@@ -1,0 +1,52 @@
+{
+  "name": "Hi-Hat",
+  "author": "Modular Synth",
+  "version": "1.1",
+  "description": "Metallic electronic hi-hat with variable decay.",
+  "tags": ["drum", "hihat", "percussion", "metallic"],
+  "modules": [
+    {
+      "id": 1,
+      "type": "oscillator",
+      "position": [50.0, 100.0],
+      "parameters": {"waveform": "noise", "level": 1.0}
+    },
+    {
+      "id": 3,
+      "type": "filter",
+      "position": [250.0, 100.0],
+      "parameters": {"filter_type": "highpass", "cutoff": 7000.0, "resonance": 0.3}
+    },
+    {
+      "id": 4,
+      "type": "envelope",
+      "position": [50.0, 280.0],
+      "parameters": {"attack": 0.001, "decay": 0.08, "sustain": 0.0, "release": 0.05}
+    },
+    {
+      "id": 8,
+      "type": "amplifier",
+      "position": [450.0, 100.0],
+      "parameters": {"level": 0.7}
+    },
+    {
+      "id": 200,
+      "type": "oscilloscope",
+      "position": [650.0, 100.0],
+      "parameters": {"time_scale": 0.3, "gain": 1.5}
+    },
+    {
+      "id": 201,
+      "type": "level_meter",
+      "position": [650.0, 280.0],
+      "parameters": {}
+    }
+  ],
+  "connections": [
+    {"from": [1, "out"], "to": [3, "in"]},
+    {"from": [3, "out"], "to": [8, "in"]},
+    {"from": [4, "out"], "to": [8, "cv"]},
+    {"from": [8, "out"], "to": [200, "in"]}
+  ],
+  "settings": {"master_volume": 0.8, "bpm": 120.0, "octave_offset": 0}
+}

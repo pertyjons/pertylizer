@@ -1,0 +1,79 @@
+{
+  "name": "Ambient Keys",
+  "author": "Modular Synth",
+  "version": "1.1",
+  "description": "Soft, dreamy electric piano with shimmer and reverb.",
+  "tags": ["keys", "ambient", "dreamy", "piano"],
+  "modules": [
+    {
+      "id": 1,
+      "type": "oscillator",
+      "position": [50.0, 100.0],
+      "parameters": {"waveform": "triangle", "level": 0.5}
+    },
+    {
+      "id": 2,
+      "type": "oscillator",
+      "position": [50.0, 230.0],
+      "parameters": {"waveform": "sine", "level": 0.4, "detune": 0.1}
+    },
+    {
+      "id": 3,
+      "type": "filter",
+      "position": [250.0, 150.0],
+      "parameters": {"filter_type": "lowpass", "cutoff": 3000.0, "resonance": 0.2}
+    },
+    {
+      "id": 4,
+      "type": "envelope",
+      "position": [50.0, 380.0],
+      "parameters": {"attack": 0.01, "decay": 0.5, "sustain": 0.4, "release": 1.0}
+    },
+    {
+      "id": 5,
+      "type": "envelope",
+      "position": [200.0, 380.0],
+      "parameters": {"attack": 0.005, "decay": 0.3, "sustain": 0.2, "release": 0.5}
+    },
+    {
+      "id": 6,
+      "type": "lfo",
+      "position": [350.0, 380.0],
+      "parameters": {"waveform": "sine", "rate": 4.0, "depth": 0.008}
+    },
+    {
+      "id": 8,
+      "type": "amplifier",
+      "position": [450.0, 150.0],
+      "parameters": {"level": 0.65}
+    },
+    {
+      "id": 100,
+      "type": "reverb",
+      "position": [650.0, 150.0],
+      "parameters": {"room_size": 0.7, "damping": 0.4, "mix": 0.45}
+    },
+    {
+      "id": 200,
+      "type": "oscilloscope",
+      "position": [650.0, 330.0],
+      "parameters": {"time_scale": 1.5, "gain": 1.0}
+    },
+    {
+      "id": 201,
+      "type": "level_meter",
+      "position": [800.0, 330.0],
+      "parameters": {}
+    }
+  ],
+  "connections": [
+    {"from": [1, "out"], "to": [3, "in"]},
+    {"from": [2, "out"], "to": [3, "in"]},
+    {"from": [3, "out"], "to": [8, "in"]},
+    {"from": [4, "out"], "to": [8, "cv"]},
+    {"from": [5, "out"], "to": [3, "cutoff_cv"]},
+    {"from": [6, "out"], "to": [1, "fm"]},
+    {"from": [8, "out"], "to": [200, "in"]}
+  ],
+  "settings": {"master_volume": 0.7, "bpm": 90.0, "octave_offset": 0}
+}

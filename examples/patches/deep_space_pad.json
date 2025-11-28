@@ -1,0 +1,130 @@
+{
+  "name": "Deep Space Pad",
+  "author": "Modular Synth",
+  "version": "1.1",
+  "description": "Evolving atmospheric pad with rich modulation.",
+  "notes": "\nSIGNAL FLOW:\nThree detuned oscillators create a thick, evolving foundation. The slight\ndetuning creates natural chorus-like movement. Triangle and saw waves\nblend for warmth with edge.\n\nMODULATION:\nTwo LFOs at different rates create complex, evolving movement:\n- Slow LFO (0.1 Hz) modulates filter cutoff for sweeping\n- Medium LFO (0.3 Hz) modulates oscillator levels for shimmer\n\nThe filter envelope adds subtle attack shaping.\n\nEFFECTS:\nLush reverb creates the spacious atmosphere. Long decay and high mix\npush the sound into the background, perfect for ambient textures.\n\nVISUALIZERS:\nOscilloscope shows the evolving waveform complexity.\n",
+  "tags": ["pad", "ambient", "atmospheric", "evolving"],
+  "modules": [
+    {
+      "id": 1,
+      "type": "oscillator",
+      "position": [50.0, 50.0],
+      "parameters": {
+        "waveform": "triangle",
+        "level": 0.4,
+        "detune": -7.0
+      }
+    },
+    {
+      "id": 2,
+      "type": "oscillator",
+      "position": [50.0, 180.0],
+      "parameters": {
+        "waveform": "sawtooth",
+        "level": 0.3,
+        "detune": 5.0
+      }
+    },
+    {
+      "id": 3,
+      "type": "filter",
+      "position": [250.0, 100.0],
+      "parameters": {
+        "filter_type": "lowpass",
+        "cutoff": 800.0,
+        "resonance": 0.3
+      }
+    },
+    {
+      "id": 4,
+      "type": "envelope",
+      "position": [50.0, 350.0],
+      "parameters": {
+        "attack": 0.8,
+        "decay": 0.5,
+        "sustain": 0.7,
+        "release": 2.0
+      }
+    },
+    {
+      "id": 5,
+      "type": "envelope",
+      "position": [200.0, 350.0],
+      "parameters": {
+        "attack": 1.2,
+        "decay": 0.8,
+        "sustain": 0.5,
+        "release": 1.5
+      }
+    },
+    {
+      "id": 6,
+      "type": "lfo",
+      "position": [350.0, 350.0],
+      "parameters": {
+        "waveform": "sine",
+        "rate": 0.1,
+        "depth": 0.4
+      }
+    },
+    {
+      "id": 7,
+      "type": "lfo",
+      "position": [500.0, 350.0],
+      "parameters": {
+        "waveform": "triangle",
+        "rate": 0.3,
+        "depth": 0.2
+      }
+    },
+    {
+      "id": 8,
+      "type": "amplifier",
+      "position": [450.0, 100.0],
+      "parameters": {
+        "level": 0.6
+      }
+    },
+    {
+      "id": 100,
+      "type": "reverb",
+      "position": [650.0, 100.0],
+      "parameters": {
+        "room_size": 0.9,
+        "damping": 0.3,
+        "mix": 0.6
+      }
+    },
+    {
+      "id": 200,
+      "type": "oscilloscope",
+      "position": [650.0, 300.0],
+      "parameters": {
+        "time_scale": 2.0,
+        "gain": 1.0
+      }
+    },
+    {
+      "id": 201,
+      "type": "level_meter",
+      "position": [800.0, 300.0],
+      "parameters": {}
+    }
+  ],
+  "connections": [
+    {"from": [1, "out"], "to": [3, "in"]},
+    {"from": [2, "out"], "to": [3, "in"]},
+    {"from": [3, "out"], "to": [8, "in"]},
+    {"from": [4, "out"], "to": [8, "cv"]},
+    {"from": [5, "out"], "to": [3, "cutoff_cv"]},
+    {"from": [6, "out"], "to": [3, "cutoff_cv"]},
+    {"from": [7, "out"], "to": [1, "fm"]},
+    {"from": [8, "out"], "to": [200, "in"]}
+  ],
+  "settings": {
+    "master_volume": 0.7,
+    "bpm": 60.0,
+    "octave_offset": 0
+  }
+}

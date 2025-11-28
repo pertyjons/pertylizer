@@ -1,0 +1,72 @@
+{
+  "name": "FM Bell",
+  "author": "Modular Synth",
+  "version": "1.1",
+  "description": "Bright, metallic bell sound using FM synthesis.",
+  "tags": ["bell", "fm", "metallic", "percussion"],
+  "modules": [
+    {
+      "id": 1,
+      "type": "oscillator",
+      "position": [50.0, 100.0],
+      "parameters": {"waveform": "sine", "level": 0.7}
+    },
+    {
+      "id": 2,
+      "type": "oscillator",
+      "position": [50.0, 250.0],
+      "parameters": {"waveform": "sine", "level": 0.5}
+    },
+    {
+      "id": 3,
+      "type": "filter",
+      "position": [250.0, 150.0],
+      "parameters": {"filter_type": "lowpass", "cutoff": 8000.0, "resonance": 0.1}
+    },
+    {
+      "id": 4,
+      "type": "envelope",
+      "position": [50.0, 400.0],
+      "parameters": {"attack": 0.001, "decay": 1.5, "sustain": 0.0, "release": 1.0}
+    },
+    {
+      "id": 5,
+      "type": "envelope",
+      "position": [200.0, 400.0],
+      "parameters": {"attack": 0.001, "decay": 0.3, "sustain": 0.1, "release": 0.5}
+    },
+    {
+      "id": 8,
+      "type": "amplifier",
+      "position": [450.0, 150.0],
+      "parameters": {"level": 0.6}
+    },
+    {
+      "id": 100,
+      "type": "reverb",
+      "position": [650.0, 150.0],
+      "parameters": {"room_size": 0.6, "damping": 0.5, "mix": 0.35}
+    },
+    {
+      "id": 200,
+      "type": "oscilloscope",
+      "position": [650.0, 330.0],
+      "parameters": {"time_scale": 0.8, "gain": 1.0}
+    },
+    {
+      "id": 201,
+      "type": "level_meter",
+      "position": [800.0, 330.0],
+      "parameters": {}
+    }
+  ],
+  "connections": [
+    {"from": [2, "out"], "to": [1, "fm"]},
+    {"from": [1, "out"], "to": [3, "in"]},
+    {"from": [3, "out"], "to": [8, "in"]},
+    {"from": [4, "out"], "to": [8, "cv"]},
+    {"from": [5, "out"], "to": [2, "fm"]},
+    {"from": [8, "out"], "to": [200, "in"]}
+  ],
+  "settings": {"master_volume": 0.65, "bpm": 120.0, "octave_offset": 1}
+}

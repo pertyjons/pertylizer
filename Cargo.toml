@@ -1,0 +1,56 @@
+[package]
+name = "modular-synth"
+version = "0.12.0"
+edition = "2024"
+rust-version = "1.91"
+description = "A modular synthesizer with abstract audio backend"
+authors = ["Per"]
+license = "MIT"
+default-run = "modular-synth"
+
+[features]
+default = ["gui-egui"]
+gui-console = []
+gui-egui = ["dep:eframe", "dep:egui"]
+
+[dependencies]
+# Audio I/O
+cpal = "0.16"
+
+# Lock-free communication
+ringbuf = "0.4"
+
+# Fast mutex for visualization buffers
+parking_lot = "0.12"
+
+# Error handling
+thiserror = "2.0"
+
+# Serialization for save/load
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# GUI - egui (optional)
+eframe = { version = "0.33", optional = true, default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+egui = { version = "0.33", optional = true }
+
+[dev-dependencies]
+criterion = "0.7"
+
+[[bench]]
+name = "audio_processing"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 1  # Lite optimering även i dev för audio

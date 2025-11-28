@@ -1,0 +1,135 @@
+{
+  "name": "Vintage Lead",
+  "author": "Modular Synth",
+  "version": "1.1",
+  "description": "Classic analog-style mono lead with vibrato and delay.",
+  "notes": "\nSIGNAL FLOW:\nTwo oscillators create the core sound: a sawtooth for brightness and a \npulse wave (with PWM) for movement and thickness. The pulse width is \nmodulated by a slow LFO, creating the classic \"breathing\" analog sound.\n\nThe mixed signal passes through a resonant lowpass filter. The filter\nenvelope provides the attack \"bite\" that helps notes stand out.\n\nVIBRATO:\nA dedicated vibrato LFO modulates OSC1's pitch at about 5.5 Hz. The depth\nis subtle (1.5%) to add expression without being overbearing.\n\nEFFECTS:\nThe delay adds rhythmic interest and fills space between notes. The \nping-pong mode creates stereo width.\n\nVISUALIZERS:\nOscilloscope shows the waveform shape, level meter monitors output.\n",
+  "tags": [
+    "lead",
+    "vintage",
+    "analog",
+    "mono"
+  ],
+  "modules": [
+    {
+      "id": 1,
+      "type": "oscillator",
+      "position": [50.0, 50.0],
+      "parameters": {
+        "waveform": "sawtooth",
+        "level": 0.6
+      }
+    },
+    {
+      "id": 2,
+      "type": "oscillator",
+      "position": [50.0, 200.0],
+      "parameters": {
+        "waveform": "pulse",
+        "level": 0.4,
+        "pulse_width": 0.3
+      }
+    },
+    {
+      "id": 3,
+      "type": "filter",
+      "position": [250.0, 100.0],
+      "parameters": {
+        "filter_type": "lowpass",
+        "cutoff": 2000.0,
+        "resonance": 0.4
+      }
+    },
+    {
+      "id": 4,
+      "type": "envelope",
+      "position": [50.0, 350.0],
+      "parameters": {
+        "attack": 0.005,
+        "decay": 0.1,
+        "sustain": 0.8,
+        "release": 0.2
+      }
+    },
+    {
+      "id": 5,
+      "type": "envelope",
+      "position": [200.0, 350.0],
+      "parameters": {
+        "attack": 0.002,
+        "decay": 0.2,
+        "sustain": 0.4,
+        "release": 0.15
+      }
+    },
+    {
+      "id": 6,
+      "type": "lfo",
+      "position": [350.0, 350.0],
+      "parameters": {
+        "waveform": "sine",
+        "rate": 5.5,
+        "depth": 0.015
+      }
+    },
+    {
+      "id": 7,
+      "type": "lfo",
+      "position": [500.0, 350.0],
+      "parameters": {
+        "waveform": "triangle",
+        "rate": 0.4,
+        "depth": 0.35
+      }
+    },
+    {
+      "id": 8,
+      "type": "amplifier",
+      "position": [450.0, 100.0],
+      "parameters": {
+        "level": 0.75
+      }
+    },
+    {
+      "id": 100,
+      "type": "delay",
+      "position": [650.0, 100.0],
+      "parameters": {
+        "mode": "ping_pong",
+        "time": 0.35,
+        "feedback": 0.4,
+        "mix": 0.3
+      }
+    },
+    {
+      "id": 200,
+      "type": "oscilloscope",
+      "position": [650.0, 300.0],
+      "parameters": {
+        "time_scale": 1.0,
+        "gain": 1.0
+      }
+    },
+    {
+      "id": 201,
+      "type": "level_meter",
+      "position": [800.0, 300.0],
+      "parameters": {}
+    }
+  ],
+  "connections": [
+    {"from": [1, "out"], "to": [3, "in"]},
+    {"from": [2, "out"], "to": [3, "in"]},
+    {"from": [3, "out"], "to": [8, "in"]},
+    {"from": [4, "out"], "to": [8, "cv"]},
+    {"from": [5, "out"], "to": [3, "cutoff_cv"]},
+    {"from": [6, "out"], "to": [1, "fm"]},
+    {"from": [7, "out"], "to": [2, "pwm"]},
+    {"from": [8, "out"], "to": [200, "in"]}
+  ],
+  "settings": {
+    "master_volume": 0.8,
+    "bpm": 120.0,
+    "octave_offset": 1
+  }
+}

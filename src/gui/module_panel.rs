@@ -1,0 +1,428 @@
+//! Module panel rendering.
+//!
+//! This module handles rendering individual synthesizer modules
+//! with their parameters and ports.
+
+use std::collections::HashMap;
+use eframe::egui::{self, Color32, Pos2, Response, Ui, Vec2};
+
+use crate::engine::ModuleId;
+use crate::engine::typed_params::{TypedParam, TypedValue};
+use crate::modules::core::{
+    ModuleCategory, ModuleDescriptor, ParameterDescriptor,
+    PortDirection as CorePortDirection, PortType as CorePortType, WidgetHint,
+};
+
+use super::widgets::{colors, theme, Knob, Port, PortDirection, PortType};
+
+/// State for a module panel in the UI.
+#[derive(Clone)]
+pub struct ModulePanelState {
+    /// Module ID.
+    pub id: ModuleId,
+    /// Position in the rack.
+    pub position: Pos2,
+    /// Cached parameter values.
+    pub param_values: HashMap<TypedParam, f32>,
+    /// Cached choice parameter values (waveform, filter_type, etc).
+    pub choice_values: HashMap<TypedParam, String>,
+    /// Is this panel selected?
+    #[allow(dead_code)]
+    pub selected: bool,
+    /// Is this panel being dragged?
+    #[allow(dead_code)]
+    pub dragging: bool,
+}
+
+impl ModulePanelState {
+    pub fn new(id: ModuleId, position: Pos2) -> Self {
+        Self {
+            id,
+            position,
+            param_values: HashMap::new(),
+            choice_values: HashMap::new(),
+            selected: false,
+            dragging: false,
+        }
+    }
+}
+
+/// Port position information for cable routing.
+#[derive(Clone, Debug)]
+pub struct PortPosition {
+    pub module_id: ModuleId,
+    pub port_name: String,
+    pub position: Pos2,
+    pub port_type: PortType,
+    pub direction: PortDirection,
+}
+
+/// Result of drawing a module panel.
+pub struct ModulePanelResult {
+    /// The panel response for interaction.
+    pub response: Response,
+    /// Port positions for cable routing.
+    pub port_positions: Vec<PortPosition>,
+    /// Parameter changes that were made.
+    pub param_changes: Vec<(TypedParam, TypedValue)>,
+}
+
+/// Draw a module panel.
+#[allow(dead_code)]
+pub fn draw_module_panel(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    connected_ports: &[String],
+) -> ModulePanelResult {
+    let accent_color = category_color(descriptor.category);
+    let mut port_positions = Vec::new();
+    let mut param_changes = Vec::new();
+
+    // Calculate panel size based on content
+    let panel_width = 180.0;
+    let min_height = 120.0;
+
+    let frame_response = egui::Frame::new()
+        .fill(colors::BG_MODULE)
+        .corner_radius(8.0)
+        .stroke(egui::Stroke::new(
+            if state.selected { 2.0 } else { 1.0 },
+            if state.selected {
+                accent_color
+            } else {
+                accent_color.gamma_multiply(0.5)
+            },
+        ))
+        .inner_margin(8.0)
+        .show(ui, |ui| {
+            ui.set_min_width(panel_width);
+            ui.set_min_height(min_height);
+
+            // Header
+            ui.horizontal(|ui| {
+                // Colored accent bar
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 16.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, accent_color);
+
+                ui.label(egui::RichText::new(&descriptor.name).color(accent_color).strong());
+            });
+
+            ui.add_space(4.0);
+
+            // Ports section
+            ui.horizontal(|ui| {
+                // Input ports on the left
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("IN").small().color(colors::TEXT_DIM));
+                    for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Input) {
+                        let port_type = convert_port_type(port.port_type);
+                        let is_connected = connected_ports.contains(&port.name);
+
+                        ui.horizontal(|ui| {
+                            let (response, center) = Port::new(port_type, PortDirection::Input)
+                                .connected(is_connected)
+                                .show(ui);
+
+                            // Convert local position to absolute
+                            let abs_pos = center;
+
+                            port_positions.push(PortPosition {
+                                module_id: state.id,
+                                port_name: port.name.clone(),
+                                position: abs_pos,
+                                port_type,
+                                direction: PortDirection::Input,
+                            });
+
+                            ui.label(
+                                egui::RichText::new(&port.label)
+                                    .small()
+                                    .color(colors::TEXT_SECONDARY),
+                            );
+
+                            // Show tooltip on hover
+                            if response.hovered() && !port.description.is_empty() {
+                                response.on_hover_text(&port.description);
+                            }
+                        });
+                    }
+                });
+
+                ui.add_space(16.0);
+
+                // Output ports on the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("OUT").small().color(colors::TEXT_DIM));
+                        for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Output) {
+                            let port_type = convert_port_type(port.port_type);
+                            let is_connected = connected_ports.contains(&port.name);
+
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&port.label)
+                                        .small()
+                                        .color(colors::TEXT_SECONDARY),
+                                );
+
+                                let (response, center) = Port::new(port_type, PortDirection::Output)
+                                    .connected(is_connected)
+                                    .show(ui);
+
+                                let abs_pos = center;
+
+                                port_positions.push(PortPosition {
+                                    module_id: state.id,
+                                    port_name: port.name.clone(),
+                                    position: abs_pos,
+                                    port_type,
+                                    direction: PortDirection::Output,
+                                });
+
+                                if response.hovered() && !port.description.is_empty() {
+                                    response.on_hover_text(&port.description);
+                                }
+                            });
+                        }
+                    });
+                });
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Parameters section
+            draw_parameters(ui, state, descriptor, accent_color, &mut param_changes);
+        });
+
+    ModulePanelResult {
+        response: frame_response.response,
+        port_positions,
+        param_changes,
+    }
+}
+
+/// Draw parameters for a module.
+fn draw_parameters(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    accent_color: Color32,
+    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    // Group parameters by widget hint for layout
+    let knob_params: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|p| matches!(p.widget_hint, WidgetHint::Knob))
+        .collect();
+
+    let slider_params: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|p| matches!(p.widget_hint, WidgetHint::Slider))
+        .collect();
+
+    let dropdown_params: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|p| matches!(p.widget_hint, WidgetHint::Dropdown))
+        .collect();
+
+    let toggle_params: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|p| matches!(p.widget_hint, WidgetHint::Toggle))
+        .collect();
+
+    // Draw dropdowns first
+    for param in &dropdown_params {
+        draw_dropdown_param(ui, state, param, param_changes);
+    }
+
+    // Draw toggles
+    if !toggle_params.is_empty() {
+        ui.horizontal(|ui| {
+            for param in &toggle_params {
+                draw_toggle_param(ui, state, param, param_changes);
+            }
+        });
+    }
+
+    // Draw knobs in a responsive grid
+    if !knob_params.is_empty() {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+        ui.horizontal_wrapped(|ui| {
+            for param in &knob_params {
+                draw_knob_param(ui, state, param, accent_color, param_changes);
+            }
+        });
+    }
+
+    // Draw sliders
+    for param in &slider_params {
+        draw_slider_param(ui, state, param, accent_color, param_changes);
+    }
+}
+
+fn draw_knob_param(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    param: &ParameterDescriptor,
+    accent_color: Color32,
+    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    ui.vertical(|ui| {
+        let current_value = state
+            .param_values
+            .get(&param.id)
+            .copied()
+            .unwrap_or(param.default);
+
+        let mut value = current_value;
+        let size = 48.0;
+
+        Knob::new(&mut value, param.min, param.max)
+            .default(param.default)
+            .response_curve(param.response_curve)
+            .label(&param.name)
+            .size(size)
+            .accent_color(accent_color)
+            .show(ui);
+
+        if (value - current_value).abs() > f32::EPSILON {
+            state.param_values.insert(param.id, value);
+            param_changes.push((param.id, TypedValue::Float(value)));
+        }
+
+        // Value display
+        ui.label(
+            egui::RichText::new(param.format(value))
+                .small()
+                .color(colors::TEXT_DIM),
+        );
+    });
+}
+
+fn draw_slider_param(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    param: &ParameterDescriptor,
+    _accent_color: Color32,
+    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    let current_value = state
+        .param_values
+        .get(&param.id)
+        .copied()
+        .unwrap_or(param.default);
+
+    let mut value = current_value;
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+
+        let slider = egui::Slider::new(&mut value, param.min..=param.max)
+            .show_value(true)
+            .custom_formatter(|v, _| param.format(v as f32));
+
+        ui.add(slider);
+    });
+
+    if (value - current_value).abs() > f32::EPSILON {
+        state.param_values.insert(param.id, value);
+        param_changes.push((param.id, TypedValue::Float(value)));
+    }
+}
+
+fn draw_dropdown_param(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    param: &ParameterDescriptor,
+    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    if let Some(ref choices) = param.choices {
+        let current_value = state
+            .param_values
+            .get(&param.id)
+            .copied()
+            .unwrap_or(param.default);
+
+        let mut selected = current_value.round() as usize;
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+
+            let selected_text = choices.get(selected)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "?".to_string());
+
+            egui::ComboBox::from_id_salt(format!("{:?}", param.id))
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for (i, choice) in choices.iter().enumerate() {
+                        if ui.selectable_label(selected == i, &choice.name).clicked() {
+                            selected = i;
+                        }
+                    }
+                });
+        });
+
+        if selected as f32 != current_value.round() {
+            let new_value = selected as f32;
+            state.param_values.insert(param.id, new_value);
+            param_changes.push((param.id, TypedValue::Int(selected as i32)));
+        }
+    }
+}
+
+fn draw_toggle_param(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    param: &ParameterDescriptor,
+    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    let current_value = state
+        .param_values
+        .get(&param.id)
+        .copied()
+        .unwrap_or(param.default);
+
+    let mut checked = current_value > 0.5;
+
+    if ui.checkbox(&mut checked, &param.name).changed() {
+        let new_value = if checked { 1.0 } else { 0.0 };
+        state.param_values.insert(param.id, new_value);
+        param_changes.push((param.id, TypedValue::Bool(checked)));
+    }
+}
+
+/// Get accent color for a module category.
+pub fn category_color(category: ModuleCategory) -> Color32 {
+    match category {
+        ModuleCategory::Oscillator => colors::ACCENT_ORANGE,
+        ModuleCategory::Filter => colors::ACCENT_CYAN,
+        ModuleCategory::Envelope => colors::ACCENT_GREEN,
+        ModuleCategory::LFO => colors::ACCENT_PURPLE,
+        ModuleCategory::Amplifier => colors::ACCENT_YELLOW,
+        ModuleCategory::Effect => colors::ACCENT_CYAN,
+        ModuleCategory::Utility => colors::TEXT_SECONDARY,
+        ModuleCategory::Sampler => colors::ACCENT_ORANGE,
+        ModuleCategory::Sequencer => colors::ACCENT_RED,
+        ModuleCategory::Mixer => colors::ACCENT_YELLOW,
+        ModuleCategory::Output => colors::ACCENT_GREEN,
+        ModuleCategory::Visualizer => colors::ACCENT_PURPLE,
+    }
+}
+
+/// Convert from core PortType to widget PortType.
+fn convert_port_type(port_type: CorePortType) -> PortType {
+    match port_type {
+        CorePortType::Audio => PortType::Audio,
+        CorePortType::Control => PortType::Control,
+        CorePortType::Gate => PortType::Gate,
+        CorePortType::Midi => PortType::Midi,
+    }
+}
