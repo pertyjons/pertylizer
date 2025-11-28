@@ -118,8 +118,8 @@ pub struct EngineHandle {
     event_consumer: ringbuf::HeapCons<EngineEvent>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
-    /// Visualization buffers keyed by module ID.
-    pub visualization_buffers: HashMap<ModuleId, VisualizationBuffer>,
+    /// Visualization buffers keyed by module ID (shared with engine via Arc).
+    pub visualization_buffers: HashMap<ModuleId, Arc<VisualizationBuffer>>,
 }
 
 impl EngineHandle {
@@ -205,14 +205,14 @@ impl EngineHandle {
         self.state.master_volume.load()
     }
 
-    /// Add a visualization buffer for a module.
-    pub fn add_visualization_buffer(&mut self, module_id: ModuleId, buffer: VisualizationBuffer) {
+    /// Add a visualization buffer for a module (Arc is shared with engine).
+    pub fn add_visualization_buffer(&mut self, module_id: ModuleId, buffer: Arc<VisualizationBuffer>) {
         self.visualization_buffers.insert(module_id, buffer);
     }
 
     /// Get a visualization buffer for a module.
     pub fn get_visualization_buffer(&self, module_id: ModuleId) -> Option<&VisualizationBuffer> {
-        self.visualization_buffers.get(&module_id)
+        self.visualization_buffers.get(&module_id).map(|arc| arc.as_ref())
     }
 
     /// Remove a visualization buffer.
@@ -233,7 +233,7 @@ struct EffectSlot {
 struct VisualizerSlot {
     module_id: ModuleId,
     visualizer: Box<dyn EffectModule>,
-    buffer: VisualizationBuffer,
+    buffer: Arc<VisualizationBuffer>,
     enabled: bool,
 }
 
@@ -317,28 +317,27 @@ impl SynthEngine {
 
         // Create default effect chain
         // Each effect has a ModuleType for type-safe lookup
-        // Module IDs 100-103 reserved for default effects
         let effects = vec![
             EffectSlot {
-                module_id: ModuleId::new(100),
+                module_id: ModuleId::new(ModuleType::Chorus, 1),
                 effect: Box::new(Chorus::new()),
                 module_type: ModuleType::Chorus,
                 enabled: false,
             },
             EffectSlot {
-                module_id: ModuleId::new(101),
+                module_id: ModuleId::new(ModuleType::Delay, 1),
                 effect: Box::new(Delay::new()),
                 module_type: ModuleType::Delay,
                 enabled: false,
             },
             EffectSlot {
-                module_id: ModuleId::new(102),
+                module_id: ModuleId::new(ModuleType::Reverb, 1),
                 effect: Box::new(Reverb::new()),
                 module_type: ModuleType::Reverb,
                 enabled: false,
             },
             EffectSlot {
-                module_id: ModuleId::new(103),
+                module_id: ModuleId::new(ModuleType::Distortion, 1),
                 effect: Box::new(crate::effects::Distortion::new()),
                 module_type: ModuleType::Distortion,
                 enabled: false,
@@ -609,19 +608,19 @@ impl SynthEngine {
                 }
             }
 
+            EngineCommand::ClearAllModules => {
+                // Clear all modules for patch loading
+                self.voice_allocator.panic();
+                self.effects.clear();
+                self.visualizers.clear();
+                self.module_graph.clear();
+                self.use_modular_routing = false;
+            }
+
             EngineCommand::SetBypass { module, bypass } => {
-                // Find effect by ModuleType
-                let effect_type = match module.0 {
-                    100 => Some(ModuleType::Chorus),
-                    101 => Some(ModuleType::Delay),
-                    102 => Some(ModuleType::Reverb),
-                    103 => Some(ModuleType::Distortion),
-                    _ => None,
-                };
-                if let Some(mt) = effect_type {
-                    if let Some(slot) = self.find_effect_by_type(mt) {
-                        slot.enabled = !bypass;
-                    }
+                // Use the module_type directly from ModuleId
+                if let Some(slot) = self.find_effect_by_type(module.module_type) {
+                    slot.enabled = !bypass;
                 }
             }
             

@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::engine::ModuleId;
-use crate::engine::typed_params::{TypedParam, TypedValue};
+use crate::engine::typed_params::{ModuleType, TypedParam, TypedValue};
 use crate::modules::core::*;
 
 /// A connection between two ports.
@@ -59,8 +59,8 @@ pub struct ModuleGraph {
     connections: HashSet<Connection>,
     /// Processing order (topologically sorted).
     processing_order: Vec<ModuleId>,
-    /// Next module ID.
-    next_id: u32,
+    /// Instance counters per module type for ID generation.
+    instance_counters: HashMap<ModuleType, u16>,
     /// Is the processing order dirty (needs recalculation).
     order_dirty: bool,
     /// Buffer size.
@@ -78,7 +78,7 @@ impl ModuleGraph {
             nodes: HashMap::new(),
             connections: HashSet::new(),
             processing_order: Vec::new(),
-            next_id: 1,
+            instance_counters: HashMap::new(),
             order_dirty: true,
             buffer_size: 256,
             input_buffers: HashMap::with_capacity(8),
@@ -86,13 +86,32 @@ impl ModuleGraph {
         }
     }
 
+    /// Clear all modules and connections.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.connections.clear();
+        self.processing_order.clear();
+        self.instance_counters.clear();
+        self.order_dirty = true;
+        self.input_buffers.clear();
+        self.incoming_cache.clear();
+    }
+
+    /// Get the next instance number for a module type.
+    fn next_instance(&mut self, module_type: ModuleType) -> u16 {
+        let counter = self.instance_counters.entry(module_type).or_insert(0);
+        *counter += 1;
+        *counter
+    }
+
     /// Add a module to the graph.
     pub fn add_module(&mut self, module: Box<dyn VoiceModule>) -> ModuleId {
-        let id = ModuleId(self.next_id);
-        self.next_id += 1;
-        
+        let module_type = module.module_type();
+        let instance = self.next_instance(module_type);
+        let id = ModuleId::new(module_type, instance);
+
         let descriptor = module.descriptor();
-        
+
         // Create output buffers
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
@@ -114,7 +133,7 @@ impl ModuleGraph {
     /// Add a module with a specific ID.
     pub fn add_module_with_id(&mut self, id: ModuleId, module: Box<dyn VoiceModule>) {
         let descriptor = module.descriptor();
-        
+
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
             if port.direction == PortDirection::Output {
@@ -128,8 +147,10 @@ impl ModuleGraph {
             outputs,
         });
 
-        if id.0 >= self.next_id {
-            self.next_id = id.0 + 1;
+        // Update instance counter if this ID is higher
+        let counter = self.instance_counters.entry(id.module_type).or_insert(0);
+        if id.instance > *counter {
+            *counter = id.instance;
         }
 
         self.order_dirty = true;
@@ -351,7 +372,7 @@ impl ModuleGraph {
     /// Clone the graph structure.
     pub fn clone_structure(&self) -> Self {
         let mut new_graph = ModuleGraph::new();
-        new_graph.next_id = self.next_id;
+        new_graph.instance_counters = self.instance_counters.clone();
         new_graph.buffer_size = self.buffer_size;
 
         // Clone all modules

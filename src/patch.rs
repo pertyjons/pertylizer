@@ -58,8 +58,8 @@ fn default_version() -> String {
 /// State of a single module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleState {
-    /// Module ID.
-    pub id: u32,
+    /// Module ID (e.g., "osc-1", "flt-2").
+    pub id: String,
     /// Module type (oscillator, filter, envelope, etc.).
     #[serde(rename = "type")]
     pub module_type: ModuleType,
@@ -108,6 +108,25 @@ impl ModuleType {
             Self::LevelMeter => "level_meter",
         }
     }
+
+    /// Get a short 3-letter prefix for module IDs.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            Self::Oscillator => "osc",
+            Self::Filter => "flt",
+            Self::Envelope => "env",
+            Self::Lfo => "lfo",
+            Self::Amplifier => "amp",
+            Self::Mixer => "mix",
+            Self::StereoOutput => "out",
+            Self::Delay => "dly",
+            Self::Reverb => "rev",
+            Self::Distortion => "dst",
+            Self::Chorus => "chr",
+            Self::Oscilloscope => "scp",
+            Self::LevelMeter => "mtr",
+        }
+    }
 }
 
 /// Parameter value for serialization.
@@ -125,29 +144,33 @@ pub enum ParamValue {
 /// Connection between two modules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionState {
-    /// Source (module_id, port_name).
-    pub from: (u32, String),
-    /// Destination (module_id, port_name).
-    pub to: (u32, String),
+    /// Source (module_id string like "osc-1", port_name).
+    pub from: (String, String),
+    /// Destination (module_id string, port_name).
+    pub to: (String, String),
 }
 
 impl From<&Connection> for ConnectionState {
     fn from(c: &Connection) -> Self {
         Self {
-            from: (c.from_module.0, c.from_port.clone()),
-            to: (c.to_module.0, c.to_port.clone()),
+            from: (c.from_module.to_string(), c.from_port.clone()),
+            to: (c.to_module.to_string(), c.to_port.clone()),
         }
     }
 }
 
-impl From<&ConnectionState> for Connection {
-    fn from(c: &ConnectionState) -> Self {
-        Connection::new(
-            ModuleId::new(c.from.0),
-            &c.from.1,
-            ModuleId::new(c.to.0),
-            &c.to.1,
-        )
+impl ConnectionState {
+    /// Convert to Connection, with an ID lookup function.
+    /// Returns None if module IDs cannot be parsed.
+    pub fn to_connection(&self) -> Option<Connection> {
+        let from_id: ModuleId = self.from.0.parse().ok()?;
+        let to_id: ModuleId = self.to.0.parse().ok()?;
+        Some(Connection::new(
+            from_id,
+            &self.from.1,
+            to_id,
+            &self.to.1,
+        ))
     }
 }
 
@@ -223,16 +246,11 @@ impl Patch {
     }
 
     /// Add a connection to the patch.
-    pub fn add_connection(&mut self, from_id: u32, from_port: &str, to_id: u32, to_port: &str) {
+    pub fn add_connection(&mut self, from_id: &str, from_port: &str, to_id: &str, to_port: &str) {
         self.connections.push(ConnectionState {
-            from: (from_id, from_port.to_string()),
-            to: (to_id, to_port.to_string()),
+            from: (from_id.to_string(), from_port.to_string()),
+            to: (to_id.to_string(), to_port.to_string()),
         });
-    }
-
-    /// Get the next available module ID.
-    pub fn next_module_id(&self) -> u32 {
-        self.modules.iter().map(|m| m.id).max().unwrap_or(0) + 1
     }
 }
 
@@ -266,7 +284,10 @@ pub struct ModuleBuilder {
 }
 
 impl ModuleBuilder {
-    pub fn new(id: u32, module_type: ModuleType) -> Self {
+    /// Create a new module with auto-generated ID based on type and instance number.
+    /// Example: ModuleBuilder::new(1, ModuleType::Oscillator) creates ID "osc-1"
+    pub fn new(instance: u16, module_type: ModuleType) -> Self {
+        let id = format!("{}-{}", module_type.prefix(), instance);
         Self {
             state: ModuleState {
                 id,
@@ -381,7 +402,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 "#.to_string());
     patch.tags = vec!["pad".into(), "ambient".into(), "atmospheric".into(), "evolving".into()];
 
-    // OSC1 - Main sawtooth
+    // OSC1 - Main sawtooth (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("sawtooth")
@@ -389,7 +410,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
         .param_f("detune", 0.0)
         .build());
 
-    // OSC2 - Detuned sawtooth
+    // OSC2 - Detuned sawtooth (osc-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
         .position(50.0, 200.0)
         .waveform("sawtooth")
@@ -397,22 +418,22 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
         .param_f("detune", 7.0)
         .build());
 
-    // Mixer for oscillators
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Mixer)
+    // Mixer for oscillators (mix-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Mixer)
         .position(250.0, 100.0)
         .param_f("level", 0.8)
         .build());
 
-    // Filter - Lowpass with resonance
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Filter)
+    // Filter - Lowpass with resonance (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(450.0, 100.0)
         .filter_mode("lowpass")
         .param_f("cutoff", 800.0)
         .param_f("resonance", 0.35)
         .build());
 
-    // Amp Envelope - Slow pad envelope
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Envelope)
+    // Amp Envelope - Slow pad envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 400.0)
         .param_f("attack", 1.5)
         .param_f("decay", 0.5)
@@ -420,8 +441,8 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
         .param_f("release", 3.0)
         .build());
 
-    // Filter Envelope - Brighter on attack
-    patch.add_module(ModuleBuilder::new(6, ModuleType::Envelope)
+    // Filter Envelope - Brighter on attack (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 400.0)
         .param_f("attack", 0.8)
         .param_f("decay", 1.5)
@@ -429,56 +450,74 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
         .param_f("release", 2.0)
         .build());
 
-    // LFO1 - Filter modulation
-    patch.add_module(ModuleBuilder::new(7, ModuleType::Lfo)
+    // LFO1 - Filter modulation (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
         .position(450.0, 400.0)
         .waveform("sine")
         .param_f("rate", 0.1)
         .param_f("depth", 0.4)
         .build());
 
-    // LFO2 - Pitch modulation for OSC2
-    patch.add_module(ModuleBuilder::new(8, ModuleType::Lfo)
+    // LFO2 - Pitch modulation for OSC2 (lfo-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Lfo)
         .position(650.0, 400.0)
         .waveform("triangle")
         .param_f("rate", 0.08)
         .param_f("depth", 0.1)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(9, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(650.0, 100.0)
         .param_f("level", 0.6)
         .build());
 
-    // Chorus - For width
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Chorus)
+    // Chorus - For width (chr-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Chorus)
         .position(850.0, 100.0)
         .param_f("rate", 0.5)
         .param_f("depth", 0.4)
         .param_f("mix", 0.35)
         .build());
 
-    // Reverb - Large space
-    patch.add_module(ModuleBuilder::new(101, ModuleType::Reverb)
+    // Reverb - Large space (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
         .position(1050.0, 100.0)
         .param_f("room_size", 0.85)
         .param_f("damping", 0.3)
         .param_f("mix", 0.4)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 3, "in1");
-    patch.add_connection(2, "out", 3, "in2");
-    patch.add_connection(3, "out", 4, "in");
-    patch.add_connection(4, "out", 9, "in");
-    patch.add_connection(5, "out", 9, "cv");
-    patch.add_connection(6, "out", 4, "cutoff_cv");
-    patch.add_connection(7, "out", 4, "cutoff_cv");
-    patch.add_connection(8, "out", 2, "fm");
-    patch.add_connection(9, "out", 100, "in_l");
-    patch.add_connection(100, "out_l", 101, "in_l");
-    patch.add_connection(100, "out_r", 101, "in_r");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(1250.0, 100.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1450.0, 100.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "mix-1", "in1");
+    patch.add_connection("osc-2", "out", "mix-1", "in2");
+    patch.add_connection("mix-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("lfo-2", "out", "osc-2", "fm");
+    patch.add_connection("amp-1", "out", "chr-1", "in_l");
+    patch.add_connection("chr-1", "out_l", "rev-1", "in_l");
+    patch.add_connection("chr-1", "out_r", "rev-1", "in_r");
+    // Route to oscilloscope and output
+    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("rev-1", "out_r", "scp-1", "in_r");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("scp-1", "out_r", "out-1", "in_r");
 
     patch.settings.octave_offset = -1;
     patch
@@ -517,23 +556,23 @@ style bass lines. Try different octaves for different characters.
 "#.to_string());
     patch.tags = vec!["bass".into(), "aggressive".into(), "edm".into(), "punchy".into()];
 
-    // OSC - Square wave for punch
+    // OSC - Square wave for punch (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("square")
         .param_f("level", 0.9)
         .build());
 
-    // Filter - Resonant lowpass
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Filter)
+    // Filter - Resonant lowpass (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 50.0)
         .filter_mode("lowpass")
         .param_f("cutoff", 400.0)
         .param_f("resonance", 0.6)
         .build());
 
-    // Amp Envelope - Punchy
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Amp Envelope - Punchy (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.002)
         .param_f("decay", 0.15)
@@ -541,8 +580,8 @@ style bass lines. Try different octaves for different characters.
         .param_f("release", 0.1)
         .build());
 
-    // Filter Envelope - Sweep
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Envelope)
+    // Filter Envelope - Sweep (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.25)
@@ -550,14 +589,14 @@ style bass lines. Try different octaves for different characters.
         .param_f("release", 0.1)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.8)
         .build());
 
-    // Distortion - Tube warmth
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Distortion)
+    // Distortion - Tube warmth (dst-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
         .position(650.0, 50.0)
         .distortion_mode("tube")
         .param_f("drive", 0.5)
@@ -565,12 +604,28 @@ style bass lines. Try different octaves for different characters.
         .param_f("mix", 0.6)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 2, "in");
-    patch.add_connection(2, "out", 5, "in");
-    patch.add_connection(3, "out", 5, "cv");
-    patch.add_connection(4, "out", 2, "cutoff_cv");
-    patch.add_connection(5, "out", 100, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(850.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1050.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("amp-1", "out", "dst-1", "in");
+    // Route to oscilloscope and output
+    patch.add_connection("dst-1", "out", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch.settings.octave_offset = -2;
     patch
@@ -609,14 +664,14 @@ to held notes. Use pitch bends for extra expressiveness.
 "#.to_string());
     patch.tags = vec!["lead".into(), "vintage".into(), "analog".into(), "mono".into()];
 
-    // OSC1 - Sawtooth
+    // OSC1 - Sawtooth (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("sawtooth")
         .param_f("level", 0.6)
         .build());
 
-    // OSC2 - Pulse with PWM
+    // OSC2 - Pulse with PWM (osc-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
         .position(50.0, 200.0)
         .waveform("pulse")
@@ -624,22 +679,22 @@ to held notes. Use pitch bends for extra expressiveness.
         .param_f("pulse_width", 0.3)
         .build());
 
-    // Mixer
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Mixer)
+    // Mixer (mix-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Mixer)
         .position(250.0, 100.0)
         .param_f("level", 0.85)
         .build());
 
-    // Filter
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Filter)
+    // Filter (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(450.0, 100.0)
         .filter_mode("lowpass")
         .param_f("cutoff", 2000.0)
         .param_f("resonance", 0.4)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Envelope)
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 400.0)
         .param_f("attack", 0.005)
         .param_f("decay", 0.1)
@@ -647,8 +702,8 @@ to held notes. Use pitch bends for extra expressiveness.
         .param_f("release", 0.2)
         .build());
 
-    // Filter Envelope
-    patch.add_module(ModuleBuilder::new(6, ModuleType::Envelope)
+    // Filter Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 400.0)
         .param_f("attack", 0.002)
         .param_f("decay", 0.2)
@@ -656,30 +711,30 @@ to held notes. Use pitch bends for extra expressiveness.
         .param_f("release", 0.15)
         .build());
 
-    // Vibrato LFO
-    patch.add_module(ModuleBuilder::new(7, ModuleType::Lfo)
+    // Vibrato LFO (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
         .position(450.0, 400.0)
         .waveform("sine")
         .param_f("rate", 5.5)
         .param_f("depth", 0.015)
         .build());
 
-    // PWM LFO
-    patch.add_module(ModuleBuilder::new(8, ModuleType::Lfo)
+    // PWM LFO (lfo-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Lfo)
         .position(650.0, 400.0)
         .waveform("triangle")
         .param_f("rate", 0.4)
         .param_f("depth", 0.35)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(9, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(650.0, 100.0)
         .param_f("level", 0.75)
         .build());
 
-    // Delay
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Delay)
+    // Delay (dly-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Delay)
         .position(850.0, 100.0)
         .delay_mode("ping_pong")
         .param_f("time", 0.35)
@@ -687,16 +742,34 @@ to held notes. Use pitch bends for extra expressiveness.
         .param_f("mix", 0.3)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 3, "in1");
-    patch.add_connection(2, "out", 3, "in2");
-    patch.add_connection(3, "out", 4, "in");
-    patch.add_connection(4, "out", 9, "in");
-    patch.add_connection(5, "out", 9, "cv");
-    patch.add_connection(6, "out", 4, "cutoff_cv");
-    patch.add_connection(7, "out", 1, "fm");
-    patch.add_connection(8, "out", 2, "pwm");
-    patch.add_connection(9, "out", 100, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(1050.0, 100.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1250.0, 100.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "mix-1", "in1");
+    patch.add_connection("osc-2", "out", "mix-1", "in2");
+    patch.add_connection("mix-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("lfo-1", "out", "osc-1", "fm");
+    patch.add_connection("lfo-2", "out", "osc-2", "pwm");
+    patch.add_connection("amp-1", "out", "dly-1", "in_l");
+    // Route to oscilloscope and output
+    patch.add_connection("dly-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("dly-1", "out_r", "scp-1", "in_r");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("scp-1", "out_r", "out-1", "in_r");
 
     patch.settings.octave_offset = 1;
     patch
@@ -738,23 +811,23 @@ ambient music, ballads, or as a bed under other instruments.
 "#.to_string());
     patch.tags = vec!["keys".into(), "ambient".into(), "electric_piano".into(), "dreamy".into()];
 
-    // OSC - Triangle for soft tone
+    // OSC - Triangle for soft tone (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("triangle")
         .param_f("level", 0.8)
         .build());
 
-    // Filter
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Filter)
+    // Filter (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 50.0)
         .filter_mode("lowpass")
         .param_f("cutoff", 3000.0)
         .param_f("resonance", 0.15)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.003)
         .param_f("decay", 0.8)
@@ -762,8 +835,8 @@ ambient music, ballads, or as a bed under other instruments.
         .param_f("release", 0.6)
         .build());
 
-    // Filter Envelope
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Envelope)
+    // Filter Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.4)
@@ -771,45 +844,63 @@ ambient music, ballads, or as a bed under other instruments.
         .param_f("release", 0.3)
         .build());
 
-    // Subtle tremolo LFO
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Lfo)
+    // Subtle tremolo LFO (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
         .position(450.0, 300.0)
         .waveform("sine")
         .param_f("rate", 4.0)
         .param_f("depth", 0.06)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(6, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.65)
         .build());
 
-    // Chorus
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Chorus)
+    // Chorus (chr-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Chorus)
         .position(650.0, 50.0)
         .param_f("rate", 0.7)
         .param_f("depth", 0.3)
         .param_f("mix", 0.3)
         .build());
 
-    // Reverb - Large and lush
-    patch.add_module(ModuleBuilder::new(101, ModuleType::Reverb)
+    // Reverb - Large and lush (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
         .position(850.0, 50.0)
         .param_f("room_size", 0.9)
         .param_f("damping", 0.25)
         .param_f("mix", 0.5)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 2, "in");
-    patch.add_connection(2, "out", 6, "in");
-    patch.add_connection(3, "out", 6, "cv");
-    patch.add_connection(4, "out", 2, "cutoff_cv");
-    patch.add_connection(5, "out", 6, "cv");
-    patch.add_connection(6, "out", 100, "in_l");
-    patch.add_connection(100, "out_l", 101, "in_l");
-    patch.add_connection(100, "out_r", 101, "in_r");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(1050.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1250.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("lfo-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "chr-1", "in_l");
+    patch.add_connection("chr-1", "out_l", "rev-1", "in_l");
+    patch.add_connection("chr-1", "out_r", "rev-1", "in_r");
+    // Route to oscilloscope and output
+    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("rev-1", "out_r", "scp-1", "in_r");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("scp-1", "out_r", "out-1", "in_r");
 
     patch
 }
@@ -850,15 +941,15 @@ kick characters. Works well in the lowest octave.
 "#.to_string());
     patch.tags = vec!["drum".into(), "kick".into(), "percussion".into(), "808".into()];
 
-    // OSC - Sine for pure sub
+    // OSC - Sine for pure sub (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("sine")
         .param_f("level", 1.0)
         .build());
 
-    // Pitch Envelope - Fast sweep
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
+    // Pitch Envelope - Fast sweep (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 250.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.05)
@@ -866,8 +957,8 @@ kick characters. Works well in the lowest octave.
         .param_f("release", 0.01)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Amp Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 250.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.15)
@@ -875,25 +966,41 @@ kick characters. Works well in the lowest octave.
         .param_f("release", 0.05)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(250.0, 50.0)
         .param_f("level", 0.9)
         .build());
 
-    // Soft clip for warmth
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Distortion)
+    // Soft clip for warmth (dst-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
         .position(450.0, 50.0)
         .distortion_mode("soft_clip")
         .param_f("drive", 0.2)
         .param_f("mix", 0.3)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 4, "in");
-    patch.add_connection(2, "out", 1, "fm");
-    patch.add_connection(3, "out", 4, "cv");
-    patch.add_connection(4, "out", 100, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(650.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "osc-1", "fm");
+    patch.add_connection("env-2", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "dst-1", "in");
+    // Route to oscilloscope and output
+    patch.add_connection("dst-1", "out", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch.settings.octave_offset = -2;
     patch
@@ -930,36 +1037,36 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
 "#.to_string());
     patch.tags = vec!["drum".into(), "snare".into(), "percussion".into()];
 
-    // OSC1 - Triangle for body
+    // OSC1 - Triangle for body (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("triangle")
         .param_f("level", 0.6)
         .build());
 
-    // OSC2 - Noise for snare
+    // OSC2 - Noise for snare (osc-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
         .position(50.0, 200.0)
         .waveform("noise")
         .param_f("level", 0.7)
         .build());
 
-    // Noise Filter - Bandpass
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Filter)
+    // Noise Filter - Bandpass (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 200.0)
         .filter_mode("bandpass")
         .param_f("cutoff", 5000.0)
         .param_f("resonance", 0.3)
         .build());
 
-    // Mixer
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Mixer)
+    // Mixer (mix-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Mixer)
         .position(450.0, 100.0)
         .param_f("level", 0.8)
         .build());
 
-    // Pitch Envelope
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Envelope)
+    // Pitch Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 400.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.03)
@@ -967,8 +1074,8 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
         .param_f("release", 0.01)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(6, ModuleType::Envelope)
+    // Amp Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 400.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.12)
@@ -976,19 +1083,35 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
         .param_f("release", 0.08)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(7, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(650.0, 100.0)
         .param_f("level", 0.75)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 4, "in1");
-    patch.add_connection(2, "out", 3, "in");
-    patch.add_connection(3, "out", 4, "in2");
-    patch.add_connection(4, "out", 7, "in");
-    patch.add_connection(5, "out", 1, "fm");
-    patch.add_connection(6, "out", 7, "cv");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(850.0, 100.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1050.0, 100.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "mix-1", "in1");
+    patch.add_connection("osc-2", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "mix-1", "in2");
+    patch.add_connection("mix-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "osc-1", "fm");
+    patch.add_connection("env-2", "out", "amp-1", "cv");
+    // Route to oscilloscope and output
+    patch.add_connection("amp-1", "out", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch.settings.octave_offset = -1;
     patch
@@ -1026,23 +1149,23 @@ for open hi-hats. The filter cutoff affects brightness.
 "#.to_string());
     patch.tags = vec!["drum".into(), "hihat".into(), "percussion".into(), "cymbal".into()];
 
-    // OSC - Noise
+    // OSC - Noise (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("noise")
         .param_f("level", 0.8)
         .build());
 
-    // Filter - Highpass
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Filter)
+    // Filter - Highpass (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 50.0)
         .filter_mode("highpass")
         .param_f("cutoff", 7500.0)
         .param_f("resonance", 0.4)
         .build());
 
-    // Amp Envelope - Very short
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Amp Envelope - Very short (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.05)
@@ -1050,16 +1173,32 @@ for open hi-hats. The filter cutoff affects brightness.
         .param_f("release", 0.03)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.5)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 2, "in");
-    patch.add_connection(2, "out", 4, "in");
-    patch.add_connection(3, "out", 4, "cv");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(650.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    // Route to oscilloscope and output
+    patch.add_connection("amp-1", "out", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch
 }
@@ -1102,23 +1241,23 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
 "#.to_string());
     patch.tags = vec!["pluck".into(), "synth".into(), "arpeggio".into(), "sequence".into()];
 
-    // OSC - Sawtooth
+    // OSC - Sawtooth (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("sawtooth")
         .param_f("level", 0.8)
         .build());
 
-    // Filter
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Filter)
+    // Filter (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 50.0)
         .filter_mode("lowpass")
         .param_f("cutoff", 1000.0)
         .param_f("resonance", 0.45)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.002)
         .param_f("decay", 0.2)
@@ -1126,8 +1265,8 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
         .param_f("release", 0.15)
         .build());
 
-    // Filter Envelope
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Envelope)
+    // Filter Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.1)
@@ -1135,14 +1274,14 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
         .param_f("release", 0.1)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.7)
         .build());
 
-    // Delay
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Delay)
+    // Delay (dly-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Delay)
         .position(650.0, 50.0)
         .delay_mode("ping_pong")
         .param_f("time", 0.25)
@@ -1150,12 +1289,30 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
         .param_f("mix", 0.35)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 2, "in");
-    patch.add_connection(2, "out", 5, "in");
-    patch.add_connection(3, "out", 5, "cv");
-    patch.add_connection(4, "out", 2, "cutoff_cv");
-    patch.add_connection(5, "out", 100, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(850.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1050.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("amp-1", "out", "dly-1", "in_l");
+    // Route to oscilloscope and output
+    patch.add_connection("dly-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("dly-1", "out_r", "scp-1", "in_r");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("scp-1", "out_r", "out-1", "in_r");
 
     patch
 }
@@ -1194,14 +1351,14 @@ more "chime-like", lower notes more "gong-like".
 "#.to_string());
     patch.tags = vec!["bell".into(), "fm".into(), "metallic".into(), "chime".into()];
 
-    // OSC1 - Carrier (sine)
+    // OSC1 - Carrier (sine) (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(250.0, 50.0)
         .waveform("sine")
         .param_f("level", 0.7)
         .build());
 
-    // OSC2 - Modulator (sine)
+    // OSC2 - Modulator (sine) (osc-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("sine")
@@ -1209,8 +1366,8 @@ more "chime-like", lower notes more "gong-like".
         .param_f("detune", 2.0)  // Slightly detuned for inharmonic partials
         .build());
 
-    // Modulator Envelope - Controls FM depth
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Envelope)
+    // Modulator Envelope - Controls FM depth (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.5)
@@ -1218,8 +1375,8 @@ more "chime-like", lower notes more "gong-like".
         .param_f("release", 0.3)
         .build());
 
-    // Amp Envelope - Bell-like
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Envelope)
+    // Amp Envelope - Bell-like (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 2.0)
@@ -1227,26 +1384,42 @@ more "chime-like", lower notes more "gong-like".
         .param_f("release", 1.0)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.6)
         .build());
 
-    // Reverb - Large space
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Reverb)
+    // Reverb - Large space (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
         .position(650.0, 50.0)
         .param_f("room_size", 0.8)
         .param_f("damping", 0.2)
         .param_f("mix", 0.45)
         .build());
 
-    // Connections
-    patch.add_connection(2, "out", 1, "fm");
-    patch.add_connection(3, "out", 2, "cv");  // Envelope controls modulator level
-    patch.add_connection(1, "out", 5, "in");
-    patch.add_connection(4, "out", 5, "cv");
-    patch.add_connection(5, "out", 100, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(850.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1050.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-2", "out", "osc-1", "fm");
+    patch.add_connection("env-1", "out", "osc-2", "cv");  // Envelope controls modulator level
+    patch.add_connection("osc-1", "out", "amp-1", "in");
+    patch.add_connection("env-2", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "rev-1", "in_l");
+    // Route to oscilloscope and output
+    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch
 }
@@ -1291,31 +1464,31 @@ different effect speeds. Great for transitions, buildups, and risers.
 "#.to_string());
     patch.tags = vec!["effect".into(), "sweep".into(), "noise".into(), "riser".into(), "experimental".into()];
 
-    // OSC - Noise
+    // OSC - Noise (osc-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("noise")
         .param_f("level", 0.9)
         .build());
 
-    // Filter - Bandpass with high resonance
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Filter)
+    // Filter - Bandpass with high resonance (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
         .position(250.0, 50.0)
         .filter_mode("bandpass")
         .param_f("cutoff", 1500.0)
         .param_f("resonance", 0.7)
         .build());
 
-    // Sweep LFO
-    patch.add_module(ModuleBuilder::new(3, ModuleType::Lfo)
+    // Sweep LFO (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
         .position(50.0, 300.0)
         .waveform("triangle")
         .param_f("rate", 0.15)
         .param_f("depth", 0.8)
         .build());
 
-    // Amp Envelope
-    patch.add_module(ModuleBuilder::new(4, ModuleType::Envelope)
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.5)
         .param_f("decay", 0.2)
@@ -1323,35 +1496,51 @@ different effect speeds. Great for transitions, buildups, and risers.
         .param_f("release", 1.0)
         .build());
 
-    // Amplifier
-    patch.add_module(ModuleBuilder::new(5, ModuleType::Amplifier)
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
         .position(450.0, 50.0)
         .param_f("level", 0.6)
         .build());
 
-    // Distortion
-    patch.add_module(ModuleBuilder::new(100, ModuleType::Distortion)
+    // Distortion (dst-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
         .position(650.0, 50.0)
         .distortion_mode("soft_clip")
         .param_f("drive", 0.4)
         .param_f("mix", 0.4)
         .build());
 
-    // Reverb
-    patch.add_module(ModuleBuilder::new(101, ModuleType::Reverb)
+    // Reverb (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
         .position(850.0, 50.0)
         .param_f("room_size", 0.7)
         .param_f("damping", 0.4)
         .param_f("mix", 0.35)
         .build());
 
-    // Connections
-    patch.add_connection(1, "out", 2, "in");
-    patch.add_connection(2, "out", 5, "in");
-    patch.add_connection(3, "out", 2, "cutoff_cv");
-    patch.add_connection(4, "out", 5, "cv");
-    patch.add_connection(5, "out", 100, "in_l");
-    patch.add_connection(100, "out_l", 101, "in_l");
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(1050.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1250.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "dst-1", "in");
+    patch.add_connection("dst-1", "out", "rev-1", "in_l");
+    // Route to oscilloscope and output
+    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
 
     patch
 }

@@ -74,6 +74,61 @@ impl ModuleType {
             Self::LevelMeter => "Level Meter",
         }
     }
+
+    /// Get a short 3-letter prefix for module IDs.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            Self::Oscillator => "osc",
+            Self::Filter => "flt",
+            Self::Envelope => "env",
+            Self::Lfo => "lfo",
+            Self::Amplifier => "amp",
+            Self::Mixer => "mix",
+            Self::StereoOutput => "out",
+            Self::Delay => "dly",
+            Self::Reverb => "rev",
+            Self::Distortion => "dst",
+            Self::Chorus => "chr",
+            Self::Phaser => "phs",
+            Self::Flanger => "fln",
+            Self::Compressor => "cmp",
+            Self::Eq => "equ",
+            Self::SamplePlayer => "spl",
+            Self::SampleRecorder => "rec",
+            Self::GranularSynth => "grn",
+            Self::Wavetable => "wtb",
+            Self::Oscilloscope => "scp",
+            Self::LevelMeter => "mtr",
+        }
+    }
+
+    /// Parse a prefix string back to ModuleType.
+    pub fn from_prefix(prefix: &str) -> Option<Self> {
+        match prefix {
+            "osc" => Some(Self::Oscillator),
+            "flt" => Some(Self::Filter),
+            "env" => Some(Self::Envelope),
+            "lfo" => Some(Self::Lfo),
+            "amp" => Some(Self::Amplifier),
+            "mix" => Some(Self::Mixer),
+            "out" => Some(Self::StereoOutput),
+            "dly" => Some(Self::Delay),
+            "rev" => Some(Self::Reverb),
+            "dst" => Some(Self::Distortion),
+            "chr" => Some(Self::Chorus),
+            "phs" => Some(Self::Phaser),
+            "fln" => Some(Self::Flanger),
+            "cmp" => Some(Self::Compressor),
+            "equ" => Some(Self::Eq),
+            "spl" => Some(Self::SamplePlayer),
+            "rec" => Some(Self::SampleRecorder),
+            "grn" => Some(Self::GranularSynth),
+            "wtb" => Some(Self::Wavetable),
+            "scp" => Some(Self::Oscilloscope),
+            "mtr" => Some(Self::LevelMeter),
+            _ => None,
+        }
+    }
     
     /// Convert to patch::ModuleType for storage.
     pub fn to_module_type(self) -> crate::patch::ModuleType {

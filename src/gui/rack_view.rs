@@ -339,7 +339,7 @@ impl RackView {
             let is_selected = self.selected_module == Some(module_id);
             
             let mut open = true;
-            let window_id = egui::Id::new(("module_window", module_id.0));
+            let window_id = egui::Id::new(("module_window", module_id.to_string()));
             
             let window = egui::Window::new(&descriptor.name)
                 .id(window_id)
@@ -783,6 +783,91 @@ pub struct PanelParamsResult {
     pub param_changes: Vec<(TypedParam, TypedValue)>,
 }
 
+/// Draw visualizer display (oscilloscope or level meter).
+/// This is called for Visualizer category modules to show the visualization prominently.
+fn draw_visualizer_display(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    vis_buffer: Option<&crate::visualizers::VisualizationBuffer>,
+    _param_changes: &mut Vec<(TypedParam, TypedValue)>,
+) {
+    // Check which type of visualizer based on module type id
+    if descriptor.type_id.0 == "oscilloscope" {
+        use crate::engine::typed_params::OscilloscopeParam;
+        // Get gain from params
+        let gain = state.param_values.get(&TypedParam::Oscilloscope(OscilloscopeParam::Gain))
+            .copied().unwrap_or(1.0);
+
+        // Get samples from visualization buffer if available
+        let samples = if let Some(buffer) = vis_buffer {
+            let (left, _right) = buffer.read_samples();
+            // Downsample to 256 points for display
+            let step = left.len().max(1) / 256;
+            if step > 0 {
+                left.into_iter().step_by(step.max(1)).take(256).collect()
+            } else {
+                left
+            }
+        } else {
+            // Demo waveform if no buffer connected
+            (0..256)
+                .map(|i| {
+                    let t = i as f32 / 256.0;
+                    (t * std::f32::consts::TAU * 3.0).sin() * 0.5
+                })
+                .collect()
+        };
+
+        // Use available width, with min/max constraints
+        let width = ui.available_width().clamp(120.0, 300.0);
+        let height = (width * 0.5).clamp(60.0, 120.0);
+
+        super::widgets::draw_oscilloscope(
+            ui,
+            &samples,
+            width,
+            height,
+            gain,
+            colors::ACCENT_CYAN,
+        );
+
+        if vis_buffer.is_none() {
+            ui.label(egui::RichText::new("No signal")
+                .small().color(colors::TEXT_DIM));
+        }
+    } else if descriptor.type_id.0 == "level_meter" {
+        // Get levels from visualization buffer if available
+        let (peak_l, peak_r, rms_l, rms_r) = if let Some(buffer) = vis_buffer {
+            let (peak_l, peak_r) = buffer.get_peaks();
+            let (rms_l, rms_r) = buffer.get_rms();
+            (peak_l, peak_r, rms_l, rms_r)
+        } else {
+            // Demo levels if no buffer connected
+            (0.0, 0.0, 0.0, 0.0)
+        };
+
+        // Use available width for meter, with constraints
+        let width = ui.available_width().clamp(60.0, 120.0);
+        let height = (width * 1.5).clamp(80.0, 150.0);
+
+        super::widgets::draw_stereo_meter(
+            ui,
+            peak_l,
+            peak_r,
+            rms_l,
+            rms_r,
+            width,
+            height,
+        );
+
+        if vis_buffer.is_none() {
+            ui.label(egui::RichText::new("No signal")
+                .small().color(colors::TEXT_DIM));
+        }
+    }
+}
+
 /// Draw only the parameters section of a module panel.
 fn draw_module_panel_params(
     ui: &mut Ui,
@@ -795,6 +880,13 @@ fn draw_module_panel_params(
     use super::widgets::{Knob, WaveformSelector};
 
     let mut param_changes = Vec::new();
+
+    // For Visualizer modules, draw visualization FIRST (before parameters)
+    if descriptor.category == ModuleCategory::Visualizer {
+        draw_visualizer_display(ui, state, descriptor, vis_buffer, &mut param_changes);
+        // Skip regular parameter drawing for visualizers - the display is the main UI
+        return PanelParamsResult { param_changes };
+    }
 
     // Group parameters by widget hint
     let waveform_params: Vec<_> = descriptor.parameters.iter()
@@ -957,86 +1049,6 @@ fn draw_module_panel_params(
                 });
             }
         });
-    }
-
-    // Draw visualizer display if this is a Visualizer module
-    if descriptor.category == ModuleCategory::Visualizer {
-        ui.add_space(8.0);
-        
-        // Check which type of visualizer based on module type id
-        if descriptor.type_id.0 == "oscilloscope" {
-            use crate::engine::typed_params::OscilloscopeParam;
-            // Get gain from params
-            let gain = state.param_values.get(&TypedParam::Oscilloscope(OscilloscopeParam::Gain))
-                .copied().unwrap_or(1.0);
-            
-            // Get samples from visualization buffer if available
-            let samples = if let Some(buffer) = vis_buffer {
-                let (left, _right) = buffer.read_samples();
-                // Downsample to 256 points for display
-                let step = left.len().max(1) / 256;
-                if step > 0 {
-                    left.into_iter().step_by(step.max(1)).take(256).collect()
-                } else {
-                    left
-                }
-            } else {
-                // Demo waveform if no buffer connected
-                (0..256)
-                    .map(|i| {
-                        let t = i as f32 / 256.0;
-                        (t * std::f32::consts::TAU * 3.0).sin() * 0.5
-                    })
-                    .collect()
-            };
-            
-            // Use available width, with min/max constraints
-            let width = ui.available_width().clamp(120.0, 300.0);
-            let height = (width * 0.5).clamp(60.0, 120.0);
-            
-            super::widgets::draw_oscilloscope(
-                ui, 
-                &samples, 
-                width, 
-                height, 
-                gain,
-                colors::ACCENT_CYAN,
-            );
-            
-            if vis_buffer.is_none() {
-                ui.label(egui::RichText::new("No signal")
-                    .small().color(colors::TEXT_DIM));
-            }
-        } else if descriptor.type_id.0 == "level_meter" {
-            // Get levels from visualization buffer if available
-            let (peak_l, peak_r, rms_l, rms_r) = if let Some(buffer) = vis_buffer {
-                let (peak_l, peak_r) = buffer.get_peaks();
-                let (rms_l, rms_r) = buffer.get_rms();
-                (peak_l, peak_r, rms_l, rms_r)
-            } else {
-                // Demo levels if no buffer connected
-                (0.0, 0.0, 0.0, 0.0)
-            };
-            
-            // Use available width for meter, with constraints
-            let width = ui.available_width().clamp(60.0, 120.0);
-            let height = (width * 1.5).clamp(80.0, 150.0);
-            
-            super::widgets::draw_stereo_meter(
-                ui,
-                peak_l,
-                peak_r,
-                rms_l,
-                rms_r,
-                width,
-                height,
-            );
-            
-            if vis_buffer.is_none() {
-                ui.label(egui::RichText::new("No signal")
-                    .small().color(colors::TEXT_DIM));
-            }
-        }
     }
 
     PanelParamsResult { param_changes }

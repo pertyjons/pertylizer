@@ -5,32 +5,105 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
-use super::typed_params::{TypedParam, TypedValue};
+use super::typed_params::{ModuleType, TypedParam, TypedValue};
 
 /// Unique identifier for a module instance.
-/// 
-/// Uses numeric IDs internally for efficiency (Copy trait).
-/// Use `VoiceModule` enum for type-safe access to standard voice modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ModuleId(pub u32);
+///
+/// Format: `{type}-{instance}` e.g., "osc-1", "flt-2", "env-1"
+///
+/// The type prefix is a 3-letter code from ModuleType::prefix().
+/// The instance number starts at 1 and is unique per type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleId {
+    pub module_type: ModuleType,
+    pub instance: u16,
+}
 
 impl ModuleId {
-    pub const MASTER: Self = Self(0);
+    /// Master output module ID.
+    pub const MASTER: Self = Self { module_type: ModuleType::Mixer, instance: 0 };
 
-    pub fn new(id: u32) -> Self {
-        Self(id)
+    /// Create a new module ID.
+    pub fn new(module_type: ModuleType, instance: u16) -> Self {
+        Self { module_type, instance }
+    }
+
+    /// Create from legacy u32 format (for backwards compatibility).
+    /// Maps old numeric IDs to typed IDs based on ranges:
+    /// - 0: Master (mix-0)
+    /// - 1-99: Oscillators
+    /// - 100-199: Effects
+    /// - 200-299: Visualizers
+    /// - 300+: Outputs
+    #[deprecated(note = "Use ModuleId::new(type, instance) instead")]
+    pub fn from_legacy(id: u32) -> Self {
+        match id {
+            0 => Self::MASTER,
+            1..=99 => Self::new(ModuleType::Oscillator, id as u16),
+            100..=199 => Self::new(ModuleType::Delay, (id - 100) as u16),
+            200..=299 => Self::new(ModuleType::Oscilloscope, (id - 200) as u16),
+            300..=399 => Self::new(ModuleType::StereoOutput, (id - 300) as u16),
+            _ => Self::new(ModuleType::Mixer, id as u16),
+        }
+    }
+
+    /// Get the type prefix (e.g., "osc", "flt").
+    pub fn prefix(&self) -> &'static str {
+        self.module_type.prefix()
     }
 }
 
 impl fmt::Display for ModuleId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Try to get a descriptive name from VoiceModule
-        if let Some(vm) = VoiceModule::from_module_id(*self) {
-            write!(f, "{}", vm.id())
-        } else {
-            write!(f, "module-{}", self.0)
+        write!(f, "{}-{}", self.module_type.prefix(), self.instance)
+    }
+}
+
+impl FromStr for ModuleId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() != 2 {
+            return Err(format!("Invalid ModuleId format: {}", s));
         }
+
+        let module_type = ModuleType::from_prefix(parts[0])
+            .ok_or_else(|| format!("Unknown module type prefix: {}", parts[0]))?;
+        let instance = parts[1].parse::<u16>()
+            .map_err(|_| format!("Invalid instance number: {}", parts[1]))?;
+
+        Ok(Self { module_type, instance })
+    }
+}
+
+// Custom serialization as string "osc-1"
+impl Serialize for ModuleId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ModuleId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+
+        // Try new format first "osc-1"
+        if let Ok(id) = s.parse::<ModuleId>() {
+            return Ok(id);
+        }
+
+        // Fall back to legacy u32 format for old patches
+        if let Ok(num) = s.parse::<u32>() {
+            #[allow(deprecated)]
+            return Ok(ModuleId::from_legacy(num));
+        }
+
+        Err(serde::de::Error::custom(format!("Invalid ModuleId: {}", s)))
     }
 }
 
@@ -51,35 +124,36 @@ pub enum VoiceModule {
 }
 
 impl VoiceModule {
-    /// Get the module info: (numeric_id, string_id, internal_name)
-    pub const fn info(&self) -> (u32, &'static str, &'static str) {
+    /// Get the module info: (module_type, instance, internal_name)
+    pub const fn info(&self) -> (ModuleType, u16, &'static str) {
         match self {
-            Self::Oscillator1    => (1, "oscillator-1", "osc1"),
-            Self::Oscillator2    => (2, "oscillator-2", "osc2"),
-            Self::Filter         => (3, "filter", "filter"),
-            Self::AmpEnvelope    => (4, "amp-envelope", "amp_env"),
-            Self::FilterEnvelope => (5, "filter-envelope", "filter_env"),
-            Self::Lfo            => (6, "lfo", "lfo"),
-            Self::Amplifier      => (7, "amplifier", "amp"),
-            Self::Mixer          => (8, "mixer", "mixer"),
+            Self::Oscillator1    => (ModuleType::Oscillator, 1, "osc1"),
+            Self::Oscillator2    => (ModuleType::Oscillator, 2, "osc2"),
+            Self::Filter         => (ModuleType::Filter, 1, "filter"),
+            Self::AmpEnvelope    => (ModuleType::Envelope, 1, "amp_env"),
+            Self::FilterEnvelope => (ModuleType::Envelope, 2, "filter_env"),
+            Self::Lfo            => (ModuleType::Lfo, 1, "lfo"),
+            Self::Amplifier      => (ModuleType::Amplifier, 1, "amp"),
+            Self::Mixer          => (ModuleType::Mixer, 1, "mixer"),
         }
     }
-    
-    /// Get the descriptive string ID (e.g., "oscillator-1").
-    pub const fn id(&self) -> &'static str {
-        self.info().1
+
+    /// Get the descriptive string ID (e.g., "osc-1").
+    pub fn id(&self) -> String {
+        self.module_id().to_string()
     }
-    
+
     /// Get the internal module name used by Voice (e.g., "osc1").
     pub const fn internal_name(&self) -> &'static str {
         self.info().2
     }
-    
+
     /// Get the GUI ModuleId for this voice module.
     pub const fn module_id(&self) -> ModuleId {
-        ModuleId(self.info().0)
+        let (module_type, instance, _) = self.info();
+        ModuleId { module_type, instance }
     }
-    
+
     /// Try to get VoiceModule from a ModuleId.
     pub fn from_module_id(id: ModuleId) -> Option<Self> {
         Self::ALL.iter().find(|v| v.module_id() == id).copied()
@@ -264,6 +338,9 @@ pub enum EngineCommand {
     /// Reset the engine state.
     Reset,
 
+    /// Clear all modules (for patch loading).
+    ClearAllModules,
+
     /// Set master volume.
     SetMasterVolume(f32),
 
@@ -282,7 +359,7 @@ pub enum EngineCommand {
     AddVisualizer {
         id: ModuleId,
         visualizer_type: VisualizerType,
-        buffer: crate::visualizers::VisualizationBuffer,
+        buffer: std::sync::Arc<crate::visualizers::VisualizationBuffer>,
     },
 
     /// Remove a visualizer module.
@@ -510,6 +587,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::Pause => write!(f, "Pause"),
             Self::Rewind => write!(f, "Rewind"),
             Self::Reset => write!(f, "Reset"),
+            Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),
             Self::SetGlideTime(t) => write!(f, "SetGlideTime({t})"),
             Self::SetBypass { module, bypass } => {
