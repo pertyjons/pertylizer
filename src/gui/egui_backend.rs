@@ -24,6 +24,7 @@ use crate::engine::{
 use crate::engine::graph::Connection;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::gui::widgets::colors;
+use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::modules::{
     Describable, ModuleCategory, ModuleDescriptor,
@@ -133,10 +134,10 @@ struct SynthApp {
     
     // Rack view state
     rack_view: RackView,
-    
+
     // Keyboard state
-    pressed_keys: HashMap<u8, bool>,
-    octave_offset: i32,
+    keyboard: PianoKeyboard,
+    pressed_keys: HashMap<u8, bool>, // For computer keyboard tracking
     
     // Dialogs
     show_settings: bool,
@@ -241,8 +242,8 @@ impl SynthApp {
             config,
             latency,
             rack_view,
+            keyboard: PianoKeyboard::new(),
             pressed_keys: HashMap::new(),
-            octave_offset: -1, // Start one octave down for bass
             show_settings: false,
             show_about: false,
             show_add_module: false,
@@ -679,125 +680,29 @@ impl SynthApp {
     
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("KEYBOARD").color(colors::TEXT_DIM));
-            ui.separator();
-            ui.label(RichText::new(format!("Octave: {:+}", self.octave_offset)).color(colors::TEXT_SECONDARY));
-            if ui.small_button("-").clicked() && self.octave_offset > -2 {
-                self.octave_offset -= 1;
-            }
-            if ui.small_button("+").clicked() && self.octave_offset < 4 {
-                self.octave_offset += 1;
-            }
-            ui.separator();
-            
-            // Panic button
+            // Panic button (moved here since keyboard handles its own header)
             if ui.add(egui::Button::new(RichText::new("PANIC").color(colors::ACCENT_RED))).clicked() {
                 self.handle.send(EngineCommand::Reset);
                 self.pressed_keys.clear();
+                self.keyboard.clear_pressed();
             }
         });
-        
-        ui.add_space(4.0);
-        
-        // Piano keyboard
-        let available = ui.available_size();
-        let keyboard_height = 90.0;
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(available.x, keyboard_height),
-            egui::Sense::click_and_drag()
-        );
-        
-        let painter = ui.painter();
-        
-        // Background
-        painter.rect_filled(rect, 4.0, colors::BG_DARK);
-        
-        // White keys (2 octaves)
-        let white_key_width = 28.0;
-        let white_key_height = keyboard_height - 5.0;
-        let base_note = (48i32 + self.octave_offset * 12).max(0).min(127) as u8;
-        
-        let white_notes = [0, 2, 4, 5, 7, 9, 11]; // C, D, E, F, G, A, B semitones
-        
-        for octave in 0..2 {
-            for (i, &semitone) in white_notes.iter().enumerate() {
-                let key_x = rect.left() + 10.0 + ((octave * 7 + i) as f32) * (white_key_width + 2.0);
-                let key_rect = egui::Rect::from_min_size(
-                    Pos2::new(key_x, rect.top() + 2.0),
-                    Vec2::new(white_key_width, white_key_height),
-                );
-                
-                let note = base_note + (octave as u8 * 12) + semitone;
-                let is_pressed = self.pressed_keys.get(&note).copied().unwrap_or(false);
-                let is_hovered = response.hovered() && key_rect.contains(response.hover_pos().unwrap_or_default());
-                
-                let fill = if is_pressed {
-                    colors::ACCENT_ORANGE
-                } else if is_hovered {
-                    Color32::from_rgb(230, 230, 235)
-                } else {
-                    Color32::from_rgb(250, 250, 252)
-                };
-                
-                painter.rect_filled(key_rect, 3.0, fill);
-                painter.rect_stroke(key_rect, 3.0, Stroke::new(1.0, Color32::from_rgb(180, 180, 185)), egui::StrokeKind::Outside);
-                
-                if is_hovered && response.clicked() {
-                    self.handle.note_on(note, 0.8);
-                    self.pressed_keys.insert(note, true);
-                }
-            }
+
+        // Sync pressed keys to keyboard for visual feedback
+        for (&note, &pressed) in &self.pressed_keys {
+            self.keyboard.set_note_pressed(note, pressed);
         }
-        
-        // Black keys (2 octaves)
-        let black_positions = [0, 1, 3, 4, 5]; // After C, D, F, G, A
-        let black_key_width = 18.0;
-        let black_key_height = 55.0;
-        
-        for octave in 0..2 {
-            for &white_idx in &black_positions {
-                if octave == 1 && white_idx == 5 {
-                    continue;
-                }
-                
-                let key_x = rect.left() + 10.0 + ((octave * 7 + white_idx) as f32) * (white_key_width + 2.0) + white_key_width - black_key_width / 2.0 + 1.0;
-                let key_rect = egui::Rect::from_min_size(
-                    Pos2::new(key_x, rect.top() + 2.0),
-                    Vec2::new(black_key_width, black_key_height),
-                );
-                
-                let semitone = match white_idx {
-                    0 => 1, 1 => 3, 3 => 6, 4 => 8, 5 => 10, _ => continue,
-                };
-                let note = base_note + (octave as u8 * 12) + semitone;
-                let is_pressed = self.pressed_keys.get(&note).copied().unwrap_or(false);
-                let is_hovered = response.hovered() && key_rect.contains(response.hover_pos().unwrap_or_default());
-                
-                let fill = if is_pressed {
-                    colors::ACCENT_ORANGE
-                } else if is_hovered {
-                    Color32::from_rgb(60, 60, 65)
-                } else {
-                    Color32::from_rgb(30, 32, 38)
-                };
-                
-                painter.rect_filled(key_rect, 2.0, fill);
-                
-                if is_hovered && response.clicked() {
-                    self.handle.note_on(note, 0.8);
-                    self.pressed_keys.insert(note, true);
-                }
-            }
+
+        // Show the 88-key piano keyboard
+        let event = self.keyboard.show(ui);
+
+        // Handle note events from mouse interaction
+        if let Some(note) = event.note_on {
+            self.handle.note_on(note, 0.8);
         }
-        
-        // Release notes on mouse release
-        if response.drag_stopped() || (!response.hovered() && !self.pressed_keys.is_empty()) {
-            for (&note, pressed) in self.pressed_keys.iter_mut() {
-                if *pressed {
-                    self.handle.note_off(note);
-                    *pressed = false;
-                }
-            }
+        for note in event.note_off {
+            self.handle.note_off(note);
+            self.keyboard.set_note_pressed(note, false);
         }
     }
     
@@ -815,32 +720,36 @@ impl SynthApp {
             (egui::Key::Y, 69), (egui::Key::Num7, 70), (egui::Key::U, 71),
             (egui::Key::I, 72),
         ];
-        
+
+        let octave_offset = self.keyboard.octave_offset();
+
         ctx.input(|input| {
             for (key, base_note) in key_map {
-                let note_i32 = *base_note as i32 + self.octave_offset * 12;
+                let note_i32 = *base_note as i32 + octave_offset * 12;
                 if note_i32 < 0 || note_i32 > 127 {
                     continue; // Skip invalid notes
                 }
                 let note = note_i32 as u8;
-                
+
                 if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
                     self.handle.note_on(note, 0.8);
                     self.pressed_keys.insert(note, true);
+                    self.keyboard.set_note_pressed(note, true);
                 }
-                
+
                 if input.key_released(*key) {
                     self.handle.note_off(note);
                     self.pressed_keys.insert(note, false);
+                    self.keyboard.set_note_pressed(note, false);
                 }
             }
-            
-            // Octave shift
-            if input.key_pressed(egui::Key::Minus) && self.octave_offset > -2 {
-                self.octave_offset -= 1;
+
+            // Octave shift via keyboard
+            if input.key_pressed(egui::Key::Minus) && octave_offset > -2 {
+                self.keyboard.set_octave_offset(octave_offset - 1);
             }
-            if input.key_pressed(egui::Key::Plus) && self.octave_offset < 4 {
-                self.octave_offset += 1;
+            if input.key_pressed(egui::Key::Plus) && octave_offset < 4 {
+                self.keyboard.set_octave_offset(octave_offset + 1);
             }
         });
     }
@@ -1077,7 +986,7 @@ impl SynthApp {
         }
         
         // Apply settings
-        self.octave_offset = patch.settings.octave_offset;
+        self.keyboard.set_octave_offset(patch.settings.octave_offset);
         self.glide_time = patch.settings.glide_time;
         self.handle.send(EngineCommand::SetMasterVolume(patch.settings.master_volume));
         self.handle.send(EngineCommand::SetGlideTime(patch.settings.glide_time));
@@ -1126,7 +1035,7 @@ impl SynthApp {
             });
         }
         
-        patch.settings.octave_offset = self.octave_offset;
+        patch.settings.octave_offset = self.keyboard.octave_offset();
         patch.settings.master_volume = self.handle.master_volume();
         patch.settings.glide_time = self.glide_time;
 

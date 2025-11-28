@@ -36,6 +36,9 @@ pub mod console;
 pub mod egui_backend;
 
 #[cfg(feature = "gui-egui")]
+pub mod keyboard;
+
+#[cfg(feature = "gui-egui")]
 pub mod widgets;
 
 #[cfg(feature = "gui-egui")]
