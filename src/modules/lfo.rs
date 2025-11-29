@@ -8,7 +8,6 @@
 //! - Sample and hold mode
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, LfoParam, ModuleType};
 use crate::modules::core::*;
@@ -91,22 +90,19 @@ impl Lfo {
         let phase_inc = effective_rate.phase_increment(self.sample_rate);
         let phase = self.phase.advance(self.phase_offset.as_f32()).as_f32();
 
+        let phase_wrapped = Phase::new_unchecked(phase);
         let raw = match self.waveform {
             LfoWaveform::Sine => {
-                (phase * TAU).sin()
+                phase_wrapped.sin()
             }
             LfoWaveform::Triangle => {
-                if phase < 0.5 {
-                    4.0 * phase - 1.0
-                } else {
-                    3.0 - 4.0 * phase
-                }
+                phase_wrapped.triangle()
             }
             LfoWaveform::Sawtooth => {
-                2.0 * phase - 1.0
+                phase_wrapped.sawtooth()
             }
             LfoWaveform::Square => {
-                if phase < 0.5 { 1.0 } else { -1.0 }
+                phase_wrapped.pulse(NormalizedValue::CENTER)
             }
             LfoWaveform::SampleAndHold => {
                 // Trigger new random value at phase wrap

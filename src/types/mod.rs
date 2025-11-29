@@ -23,6 +23,10 @@
 //! let period = freq.period(); // Returns Seconds
 //! ```
 
+// Macros must be loaded first to be available to other modules
+#[macro_use]
+mod macros;
+
 // Load modules in dependency order (time first, then frequency which depends on it)
 mod time;
 mod frequency;

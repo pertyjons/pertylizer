@@ -6,12 +6,12 @@
 //! - Optional soft clipping
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_4;
 
 use crate::engine::typed_params::{
     TypedParam, TypedValue, AmplifierParam, ModuleType,
 };
 use crate::modules::core::*;
+use crate::types::{BipolarValue, Gain};
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
@@ -45,12 +45,8 @@ impl Amplifier {
 
     /// Calculate constant-power pan coefficients.
     #[inline]
-    fn pan_coefficients(&self) -> (f32, f32) {
-        // Constant power panning using sine/cosine
-        let angle = (self.pan + 1.0) * FRAC_PI_4; // 0 to π/2
-        let left = angle.cos();
-        let right = angle.sin();
-        (left, right)
+    fn pan_coefficients(&self) -> (Gain, Gain) {
+        Gain::from_pan(BipolarValue::new(self.pan))
     }
 
     /// Soft clipping function.
@@ -127,13 +123,11 @@ impl VoiceModule for Amplifier {
             };
             
             // Calculate pan coefficients
-            let angle = (effective_pan + 1.0) * FRAC_PI_4;
-            let pan_left = angle.cos();
-            let pan_right = angle.sin();
+            let (pan_left, pan_right) = Gain::from_pan(BipolarValue::new(effective_pan));
             
             // Apply level and pan
-            let mut left = input * effective_level * pan_left;
-            let mut right = input * effective_level * pan_right;
+            let mut left = input * effective_level * pan_left.as_f32();
+            let mut right = input * effective_level * pan_right.as_f32();
             
             // Optional soft clipping
             if self.soft_clip {
@@ -355,22 +349,22 @@ mod tests {
     #[test]
     fn test_constant_power_pan() {
         let mut amp = Amplifier::new();
-        
+
         // Center: both channels equal
         amp.pan = 0.0;
         let (l, r) = amp.pan_coefficients();
-        assert!((l - r).abs() < 0.01);
-        
+        assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
+
         // Left: left channel full, right silent
         amp.pan = -1.0;
         let (l, r) = amp.pan_coefficients();
-        assert!(l > 0.99);
-        assert!(r < 0.01);
-        
+        assert!(l.as_f32() > 0.99);
+        assert!(r.as_f32() < 0.01);
+
         // Right: right channel full, left silent
         amp.pan = 1.0;
         let (l, r) = amp.pan_coefficients();
-        assert!(l < 0.01);
-        assert!(r > 0.99);
+        assert!(l.as_f32() < 0.01);
+        assert!(r.as_f32() > 0.99);
     }
 }

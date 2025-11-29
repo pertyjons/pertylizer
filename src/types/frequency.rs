@@ -1,7 +1,6 @@
 //! Frequency types for type-safe audio processing.
 
 use std::f32::consts::TAU;
-use std::ops::{Add, Div, Mul, Sub};
 
 use super::{Clampable, Interpolate, Seconds};
 
@@ -90,6 +89,18 @@ impl Hertz {
     pub fn clamp_max(self, max: Hertz) -> Self {
         Self(self.0.clamp(0.0, max.0))
     }
+
+    /// Get the period in samples (sample_rate / freq).
+    ///
+    /// Useful for delay lines and oscillator period calculations.
+    #[inline]
+    pub fn period_samples(self, sample_rate: SampleRate) -> f32 {
+        if self.0 > 0.0 {
+            sample_rate.0 / self.0
+        } else {
+            f32::INFINITY
+        }
+    }
 }
 
 impl Clampable for Hertz {
@@ -125,72 +136,11 @@ impl Interpolate for Hertz {
     }
 }
 
-// Arithmetic operations
-impl Add for Hertz {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl Sub for Hertz {
-    type Output = Self;
-
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
-    }
-}
-
-impl Mul<f32> for Hertz {
-    type Output = Self;
-
-    #[inline]
-    fn mul(self, rhs: f32) -> Self::Output {
-        Self(self.0 * rhs)
-    }
-}
-
-impl Mul<Hertz> for f32 {
-    type Output = Hertz;
-
-    #[inline]
-    fn mul(self, rhs: Hertz) -> Self::Output {
-        Hertz(self * rhs.0)
-    }
-}
-
-impl Div<f32> for Hertz {
-    type Output = Self;
-
-    #[inline]
-    fn div(self, rhs: f32) -> Self::Output {
-        Self(self.0 / rhs)
-    }
-}
-
-impl Div<Hertz> for Hertz {
-    type Output = f32;
-
-    #[inline]
-    fn div(self, rhs: Hertz) -> Self::Output {
-        self.0 / rhs.0
-    }
-}
-
-impl From<f32> for Hertz {
-    fn from(hz: f32) -> Self {
-        Self(hz)
-    }
-}
-
-impl From<Hertz> for f32 {
-    fn from(hz: Hertz) -> Self {
-        hz.0
-    }
-}
+// Arithmetic operations via macros
+crate::impl_additive!(Hertz);
+crate::impl_scaling!(Hertz);
+crate::impl_ratio!(Hertz);
+crate::impl_float_conversions!(Hertz);
 
 impl std::fmt::Display for Hertz {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

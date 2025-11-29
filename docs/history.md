@@ -1,5 +1,36 @@
 # Version History
 
+## [0.18.0] - 2024
+
+### Added
+- **Arithmetic Macros** (`src/types/macros.rs`) - Reduce boilerplate for newtypes
+  - `impl_additive!` - Add/Sub traits
+  - `impl_scaling!` - Mul<f32>/Div<f32> scaling
+  - `impl_ratio!` - T / T -> f32 for ratios
+  - `impl_float_conversions!` - From<f32> conversions
+  - `impl_newtype_arithmetic!` - Combines all above
+
+- **DSP Methods on Types** - Domain-specific audio processing methods
+  - `Phase`: `triangle()`, `sawtooth()`, `pulse(width)`, `difference(other)`
+  - `Hertz`: `period_samples(sample_rate)`
+  - `Gain`: `from_pan(pan)` -> `(Gain, Gain)` constant power panning
+  - `Seconds`: `to_exp_coeff(sample_rate)`, `to_samples(sample_rate)`
+
+### Refactored
+- **Modules use type methods** - Cleaner DSP code
+  - `oscillator.rs`: Uses `Phase::triangle()`, `Phase::sawtooth()`, `Phase::pulse()`
+  - `lfo.rs`: Uses `Phase::sin()`, `Phase::triangle()`, etc.
+  - `envelope.rs`: Uses `Seconds::to_exp_coeff()` for exponential curves
+  - `amplifier.rs`: Uses `Gain::from_pan()` for stereo panning
+
+### Technical Details
+- Macros use `#[inline]` for performance
+- `frequency.rs` and `time.rs` cleaned up with macro calls
+- Removed duplicate coefficient calculation code from envelope
+- Removed duplicate pan calculation code from amplifier
+
+---
+
 ## [0.17.0] - 2024
 
 ### Refactored

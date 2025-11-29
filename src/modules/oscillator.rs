@@ -152,27 +152,20 @@ impl Oscillator {
             }
 
             Waveform::Triangle => {
-                // Band-limited triangle using integrated square
-                let tri = if phase < 0.5 {
-                    4.0 * phase - 1.0
-                } else {
-                    3.0 - 4.0 * phase
-                };
-                // Approximate PolyBLEP for triangle (less critical)
-                tri
+                // Use Phase::triangle() for cleaner code
+                Phase::new_unchecked(phase).triangle()
             }
 
             Waveform::Sawtooth => {
-                // Naive saw
-                let mut saw = 2.0 * phase - 1.0;
-                // Apply PolyBLEP at discontinuity
+                // Use Phase::sawtooth() with PolyBLEP anti-aliasing
+                let mut saw = Phase::new_unchecked(phase).sawtooth();
                 saw -= self.poly_blep(phase, dt);
                 saw
             }
 
             Waveform::Square => {
-                // Naive square
-                let mut sq = if phase < 0.5 { 1.0 } else { -1.0 };
+                // Use Phase::pulse() for square wave (width = 0.5)
+                let mut sq = Phase::new_unchecked(phase).pulse(NormalizedValue::CENTER);
                 // PolyBLEP at both edges
                 sq += self.poly_blep(phase, dt);
                 sq -= self.poly_blep((phase + 0.5).rem_euclid(1.0), dt);
@@ -180,10 +173,10 @@ impl Oscillator {
             }
 
             Waveform::Pulse => {
-                // Pulse with variable width
-                let pw = self.pulse_width.as_f32().clamp(0.01, 0.99);
-                let mut pulse = if phase < pw { 1.0 } else { -1.0 };
+                // Use Phase::pulse() with variable width
+                let mut pulse = Phase::new_unchecked(phase).pulse(self.pulse_width);
                 // PolyBLEP at both edges
+                let pw = self.pulse_width.as_f32().clamp(0.01, 0.99);
                 pulse += self.poly_blep(phase, dt);
                 pulse -= self.poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse

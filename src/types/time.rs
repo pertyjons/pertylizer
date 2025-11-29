@@ -1,8 +1,6 @@
 //! Time duration types for type-safe audio processing.
 
-use std::ops::{Add, Div, Mul, Sub};
-
-use super::{Clampable, Interpolate};
+use super::{Clampable, Interpolate, SampleRate};
 
 /// Duration in seconds.
 ///
@@ -63,6 +61,25 @@ impl Seconds {
     pub fn clamp_positive(self) -> Self {
         Self(self.0.max(0.0))
     }
+
+    /// Calculate one-pole filter coefficient for envelope smoothing.
+    ///
+    /// Returns `exp(-1.0 / (time * sample_rate))` which can be used as:
+    /// `y = y * coeff + target * (1 - coeff)`
+    #[inline]
+    pub fn to_exp_coeff(self, sample_rate: SampleRate) -> f32 {
+        if self.0 > 0.0 {
+            (-1.0 / (self.0 * sample_rate.as_f32())).exp()
+        } else {
+            0.0 // Instant (no smoothing)
+        }
+    }
+
+    /// Convert to sample count.
+    #[inline]
+    pub fn to_samples(self, sample_rate: SampleRate) -> usize {
+        (self.0 * sample_rate.as_f32()).round() as usize
+    }
 }
 
 impl Clampable for Seconds {
@@ -90,72 +107,11 @@ impl Interpolate for Seconds {
     }
 }
 
-// Arithmetic operations
-impl Add for Seconds {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl Sub for Seconds {
-    type Output = Self;
-
-    #[inline]
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
-    }
-}
-
-impl Mul<f32> for Seconds {
-    type Output = Self;
-
-    #[inline]
-    fn mul(self, rhs: f32) -> Self::Output {
-        Self(self.0 * rhs)
-    }
-}
-
-impl Mul<Seconds> for f32 {
-    type Output = Seconds;
-
-    #[inline]
-    fn mul(self, rhs: Seconds) -> Self::Output {
-        Seconds(self * rhs.0)
-    }
-}
-
-impl Div<f32> for Seconds {
-    type Output = Self;
-
-    #[inline]
-    fn div(self, rhs: f32) -> Self::Output {
-        Self(self.0 / rhs)
-    }
-}
-
-impl Div<Seconds> for Seconds {
-    type Output = f32;
-
-    #[inline]
-    fn div(self, rhs: Seconds) -> Self::Output {
-        self.0 / rhs.0
-    }
-}
-
-impl From<f32> for Seconds {
-    fn from(secs: f32) -> Self {
-        Self(secs)
-    }
-}
-
-impl From<Seconds> for f32 {
-    fn from(secs: Seconds) -> Self {
-        secs.0
-    }
-}
+// Arithmetic operations via macros
+crate::impl_additive!(Seconds);
+crate::impl_scaling!(Seconds);
+crate::impl_ratio!(Seconds);
+crate::impl_float_conversions!(Seconds);
 
 impl std::fmt::Display for Seconds {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

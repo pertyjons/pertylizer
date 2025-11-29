@@ -106,18 +106,6 @@ impl Envelope {
         }
     }
 
-    /// Calculate the coefficient for exponential curves.
-    #[inline]
-    fn calculate_coefficient(time: Seconds, sample_rate: SampleRate) -> f32 {
-        if time.as_f32() <= 0.0 {
-            1.0
-        } else {
-            let samples = time.as_f32() * sample_rate.as_f32();
-            // Time constant for ~99.3% of target in given time
-            (-1.0 / samples).exp()
-        }
-    }
-
     /// Process a single sample.
     #[inline]
     fn process_sample(&mut self) -> f32 {
@@ -143,7 +131,7 @@ impl Envelope {
                         if self.attack.as_f32() <= 0.001 {
                             self.level = NormalizedValue::MAX;
                         } else {
-                            let coef = Self::calculate_coefficient(self.attack, self.sample_rate);
+                            let coef = self.attack.to_exp_coeff(self.sample_rate);
                             let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
                             self.level = NormalizedValue::new_unchecked(new_level);
                         }
@@ -172,7 +160,7 @@ impl Envelope {
                         if self.decay.as_f32() <= 0.001 {
                             self.level = self.sustain;
                         } else {
-                            let coef = Self::calculate_coefficient(self.decay, self.sample_rate);
+                            let coef = self.decay.to_exp_coeff(self.sample_rate);
                             let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
                             self.level = NormalizedValue::new_unchecked(new_level);
                         }
@@ -204,7 +192,7 @@ impl Envelope {
                         if self.release.as_f32() <= 0.001 {
                             self.level = NormalizedValue::MIN;
                         } else {
-                            let coef = Self::calculate_coefficient(self.release, self.sample_rate);
+                            let coef = self.release.to_exp_coeff(self.sample_rate);
                             let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
                             self.level = NormalizedValue::new_unchecked(new_level);
                         }

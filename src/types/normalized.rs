@@ -370,6 +370,55 @@ impl Phase {
     pub fn reset(&mut self) {
         self.0 = 0.0;
     }
+
+    // === Waveform generation methods ===
+
+    /// Generate triangle wave from phase.
+    ///
+    /// Returns a value in [-1, 1].
+    #[inline]
+    pub fn triangle(self) -> f32 {
+        if self.0 < 0.5 {
+            4.0 * self.0 - 1.0
+        } else {
+            3.0 - 4.0 * self.0
+        }
+    }
+
+    /// Generate sawtooth wave from phase.
+    ///
+    /// Returns a value in [-1, 1], rising from -1 to 1.
+    #[inline]
+    pub fn sawtooth(self) -> f32 {
+        2.0 * self.0 - 1.0
+    }
+
+    /// Generate pulse/square wave from phase.
+    ///
+    /// Returns 1.0 when phase < width, -1.0 otherwise.
+    #[inline]
+    pub fn pulse(self, width: NormalizedValue) -> f32 {
+        if self.0 < width.0 {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+
+    /// Calculate the shortest distance between two phases.
+    ///
+    /// Returns a value in [-0.5, 0.5], useful for phase comparisons.
+    #[inline]
+    pub fn difference(self, other: Phase) -> f32 {
+        let diff = other.0 - self.0;
+        if diff > 0.5 {
+            diff - 1.0
+        } else if diff < -0.5 {
+            diff + 1.0
+        } else {
+            diff
+        }
+    }
 }
 
 impl Default for Phase {

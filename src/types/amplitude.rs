@@ -1,8 +1,9 @@
 //! Amplitude and gain types for type-safe audio processing.
 
+use std::f32::consts::FRAC_PI_4;
 use std::ops::{Add, Mul, Sub};
 
-use super::Clampable;
+use super::{BipolarValue, Clampable};
 
 /// Linear gain factor (amplitude multiplier).
 ///
@@ -57,6 +58,19 @@ impl Gain {
     #[inline]
     pub fn clamp_reasonable(self) -> Self {
         Self(self.0.clamp(0.0, 10.0))
+    }
+
+    /// Calculate left and right gains from a pan position using constant power panning.
+    ///
+    /// Pan: -1.0 = full left, 0.0 = center, 1.0 = full right.
+    /// Uses sine/cosine curves to maintain constant perceived loudness.
+    #[inline]
+    pub fn from_pan(pan: BipolarValue) -> (Gain, Gain) {
+        // Convert pan [-1, 1] to angle [0, π/2]
+        let angle = (pan.as_f32() + 1.0) * FRAC_PI_4;
+        let left = Gain::new(angle.cos());
+        let right = Gain::new(angle.sin());
+        (left, right)
     }
 }
 
