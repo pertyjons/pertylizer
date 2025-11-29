@@ -1,5 +1,40 @@
 # Version History
 
+## [0.19.0] - 2024
+
+### Added
+- **Additional Audio Types** (`src/types/audio.rs`) - Extended newtype coverage
+  - `Tempo` - BPM values with beat duration methods
+  - `BufferIndex` - Index for delay lines and circular buffers with wrap/advance
+  - `FrameCount` - Sample count with duration conversion
+  - `NoiseState` - Xorshift random state (u32) with `next()` method
+  - `FilterState` - IIR filter state with `one_pole()` method
+  - `Amplitude` - Peak/RMS measurements with `update_peak()` and `decay()`
+
+- **Decibels Extensions** - New methods in `amplitude.rs`
+  - `to_linear()` - Convert dB to linear amplitude
+  - `from_linear()` - Create dB from linear value
+
+### Refactored
+- **Modules with Extended Types** - Consistent type usage across DSP code
+  - `oscillator.rs`: Uses `NoiseState` for white/pink noise generation
+  - `lfo.rs`: Uses `NoiseState` for sample-and-hold
+  - `filter.rs`: Uses `MidiNote` for key tracking, `BipolarValue` for env amount
+  - `amplifier.rs` (Mixer): Uses `[Gain; 8]` for channel levels
+  - `output.rs`: Uses `Gain`, `BipolarValue`, `Decibels`, `Amplitude` for metering
+  - `math_oscillator.rs`: Full type coverage with `Hertz`, `Phase`, `NormalizedValue`, `SampleRate`, `NoiseState`, `BufferIndex`, `FrameCount`
+
+- **Effects with Typed Values** - Type safety for effect parameters
+  - `delay.rs`: Uses `Seconds`, `NormalizedValue`, `Hertz`, `SampleRate`, `BufferIndex`, `FilterState`
+
+### Technical Details
+- All new types implement `Copy`, `Clone`, `Debug`, `PartialEq`
+- `#[repr(transparent)]` for zero-cost abstraction
+- Consistent `as_f32()`, `as_usize()`, `as_u32()` accessor methods
+- Compile-time prevention of unit mismatches (e.g., can't mix Seconds with Hertz)
+
+---
+
 ## [0.18.0] - 2024
 
 ### Added

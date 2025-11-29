@@ -11,21 +11,21 @@ use crate::engine::typed_params::{
     TypedParam, TypedValue, AmplifierParam, ModuleType,
 };
 use crate::modules::core::*;
-use crate::types::{BipolarValue, Gain};
+use crate::types::{BipolarValue, Gain, SampleRate};
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
 pub struct Amplifier {
     // Parameters
-    level: f32,
-    pan: f32,  // -1 = left, 0 = center, +1 = right
-    
+    level: Gain,
+    pan: BipolarValue,
+
     // Options
     soft_clip: bool,
-    
+
     // State
-    sample_rate: f32,
-    
+    sample_rate: SampleRate,
+
     // Outputs
     output_left: AudioBuffer,
     output_right: AudioBuffer,
@@ -34,10 +34,10 @@ pub struct Amplifier {
 impl Amplifier {
     pub fn new() -> Self {
         Self {
-            level: 1.0,
-            pan: 0.0,
+            level: Gain::UNITY,
+            pan: BipolarValue::CENTER,
             soft_clip: false,
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             output_left: AudioBuffer::new(256),
             output_right: AudioBuffer::new(256),
         }
@@ -46,7 +46,7 @@ impl Amplifier {
     /// Calculate constant-power pan coefficients.
     #[inline]
     fn pan_coefficients(&self) -> (Gain, Gain) {
-        Gain::from_pan(BipolarValue::new(self.pan))
+        Gain::from_pan(self.pan)
     }
 
     /// Soft clipping function.
@@ -100,7 +100,7 @@ impl VoiceModule for Amplifier {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_left.resize(context.samples);
         self.output_right.resize(context.samples);
 
@@ -110,24 +110,24 @@ impl VoiceModule for Amplifier {
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
-            
+
             // CV modulation (multiplicative)
             let cv = cv_in.map(|b| b[i]).unwrap_or(1.0);
             let effective_level = self.level * cv.max(0.0);
-            
+
             // Pan modulation
             let effective_pan = if let Some(pan_mod) = pan_cv {
-                (self.pan + pan_mod[i]).clamp(-1.0, 1.0)
+                BipolarValue::new(self.pan.as_f32() + pan_mod[i])
             } else {
                 self.pan
             };
-            
-            // Calculate pan coefficients
-            let (pan_left, pan_right) = Gain::from_pan(BipolarValue::new(effective_pan));
-            
+
+            // Calculate pan coefficients using type method
+            let (pan_left, pan_right) = Gain::from_pan(effective_pan);
+
             // Apply level and pan
-            let mut left = input * effective_level * pan_left.as_f32();
-            let mut right = input * effective_level * pan_right.as_f32();
+            let mut left = input * effective_level.as_f32() * pan_left.as_f32();
+            let mut right = input * effective_level.as_f32() * pan_right.as_f32();
             
             // Optional soft clipping
             if self.soft_clip {
@@ -159,12 +159,12 @@ impl VoiceModule for Amplifier {
             match amp_param {
                 AmplifierParam::Level => {
                     if let Some(l) = value.as_float() {
-                        self.level = l.clamp(0.0, 2.0);
+                        self.level = Gain::new(l.clamp(0.0, 2.0));
                     }
                 }
                 AmplifierParam::Pan => {
                     if let Some(p) = value.as_float() {
-                        self.pan = p.clamp(-1.0, 1.0);
+                        self.pan = BipolarValue::new(p);
                     }
                 }
             }
@@ -174,8 +174,8 @@ impl VoiceModule for Amplifier {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Amplifier(amp_param) = param {
             match amp_param {
-                AmplifierParam::Level => Some(TypedValue::Float(self.level)),
-                AmplifierParam::Pan => Some(TypedValue::Float(self.pan)),
+                AmplifierParam::Level => Some(TypedValue::Float(self.level.as_f32())),
+                AmplifierParam::Pan => Some(TypedValue::Float(self.pan.as_f32())),
             }
         } else {
             None
@@ -203,9 +203,9 @@ impl VoiceModule for Amplifier {
 #[derive(Clone)]
 pub struct Mixer {
     // Per-channel levels
-    levels: [f32; 8],
-    master_level: f32,
-    
+    levels: [Gain; 8],
+    master_level: Gain,
+
     // Output
     output_buffer: AudioBuffer,
 }
@@ -213,8 +213,8 @@ pub struct Mixer {
 impl Mixer {
     pub fn new() -> Self {
         Self {
-            levels: [1.0; 8],
-            master_level: 1.0,
+            levels: [Gain::UNITY; 8],
+            master_level: Gain::UNITY,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -270,7 +270,7 @@ impl VoiceModule for Mixer {
         for i in 1..=8 {
             let key = format!("in{i}");
             if let Some(input) = inputs.get(&key) {
-                let level = self.levels[i - 1];
+                let level = self.levels[i - 1].as_f32();
                 for j in 0..context.samples {
                     self.output_buffer[j] += input[j] * level;
                 }
@@ -278,7 +278,7 @@ impl VoiceModule for Mixer {
         }
 
         // Apply master level
-        self.output_buffer.scale(self.master_level);
+        self.output_buffer.scale(self.master_level.as_f32());
 
         if let Some(out) = outputs.get_mut("out") {
             out.copy_from(&self.output_buffer);
@@ -291,27 +291,27 @@ impl VoiceModule for Mixer {
             match mixer_param {
                 MixerParam::Master => {
                     if let Some(l) = value.as_float() {
-                        self.master_level = l.clamp(0.0, 2.0);
+                        self.master_level = Gain::new(l.clamp(0.0, 2.0));
                     }
                 }
-                MixerParam::Input1 => if let Some(l) = value.as_float() { self.levels[0] = l.clamp(0.0, 2.0); }
-                MixerParam::Input2 => if let Some(l) = value.as_float() { self.levels[1] = l.clamp(0.0, 2.0); }
-                MixerParam::Input3 => if let Some(l) = value.as_float() { self.levels[2] = l.clamp(0.0, 2.0); }
-                MixerParam::Input4 => if let Some(l) = value.as_float() { self.levels[3] = l.clamp(0.0, 2.0); }
+                MixerParam::Input1 => if let Some(l) = value.as_float() { self.levels[0] = Gain::new(l.clamp(0.0, 2.0)); }
+                MixerParam::Input2 => if let Some(l) = value.as_float() { self.levels[1] = Gain::new(l.clamp(0.0, 2.0)); }
+                MixerParam::Input3 => if let Some(l) = value.as_float() { self.levels[2] = Gain::new(l.clamp(0.0, 2.0)); }
+                MixerParam::Input4 => if let Some(l) = value.as_float() { self.levels[3] = Gain::new(l.clamp(0.0, 2.0)); }
                 MixerParam::Mute | MixerParam::Limit => {} // Not used by Mixer
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Mixer(mixer_param) = param {
             use crate::engine::typed_params::MixerParam;
             match mixer_param {
-                MixerParam::Master => Some(TypedValue::Float(self.master_level)),
-                MixerParam::Input1 => Some(TypedValue::Float(self.levels[0])),
-                MixerParam::Input2 => Some(TypedValue::Float(self.levels[1])),
-                MixerParam::Input3 => Some(TypedValue::Float(self.levels[2])),
-                MixerParam::Input4 => Some(TypedValue::Float(self.levels[3])),
+                MixerParam::Master => Some(TypedValue::Float(self.master_level.as_f32())),
+                MixerParam::Input1 => Some(TypedValue::Float(self.levels[0].as_f32())),
+                MixerParam::Input2 => Some(TypedValue::Float(self.levels[1].as_f32())),
+                MixerParam::Input3 => Some(TypedValue::Float(self.levels[2].as_f32())),
+                MixerParam::Input4 => Some(TypedValue::Float(self.levels[3].as_f32())),
                 MixerParam::Mute | MixerParam::Limit => None, // Not used by Mixer
             }
         } else {
@@ -342,8 +342,8 @@ mod tests {
     #[test]
     fn test_amplifier_creation() {
         let amp = Amplifier::new();
-        assert!((amp.level - 1.0).abs() < 0.001);
-        assert!((amp.pan - 0.0).abs() < 0.001);
+        assert!((amp.level.as_f32() - 1.0).abs() < 0.001);
+        assert!((amp.pan.as_f32() - 0.0).abs() < 0.001);
     }
 
     #[test]
@@ -351,18 +351,18 @@ mod tests {
         let mut amp = Amplifier::new();
 
         // Center: both channels equal
-        amp.pan = 0.0;
+        amp.pan = BipolarValue::CENTER;
         let (l, r) = amp.pan_coefficients();
         assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
 
         // Left: left channel full, right silent
-        amp.pan = -1.0;
+        amp.pan = BipolarValue::MIN;
         let (l, r) = amp.pan_coefficients();
         assert!(l.as_f32() > 0.99);
         assert!(r.as_f32() < 0.01);
 
         // Right: right channel full, left silent
-        amp.pan = 1.0;
+        amp.pan = BipolarValue::MAX;
         let (l, r) = amp.pan_coefficients();
         assert!(l.as_f32() < 0.01);
         assert!(r.as_f32() > 0.99);

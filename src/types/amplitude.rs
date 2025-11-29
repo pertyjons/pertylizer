@@ -168,6 +168,22 @@ impl Decibels {
         }
     }
 
+    /// Convert to linear amplitude value.
+    #[inline]
+    pub fn to_linear(self) -> f32 {
+        self.to_gain().as_f32()
+    }
+
+    /// Create from linear amplitude.
+    #[inline]
+    pub fn from_linear(linear: f32) -> Self {
+        if linear <= 0.0 {
+            Self::NEG_INF
+        } else {
+            Self(20.0 * linear.log10())
+        }
+    }
+
     /// Clamp to a display range (-60 to +20 dB).
     #[inline]
     pub fn clamp_display(self) -> Self {

@@ -9,6 +9,7 @@
 
 use crate::engine::typed_params::{TypedParam, TypedValue, DelayParam, ModuleType, DelayMode};
 use crate::modules::core::*;
+use crate::types::{BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds};
 
 /// Maximum delay time in seconds.
 const MAX_DELAY_SECONDS: f32 = 2.0;
@@ -28,23 +29,23 @@ impl DelayMode {
 pub struct Delay {
     // Parameters
     mode: DelayMode,
-    time_left: f32,    // Seconds
-    time_right: f32,   // Seconds (for stereo mode)
-    feedback: f32,     // 0-1
-    mix: f32,          // 0-1
-    high_cut: f32,     // Hz (for feedback path)
-    
+    time_left: Seconds,
+    time_right: Seconds,
+    feedback: NormalizedValue,
+    mix: NormalizedValue,
+    high_cut: Hertz,
+
     // Delay buffers
     buffer_left: Vec<f32>,
     buffer_right: Vec<f32>,
-    write_pos: usize,
-    
+    write_pos: BufferIndex,
+
     // Filter state for feedback
-    filter_left: f32,
-    filter_right: f32,
-    
+    filter_left: FilterState,
+    filter_right: FilterState,
+
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Delay {
@@ -52,48 +53,48 @@ impl Delay {
         let buffer_size = (MAX_DELAY_SECONDS * 48000.0) as usize;
         Self {
             mode: DelayMode::Mono,
-            time_left: 0.375,
-            time_right: 0.5,
-            feedback: 0.4,
-            mix: 0.5,
-            high_cut: 8000.0,
+            time_left: Seconds::new(0.375),
+            time_right: Seconds::new(0.5),
+            feedback: NormalizedValue::new(0.4),
+            mix: NormalizedValue::CENTER,
+            high_cut: Hertz::new(8000.0),
             buffer_left: vec![0.0; buffer_size],
             buffer_right: vec![0.0; buffer_size],
-            write_pos: 0,
-            filter_left: 0.0,
-            filter_right: 0.0,
-            sample_rate: 48000.0,
+            write_pos: BufferIndex::ZERO,
+            filter_left: FilterState::ZERO,
+            filter_right: FilterState::ZERO,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     /// Resize buffers for new sample rate.
     fn resize_buffers(&mut self) {
-        let size = (MAX_DELAY_SECONDS * self.sample_rate) as usize;
+        let size = (MAX_DELAY_SECONDS * self.sample_rate.as_f32()) as usize;
         if self.buffer_left.len() != size {
             self.buffer_left.resize(size, 0.0);
             self.buffer_right.resize(size, 0.0);
-            self.write_pos = 0;
+            self.write_pos = BufferIndex::ZERO;
         }
     }
 
     /// Read from delay buffer with linear interpolation.
     #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: usize, delay_samples: f32) -> f32 {
+    fn read_interpolated(buffer: &[f32], write_pos: BufferIndex, delay_samples: f32) -> f32 {
         let len = buffer.len();
-        let read_pos = (write_pos as f32 - delay_samples).rem_euclid(len as f32);
+        let read_pos = (write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
         let idx0 = (read_pos as usize) % len;  // Ensure within bounds
         let idx1 = (idx0 + 1) % len;
         let frac = read_pos - read_pos.floor();
-        
+
         buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
     }
 
     /// One-pole lowpass for feedback damping.
     #[inline]
-    fn lowpass(input: f32, state: &mut f32, cutoff: f32, sample_rate: f32) -> f32 {
-        let coef = (-std::f32::consts::TAU * cutoff / sample_rate).exp();
-        *state = input * (1.0 - coef) + *state * coef;
-        *state
+    fn lowpass(input: f32, state: &mut FilterState, cutoff: Hertz, sample_rate: SampleRate) -> f32 {
+        let coef = (-std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32()).exp();
+        state.0 = input * (1.0 - coef) + state.0 * coef;
+        state.0
     }
 }
 
@@ -157,20 +158,22 @@ impl Describable for Delay {
 
 impl EffectModule for Delay {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffers();
 
-        let delay_samples_left = (self.time_left * self.sample_rate).min((self.buffer_left.len() - 1) as f32);
-        let delay_samples_right = (self.time_right * self.sample_rate).min((self.buffer_right.len() - 1) as f32);
+        let delay_samples_left = (self.time_left.as_f32() * self.sample_rate.as_f32()).min((self.buffer_left.len() - 1) as f32);
+        let delay_samples_right = (self.time_right.as_f32() * self.sample_rate.as_f32()).min((self.buffer_right.len() - 1) as f32);
 
         let len = self.buffer_left.len();
+        let feedback = self.feedback.as_f32();
+        let mix = self.mix.as_f32();
 
         // Process assuming interleaved stereo
         let channels = 2;
         for frame in 0..context.samples {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
-            
+
             let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
             let in_r = if idx_r < input.len() { input[idx_r] } else { in_l };
 
@@ -187,20 +190,20 @@ impl EffectModule for Delay {
                 DelayMode::Mono => {
                     let mono_in = (in_l + in_r) * 0.5;
                     let mono_fb = (fb_l + fb_r) * 0.5;
-                    let write = mono_in + mono_fb * self.feedback;
+                    let write = mono_in + mono_fb * feedback;
                     (write, write)
                 }
                 DelayMode::Stereo => {
                     (
-                        in_l + fb_l * self.feedback,
-                        in_r + fb_r * self.feedback,
+                        in_l + fb_l * feedback,
+                        in_r + fb_r * feedback,
                     )
                 }
                 DelayMode::PingPong => {
                     // Cross-feed: left feedback goes to right, vice versa
                     (
-                        in_l + fb_r * self.feedback,
-                        in_r + fb_l * self.feedback,
+                        in_l + fb_r * feedback,
+                        in_r + fb_l * feedback,
                     )
                 }
             };
@@ -210,18 +213,18 @@ impl EffectModule for Delay {
             let write_r = write_r.tanh();
 
             // Write to delay buffers
-            self.buffer_left[self.write_pos] = write_l;
-            self.buffer_right[self.write_pos] = write_r;
+            self.buffer_left[self.write_pos.as_usize()] = write_l;
+            self.buffer_right[self.write_pos.as_usize()] = write_r;
 
             // Advance write position
-            self.write_pos = (self.write_pos + 1) % len;
+            self.write_pos = self.write_pos.advance(len);
 
             // Mix dry/wet
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + delayed_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + delayed_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + delayed_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + delayed_r * mix;
             }
         }
     }
@@ -229,23 +232,23 @@ impl EffectModule for Delay {
     fn reset(&mut self) {
         self.buffer_left.fill(0.0);
         self.buffer_right.fill(0.0);
-        self.filter_left = 0.0;
-        self.filter_right = 0.0;
-        self.write_pos = 0;
+        self.filter_left = FilterState::ZERO;
+        self.filter_right = FilterState::ZERO;
+        self.write_pos = BufferIndex::ZERO;
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn tail_samples(&self) -> usize {
         // Estimate tail based on feedback
-        let decay_time = self.time_left * (1.0 / (1.0 - self.feedback)).ln() / 3.0;
-        (decay_time * self.sample_rate) as usize
+        let decay_time = self.time_left.as_f32() * (1.0 / (1.0 - self.feedback.as_f32())).ln() / 3.0;
+        (decay_time * self.sample_rate.as_f32()) as usize
     }
     
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -253,39 +256,39 @@ impl EffectModule for Delay {
             match delay_param {
                 DelayParam::Mode => {
                     if let TypedValue::DelayMode(mode) = value {
-                        // Direct assignment - same type now!
                         self.mode = mode;
                     }
                 }
                 DelayParam::Time => {
                     if let Some(t) = value.as_float() {
-                        self.time_left = t.clamp(0.001, MAX_DELAY_SECONDS);
-                        self.time_right = t.clamp(0.001, MAX_DELAY_SECONDS);
+                        let clamped = t.clamp(0.001, MAX_DELAY_SECONDS);
+                        self.time_left = Seconds::new(clamped);
+                        self.time_right = Seconds::new(clamped);
                     }
                 }
                 DelayParam::TimeLeft => {
                     if let Some(t) = value.as_float() {
-                        self.time_left = t.clamp(0.001, MAX_DELAY_SECONDS);
+                        self.time_left = Seconds::new(t.clamp(0.001, MAX_DELAY_SECONDS));
                     }
                 }
                 DelayParam::TimeRight => {
                     if let Some(t) = value.as_float() {
-                        self.time_right = t.clamp(0.001, MAX_DELAY_SECONDS);
+                        self.time_right = Seconds::new(t.clamp(0.001, MAX_DELAY_SECONDS));
                     }
                 }
                 DelayParam::Feedback => {
                     if let Some(f) = value.as_float() {
-                        self.feedback = f.clamp(0.0, 0.95);
+                        self.feedback = NormalizedValue::new(f.clamp(0.0, 0.95));
                     }
                 }
                 DelayParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
                 DelayParam::Damping => {
                     if let Some(d) = value.as_float() {
-                        self.high_cut = d.clamp(200.0, 20000.0);
+                        self.high_cut = Hertz::new(d.clamp(200.0, 20000.0));
                     }
                 }
                 DelayParam::TempoSync => {
@@ -294,20 +297,17 @@ impl EffectModule for Delay {
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Delay(delay_param) = param {
             match delay_param {
-                DelayParam::Mode => {
-                    // Direct use - same type now!
-                    Some(TypedValue::DelayMode(self.mode))
-                }
-                DelayParam::Time => Some(TypedValue::Float(self.time_left)),
-                DelayParam::TimeLeft => Some(TypedValue::Float(self.time_left)),
-                DelayParam::TimeRight => Some(TypedValue::Float(self.time_right)),
-                DelayParam::Feedback => Some(TypedValue::Float(self.feedback)),
-                DelayParam::Mix => Some(TypedValue::Float(self.mix)),
-                DelayParam::Damping => Some(TypedValue::Float(self.high_cut)),
+                DelayParam::Mode => Some(TypedValue::DelayMode(self.mode)),
+                DelayParam::Time => Some(TypedValue::Float(self.time_left.as_f32())),
+                DelayParam::TimeLeft => Some(TypedValue::Float(self.time_left.as_f32())),
+                DelayParam::TimeRight => Some(TypedValue::Float(self.time_right.as_f32())),
+                DelayParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
+                DelayParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
+                DelayParam::Damping => Some(TypedValue::Float(self.high_cut.as_f32())),
                 DelayParam::TempoSync => None,
             }
         } else {
@@ -328,14 +328,14 @@ mod tests {
     fn test_delay_creation() {
         let delay = Delay::new();
         assert_eq!(delay.mode, DelayMode::Mono);
-        assert!((delay.time_left - 0.375).abs() < 0.001);
+        assert!((delay.time_left.as_f32() - 0.375).abs() < 0.001);
     }
 
     #[test]
     fn test_delay_no_explosion() {
         let mut delay = Delay::new();
-        delay.sample_rate = 48000.0;
-        delay.feedback = 0.9;
+        delay.sample_rate = SampleRate::DVD_QUALITY;
+        delay.feedback = NormalizedValue::new(0.9);
         delay.resize_buffers();
 
         let context = ProcessContext {

@@ -11,7 +11,7 @@ use std::f32::consts::PI;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, FilterParam, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, NormalizedValue, SampleRate};
+use crate::types::{Hertz, NormalizedValue, SampleRate, MidiNote, BipolarValue};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
@@ -21,7 +21,7 @@ pub struct Filter {
     cutoff: Hertz,
     resonance: NormalizedValue,
     key_tracking: NormalizedValue,
-    env_amount: f32,    // -1.0 to 1.0 (scales envelope CV)
+    env_amount: BipolarValue,    // -1.0 to 1.0 (scales envelope CV)
 
     // State
     sample_rate: SampleRate,
@@ -31,7 +31,7 @@ pub struct Filter {
     ic2eq: f32,
 
     // For key tracking
-    base_note: u8,
+    base_note: MidiNote,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -44,18 +44,18 @@ impl Filter {
             cutoff: Hertz::new(1000.0),
             resonance: NormalizedValue::MIN,
             key_tracking: NormalizedValue::MIN,
-            env_amount: 1.0,  // Full positive envelope amount by default
+            env_amount: BipolarValue::MAX,  // Full positive envelope amount by default
             sample_rate: SampleRate::DVD_QUALITY,
             ic1eq: 0.0,
             ic2eq: 0.0,
-            base_note: 60,
+            base_note: MidiNote::C4,
             output_buffer: AudioBuffer::new(256),
         }
     }
 
     /// Calculate the effective cutoff frequency with key tracking.
     fn effective_cutoff(&self) -> Hertz {
-        let tracking_offset = (self.base_note as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
+        let tracking_offset = (self.base_note.as_u8() as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
         // exp2 is faster than powf(2.0, x)
         let tracked = self.cutoff.as_f32() * (tracking_offset / 1200.0).exp2();
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
@@ -187,7 +187,7 @@ impl VoiceModule for Filter {
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
             // Scale cutoff CV by env_amount (allows negative/inverted envelopes)
-            let cutoff_mod = cutoff_cv.map(|b| b[i] * self.env_amount).unwrap_or(0.0);
+            let cutoff_mod = cutoff_cv.map(|b| b[i] * self.env_amount.as_f32()).unwrap_or(0.0);
             let res_mod = res_cv.map(|b| b[i]).unwrap_or(0.0);
 
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
@@ -227,7 +227,7 @@ impl VoiceModule for Filter {
                 }
                 FilterParam::EnvAmount => {
                     if let Some(e) = value.as_float() {
-                        self.env_amount = e.clamp(-1.0, 1.0);
+                        self.env_amount = BipolarValue::new(e);
                     }
                 }
             }
@@ -245,7 +245,7 @@ impl VoiceModule for Filter {
                 FilterParam::Resonance => Some(TypedValue::Float(self.resonance.as_f32())),
                 FilterParam::KeyTracking => Some(TypedValue::Float(self.key_tracking.as_f32())),
                 FilterParam::Drive => None,
-                FilterParam::EnvAmount => Some(TypedValue::Float(self.env_amount)),
+                FilterParam::EnvAmount => Some(TypedValue::Float(self.env_amount.as_f32())),
             }
         } else {
             None
@@ -262,7 +262,7 @@ impl VoiceModule for Filter {
     }
 
     fn note_on(&mut self, note: u8, _velocity: f32) {
-        self.base_note = note;
+        self.base_note = MidiNote::new(note);
     }
 
     fn note_off(&mut self) {}

@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate};
+use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate, NoiseState};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -29,8 +29,8 @@ pub struct Oscillator {
     phase: Phase,
     sample_rate: SampleRate,
 
-    // For noise
-    noise_state: u32,
+    // For noise generation
+    noise_state: NoiseState,
 
     // For pink noise (Voss-McCartney algorithm)
     pink_rows: [f32; 16],
@@ -60,7 +60,7 @@ impl Oscillator {
             fm_mode: FmMode::Exponential,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
-            noise_state: 0x12345678,
+            noise_state: NoiseState::DEFAULT,
             pink_rows: [0.0; 16],
             pink_running_sum: 0.0,
             pink_index: 0,
@@ -71,10 +71,7 @@ impl Oscillator {
     /// Generate white noise sample using xorshift.
     #[inline]
     fn white_noise(&mut self) -> f32 {
-        self.noise_state ^= self.noise_state << 13;
-        self.noise_state ^= self.noise_state >> 17;
-        self.noise_state ^= self.noise_state << 5;
-        (self.noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+        self.noise_state.next()
     }
 
     /// Generate pink noise using Voss-McCartney algorithm.

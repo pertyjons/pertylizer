@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, LfoParam, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Phase, NormalizedValue, SampleRate};
+use crate::types::{Hertz, Phase, NormalizedValue, SampleRate, NoiseState};
 
 /// LFO output mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub struct Lfo {
     // For S&H
     sh_value: f32,
     sh_trigger_prev: f32,
-    noise_state: u32,
+    noise_state: NoiseState,
 
     // Tempo sync
     tempo_sync: bool,
@@ -61,7 +61,7 @@ impl Lfo {
             sample_rate: SampleRate::DVD_QUALITY,
             sh_value: 0.0,
             sh_trigger_prev: 0.0,
-            noise_state: 0x12345678,
+            noise_state: NoiseState::DEFAULT,
             tempo_sync: false,
             sync_division: 1.0,
             output_buffer: AudioBuffer::new(256),
@@ -71,10 +71,7 @@ impl Lfo {
     /// Generate random value for S&H.
     #[inline]
     fn random(&mut self) -> f32 {
-        self.noise_state ^= self.noise_state << 13;
-        self.noise_state ^= self.noise_state >> 17;
-        self.noise_state ^= self.noise_state << 5;
-        (self.noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+        self.noise_state.next()
     }
 
     /// Generate a single sample.

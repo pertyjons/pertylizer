@@ -11,6 +11,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, MathOscillatorParam, MathAlgo, ModuleType};
 use crate::modules::core::*;
+use crate::types::{BufferIndex, FrameCount, Hertz, NormalizedValue, NoiseState, Phase, SampleRate};
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -20,17 +21,17 @@ const MAX_DELAY_SIZE: usize = 4800;
 pub struct MathOscillator {
     // Parameters
     algo: MathAlgo,
-    frequency: f32,
-    var_a: f32,
-    var_b: f32,
-    var_c: f32,
-    level: f32,
+    frequency: Hertz,
+    var_a: NormalizedValue,
+    var_b: NormalizedValue,
+    var_c: NormalizedValue,
+    level: NormalizedValue,
 
     // Standard state
-    phase: f32,
-    sample_rate: f32,
+    phase: Phase,
+    sample_rate: SampleRate,
 
-    // Chaos/Lorenz state
+    // Chaos/Lorenz state (raw f32 - mathematical state, not audio domain)
     lorenz_x: f32,
     lorenz_y: f32,
     lorenz_z: f32,
@@ -41,14 +42,14 @@ pub struct MathOscillator {
 
     // Karplus-Strong state
     delay_line: Vec<f32>,
-    write_pos: usize,
-    burst_remaining: usize,
+    write_pos: BufferIndex,
+    burst_remaining: FrameCount,
 
     // Bytebeat state
     time_counter: u32,
 
     // Noise state for algorithms that need it
-    noise_state: u32,
+    noise_state: NoiseState,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -58,49 +59,46 @@ impl MathOscillator {
     pub fn new() -> Self {
         Self {
             algo: MathAlgo::SineFM,
-            frequency: 440.0,
-            var_a: 0.5,
-            var_b: 0.5,
-            var_c: 0.5,
-            level: 1.0,
-            phase: 0.0,
-            sample_rate: 48000.0,
+            frequency: Hertz::A4,
+            var_a: NormalizedValue::CENTER,
+            var_b: NormalizedValue::CENTER,
+            var_c: NormalizedValue::CENTER,
+            level: NormalizedValue::MAX,
+            phase: Phase::ZERO,
+            sample_rate: SampleRate::DVD_QUALITY,
             lorenz_x: 0.1,
             lorenz_y: 0.0,
             lorenz_z: 0.0,
             last_sample: 0.0,
             logistic_x: 0.5,
             delay_line: vec![0.0; MAX_DELAY_SIZE],
-            write_pos: 0,
-            burst_remaining: 0,
+            write_pos: BufferIndex::ZERO,
+            burst_remaining: FrameCount::ZERO,
             time_counter: 0,
-            noise_state: 0x12345678,
+            noise_state: NoiseState::DEFAULT,
             output_buffer: AudioBuffer::new(256),
         }
     }
 
     /// Set frequency from MIDI note.
     pub fn set_note(&mut self, note: u8) {
-        self.frequency = 440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
+        self.frequency = Hertz::from_midi(note);
     }
 
     /// Generate white noise sample.
     #[inline]
     fn noise(&mut self) -> f32 {
-        self.noise_state ^= self.noise_state << 13;
-        self.noise_state ^= self.noise_state >> 17;
-        self.noise_state ^= self.noise_state << 5;
-        (self.noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+        self.noise_state.next()
     }
 
     /// Generate a sample using the current algorithm.
     #[inline]
     fn generate_sample(&mut self) -> f32 {
-        let t = self.phase;
-        let dt = self.frequency / self.sample_rate;
-        let a = self.var_a;
-        let b = self.var_b;
-        let c = self.var_c;
+        let t = self.phase.as_f32();
+        let dt = self.frequency.as_f32() / self.sample_rate.as_f32();
+        let a = self.var_a.as_f32();
+        let b = self.var_b.as_f32();
+        let c = self.var_c.as_f32();
 
         let sample = match self.algo {
             // ================================================================
@@ -315,21 +313,21 @@ impl MathOscillator {
 
             MathAlgo::KarplusStrong => {
                 // Karplus-Strong physical modeling
-                let delay_samples = (self.sample_rate / self.frequency).round() as usize;
+                let delay_samples = (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
                 let delay_samples = delay_samples.clamp(1, MAX_DELAY_SIZE - 1);
 
                 // Read from delay line
-                let read_pos = (self.write_pos + MAX_DELAY_SIZE - delay_samples) % MAX_DELAY_SIZE;
-                let val = self.delay_line[read_pos];
+                let read_pos = self.write_pos.delay_read(delay_samples, MAX_DELAY_SIZE);
+                let val = self.delay_line[read_pos.as_usize()];
 
                 // Low-pass filter (averaging)
-                let prev_pos = (read_pos + MAX_DELAY_SIZE - 1) % MAX_DELAY_SIZE;
+                let prev_pos = read_pos.delay_read(1, MAX_DELAY_SIZE);
                 let damping = 0.9 + a * 0.09; // 0.9 to 0.99
-                let filtered = (val + self.delay_line[prev_pos]) * 0.5 * damping;
+                let filtered = (val + self.delay_line[prev_pos.as_usize()]) * 0.5 * damping;
 
                 // Add burst noise if triggered
-                let burst_noise = if self.burst_remaining > 0 {
-                    self.burst_remaining -= 1;
+                let burst_noise = if self.burst_remaining.as_usize() > 0 {
+                    self.burst_remaining = FrameCount::new(self.burst_remaining.as_usize() - 1);
                     self.noise() * b
                 } else {
                     0.0
@@ -337,23 +335,23 @@ impl MathOscillator {
 
                 // Write to delay line
                 let output = filtered + burst_noise;
-                self.delay_line[self.write_pos] = output;
-                self.write_pos = (self.write_pos + 1) % MAX_DELAY_SIZE;
+                self.delay_line[self.write_pos.as_usize()] = output;
+                self.write_pos = self.write_pos.advance(MAX_DELAY_SIZE);
 
                 output
             }
         };
 
         // Advance phase
-        self.phase = (self.phase + dt).rem_euclid(1.0);
+        self.phase = Phase::new((t + dt).rem_euclid(1.0));
 
         // Final clamp and apply level
-        sample.clamp(-1.0, 1.0) * self.level
+        sample.clamp(-1.0, 1.0) * self.level.as_f32()
     }
 
     /// Reset chaos/iteration state for deterministic note starts.
     fn reset_state(&mut self) {
-        self.phase = 0.0;
+        self.phase = Phase::ZERO;
         self.lorenz_x = 0.1;
         self.lorenz_y = 0.0;
         self.lorenz_z = 0.0;
@@ -364,11 +362,11 @@ impl MathOscillator {
 
     /// Trigger a burst for Karplus-Strong.
     fn trigger_burst(&mut self) {
-        let delay_samples = (self.sample_rate / self.frequency).round() as usize;
-        self.burst_remaining = delay_samples.min(MAX_DELAY_SIZE);
+        let delay_samples = (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
+        self.burst_remaining = FrameCount::new(delay_samples.min(MAX_DELAY_SIZE));
         // Clear delay line for clean start
         self.delay_line.fill(0.0);
-        self.write_pos = 0;
+        self.write_pos = BufferIndex::ZERO;
     }
 }
 
@@ -449,7 +447,7 @@ impl VoiceModule for MathOscillator {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         // Get modulation inputs
@@ -463,7 +461,7 @@ impl VoiceModule for MathOscillator {
                 let fm_val = fm[i];
                 // FM modulates frequency exponentially
                 let freq_mult = (fm_val * 2.0).exp2();
-                self.frequency = 440.0 * freq_mult; // TODO: Use base frequency
+                self.frequency = Hertz::new(440.0 * freq_mult); // TODO: Use base frequency
             }
 
             // Apply param modulation
@@ -471,10 +469,10 @@ impl VoiceModule for MathOscillator {
             let base_b = self.var_b;
 
             if let Some(ma) = mod_a {
-                self.var_a = (base_a + ma[i] * 0.5).clamp(0.0, 1.0);
+                self.var_a = NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
             }
             if let Some(mb) = mod_b {
-                self.var_b = (base_b + mb[i] * 0.5).clamp(0.0, 1.0);
+                self.var_b = NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
             }
 
             self.output_buffer[i] = self.generate_sample();
@@ -501,27 +499,27 @@ impl VoiceModule for MathOscillator {
                 }
                 MathOscillatorParam::Frequency => {
                     if let Some(f) = value.as_float() {
-                        self.frequency = f.clamp(20.0, 20000.0);
+                        self.frequency = Hertz::new(f.clamp(20.0, 20000.0));
                     }
                 }
                 MathOscillatorParam::ParamA => {
                     if let Some(v) = value.as_float() {
-                        self.var_a = v.clamp(0.0, 1.0);
+                        self.var_a = NormalizedValue::new(v);
                     }
                 }
                 MathOscillatorParam::ParamB => {
                     if let Some(v) = value.as_float() {
-                        self.var_b = v.clamp(0.0, 1.0);
+                        self.var_b = NormalizedValue::new(v);
                     }
                 }
                 MathOscillatorParam::ParamC => {
                     if let Some(v) = value.as_float() {
-                        self.var_c = v.clamp(0.0, 1.0);
+                        self.var_c = NormalizedValue::new(v);
                     }
                 }
                 MathOscillatorParam::Level => {
                     if let Some(l) = value.as_float() {
-                        self.level = l.clamp(0.0, 1.0);
+                        self.level = NormalizedValue::new(l);
                     }
                 }
             }
@@ -532,11 +530,11 @@ impl VoiceModule for MathOscillator {
         if let TypedParam::MathOscillator(math_param) = param {
             match math_param {
                 MathOscillatorParam::Algorithm => Some(TypedValue::MathAlgo(self.algo)),
-                MathOscillatorParam::Frequency => Some(TypedValue::Float(self.frequency)),
-                MathOscillatorParam::ParamA => Some(TypedValue::Float(self.var_a)),
-                MathOscillatorParam::ParamB => Some(TypedValue::Float(self.var_b)),
-                MathOscillatorParam::ParamC => Some(TypedValue::Float(self.var_c)),
-                MathOscillatorParam::Level => Some(TypedValue::Float(self.level)),
+                MathOscillatorParam::Frequency => Some(TypedValue::Float(self.frequency.as_f32())),
+                MathOscillatorParam::ParamA => Some(TypedValue::Float(self.var_a.as_f32())),
+                MathOscillatorParam::ParamB => Some(TypedValue::Float(self.var_b.as_f32())),
+                MathOscillatorParam::ParamC => Some(TypedValue::Float(self.var_c.as_f32())),
+                MathOscillatorParam::Level => Some(TypedValue::Float(self.level.as_f32())),
             }
         } else {
             None
@@ -550,8 +548,8 @@ impl VoiceModule for MathOscillator {
     fn reset(&mut self) {
         self.reset_state();
         self.delay_line.fill(0.0);
-        self.write_pos = 0;
-        self.burst_remaining = 0;
+        self.write_pos = BufferIndex::ZERO;
+        self.burst_remaining = FrameCount::ZERO;
     }
 
     fn note_on(&mut self, note: u8, _velocity: f32) {
@@ -569,7 +567,7 @@ impl VoiceModule for MathOscillator {
     }
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
@@ -585,13 +583,13 @@ mod tests {
     fn test_math_oscillator_creation() {
         let osc = MathOscillator::new();
         assert_eq!(osc.algo, MathAlgo::SineFM);
-        assert!((osc.frequency - 440.0).abs() < 0.001);
+        assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
     }
 
     #[test]
     fn test_all_algorithms_produce_output() {
         let mut osc = MathOscillator::new();
-        osc.sample_rate = 48000.0;
+        osc.sample_rate = SampleRate::DVD_QUALITY;
 
         for algo in MathAlgo::ALL {
             osc.algo = algo;
@@ -625,9 +623,9 @@ mod tests {
     fn test_note_to_frequency() {
         let mut osc = MathOscillator::new();
         osc.set_note(69); // A4
-        assert!((osc.frequency - 440.0).abs() < 0.001);
+        assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
 
         osc.set_note(60); // C4
-        assert!((osc.frequency - 261.63).abs() < 1.0);
+        assert!((osc.frequency.as_f32() - 261.63).abs() < 1.0);
     }
 }

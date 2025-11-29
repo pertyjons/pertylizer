@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{ModuleType, TypedParam, TypedValue, MixerParam};
 use crate::modules::core::*;
+use crate::types::{Amplitude, BipolarValue, Decibels, Gain};
 
 /// Stereo output module - the final destination in the audio graph.
 ///
@@ -24,17 +25,17 @@ use crate::modules::core::*;
 #[derive(Debug, Clone)]
 pub struct StereoOutput {
     /// Master volume (0.0 - 1.0)
-    master_level: f32,
+    master_level: Gain,
     /// Master pan (-1.0 = left, 0.0 = center, 1.0 = right)
-    pan: f32,
+    pan: BipolarValue,
     /// Enable soft limiting
     limit_enabled: bool,
     /// Limiter threshold in dB (typically -0.1 to -3.0)
-    limit_threshold: f32,
+    limit_threshold: Decibels,
     /// Current peak level (left)
-    peak_l: f32,
+    peak_l: Amplitude,
     /// Current peak level (right)
-    peak_r: f32,
+    peak_r: Amplitude,
     /// Output buffer (interleaved stereo)
     output_buffer: Vec<f32>,
     /// Mute state
@@ -45,12 +46,12 @@ impl StereoOutput {
     /// Create a new stereo output with default settings.
     pub fn new() -> Self {
         Self {
-            master_level: 0.8,
-            pan: 0.0,
+            master_level: Gain::new(0.8),
+            pan: BipolarValue::CENTER,
             limit_enabled: true,
-            limit_threshold: -0.3, // dB
-            peak_l: 0.0,
-            peak_r: 0.0,
+            limit_threshold: Decibels::new(-0.3),
+            peak_l: Amplitude::ZERO,
+            peak_r: Amplitude::ZERO,
             output_buffer: Vec::new(),
             muted: false,
         }
@@ -62,18 +63,18 @@ impl StereoOutput {
     }
 
     /// Get the current peak levels (left, right).
-    pub fn get_peak_levels(&self) -> (f32, f32) {
+    pub fn get_peak_levels(&self) -> (Amplitude, Amplitude) {
         (self.peak_l, self.peak_r)
     }
 
     /// Get the master level.
-    pub fn get_master_level(&self) -> f32 {
+    pub fn get_master_level(&self) -> Gain {
         self.master_level
     }
 
     /// Set the master level.
     pub fn set_master_level(&mut self, level: f32) {
-        self.master_level = level.clamp(0.0, 1.0);
+        self.master_level = Gain::new(level.clamp(0.0, 1.0));
     }
 
     /// Get mute state.
@@ -93,8 +94,8 @@ impl StereoOutput {
         }
 
         // Convert threshold from dB to linear
-        let threshold = 10.0_f32.powf(self.limit_threshold / 20.0);
-        
+        let threshold = self.limit_threshold.to_linear();
+
         // Soft knee limiting using tanh
         if sample.abs() > threshold {
             let sign = sample.signum();
@@ -107,10 +108,8 @@ impl StereoOutput {
     }
 
     /// Calculate pan coefficients (equal power panning).
-    fn pan_coefficients(&self) -> (f32, f32) {
-        // Equal power panning law
-        let angle = (self.pan + 1.0) * 0.25 * std::f32::consts::PI;
-        (angle.cos(), angle.sin())
+    fn pan_coefficients(&self) -> (Gain, Gain) {
+        Gain::from_pan(self.pan)
     }
 }
 
@@ -185,8 +184,8 @@ impl VoiceModule for StereoOutput {
         let (pan_l, pan_r) = self.pan_coefficients();
 
         // Reset peaks
-        let mut peak_l = 0.0_f32;
-        let mut peak_r = 0.0_f32;
+        let mut peak_l = Amplitude::ZERO;
+        let mut peak_r = Amplitude::ZERO;
 
         // Process each sample
         for i in 0..context.samples {
@@ -208,8 +207,8 @@ impl VoiceModule for StereoOutput {
                 right = 0.0;
             } else {
                 // Apply master level with pan
-                left *= self.master_level * pan_l;
-                right *= self.master_level * pan_r;
+                left *= self.master_level.as_f32() * pan_l.as_f32();
+                right *= self.master_level.as_f32() * pan_r.as_f32();
 
                 // Apply soft limiting
                 left = self.soft_limit(left);
@@ -221,14 +220,16 @@ impl VoiceModule for StereoOutput {
             self.output_buffer[i * 2 + 1] = right;
 
             // Track peaks
-            peak_l = peak_l.max(left.abs());
-            peak_r = peak_r.max(right.abs());
+            peak_l.update_peak(left);
+            peak_r.update_peak(right);
         }
 
         // Update peak meters with decay
         const DECAY: f32 = 0.95;
-        self.peak_l = (self.peak_l * DECAY).max(peak_l);
-        self.peak_r = (self.peak_r * DECAY).max(peak_r);
+        self.peak_l.decay(DECAY);
+        self.peak_l = Amplitude::new(self.peak_l.as_f32().max(peak_l.as_f32()));
+        self.peak_r.decay(DECAY);
+        self.peak_r = Amplitude::new(self.peak_r.as_f32().max(peak_r.as_f32()));
 
         // Also write to "out" port if present (for compatibility)
         // This allows the graph to read from this module's output
@@ -246,7 +247,7 @@ impl VoiceModule for StereoOutput {
         match param {
             TypedParam::Mixer(MixerParam::Master) => {
                 if let Some(v) = value.as_float() {
-                    self.master_level = v.clamp(0.0, 1.0);
+                    self.master_level = Gain::new(v.clamp(0.0, 1.0));
                 }
             }
             TypedParam::Mixer(MixerParam::Mute) => {
@@ -261,7 +262,7 @@ impl VoiceModule for StereoOutput {
             }
             TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan) => {
                 if let Some(v) = value.as_float() {
-                    self.pan = v.clamp(-1.0, 1.0);
+                    self.pan = BipolarValue::new(v);
                 }
             }
             _ => {}
@@ -270,10 +271,10 @@ impl VoiceModule for StereoOutput {
 
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         match param {
-            TypedParam::Mixer(MixerParam::Master) => Some(TypedValue::Float(self.master_level)),
+            TypedParam::Mixer(MixerParam::Master) => Some(TypedValue::Float(self.master_level.as_f32())),
             TypedParam::Mixer(MixerParam::Mute) => Some(TypedValue::Float(if self.muted { 1.0 } else { 0.0 })),
             TypedParam::Mixer(MixerParam::Limit) => Some(TypedValue::Float(if self.limit_enabled { 1.0 } else { 0.0 })),
-            TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan) => Some(TypedValue::Float(self.pan)),
+            TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan) => Some(TypedValue::Float(self.pan.as_f32())),
             _ => None,
         }
     }
@@ -284,8 +285,8 @@ impl VoiceModule for StereoOutput {
     }
 
     fn reset(&mut self) {
-        self.peak_l = 0.0;
-        self.peak_r = 0.0;
+        self.peak_l = Amplitude::ZERO;
+        self.peak_r = Amplitude::ZERO;
         self.output_buffer.clear();
     }
 
@@ -305,8 +306,8 @@ mod tests {
     #[test]
     fn test_stereo_output_creation() {
         let output = StereoOutput::new();
-        assert_eq!(output.master_level, 0.8);
-        assert_eq!(output.pan, 0.0);
+        assert!((output.master_level.as_f32() - 0.8).abs() < 0.001);
+        assert!((output.pan.as_f32() - 0.0).abs() < 0.001);
         assert!(output.limit_enabled);
         assert!(!output.muted);
     }
@@ -327,21 +328,21 @@ mod tests {
     #[test]
     fn test_pan_coefficients() {
         let mut output = StereoOutput::new();
-        
+
         // Center pan should be equal
-        output.pan = 0.0;
+        output.pan = BipolarValue::CENTER;
         let (l, r) = output.pan_coefficients();
-        assert!((l - r).abs() < 0.01);
-        
+        assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
+
         // Full left should have higher left coefficient
-        output.pan = -1.0;
+        output.pan = BipolarValue::MIN;
         let (l, r) = output.pan_coefficients();
-        assert!(l > r);
-        
+        assert!(l.as_f32() > r.as_f32());
+
         // Full right should have higher right coefficient
-        output.pan = 1.0;
+        output.pan = BipolarValue::MAX;
         let (l, r) = output.pan_coefficients();
-        assert!(r > l);
+        assert!(r.as_f32() > l.as_f32());
     }
 
     #[test]
