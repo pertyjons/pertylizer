@@ -1,5 +1,30 @@
 # Version History
 
+## [0.13.1] - 2024
+
+### Added
+- **Pink Noise** - New waveform for the Oscillator module using Voss-McCartney algorithm
+  - Softer, warmer noise with equal energy per octave (-3dB/octave slope)
+  - Great for wind effects, percussion, and pads
+- **Linear FM Mode** - New FM mode option for Oscillator
+  - Exponential: Classic 1V/octave style (pitch tracking)
+  - Linear: Hz-based FM for stable harmonic ratios across all pitches
+  - Essential for bell-like and metallic FM tones
+- **Velocity Sensitivity** - Exposed in Envelope module
+  - Control how much note velocity affects envelope amplitude
+  - Range 0 (ignore) to 1 (full response)
+- **Filter Envelope Amount** - New parameter for Filter module
+  - Scale envelope CV from -1.0 to +1.0
+  - Enables inverted envelope response for "rubber band" bass sounds
+
+### Technical Details
+- `Waveform::PinkNoise` variant added with 16-row Voss-McCartney generator
+- `FmMode` enum (Exponential/Linear) with `OscillatorParam::FmMode`
+- `EnvelopeParam::VelocitySensitivity` exposed in descriptor
+- `FilterParam::EnvAmount` scales `cutoff_cv` input
+
+---
+
 ## [0.13.0] - 2024
 
 ### Added

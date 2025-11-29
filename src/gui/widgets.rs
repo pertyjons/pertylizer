@@ -418,6 +418,7 @@ pub enum WaveformType {
     Square,
     Pulse,
     Noise,
+    PinkNoise,
 }
 
 impl WaveformType {
@@ -430,6 +431,7 @@ impl WaveformType {
             Self::Square,
             Self::Pulse,
             Self::Noise,
+            Self::PinkNoise,
         ]
     }
 
@@ -441,7 +443,8 @@ impl WaveformType {
             Self::Sawtooth => "Saw",
             Self::Square => "Square",
             Self::Pulse => "Pulse",
-            Self::Noise => "Noise",
+            Self::Noise => "White",
+            Self::PinkNoise => "Pink",
         }
     }
 
@@ -460,10 +463,18 @@ impl WaveformType {
             Self::Square => if x < 0.5 { 1.0 } else { -1.0 },
             Self::Pulse => if x < 0.25 { 1.0 } else { -1.0 },
             Self::Noise => {
-                // Pseudo-random based on x position for consistent visualization
+                // White noise - pseudo-random based on x position
                 let seed = (x * 1000.0) as u32;
                 let hash = seed.wrapping_mul(2654435761);
                 ((hash as f32) / (u32::MAX as f32)) * 2.0 - 1.0
+            }
+            Self::PinkNoise => {
+                // Pink noise visualization - smoother than white noise
+                let seed = (x * 500.0) as u32;
+                let hash = seed.wrapping_mul(2654435761);
+                let white = ((hash as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
+                // Simple lowpass approximation for pink noise look
+                white * 0.7
             }
         }
     }

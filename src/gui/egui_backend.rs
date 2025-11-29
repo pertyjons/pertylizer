@@ -1270,6 +1270,7 @@ impl SynthApp {
                             "square" => TypedWaveform::Square,
                             "pulse" => TypedWaveform::Pulse,
                             "noise" => TypedWaveform::Noise,
+                            "pink_noise" => TypedWaveform::PinkNoise,
                             _ => TypedWaveform::Sawtooth,
                         };
                         TypedValue::Waveform(wf)

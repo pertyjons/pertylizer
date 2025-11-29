@@ -267,6 +267,14 @@ impl Describable for Envelope {
                     .widget(WidgetHint::TimeSlider)
                     .curve(ResponseCurve::Exponential),
             )
+            .parameter(
+                ParameterDescriptor::float(TypedParam::Envelope(EnvelopeParam::VelocitySensitivity), "Vel Sens")
+                    .description("Velocity sensitivity (0 = ignore velocity, 1 = full response)")
+                    .range(0.0, 1.0)
+                    .default(1.0)
+                    .unit(ParameterUnit::Percent)
+                    .widget(WidgetHint::Knob),
+            )
             .port(PortDescriptor::gate_input("gate", "Gate").description("Gate input"))
             .port(PortDescriptor::control_input("velocity", "Vel").description("Velocity input"))
             .port(PortDescriptor::audio_output("out", "Out").description("Envelope output"))
@@ -337,12 +345,17 @@ impl VoiceModule for Envelope {
                         self.release = r.max(0.0);
                     }
                 }
+                EnvelopeParam::VelocitySensitivity => {
+                    if let Some(v) = value.as_float() {
+                        self.velocity_sensitivity = v.clamp(0.0, 1.0);
+                    }
+                }
                 // Curve parameters not yet implemented in base Envelope
                 EnvelopeParam::AttackCurve | EnvelopeParam::DecayCurve | EnvelopeParam::ReleaseCurve => {}
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Envelope(env_param) = param {
             match env_param {
@@ -350,6 +363,7 @@ impl VoiceModule for Envelope {
                 EnvelopeParam::Decay => Some(TypedValue::Float(self.decay)),
                 EnvelopeParam::Sustain => Some(TypedValue::Float(self.sustain)),
                 EnvelopeParam::Release => Some(TypedValue::Float(self.release)),
+                EnvelopeParam::VelocitySensitivity => Some(TypedValue::Float(self.velocity_sensitivity)),
                 _ => None,
             }
         } else {

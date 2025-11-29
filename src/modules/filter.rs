@@ -20,17 +20,18 @@ pub struct Filter {
     cutoff: f32,        // Hz
     resonance: f32,     // 0.0 - 1.0
     key_tracking: f32,  // 0.0 - 1.0
-    
+    env_amount: f32,    // -1.0 to 1.0 (scales envelope CV)
+
     // State
     sample_rate: f32,
-    
+
     // SVF state variables
     ic1eq: f32,
     ic2eq: f32,
-    
+
     // For key tracking
     base_note: u8,
-    
+
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -42,6 +43,7 @@ impl Filter {
             cutoff: 1000.0,
             resonance: 0.0,
             key_tracking: 0.0,
+            env_amount: 1.0,  // Full positive envelope amount by default
             sample_rate: 48000.0,
             ic1eq: 0.0,
             ic2eq: 0.0,
@@ -152,9 +154,16 @@ impl Describable for Filter {
                     .unit(ParameterUnit::Percent)
                     .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(TypedParam::Filter(FilterParam::EnvAmount), "Env Amt")
+                    .description("Envelope modulation amount (-1 to +1, scales cutoff CV)")
+                    .range(-1.0, 1.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Knob),
+            )
             // Ports
             .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
-            .port(PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description("Cutoff modulation"))
+            .port(PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description("Cutoff modulation (scaled by Env Amount)"))
             .port(PortDescriptor::control_input("res_cv", "Res CV").description("Resonance modulation"))
             .port(PortDescriptor::audio_output("out", "Out").description("Filtered output"))
     }
@@ -176,7 +185,8 @@ impl VoiceModule for Filter {
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
-            let cutoff_mod = cutoff_cv.map(|b| b[i]).unwrap_or(0.0);
+            // Scale cutoff CV by env_amount (allows negative/inverted envelopes)
+            let cutoff_mod = cutoff_cv.map(|b| b[i] * self.env_amount).unwrap_or(0.0);
             let res_mod = res_cv.map(|b| b[i]).unwrap_or(0.0);
 
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
@@ -214,6 +224,11 @@ impl VoiceModule for Filter {
                 FilterParam::Drive => {
                     // Not implemented in basic SVF filter
                 }
+                FilterParam::EnvAmount => {
+                    if let Some(e) = value.as_float() {
+                        self.env_amount = e.clamp(-1.0, 1.0);
+                    }
+                }
             }
         }
     }
@@ -229,6 +244,7 @@ impl VoiceModule for Filter {
                 FilterParam::Resonance => Some(TypedValue::Float(self.resonance)),
                 FilterParam::KeyTracking => Some(TypedValue::Float(self.key_tracking)),
                 FilterParam::Drive => None,
+                FilterParam::EnvAmount => Some(TypedValue::Float(self.env_amount)),
             }
         } else {
             None

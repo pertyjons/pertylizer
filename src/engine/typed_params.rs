@@ -173,16 +173,18 @@ pub enum Waveform {
     Square,
     Pulse,
     Noise,
+    PinkNoise,
 }
 
 impl Waveform {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sine,
         Self::Triangle,
         Self::Sawtooth,
         Self::Square,
         Self::Pulse,
         Self::Noise,
+        Self::PinkNoise,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -192,7 +194,8 @@ impl Waveform {
             Self::Sawtooth => "Sawtooth",
             Self::Square => "Square",
             Self::Pulse => "Pulse",
-            Self::Noise => "Noise",
+            Self::Noise => "White Noise",
+            Self::PinkNoise => "Pink Noise",
         }
     }
 
@@ -204,6 +207,7 @@ impl Waveform {
             Self::Square => "square",
             Self::Pulse => "pulse",
             Self::Noise => "noise",
+            Self::PinkNoise => "pink_noise",
         }
     }
 
@@ -215,6 +219,7 @@ impl Waveform {
             "square" => Some(Self::Square),
             "pulse" => Some(Self::Pulse),
             "noise" => Some(Self::Noise),
+            "pink_noise" => Some(Self::PinkNoise),
             _ => None,
         }
     }
@@ -664,6 +669,8 @@ pub enum OscillatorParam {
     Level,
     /// Initial phase (0.0 to 1.0)
     Phase,
+    /// FM mode (Exponential or Linear)
+    FmMode,
 }
 
 /// Math oscillator parameters - only valid for math oscillator modules.
@@ -696,6 +703,8 @@ pub enum FilterParam {
     KeyTracking,
     /// Drive/saturation amount
     Drive,
+    /// Envelope amount (-1.0 to 1.0, scales envelope CV input)
+    EnvAmount,
 }
 
 /// Envelope (ADSR) parameters.
@@ -715,6 +724,8 @@ pub enum EnvelopeParam {
     DecayCurve,
     /// Release curve shape
     ReleaseCurve,
+    /// Velocity sensitivity (0.0 = none, 1.0 = full)
+    VelocitySensitivity,
 }
 
 /// LFO parameters.
@@ -1032,6 +1043,7 @@ impl TypedParam {
                 OscillatorParam::PulseWidth => "Pulse Width",
                 OscillatorParam::Level => "Level",
                 OscillatorParam::Phase => "Phase",
+                OscillatorParam::FmMode => "FM Mode",
             },
             Self::MathOscillator(p) => match p {
                 MathOscillatorParam::Algorithm => "Algorithm",
@@ -1047,6 +1059,7 @@ impl TypedParam {
                 FilterParam::Resonance => "Resonance",
                 FilterParam::KeyTracking => "Key Tracking",
                 FilterParam::Drive => "Drive",
+                FilterParam::EnvAmount => "Env Amount",
             },
             Self::Envelope(p) => match p {
                 EnvelopeParam::Attack => "Attack",
@@ -1056,6 +1069,7 @@ impl TypedParam {
                 EnvelopeParam::AttackCurve => "Attack Curve",
                 EnvelopeParam::DecayCurve => "Decay Curve",
                 EnvelopeParam::ReleaseCurve => "Release Curve",
+                EnvelopeParam::VelocitySensitivity => "Velocity Sens",
             },
             Self::Lfo(p) => match p {
                 LfoParam::Waveform => "Waveform",

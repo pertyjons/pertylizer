@@ -22,6 +22,7 @@ pub struct Oscillator {
     detune: f32,        // In cents
     pulse_width: f32,   // 0.0 - 1.0
     level: f32,
+    fm_mode: FmMode,    // Linear or Exponential FM
 
     // State
     phase: f32,
@@ -30,8 +31,21 @@ pub struct Oscillator {
     // For noise
     noise_state: u32,
 
+    // For pink noise (Voss-McCartney algorithm)
+    pink_rows: [f32; 16],
+    pink_running_sum: f32,
+    pink_index: u32,
+
     // Outputs
     output_buffer: AudioBuffer,
+}
+
+/// FM mode selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FmMode {
+    #[default]
+    Exponential,
+    Linear,
 }
 
 impl Oscillator {
@@ -42,11 +56,50 @@ impl Oscillator {
             detune: 0.0,
             pulse_width: 0.5,
             level: 1.0,
+            fm_mode: FmMode::Exponential,
             phase: 0.0,
             sample_rate: 48000.0,
             noise_state: 0x12345678,
+            pink_rows: [0.0; 16],
+            pink_running_sum: 0.0,
+            pink_index: 0,
             output_buffer: AudioBuffer::new(256),
         }
+    }
+
+    /// Generate white noise sample using xorshift.
+    #[inline]
+    fn white_noise(&mut self) -> f32 {
+        self.noise_state ^= self.noise_state << 13;
+        self.noise_state ^= self.noise_state >> 17;
+        self.noise_state ^= self.noise_state << 5;
+        (self.noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+
+    /// Generate pink noise using Voss-McCartney algorithm.
+    /// Pink noise has equal energy per octave (-3dB/octave slope).
+    #[inline]
+    fn pink_noise(&mut self) -> f32 {
+        let white = self.white_noise();
+
+        // Voss-McCartney algorithm: update rows based on trailing zeros of index
+        let last_index = self.pink_index;
+        self.pink_index = self.pink_index.wrapping_add(1);
+        let changed = last_index ^ self.pink_index;
+
+        // Find which rows need updating (trailing zeros indicate the row)
+        for i in 0..16 {
+            if (changed & (1 << i)) != 0 {
+                // Subtract old value, add new random value
+                self.pink_running_sum -= self.pink_rows[i];
+                self.pink_rows[i] = self.white_noise() * 0.5;
+                self.pink_running_sum += self.pink_rows[i];
+                break; // Only update one row per sample
+            }
+        }
+
+        // Combine running sum with current white noise and normalize
+        (self.pink_running_sum + white) / 5.0
     }
 
     /// Calculate the actual frequency including detune.
@@ -73,11 +126,21 @@ impl Oscillator {
     /// Generate a single sample with optional frequency and phase modulation.
     #[inline]
     fn generate_sample(&mut self, freq_mod: f32, phase_mod: f32) -> f32 {
-        // Apply frequency modulation (exponential, in semitones)
-        // freq_mod of 1.0 = +2 octaves, -1.0 = -2 octaves
-        // exp2 is faster than powf(2.0, x)
-        let freq_mult = (freq_mod * 2.0).exp2();
-        let freq = self.actual_frequency() * freq_mult;
+        // Apply frequency modulation based on mode
+        let base_freq = self.actual_frequency();
+        let freq = match self.fm_mode {
+            FmMode::Exponential => {
+                // Exponential FM (1V/octave style): freq_mod of 1.0 = +2 octaves
+                let freq_mult = (freq_mod * 2.0).exp2();
+                base_freq * freq_mult
+            }
+            FmMode::Linear => {
+                // Linear FM: add Hz directly (scaled by base frequency)
+                // This gives stable harmonic ratios across the keyboard
+                (base_freq + freq_mod * base_freq * 4.0).max(1.0)
+            }
+        };
+
         let dt = freq / self.sample_rate;
         let phase = (self.phase + phase_mod).rem_euclid(1.0);
 
@@ -125,11 +188,13 @@ impl Oscillator {
             }
 
             Waveform::Noise => {
-                // Simple white noise using xorshift
-                self.noise_state ^= self.noise_state << 13;
-                self.noise_state ^= self.noise_state >> 17;
-                self.noise_state ^= self.noise_state << 5;
-                (self.noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+                // White noise using xorshift
+                self.white_noise()
+            }
+
+            Waveform::PinkNoise => {
+                // Pink noise (-3dB/octave, equal energy per octave)
+                self.pink_noise()
             }
         };
 
@@ -200,6 +265,20 @@ impl Describable for Oscillator {
                     .default(1.0)
                     .unit(ParameterUnit::None)
                     .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::choice(
+                    TypedParam::Oscillator(OscillatorParam::FmMode),
+                    "FM Mode",
+                    vec![
+                        ChoiceOption::new("exponential", "Exponential")
+                            .with_description("1V/octave style FM (pitch tracking)"),
+                        ChoiceOption::new("linear", "Linear")
+                            .with_description("Hz-based FM (stable harmonics)"),
+                    ],
+                )
+                .description("FM input mode: Exponential (1V/oct) or Linear (Hz)")
+                .widget(WidgetHint::Dropdown),
             )
             // Ports
             .port(PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"))
@@ -299,10 +378,15 @@ impl VoiceModule for Oscillator {
                         self.phase = p.clamp(0.0, 1.0);
                     }
                 }
+                OscillatorParam::FmMode => {
+                    if let Some(i) = value.as_int() {
+                        self.fm_mode = if i == 0 { FmMode::Exponential } else { FmMode::Linear };
+                    }
+                }
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Oscillator(osc_param) = param {
             match osc_param {
@@ -313,6 +397,7 @@ impl VoiceModule for Oscillator {
                 OscillatorParam::Level => Some(TypedValue::Float(self.level)),
                 OscillatorParam::Octave => Some(TypedValue::Int(0)),
                 OscillatorParam::Phase => Some(TypedValue::Float(self.phase)),
+                OscillatorParam::FmMode => Some(TypedValue::Int(if self.fm_mode == FmMode::Exponential { 0 } else { 1 })),
             }
         } else {
             None
@@ -325,6 +410,10 @@ impl VoiceModule for Oscillator {
 
     fn reset(&mut self) {
         self.phase = 0.0;
+        // Reset pink noise state
+        self.pink_rows = [0.0; 16];
+        self.pink_running_sum = 0.0;
+        self.pink_index = 0;
     }
 
     fn note_on(&mut self, note: u8, _velocity: f32) {
