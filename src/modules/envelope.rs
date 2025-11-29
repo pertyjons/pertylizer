@@ -12,6 +12,7 @@ use crate::engine::typed_params::{
     TypedParam, TypedValue, EnvelopeParam, ModuleType,
 };
 use crate::modules::core::*;
+use crate::types::{Seconds, NormalizedValue, SampleRate};
 
 /// Envelope stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,26 +37,26 @@ pub enum EnvelopeCurve {
 #[derive(Clone)]
 pub struct Envelope {
     // Parameters (times in seconds)
-    attack: f32,
-    decay: f32,
-    sustain: f32,  // Level 0-1
-    release: f32,
-    
+    attack: Seconds,
+    decay: Seconds,
+    sustain: NormalizedValue,
+    release: Seconds,
+
     // Curve type
     curve: EnvelopeCurve,
-    
+
     // Velocity sensitivity
-    velocity_sensitivity: f32,
-    
+    velocity_sensitivity: NormalizedValue,
+
     // State
     stage: EnvelopeStage,
-    level: f32,
-    velocity: f32,
-    sample_rate: f32,
-    
+    level: NormalizedValue,
+    velocity: NormalizedValue,
+    sample_rate: SampleRate,
+
     // For exponential curves
-    target_level: f32,
-    
+    target_level: NormalizedValue,
+
     // Output
     output_buffer: AudioBuffer,
 }
@@ -63,17 +64,17 @@ pub struct Envelope {
 impl Envelope {
     pub fn new() -> Self {
         Self {
-            attack: 0.01,
-            decay: 0.1,
-            sustain: 0.7,
-            release: 0.3,
+            attack: Seconds::new(0.01),
+            decay: Seconds::new(0.1),
+            sustain: NormalizedValue::new(0.7),
+            release: Seconds::new(0.3),
             curve: EnvelopeCurve::Exponential,
-            velocity_sensitivity: 1.0,
+            velocity_sensitivity: NormalizedValue::MAX,
             stage: EnvelopeStage::Idle,
-            level: 0.0,
-            velocity: 1.0,
-            sample_rate: 48000.0,
-            target_level: 0.0,
+            level: NormalizedValue::MIN,
+            velocity: NormalizedValue::MAX,
+            sample_rate: SampleRate::DVD_QUALITY,
+            target_level: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -90,28 +91,28 @@ impl Envelope {
 
     /// Trigger the envelope.
     pub fn trigger(&mut self, velocity: f32) {
-        self.velocity = velocity;
+        self.velocity = NormalizedValue::new(velocity);
         self.stage = EnvelopeStage::Attack;
-        self.target_level = 1.0;
+        self.target_level = NormalizedValue::MAX;
         // Optionally reset level to 0 for hard attack
-        // self.level = 0.0;
+        // self.level = NormalizedValue::MIN;
     }
 
     /// Release the envelope.
     pub fn release(&mut self) {
         if self.stage != EnvelopeStage::Idle {
             self.stage = EnvelopeStage::Release;
-            self.target_level = 0.0;
+            self.target_level = NormalizedValue::MIN;
         }
     }
 
     /// Calculate the coefficient for exponential curves.
     #[inline]
-    fn calculate_coefficient(time_seconds: f32, sample_rate: f32) -> f32 {
-        if time_seconds <= 0.0 {
+    fn calculate_coefficient(time: Seconds, sample_rate: SampleRate) -> f32 {
+        if time.as_f32() <= 0.0 {
             1.0
         } else {
-            let samples = time_seconds * sample_rate;
+            let samples = time.as_f32() * sample_rate.as_f32();
             // Time constant for ~99.3% of target in given time
             (-1.0 / samples).exp()
         }
@@ -120,36 +121,37 @@ impl Envelope {
     /// Process a single sample.
     #[inline]
     fn process_sample(&mut self) -> f32 {
-        let velocity_scale = 1.0 - self.velocity_sensitivity * (1.0 - self.velocity);
+        let velocity_scale = 1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32());
 
         match self.stage {
             EnvelopeStage::Idle => {
-                self.level = 0.0;
+                self.level = NormalizedValue::MIN;
             }
 
             EnvelopeStage::Attack => {
                 match self.curve {
                     EnvelopeCurve::Linear => {
-                        if self.attack > 0.0 {
-                            let increment = 1.0 / (self.attack * self.sample_rate);
-                            self.level += increment;
+                        if self.attack.as_f32() > 0.0 {
+                            let increment = 1.0 / (self.attack.as_f32() * self.sample_rate.as_f32());
+                            self.level = NormalizedValue::new(self.level.as_f32() + increment);
                         } else {
-                            self.level = 1.0;
+                            self.level = NormalizedValue::MAX;
                         }
                     }
                     EnvelopeCurve::Exponential => {
                         // Handle zero/very short attack time
-                        if self.attack <= 0.001 {
-                            self.level = 1.0;
+                        if self.attack.as_f32() <= 0.001 {
+                            self.level = NormalizedValue::MAX;
                         } else {
                             let coef = Self::calculate_coefficient(self.attack, self.sample_rate);
-                            self.level = self.target_level + (self.level - self.target_level) * coef;
+                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
+                            self.level = NormalizedValue::new_unchecked(new_level);
                         }
                     }
                 }
 
-                if self.level >= 0.999 {
-                    self.level = 1.0;
+                if self.level.as_f32() >= 0.999 {
+                    self.level = NormalizedValue::MAX;
                     self.stage = EnvelopeStage::Decay;
                     self.target_level = self.sustain;
                 }
@@ -158,25 +160,26 @@ impl Envelope {
             EnvelopeStage::Decay => {
                 match self.curve {
                     EnvelopeCurve::Linear => {
-                        if self.decay > 0.0 {
-                            let decrement = (1.0 - self.sustain) / (self.decay * self.sample_rate);
-                            self.level -= decrement;
+                        if self.decay.as_f32() > 0.0 {
+                            let decrement = (1.0 - self.sustain.as_f32()) / (self.decay.as_f32() * self.sample_rate.as_f32());
+                            self.level = NormalizedValue::new(self.level.as_f32() - decrement);
                         } else {
                             self.level = self.sustain;
                         }
                     }
                     EnvelopeCurve::Exponential => {
                         // Handle zero/very short decay time
-                        if self.decay <= 0.001 {
+                        if self.decay.as_f32() <= 0.001 {
                             self.level = self.sustain;
                         } else {
                             let coef = Self::calculate_coefficient(self.decay, self.sample_rate);
-                            self.level = self.target_level + (self.level - self.target_level) * coef;
+                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
+                            self.level = NormalizedValue::new_unchecked(new_level);
                         }
                     }
                 }
 
-                if self.level <= self.sustain + 0.001 {
+                if self.level.as_f32() <= self.sustain.as_f32() + 0.001 {
                     self.level = self.sustain;
                     self.stage = EnvelopeStage::Sustain;
                 }
@@ -189,32 +192,33 @@ impl Envelope {
             EnvelopeStage::Release => {
                 match self.curve {
                     EnvelopeCurve::Linear => {
-                        if self.release > 0.0 {
-                            let decrement = self.sustain / (self.release * self.sample_rate);
-                            self.level -= decrement;
+                        if self.release.as_f32() > 0.0 {
+                            let decrement = self.sustain.as_f32() / (self.release.as_f32() * self.sample_rate.as_f32());
+                            self.level = NormalizedValue::new(self.level.as_f32() - decrement);
                         } else {
-                            self.level = 0.0;
+                            self.level = NormalizedValue::MIN;
                         }
                     }
                     EnvelopeCurve::Exponential => {
                         // Handle zero/very short release time
-                        if self.release <= 0.001 {
-                            self.level = 0.0;
+                        if self.release.as_f32() <= 0.001 {
+                            self.level = NormalizedValue::MIN;
                         } else {
                             let coef = Self::calculate_coefficient(self.release, self.sample_rate);
-                            self.level = self.target_level + (self.level - self.target_level) * coef;
+                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
+                            self.level = NormalizedValue::new_unchecked(new_level);
                         }
                     }
                 }
 
-                if self.level <= 0.001 {
-                    self.level = 0.0;
+                if self.level.as_f32() <= 0.001 {
+                    self.level = NormalizedValue::MIN;
                     self.stage = EnvelopeStage::Idle;
                 }
             }
         }
 
-        self.level * velocity_scale
+        self.level.as_f32() * velocity_scale
     }
 }
 
@@ -288,7 +292,7 @@ impl VoiceModule for Envelope {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         let gate_input = inputs.get("gate");
@@ -327,27 +331,27 @@ impl VoiceModule for Envelope {
             match env_param {
                 EnvelopeParam::Attack => {
                     if let Some(a) = value.as_float() {
-                        self.attack = a.max(0.0);
+                        self.attack = Seconds::new(a.max(0.0));
                     }
                 }
                 EnvelopeParam::Decay => {
                     if let Some(d) = value.as_float() {
-                        self.decay = d.max(0.0);
+                        self.decay = Seconds::new(d.max(0.0));
                     }
                 }
                 EnvelopeParam::Sustain => {
                     if let Some(s) = value.as_float() {
-                        self.sustain = s.clamp(0.0, 1.0);
+                        self.sustain = NormalizedValue::new(s);
                     }
                 }
                 EnvelopeParam::Release => {
                     if let Some(r) = value.as_float() {
-                        self.release = r.max(0.0);
+                        self.release = Seconds::new(r.max(0.0));
                     }
                 }
                 EnvelopeParam::VelocitySensitivity => {
                     if let Some(v) = value.as_float() {
-                        self.velocity_sensitivity = v.clamp(0.0, 1.0);
+                        self.velocity_sensitivity = NormalizedValue::new(v);
                     }
                 }
                 // Curve parameters not yet implemented in base Envelope
@@ -359,11 +363,11 @@ impl VoiceModule for Envelope {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Envelope(env_param) = param {
             match env_param {
-                EnvelopeParam::Attack => Some(TypedValue::Float(self.attack)),
-                EnvelopeParam::Decay => Some(TypedValue::Float(self.decay)),
-                EnvelopeParam::Sustain => Some(TypedValue::Float(self.sustain)),
-                EnvelopeParam::Release => Some(TypedValue::Float(self.release)),
-                EnvelopeParam::VelocitySensitivity => Some(TypedValue::Float(self.velocity_sensitivity)),
+                EnvelopeParam::Attack => Some(TypedValue::Float(self.attack.as_f32())),
+                EnvelopeParam::Decay => Some(TypedValue::Float(self.decay.as_f32())),
+                EnvelopeParam::Sustain => Some(TypedValue::Float(self.sustain.as_f32())),
+                EnvelopeParam::Release => Some(TypedValue::Float(self.release.as_f32())),
+                EnvelopeParam::VelocitySensitivity => Some(TypedValue::Float(self.velocity_sensitivity.as_f32())),
                 _ => None,
             }
         } else {
@@ -377,7 +381,7 @@ impl VoiceModule for Envelope {
 
     fn reset(&mut self) {
         self.stage = EnvelopeStage::Idle;
-        self.level = 0.0;
+        self.level = NormalizedValue::MIN;
     }
 
     fn note_on(&mut self, _note: u8, velocity: f32) {
@@ -401,22 +405,22 @@ mod tests {
     fn test_envelope_creation() {
         let env = Envelope::new();
         assert_eq!(env.stage, EnvelopeStage::Idle);
-        assert!((env.level - 0.0).abs() < 0.001);
+        assert!((env.level.as_f32() - 0.0).abs() < 0.001);
     }
 
     #[test]
     fn test_envelope_trigger() {
         let mut env = Envelope::new();
-        env.sample_rate = 48000.0;
-        
+        env.sample_rate = SampleRate::DVD_QUALITY;
+
         env.trigger(1.0);
         assert_eq!(env.stage, EnvelopeStage::Attack);
-        
+
         // Process some samples
         for _ in 0..10000 {
             env.process_sample();
         }
-        
+
         // Should be in sustain now
         assert!(env.stage == EnvelopeStage::Decay || env.stage == EnvelopeStage::Sustain);
     }
@@ -424,27 +428,27 @@ mod tests {
     #[test]
     fn test_envelope_release() {
         let mut env = Envelope::new();
-        env.sample_rate = 48000.0;
-        env.attack = 0.001;
-        env.decay = 0.001;
-        env.release = 0.1;
-        
+        env.sample_rate = SampleRate::DVD_QUALITY;
+        env.attack = Seconds::new(0.001);
+        env.decay = Seconds::new(0.001);
+        env.release = Seconds::new(0.1);
+
         env.trigger(1.0);
-        
+
         // Process through attack and decay
         for _ in 0..1000 {
             env.process_sample();
         }
-        
+
         env.release();
         assert_eq!(env.stage, EnvelopeStage::Release);
-        
+
         // Process through release
         for _ in 0..50000 {
             env.process_sample();
         }
-        
+
         assert_eq!(env.stage, EnvelopeStage::Idle);
-        assert!(env.level < 0.01);
+        assert!(env.level.as_f32() < 0.01);
     }
 }

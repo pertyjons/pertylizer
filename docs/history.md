@@ -1,5 +1,27 @@
 # Version History
 
+## [0.16.0] - 2024
+
+### Changed
+- **Newtype Pattern in Audio Modules** - Domain-specific types for type safety
+  - `oscillator.rs`: frequency→`Hertz`, pulse_width→`NormalizedValue`, phase→`Phase`, detune→`Cents`
+  - `envelope.rs`: attack/decay/release→`Seconds`, sustain→`NormalizedValue`, sample_rate→`SampleRate`
+  - `filter.rs`: cutoff→`Hertz`, resonance→`NormalizedValue`, key_tracking→`NormalizedValue`
+  - `lfo.rs`: rate→`Hertz`, depth→`NormalizedValue`, phase→`Phase`
+
+### Refactored
+- **GUI Architecture** - Extracted patch logic to separate module
+  - New `patch_bridge.rs` module (~500 lines) for patch load/save logic
+  - `egui_backend.rs` reduced from ~1294 to ~872 lines (33% reduction)
+  - Better separation of concerns between GUI and engine communication
+
+### Technical Details
+- Types from `crate::types`: `Hertz`, `Cents`, `Phase`, `NormalizedValue`, `Seconds`, `SampleRate`
+- Key methods: `.as_f32()`, `.advance()`, `.phase_increment()`, `.clamp_audible()`, `.clamp_detune()`
+- Constants: `Hertz::A4`, `Phase::ZERO`, `NormalizedValue::CENTER/MAX/MIN`, `SampleRate::DVD_QUALITY`
+
+---
+
 ## [0.13.2] - 2024
 
 ### Fixed

@@ -53,6 +53,9 @@ pub mod theme;
 #[cfg(feature = "gui-egui")]
 pub mod dialogs;
 
+#[cfg(feature = "gui-egui")]
+pub mod patch_bridge;
+
 use crate::engine::{EngineHandle, SynthEngine, AllocatorConfig};
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;

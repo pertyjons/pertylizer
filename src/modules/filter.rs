@@ -11,19 +11,20 @@ use std::f32::consts::PI;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, FilterParam, ModuleType};
 use crate::modules::core::*;
+use crate::types::{Hertz, NormalizedValue, SampleRate};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
 pub struct Filter {
     // Parameters
     filter_type: FilterType,
-    cutoff: f32,        // Hz
-    resonance: f32,     // 0.0 - 1.0
-    key_tracking: f32,  // 0.0 - 1.0
+    cutoff: Hertz,
+    resonance: NormalizedValue,
+    key_tracking: NormalizedValue,
     env_amount: f32,    // -1.0 to 1.0 (scales envelope CV)
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 
     // SVF state variables
     ic1eq: f32,
@@ -40,11 +41,11 @@ impl Filter {
     pub fn new() -> Self {
         Self {
             filter_type: FilterType::Lowpass,
-            cutoff: 1000.0,
-            resonance: 0.0,
-            key_tracking: 0.0,
+            cutoff: Hertz::new(1000.0),
+            resonance: NormalizedValue::MIN,
+            key_tracking: NormalizedValue::MIN,
             env_amount: 1.0,  // Full positive envelope amount by default
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             ic1eq: 0.0,
             ic2eq: 0.0,
             base_note: 60,
@@ -53,22 +54,22 @@ impl Filter {
     }
 
     /// Calculate the effective cutoff frequency with key tracking.
-    fn effective_cutoff(&self) -> f32 {
-        let tracking_offset = (self.base_note as f32 - 60.0) * self.key_tracking * 100.0;
+    fn effective_cutoff(&self) -> Hertz {
+        let tracking_offset = (self.base_note as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
         // exp2 is faster than powf(2.0, x)
-        let tracked = self.cutoff * (tracking_offset / 1200.0).exp2();
-        tracked.clamp(20.0, self.sample_rate * 0.49)
+        let tracked = self.cutoff.as_f32() * (tracking_offset / 1200.0).exp2();
+        Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
     }
 
     /// Process a single sample through the SVF.
     #[inline]
     fn process_sample(&mut self, input: f32, cutoff_mod: f32, res_mod: f32) -> f32 {
         // Calculate coefficients
-        let cutoff = (self.effective_cutoff() * (1.0 + cutoff_mod)).clamp(20.0, self.sample_rate * 0.49);
-        let resonance = (self.resonance + res_mod).clamp(0.0, 1.0);
-        
+        let cutoff = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod)).clamp(20.0, self.sample_rate.as_f32() * 0.49);
+        let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 1.0);
+
         // SVF coefficients
-        let g = (PI * cutoff / self.sample_rate).tan();
+        let g = (PI * cutoff / self.sample_rate.as_f32()).tan();
         let k = 2.0 - 2.0 * resonance; // k = 2 - 2*Q, where Q ranges from 0.5 to inf
         
         // SVF equations (Cytomic/Vadim Zavalishin style)
@@ -176,7 +177,7 @@ impl VoiceModule for Filter {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         let audio_in = inputs.get("in");
@@ -208,17 +209,17 @@ impl VoiceModule for Filter {
                 }
                 FilterParam::Cutoff => {
                     if let Some(c) = value.as_float() {
-                        self.cutoff = c.clamp(20.0, 20000.0);
+                        self.cutoff = Hertz::new(c).clamp_audible();
                     }
                 }
                 FilterParam::Resonance => {
                     if let Some(r) = value.as_float() {
-                        self.resonance = r.clamp(0.0, 1.0);
+                        self.resonance = NormalizedValue::new(r);
                     }
                 }
                 FilterParam::KeyTracking => {
                     if let Some(k) = value.as_float() {
-                        self.key_tracking = k.clamp(0.0, 1.0);
+                        self.key_tracking = NormalizedValue::new(k);
                     }
                 }
                 FilterParam::Drive => {
@@ -240,9 +241,9 @@ impl VoiceModule for Filter {
                     // Direct use - same type now!
                     Some(TypedValue::FilterMode(self.filter_type))
                 }
-                FilterParam::Cutoff => Some(TypedValue::Float(self.cutoff)),
-                FilterParam::Resonance => Some(TypedValue::Float(self.resonance)),
-                FilterParam::KeyTracking => Some(TypedValue::Float(self.key_tracking)),
+                FilterParam::Cutoff => Some(TypedValue::Float(self.cutoff.as_f32())),
+                FilterParam::Resonance => Some(TypedValue::Float(self.resonance.as_f32())),
+                FilterParam::KeyTracking => Some(TypedValue::Float(self.key_tracking.as_f32())),
                 FilterParam::Drive => None,
                 FilterParam::EnvAmount => Some(TypedValue::Float(self.env_amount)),
             }
@@ -267,7 +268,7 @@ impl VoiceModule for Filter {
     fn note_off(&mut self) {}
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
@@ -279,15 +280,15 @@ impl VoiceModule for Filter {
 #[derive(Clone)]
 pub struct LadderFilter {
     // Parameters
-    cutoff: f32,
-    resonance: f32,
-    drive: f32,
-    
+    cutoff: Hertz,
+    resonance: NormalizedValue,
+    drive: NormalizedValue,
+
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
     stage: [f32; 4],
     delay: [f32; 4],
-    
+
     // Output
     output_buffer: AudioBuffer,
 }
@@ -295,10 +296,10 @@ pub struct LadderFilter {
 impl LadderFilter {
     pub fn new() -> Self {
         Self {
-            cutoff: 1000.0,
-            resonance: 0.0,
-            drive: 0.0,
-            sample_rate: 48000.0,
+            cutoff: Hertz::new(1000.0),
+            resonance: NormalizedValue::MIN,
+            drive: NormalizedValue::MIN,
+            sample_rate: SampleRate::DVD_QUALITY,
             stage: [0.0; 4],
             delay: [0.0; 4],
             output_buffer: AudioBuffer::new(256),
@@ -314,13 +315,13 @@ impl LadderFilter {
     /// Process a single sample.
     #[inline]
     fn process_sample(&mut self, input: f32) -> f32 {
-        let cutoff = self.cutoff.clamp(20.0, self.sample_rate * 0.49);
-        let g = (PI * cutoff / self.sample_rate).tan();
-        let k = self.resonance * 4.0;
-        
+        let cutoff = self.cutoff.as_f32().clamp(20.0, self.sample_rate.as_f32() * 0.49);
+        let g = (PI * cutoff / self.sample_rate.as_f32()).tan();
+        let k = self.resonance.as_f32() * 4.0;
+
         // Drive/saturation
-        let driven = if self.drive > 0.0 {
-            Self::saturate(input * (1.0 + self.drive * 3.0))
+        let driven = if self.drive.as_f32() > 0.0 {
+            Self::saturate(input * (1.0 + self.drive.as_f32() * 3.0))
         } else {
             input
         };
@@ -334,13 +335,13 @@ impl LadderFilter {
             let prev = if i == 0 { input_with_fb } else { self.stage[i - 1] };
             self.stage[i] = (prev - self.delay[i]) * g / (1.0 + g) + self.delay[i];
             self.delay[i] = self.stage[i];
-            
+
             // Add saturation between stages for character
-            if self.drive > 0.0 {
+            if self.drive.as_f32() > 0.0 {
                 self.stage[i] = Self::saturate(self.stage[i]);
             }
         }
-        
+
         self.stage[3]
     }
 }
@@ -395,7 +396,7 @@ impl VoiceModule for LadderFilter {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         let audio_in = inputs.get("in");
@@ -403,12 +404,13 @@ impl VoiceModule for LadderFilter {
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
-            
+
             // Apply cutoff modulation
             if let Some(cv) = cutoff_cv {
                 let mod_amount = cv[i];
                 // Exponential modulation (exp2 is faster than powf)
-                self.cutoff = (self.cutoff * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0);
+                let new_cutoff = (self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0);
+                self.cutoff = Hertz::new(new_cutoff);
             }
 
             self.output_buffer[i] = self.process_sample(input);
@@ -424,30 +426,30 @@ impl VoiceModule for LadderFilter {
             match filter_param {
                 FilterParam::Cutoff => {
                     if let Some(c) = value.as_float() {
-                        self.cutoff = c.clamp(20.0, 20000.0);
+                        self.cutoff = Hertz::new(c).clamp_audible();
                     }
                 }
                 FilterParam::Resonance => {
                     if let Some(r) = value.as_float() {
-                        self.resonance = r.clamp(0.0, 1.0);
+                        self.resonance = NormalizedValue::new(r);
                     }
                 }
                 FilterParam::Drive => {
                     if let Some(d) = value.as_float() {
-                        self.drive = d.clamp(0.0, 1.0);
+                        self.drive = NormalizedValue::new(d);
                     }
                 }
                 _ => {}
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Filter(filter_param) = param {
             match filter_param {
-                FilterParam::Cutoff => Some(TypedValue::Float(self.cutoff)),
-                FilterParam::Resonance => Some(TypedValue::Float(self.resonance)),
-                FilterParam::Drive => Some(TypedValue::Float(self.drive)),
+                FilterParam::Cutoff => Some(TypedValue::Float(self.cutoff.as_f32())),
+                FilterParam::Resonance => Some(TypedValue::Float(self.resonance.as_f32())),
+                FilterParam::Drive => Some(TypedValue::Float(self.drive.as_f32())),
                 _ => None,
             }
         } else {
@@ -468,7 +470,7 @@ impl VoiceModule for LadderFilter {
     fn note_off(&mut self) {}
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
@@ -484,15 +486,15 @@ mod tests {
     fn test_filter_creation() {
         let filter = Filter::new();
         assert_eq!(filter.filter_type, FilterType::Lowpass);
-        assert!((filter.cutoff - 1000.0).abs() < 0.001);
+        assert!((filter.cutoff.as_f32() - 1000.0).abs() < 0.001);
     }
 
     #[test]
     fn test_filter_stability() {
         let mut filter = Filter::new();
-        filter.sample_rate = 48000.0;
-        filter.cutoff = 100.0;
-        filter.resonance = 0.99;
+        filter.sample_rate = SampleRate::DVD_QUALITY;
+        filter.cutoff = Hertz::new(100.0);
+        filter.resonance = NormalizedValue::new(0.99);
 
         // Process some samples, check for stability
         for _ in 0..1000 {

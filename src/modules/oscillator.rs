@@ -12,22 +12,22 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents};
+use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
 pub struct Oscillator {
     // Parameters
     waveform: Waveform,
-    frequency: f32,
-    detune: f32,        // In cents
-    pulse_width: f32,   // 0.0 - 1.0
-    level: f32,
+    frequency: Hertz,
+    detune: Cents,
+    pulse_width: NormalizedValue,
+    level: NormalizedValue,
     fm_mode: FmMode,    // Linear or Exponential FM
 
     // State
-    phase: f32,
-    sample_rate: f32,
+    phase: Phase,
+    sample_rate: SampleRate,
 
     // For noise
     noise_state: u32,
@@ -53,13 +53,13 @@ impl Oscillator {
     pub fn new() -> Self {
         Self {
             waveform: Waveform::Sawtooth,
-            frequency: 440.0,
-            detune: 0.0,
-            pulse_width: 0.5,
-            level: 1.0,
+            frequency: Hertz::A4,
+            detune: Cents::ZERO,
+            pulse_width: NormalizedValue::CENTER,
+            level: NormalizedValue::MAX,
             fm_mode: FmMode::Exponential,
-            phase: 0.0,
-            sample_rate: 48000.0,
+            phase: Phase::ZERO,
+            sample_rate: SampleRate::DVD_QUALITY,
             noise_state: 0x12345678,
             pink_rows: [0.0; 16],
             pink_running_sum: 0.0,
@@ -106,10 +106,9 @@ impl Oscillator {
     /// Calculate the actual frequency including detune.
     /// Uses type-safe Cents for the detune calculation.
     #[inline]
-    fn actual_frequency(&self) -> f32 {
+    fn actual_frequency(&self) -> Hertz {
         // Use Cents type for type-safe interval calculation
-        let detune = Cents::new(self.detune);
-        Hertz::new(self.frequency).transpose(detune.to_semitones().as_f32()).as_f32()
+        self.detune.apply(self.frequency)
     }
 
     /// PolyBLEP correction for band-limited waveforms.
@@ -135,17 +134,17 @@ impl Oscillator {
             FmMode::Exponential => {
                 // Exponential FM (1V/octave style): freq_mod of 1.0 = +2 octaves
                 let freq_mult = (freq_mod * 2.0).exp2();
-                base_freq * freq_mult
+                Hertz::new(base_freq.as_f32() * freq_mult)
             }
             FmMode::Linear => {
                 // Linear FM: add Hz directly (scaled by base frequency)
                 // This gives stable harmonic ratios across the keyboard
-                (base_freq + freq_mod * base_freq * 4.0).max(1.0)
+                Hertz::new((base_freq.as_f32() + freq_mod * base_freq.as_f32() * 4.0).max(1.0))
             }
         };
 
-        let dt = freq / self.sample_rate;
-        let phase = (self.phase + phase_mod).rem_euclid(1.0);
+        let dt = freq.phase_increment(self.sample_rate);
+        let phase = self.phase.advance(phase_mod).as_f32();
 
         let sample = match self.waveform {
             Waveform::Sine => {
@@ -182,7 +181,7 @@ impl Oscillator {
 
             Waveform::Pulse => {
                 // Pulse with variable width
-                let pw = self.pulse_width.clamp(0.01, 0.99);
+                let pw = self.pulse_width.as_f32().clamp(0.01, 0.99);
                 let mut pulse = if phase < pw { 1.0 } else { -1.0 };
                 // PolyBLEP at both edges
                 pulse += self.poly_blep(phase, dt);
@@ -202,25 +201,25 @@ impl Oscillator {
         };
 
         // Advance phase
-        self.phase = (self.phase + dt).rem_euclid(1.0);
+        self.phase = self.phase.advance(dt);
 
-        sample * self.level
+        sample * self.level.as_f32()
     }
 
     /// Set frequency from MIDI note using type-safe conversion.
     pub fn set_note(&mut self, note: u8) {
         // Uses Hertz::from_midi for type-safe frequency conversion
-        self.frequency = Hertz::from_midi(note).as_f32();
+        self.frequency = Hertz::from_midi(note);
     }
 
     /// Set frequency using the type-safe Hertz type.
     pub fn set_frequency(&mut self, freq: Hertz) {
-        self.frequency = freq.as_f32();
+        self.frequency = freq;
     }
 
     /// Get current frequency as type-safe Hertz.
     pub fn get_frequency(&self) -> Hertz {
-        Hertz::new(self.frequency)
+        self.frequency
     }
 }
 
@@ -310,7 +309,7 @@ impl VoiceModule for Oscillator {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         // Get modulation inputs
@@ -324,17 +323,17 @@ impl VoiceModule for Oscillator {
         for i in 0..context.samples {
             // Get FM modulation amount (normalized -1 to 1)
             let fm = fm_input.map(|f| f[i]).unwrap_or(0.0);
-            
+
             // PWM modulation
             if let Some(pwm) = pwm_input {
-                self.pulse_width = (0.5 + pwm[i] * 0.49).clamp(0.01, 0.99);
+                self.pulse_width = NormalizedValue::new((0.5 + pwm[i] * 0.49).clamp(0.01, 0.99));
             }
 
             // Hard sync - reset phase on rising edge
             if let Some(sync) = sync_input {
                 let sync_val = sync[i];
                 if sync_val > 0.5 && prev_sync <= 0.5 {
-                    self.phase = 0.0;
+                    self.phase = Phase::ZERO;
                 }
                 prev_sync = sync_val;
             }
@@ -363,33 +362,32 @@ impl VoiceModule for Oscillator {
                 }
                 OscillatorParam::Frequency => {
                     if let Some(f) = value.as_float() {
-                        self.frequency = f.clamp(20.0, 20000.0);
+                        self.frequency = Hertz::new(f.clamp(20.0, 20000.0));
                     }
                 }
                 OscillatorParam::Detune => {
                     if let Some(d) = value.as_float() {
-                        self.detune = d.clamp(-100.0, 100.0);
+                        self.detune = Cents::new(d).clamp_detune();
                     }
                 }
                 OscillatorParam::PulseWidth => {
                     if let Some(pw) = value.as_float() {
-                        self.pulse_width = pw.clamp(0.01, 0.99);
+                        self.pulse_width = NormalizedValue::new(pw.clamp(0.01, 0.99));
                     }
                 }
                 OscillatorParam::Level => {
                     if let Some(l) = value.as_float() {
-                        self.level = l.clamp(0.0, 1.0);
+                        self.level = NormalizedValue::new(l);
                     }
                 }
                 OscillatorParam::Octave => {
                     if let Some(o) = value.as_int() {
-                        let base_freq = self.frequency / 2.0f32.powi(0);
-                        self.frequency = base_freq * 2.0f32.powi(o);
+                        self.frequency = self.frequency.octave(o);
                     }
                 }
                 OscillatorParam::Phase => {
                     if let Some(p) = value.as_float() {
-                        self.phase = p.clamp(0.0, 1.0);
+                        self.phase = Phase::new(p);
                     }
                 }
                 OscillatorParam::FmMode => {
@@ -405,12 +403,12 @@ impl VoiceModule for Oscillator {
         if let TypedParam::Oscillator(osc_param) = param {
             match osc_param {
                 OscillatorParam::Waveform => Some(TypedValue::Waveform(self.waveform)),
-                OscillatorParam::Frequency => Some(TypedValue::Float(self.frequency)),
-                OscillatorParam::Detune => Some(TypedValue::Float(self.detune)),
-                OscillatorParam::PulseWidth => Some(TypedValue::Float(self.pulse_width)),
-                OscillatorParam::Level => Some(TypedValue::Float(self.level)),
+                OscillatorParam::Frequency => Some(TypedValue::Float(self.frequency.as_f32())),
+                OscillatorParam::Detune => Some(TypedValue::Float(self.detune.as_f32())),
+                OscillatorParam::PulseWidth => Some(TypedValue::Float(self.pulse_width.as_f32())),
+                OscillatorParam::Level => Some(TypedValue::Float(self.level.as_f32())),
                 OscillatorParam::Octave => Some(TypedValue::Int(0)),
-                OscillatorParam::Phase => Some(TypedValue::Float(self.phase)),
+                OscillatorParam::Phase => Some(TypedValue::Float(self.phase.as_f32())),
                 OscillatorParam::FmMode => Some(TypedValue::Int(if self.fm_mode == FmMode::Exponential { 0 } else { 1 })),
             }
         } else {
@@ -423,7 +421,7 @@ impl VoiceModule for Oscillator {
     }
 
     fn reset(&mut self) {
-        self.phase = 0.0;
+        self.phase = Phase::ZERO;
         // Reset pink noise state
         self.pink_rows = [0.0; 16];
         self.pink_running_sum = 0.0;
@@ -441,7 +439,7 @@ impl VoiceModule for Oscillator {
     }
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
@@ -457,25 +455,25 @@ mod tests {
     fn test_oscillator_creation() {
         let osc = Oscillator::new();
         assert_eq!(osc.waveform, Waveform::Sawtooth);
-        assert!((osc.frequency - 440.0).abs() < 0.001);
+        assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
     }
 
     #[test]
     fn test_note_to_frequency() {
         let mut osc = Oscillator::new();
         osc.set_note(69); // A4
-        assert!((osc.frequency - 440.0).abs() < 0.001);
+        assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
 
         osc.set_note(60); // C4
-        assert!((osc.frequency - 261.63).abs() < 1.0);
+        assert!((osc.frequency.as_f32() - 261.63).abs() < 1.0);
     }
 
     #[test]
     fn test_waveform_output() {
         let mut osc = Oscillator::new();
         osc.waveform = Waveform::Sine;
-        osc.frequency = 1000.0;
-        osc.sample_rate = 48000.0;
+        osc.frequency = Hertz::new(1000.0);
+        osc.sample_rate = SampleRate::DVD_QUALITY;
 
         // Generate a few samples
         for _ in 0..100 {

@@ -18,9 +18,8 @@ use crate::engine::{EngineCommand, EngineHandle, SynthEngine, ModuleId};
 use crate::engine::commands::{VoiceModule, PortId};
 use crate::engine::{
     ModuleType as TypedModuleType,
-    TypedParam, TypedValue, OscillatorParam, FilterParam, EnvelopeParam, LfoParam,
-    AmplifierParam, DelayParam, DistortionParam,
-    TypedWaveform, TypedLfoWaveform, FilterMode, DelayMode, DistortionMode,
+    TypedParam, OscillatorParam, FilterParam, EnvelopeParam, LfoParam,
+    AmplifierParam,
 };
 use crate::engine::graph::Connection;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
@@ -28,13 +27,14 @@ use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_se
 use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
+use crate::gui::patch_bridge;
 use crate::modules::{
-    Describable, ModuleCategory, ModuleDescriptor,
+    Describable, ModuleCategory,
     Oscillator, MathOscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
 };
 use crate::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use crate::visualizers::{Oscilloscope, LevelMeter};
-use crate::patch::{Patch, ModuleType as PatchModuleType, ModuleState, ConnectionState, example_patches};
+use crate::patch::{Patch, example_patches};
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -412,7 +412,7 @@ impl eframe::App for SynthApp {
                 match category {
                     Some(ModuleCategory::Effect) => {
                         // Effect module - use SetEffectParameter
-                        if let Some(effect_type) = self.get_effect_type_from_module(module_id) {
+                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(&self.rack_view, module_id) {
                             self.handle.send(EngineCommand::SetEffectParameter {
                                 effect_type,
                                 param: typed_param,
@@ -435,7 +435,7 @@ impl eframe::App for SynthApp {
                         });
 
                         // 2. Also send to voice modules for backwards compatibility
-                        if let Some(voice_module) = self.get_voice_module_for_typed_param(module_id, typed_param) {
+                        if let Some(voice_module) = patch_bridge::get_voice_module_for_typed_param(module_id, typed_param) {
                             self.handle.send(EngineCommand::SetVoiceParameter {
                                 target: voice_module,
                                 param: typed_param,
@@ -810,452 +810,29 @@ impl SynthApp {
     
     /// Load a patch into the rack view.
     fn load_patch_data(&mut self, patch: &Patch) {
-        // Clear existing modules and connections
-        self.rack_view.clear();
-        self.instance_counters.clear();
+        // Clear visualization buffers (not handled by patch_bridge)
         self.handle.visualization_buffers.clear();
 
-        // Clear engine state - blocking to ensure it completes before adding new modules
-        self.handle.send_blocking(EngineCommand::ClearAllModules);
-
-        // Add modules from patch
-        for module_state in &patch.modules {
-            // Parse module ID from patch file (e.g., "osc-1" -> ModuleId)
-            let module_id: ModuleId = match module_state.id.parse() {
-                Ok(id) => id,
-                Err(_) => continue, // Skip invalid IDs
-            };
-
-            // Update instance counter to track highest instance number
-            let counter = self.instance_counters.entry(module_id.module_type).or_insert(0);
-            if module_id.instance > *counter {
-                *counter = module_id.instance;
-            }
-
-            // Create module descriptor and instance based on type
-            match module_state.module_type {
-                PatchModuleType::Oscillator => {
-                    let m = Oscillator::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::MathOscillator => {
-                    let m = MathOscillator::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Filter => {
-                    let m = Filter::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Envelope => {
-                    let m = Envelope::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Lfo => {
-                    let m = Lfo::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Amplifier => {
-                    let m = Amplifier::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Mixer => {
-                    let m = Mixer::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::StereoOutput => {
-                    let m = StereoOutput::new();
-                    let descriptor = m.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        id: module_id,
-                        module: Box::new(m),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
-                }
-                PatchModuleType::Delay => {
-                    let e = Delay::new();
-                    let descriptor = e.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddEffectInstance {
-                        id: module_id,
-                        effect: Box::new(e),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(EffectType::Delay));
-                }
-                PatchModuleType::Reverb => {
-                    let e = Reverb::new();
-                    let descriptor = e.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddEffectInstance {
-                        id: module_id,
-                        effect: Box::new(e),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(EffectType::Reverb));
-                }
-                PatchModuleType::Distortion => {
-                    let e = Distortion::new();
-                    let descriptor = e.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddEffectInstance {
-                        id: module_id,
-                        effect: Box::new(e),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(EffectType::Distortion));
-                }
-                PatchModuleType::Chorus => {
-                    let e = Chorus::new();
-                    let descriptor = e.descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor.clone(),
-                        Pos2::new(module_state.position.0, module_state.position.1));
-                    self.handle.send(EngineCommand::AddEffectInstance {
-                        id: module_id,
-                        effect: Box::new(e),
-                    });
-                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(EffectType::Chorus));
-                }
-                PatchModuleType::Oscilloscope => {
-                    let descriptor = Oscilloscope::new().descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor,
-                        Pos2::new(module_state.position.0, module_state.position.1));
-
-                    // Create shared visualization buffer
-                    let buffer = std::sync::Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
-                    self.handle.add_visualization_buffer(module_id, buffer.clone());
-
-                    self.handle.send(EngineCommand::AddVisualizer {
-                        id: module_id,
-                        visualizer_type: crate::engine::commands::VisualizerType::Oscilloscope,
-                        buffer,
-                    });
-                }
-                PatchModuleType::LevelMeter => {
-                    let descriptor = LevelMeter::new().descriptor();
-                    self.rack_view.add_module_at(module_id, descriptor,
-                        Pos2::new(module_state.position.0, module_state.position.1));
-
-                    // Create shared visualization buffer
-                    let buffer = std::sync::Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
-                    self.handle.add_visualization_buffer(module_id, buffer.clone());
-
-                    self.handle.send(EngineCommand::AddVisualizer {
-                        id: module_id,
-                        visualizer_type: crate::engine::commands::VisualizerType::LevelMeter,
-                        buffer,
-                    });
-                }
-            }
-        }
-
-        // Add connections to both rack_view and engine
-        for conn in &patch.connections {
-            if let (Ok(from_id), Ok(to_id)) = (conn.from.0.parse::<ModuleId>(), conn.to.0.parse::<ModuleId>()) {
-                let connection = Connection::new(
-                    from_id,
-                    &conn.from.1,
-                    to_id,
-                    &conn.to.1,
-                );
-                self.rack_view.add_connection(connection);
-
-                // Send connection to engine - blocking to ensure all connections are established
-                self.handle.send_blocking(EngineCommand::Connect {
-                    from: PortId {
-                        module: from_id,
-                        port: conn.from.1.clone(),
-                    },
-                    to: PortId {
-                        module: to_id,
-                        port: conn.to.1.clone(),
-                    },
-                });
-            }
-        }
-
-        // Apply settings - blocking to ensure they're applied after all modules
-        self.keyboard.set_octave_offset(patch.settings.octave_offset);
-        self.glide_time = patch.settings.glide_time;
-        self.handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-        self.handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
+        // Delegate to patch_bridge for the main loading logic
+        patch_bridge::load_patch(
+            patch,
+            &mut self.rack_view,
+            &mut self.instance_counters,
+            &mut self.handle,
+            &mut self.keyboard,
+            &mut self.glide_time,
+        );
     }
 
-    /// Helper to apply parameters to a module during patch loading.
-    fn apply_module_parameters(
-        &mut self,
-        module_id: ModuleId,
-        descriptor: &ModuleDescriptor,
-        parameters: &HashMap<String, crate::patch::ParamValue>,
-        effect_type: Option<EffectType>,
-    ) {
-        for (param_name, value) in parameters {
-            if let Some(typed_param) = self.find_param_by_name(descriptor, param_name) {
-                // Update rack_view
-                match value {
-                    crate::patch::ParamValue::Float(f) => {
-                        self.rack_view.set_parameter(module_id, typed_param, *f);
-                    }
-                    crate::patch::ParamValue::Int(i) => {
-                        self.rack_view.set_parameter(module_id, typed_param, *i as f32);
-                    }
-                    crate::patch::ParamValue::Bool(b) => {
-                        self.rack_view.set_parameter(module_id, typed_param, if *b { 1.0 } else { 0.0 });
-                    }
-                    crate::patch::ParamValue::Choice(s) => {
-                        if let Some(param_spec) = descriptor.parameters.iter().find(|p| p.id == typed_param) {
-                            if let Some(ref choices) = param_spec.choices {
-                                if let Some(idx) = choices.iter().position(|c| c.id == *s) {
-                                    self.rack_view.set_parameter(module_id, typed_param, idx as f32);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Send to engine
-                let typed_value = self.convert_param_value_to_typed(typed_param, value);
-                if let Some(et) = effect_type {
-                    self.handle.send(EngineCommand::SetEffectParameter {
-                        effect_type: et,
-                        param: typed_param,
-                        value: typed_value,
-                    });
-                } else if let Some(voice_module) = self.get_voice_module_for_typed_param(module_id, typed_param) {
-                    self.handle.send(EngineCommand::SetVoiceParameter {
-                        target: voice_module,
-                        param: typed_param,
-                        value: typed_value,
-                    });
-                }
-            }
-        }
-    }
-    
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
-        let mut patch = Patch::new(&self.dialog_state.patch_save_name);
-        patch.author = Some("User".to_string());
-
-        // Add modules
-        for module_id in self.rack_view.module_ids() {
-            if let Some((descriptor, position, params)) = self.rack_view.get_module_data(module_id) {
-                let module_type = match descriptor.category {
-                    ModuleCategory::Oscillator => PatchModuleType::Oscillator,
-                    ModuleCategory::Filter => PatchModuleType::Filter,
-                    ModuleCategory::Envelope => PatchModuleType::Envelope,
-                    ModuleCategory::LFO => PatchModuleType::Lfo,
-                    ModuleCategory::Amplifier => PatchModuleType::Amplifier,
-                    ModuleCategory::Mixer => PatchModuleType::Mixer,
-                    ModuleCategory::Effect => PatchModuleType::Delay, // Default to delay for effects
-                    _ => continue,
-                };
-
-                let mut param_map = HashMap::new();
-                for (typed_param, value) in params {
-                    if let Some(name) = self.typed_param_to_name(typed_param) {
-                        param_map.insert(name, crate::patch::ParamValue::Float(value));
-                    }
-                }
-
-                patch.modules.push(ModuleState {
-                    id: module_id.to_string(),
-                    module_type,
-                    position: (position.x, position.y),
-                    parameters: param_map,
-                });
-            }
-        }
-
-        // Add connections
-        for conn in self.rack_view.connections() {
-            patch.connections.push(ConnectionState {
-                from: (conn.from_module.to_string(), conn.from_port.clone()),
-                to: (conn.to_module.to_string(), conn.to_port.clone()),
-            });
-        }
-        
-        patch.settings.octave_offset = self.keyboard.octave_offset();
-        patch.settings.master_volume = self.handle.master_volume();
-        patch.settings.glide_time = self.glide_time;
-
-        Some(patch)
-    }
-    
-    /// Find TypedParam by name from a module descriptor.
-    fn find_param_by_name(&self, descriptor: &ModuleDescriptor, name: &str) -> Option<TypedParam> {
-        // Normalize name for comparison
-        let normalized = name.to_lowercase();
-        descriptor.parameters.iter()
-            .find(|p| p.name.to_lowercase() == normalized || p.id.name().to_lowercase() == normalized)
-            .map(|p| p.id)
-    }
-
-    /// Convert TypedParam to name for serialization.
-    fn typed_param_to_name(&self, param: TypedParam) -> Option<String> {
-        Some(param.name().to_lowercase())
-    }
-
-    /// Convert ParamValue to TypedValue based on the TypedParam type.
-    fn convert_param_value_to_typed(&self, param: TypedParam, value: &crate::patch::ParamValue) -> TypedValue {
-        match value {
-            crate::patch::ParamValue::Float(f) => TypedValue::Float(*f),
-            crate::patch::ParamValue::Int(i) => TypedValue::Int(*i),
-            crate::patch::ParamValue::Bool(b) => TypedValue::Bool(*b),
-            crate::patch::ParamValue::Choice(s) => {
-                // Convert choice strings to appropriate TypedValue based on param type
-                match param {
-                    TypedParam::Oscillator(OscillatorParam::Waveform) => {
-                        let wf = match s.as_str() {
-                            "sine" => TypedWaveform::Sine,
-                            "triangle" => TypedWaveform::Triangle,
-                            "sawtooth" => TypedWaveform::Sawtooth,
-                            "square" => TypedWaveform::Square,
-                            "pulse" => TypedWaveform::Pulse,
-                            "noise" => TypedWaveform::Noise,
-                            "pink_noise" => TypedWaveform::PinkNoise,
-                            _ => TypedWaveform::Sawtooth,
-                        };
-                        TypedValue::Waveform(wf)
-                    }
-                    TypedParam::Lfo(LfoParam::Waveform) => {
-                        let wf = match s.as_str() {
-                            "sine" => TypedLfoWaveform::Sine,
-                            "triangle" => TypedLfoWaveform::Triangle,
-                            "sawtooth" => TypedLfoWaveform::Sawtooth,
-                            "square" => TypedLfoWaveform::Square,
-                            "sample_and_hold" | "s&h" => TypedLfoWaveform::SampleAndHold,
-                            _ => TypedLfoWaveform::Sine,
-                        };
-                        TypedValue::LfoWaveform(wf)
-                    }
-                    TypedParam::Filter(FilterParam::Mode) => {
-                        let mode = match s.as_str() {
-                            "lowpass" | "lp" => FilterMode::Lowpass,
-                            "highpass" | "hp" => FilterMode::Highpass,
-                            "bandpass" | "bp" => FilterMode::Bandpass,
-                            "notch" => FilterMode::Notch,
-                            "peak" => FilterMode::Peak,
-                            "low_shelf" => FilterMode::LowShelf,
-                            "high_shelf" => FilterMode::HighShelf,
-                            _ => FilterMode::Lowpass,
-                        };
-                        TypedValue::FilterMode(mode)
-                    }
-                    TypedParam::Delay(DelayParam::Mode) => {
-                        let mode = match s.as_str() {
-                            "mono" => DelayMode::Mono,
-                            "stereo" => DelayMode::Stereo,
-                            "ping_pong" => DelayMode::PingPong,
-                            _ => DelayMode::Mono,
-                        };
-                        TypedValue::DelayMode(mode)
-                    }
-                    TypedParam::Distortion(DistortionParam::Mode) => {
-                        let mode = match s.as_str() {
-                            "soft_clip" => DistortionMode::SoftClip,
-                            "hard_clip" => DistortionMode::HardClip,
-                            "tube" => DistortionMode::Tube,
-                            "foldback" => DistortionMode::Foldback,
-                            "bitcrush" => DistortionMode::Bitcrush,
-                            _ => DistortionMode::SoftClip,
-                        };
-                        TypedValue::DistortionMode(mode)
-                    }
-                    _ => TypedValue::Float(0.0),
-                }
-            }
-        }
-    }
-
-    /// Get the VoiceModule target for a given TypedParam.
-    fn get_voice_module_for_typed_param(&self, module_id: ModuleId, param: TypedParam) -> Option<VoiceModule> {
-        // First try to get from module ID mapping
-        if let Some(vm) = VoiceModule::from_module_id(module_id) {
-            return Some(vm);
-        }
-
-        // Fall back to parameter type inference
-        match param {
-            TypedParam::Oscillator(_) => Some(VoiceModule::Oscillator1),
-            TypedParam::Filter(_) => Some(VoiceModule::Filter),
-            TypedParam::Envelope(_) => Some(VoiceModule::AmpEnvelope),
-            TypedParam::Lfo(_) => Some(VoiceModule::Lfo),
-            TypedParam::Amplifier(_) => Some(VoiceModule::Amplifier),
-            TypedParam::Mixer(_) => Some(VoiceModule::Mixer),
-            // Effects are handled separately
-            TypedParam::Delay(_) | TypedParam::Reverb(_) |
-            TypedParam::Distortion(_) | TypedParam::Chorus(_) => None,
-            _ => None,
-        }
-    }
-
-    /// Get the EffectType for a module from its descriptor.
-    fn get_effect_type_from_module(&self, module_id: ModuleId) -> Option<EffectType> {
-        let desc = self.rack_view.module_descriptor(module_id)?;
-        
-        // Match based on type_id
-        match desc.type_id.0.as_str() {
-            "chorus" => Some(EffectType::Chorus),
-            "delay" => Some(EffectType::Delay),
-            "reverb" => Some(EffectType::Reverb),
-            "distortion" => Some(EffectType::Distortion),
-            _ => None,
-        }
+        patch_bridge::create_patch_from_rack(
+            &self.dialog_state.patch_save_name,
+            &self.rack_view,
+            &self.keyboard,
+            &self.handle,
+            self.glide_time,
+        )
     }
 }
 

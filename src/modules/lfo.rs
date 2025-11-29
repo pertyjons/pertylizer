@@ -12,6 +12,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, LfoParam, ModuleType};
 use crate::modules::core::*;
+use crate::types::{Hertz, Phase, NormalizedValue, SampleRate};
 
 /// LFO output mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,24 +28,24 @@ pub enum LfoMode {
 pub struct Lfo {
     // Parameters
     waveform: LfoWaveform,
-    rate: f32,          // Hz
-    depth: f32,         // 0-1
-    phase_offset: f32,  // 0-1 (full cycle)
+    rate: Hertz,
+    depth: NormalizedValue,
+    phase_offset: Phase,
     mode: LfoMode,
-    
+
     // State
-    phase: f32,
-    sample_rate: f32,
-    
+    phase: Phase,
+    sample_rate: SampleRate,
+
     // For S&H
     sh_value: f32,
     sh_trigger_prev: f32,
     noise_state: u32,
-    
+
     // Tempo sync
     tempo_sync: bool,
     sync_division: f32,  // In beats (0.25 = 16th note, 1.0 = quarter, etc)
-    
+
     // Output
     output_buffer: AudioBuffer,
 }
@@ -53,12 +54,12 @@ impl Lfo {
     pub fn new() -> Self {
         Self {
             waveform: LfoWaveform::Sine,
-            rate: 1.0,
-            depth: 1.0,
-            phase_offset: 0.0,
+            rate: Hertz::new(1.0),
+            depth: NormalizedValue::MAX,
+            phase_offset: Phase::ZERO,
             mode: LfoMode::Bipolar,
-            phase: 0.0,
-            sample_rate: 48000.0,
+            phase: Phase::ZERO,
+            sample_rate: SampleRate::DVD_QUALITY,
             sh_value: 0.0,
             sh_trigger_prev: 0.0,
             noise_state: 0x12345678,
@@ -82,13 +83,13 @@ impl Lfo {
     fn generate_sample(&mut self, tempo: f32) -> f32 {
         let effective_rate = if self.tempo_sync {
             // Convert beat division to Hz based on tempo
-            tempo / 60.0 / self.sync_division
+            Hertz::new(tempo / 60.0 / self.sync_division)
         } else {
             self.rate
         };
 
-        let phase_inc = effective_rate / self.sample_rate;
-        let phase = (self.phase + self.phase_offset).rem_euclid(1.0);
+        let phase_inc = effective_rate.phase_increment(self.sample_rate);
+        let phase = self.phase.advance(self.phase_offset.as_f32()).as_f32();
 
         let raw = match self.waveform {
             LfoWaveform::Sine => {
@@ -119,7 +120,7 @@ impl Lfo {
         };
 
         // Advance phase
-        self.phase = (self.phase + phase_inc).rem_euclid(1.0);
+        self.phase = self.phase.advance(phase_inc);
 
         // Apply mode
         let output = match self.mode {
@@ -127,12 +128,12 @@ impl Lfo {
             LfoMode::Unipolar => (raw + 1.0) * 0.5,
         };
 
-        output * self.depth
+        output * self.depth.as_f32()
     }
 
     /// Reset the LFO phase.
     pub fn retrigger(&mut self) {
-        self.phase = 0.0;
+        self.phase = Phase::ZERO;
     }
 }
 
@@ -193,7 +194,7 @@ impl VoiceModule for Lfo {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
         let retrigger_input = inputs.get("retrigger");
@@ -216,7 +217,7 @@ impl VoiceModule for Lfo {
                 let mod_amount = cv[i];
                 // Exponential rate modulation (exp2 is faster than powf)
                 let rate_mult = (mod_amount * 2.0).exp2();
-                self.rate = (self.rate * rate_mult).clamp(0.01, 50.0);
+                self.rate = Hertz::new((self.rate.as_f32() * rate_mult).clamp(0.01, 50.0));
             }
 
             self.output_buffer[i] = self.generate_sample(context.tempo);
@@ -238,17 +239,17 @@ impl VoiceModule for Lfo {
                 }
                 LfoParam::Rate => {
                     if let Some(r) = value.as_float() {
-                        self.rate = r.clamp(0.01, 50.0);
+                        self.rate = Hertz::new(r.clamp(0.01, 50.0));
                     }
                 }
                 LfoParam::Depth => {
                     if let Some(d) = value.as_float() {
-                        self.depth = d.clamp(0.0, 1.0);
+                        self.depth = NormalizedValue::new(d);
                     }
                 }
                 LfoParam::Phase => {
                     if let Some(p) = value.as_float() {
-                        self.phase_offset = p.clamp(0.0, 1.0);
+                        self.phase_offset = Phase::new(p);
                     }
                 }
                 LfoParam::TempoSync => {
@@ -262,7 +263,7 @@ impl VoiceModule for Lfo {
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Lfo(lfo_param) = param {
             match lfo_param {
@@ -270,9 +271,9 @@ impl VoiceModule for Lfo {
                     // Direct use - same type now!
                     Some(TypedValue::LfoWaveform(self.waveform))
                 }
-                LfoParam::Rate => Some(TypedValue::Float(self.rate)),
-                LfoParam::Depth => Some(TypedValue::Float(self.depth)),
-                LfoParam::Phase => Some(TypedValue::Float(self.phase_offset)),
+                LfoParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
+                LfoParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
+                LfoParam::Phase => Some(TypedValue::Float(self.phase_offset.as_f32())),
                 LfoParam::TempoSync => Some(TypedValue::Bool(self.tempo_sync)),
                 LfoParam::Retrigger => None,
             }
@@ -286,7 +287,7 @@ impl VoiceModule for Lfo {
     }
 
     fn reset(&mut self) {
-        self.phase = 0.0;
+        self.phase = Phase::ZERO;
         self.sh_value = 0.0;
     }
 
@@ -310,16 +311,16 @@ mod tests {
     fn test_lfo_creation() {
         let lfo = Lfo::new();
         assert_eq!(lfo.waveform, LfoWaveform::Sine);
-        assert!((lfo.rate - 1.0).abs() < 0.001);
+        assert!((lfo.rate.as_f32() - 1.0).abs() < 0.001);
     }
 
     #[test]
     fn test_lfo_output_range_bipolar() {
         let mut lfo = Lfo::new();
-        lfo.sample_rate = 48000.0;
-        lfo.rate = 10.0;
+        lfo.sample_rate = SampleRate::DVD_QUALITY;
+        lfo.rate = Hertz::new(10.0);
         lfo.mode = LfoMode::Bipolar;
-        lfo.depth = 1.0;
+        lfo.depth = NormalizedValue::MAX;
 
         let mut min = f32::MAX;
         let mut max = f32::MIN;
@@ -337,10 +338,10 @@ mod tests {
     #[test]
     fn test_lfo_output_range_unipolar() {
         let mut lfo = Lfo::new();
-        lfo.sample_rate = 48000.0;
-        lfo.rate = 10.0;
+        lfo.sample_rate = SampleRate::DVD_QUALITY;
+        lfo.rate = Hertz::new(10.0);
         lfo.mode = LfoMode::Unipolar;
-        lfo.depth = 1.0;
+        lfo.depth = NormalizedValue::MAX;
 
         let mut min = f32::MAX;
         let mut max = f32::MIN;
