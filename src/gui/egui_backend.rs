@@ -272,9 +272,12 @@ impl SynthApp {
 
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Clean up any modules returned from audio thread (dropped on main thread)
+        self.handle.cleanup_dropped_modules();
+
         // Handle keyboard input
         self.handle_keyboard_input(ctx);
-        
+
         // Request continuous repaint for meters
         ctx.request_repaint();
         
@@ -918,8 +921,8 @@ impl SynthApp {
         self.instance_counters.clear();
         self.handle.visualization_buffers.clear();
 
-        // Clear engine state
-        self.handle.send(EngineCommand::ClearAllModules);
+        // Clear engine state - blocking to ensure it completes before adding new modules
+        self.handle.send_blocking(EngineCommand::ClearAllModules);
 
         // Add modules from patch
         for module_state in &patch.modules {
@@ -1117,8 +1120,8 @@ impl SynthApp {
                 );
                 self.rack_view.add_connection(connection);
 
-                // Send connection to engine
-                self.handle.send(EngineCommand::Connect {
+                // Send connection to engine - blocking to ensure all connections are established
+                self.handle.send_blocking(EngineCommand::Connect {
                     from: PortId {
                         module: from_id,
                         port: conn.from.1.clone(),
@@ -1131,11 +1134,11 @@ impl SynthApp {
             }
         }
 
-        // Apply settings
+        // Apply settings - blocking to ensure they're applied after all modules
         self.keyboard.set_octave_offset(patch.settings.octave_offset);
         self.glide_time = patch.settings.glide_time;
-        self.handle.send(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-        self.handle.send(EngineCommand::SetGlideTime(patch.settings.glide_time));
+        self.handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
+        self.handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
     }
 
     /// Helper to apply parameters to a module during patch loading.

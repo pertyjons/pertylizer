@@ -30,10 +30,14 @@ use crate::modules::{
 use crate::visualizers::{Oscilloscope, LevelMeter, VisualizationBuffer};
 
 /// Size of the command ring buffer.
-const COMMAND_BUFFER_SIZE: usize = 1024;
+/// Large enough to handle patch loading (100+ modules with params/connections).
+const COMMAND_BUFFER_SIZE: usize = 16384;
 
 /// Size of the event ring buffer.
 const EVENT_BUFFER_SIZE: usize = 256;
+
+/// Size of the return channel for modules that need to be dropped on main thread.
+const RETURN_BUFFER_SIZE: usize = 256;
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -110,12 +114,21 @@ impl VoiceProcessingBuffers {
     }
 }
 
+/// Wrapper for modules returned from audio thread.
+/// This allows dropping to happen on the main thread.
+pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
+
+// SAFETY: VoiceModule trait requires Send
+unsafe impl Send for DroppedModule {}
+
 /// Handle for the UI to communicate with the engine.
 pub struct EngineHandle {
     /// Send commands to the engine.
     command_producer: ringbuf::HeapProd<EngineCommand>,
     /// Receive events from the engine.
     event_consumer: ringbuf::HeapCons<EngineEvent>,
+    /// Receive dropped modules from audio thread (for main thread cleanup).
+    return_consumer: ringbuf::HeapCons<DroppedModule>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -123,9 +136,43 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    /// Send a command to the engine.
+    /// Send a command to the engine (non-blocking, may fail if queue full).
     pub fn send(&mut self, command: EngineCommand) -> bool {
         self.command_producer.try_push(command).is_ok()
+    }
+
+    /// Send a command to the engine, blocking until there's space in the queue.
+    /// Use this when loading patches or doing bulk operations.
+    /// Returns false only if there's a timeout (deadlock protection).
+    pub fn send_blocking(&mut self, command: EngineCommand) -> bool {
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 10000; // ~10 seconds at 1ms sleep
+        let mut cmd = command;
+
+        loop {
+            match self.command_producer.try_push(cmd) {
+                Ok(()) => return true,
+                Err(returned_cmd) => {
+                    cmd = returned_cmd; // ringbuf returns the value directly on error
+                    attempts += 1;
+                    if attempts >= MAX_ATTEMPTS {
+                        eprintln!("Command queue timeout after {} attempts!", MAX_ATTEMPTS);
+                        // Final attempt, drop the command if it fails
+                        return self.command_producer.try_push(cmd).is_ok();
+                    }
+                    // Give the audio thread time to process commands
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
+    /// Poll and drop any modules returned from the audio thread.
+    /// Call this regularly from the main thread to clean up removed modules.
+    pub fn cleanup_dropped_modules(&mut self) {
+        while self.return_consumer.try_pop().is_some() {
+            // Module is dropped here on the main thread - no audio glitches!
+        }
     }
 
     /// Send a note on event.
@@ -243,6 +290,8 @@ pub struct SynthEngine {
     command_consumer: ringbuf::HeapCons<EngineCommand>,
     /// Send events to UI.
     event_producer: ringbuf::HeapProd<EngineEvent>,
+    /// Send removed modules back to UI for dropping on main thread.
+    return_producer: ringbuf::HeapProd<DroppedModule>,
     /// Shared state.
     state: Arc<EngineState>,
 
@@ -309,6 +358,10 @@ impl SynthEngine {
         let event_rb = HeapRb::<EngineEvent>::new(EVENT_BUFFER_SIZE);
         let (event_producer, event_consumer) = event_rb.split();
 
+        // Create return buffer for modules to be dropped on main thread
+        let return_rb = HeapRb::<DroppedModule>::new(RETURN_BUFFER_SIZE);
+        let (return_producer, return_consumer) = return_rb.split();
+
         // Create voice template with default signal chain
         let voice_template = Self::create_default_voice_template();
 
@@ -347,6 +400,7 @@ impl SynthEngine {
         let engine = Self {
             command_consumer,
             event_producer,
+            return_producer,
             state: Arc::clone(&state),
             voice_allocator,
             voice_template,
@@ -374,6 +428,7 @@ impl SynthEngine {
         let handle = EngineHandle {
             command_producer,
             event_consumer,
+            return_consumer,
             state,
             visualization_buffers: HashMap::new(),
         };
@@ -688,7 +743,11 @@ impl SynthEngine {
             }
 
             EngineCommand::RemoveModule { id } => {
-                self.module_graph.remove_module(id);
+                // Remove module and send it back to main thread for dropping
+                // This avoids deallocation on the audio thread
+                if let Some(module) = self.module_graph.remove_module_and_return(id) {
+                    let _ = self.return_producer.try_push(DroppedModule(module));
+                }
             }
 
             EngineCommand::Connect { from, to } => {

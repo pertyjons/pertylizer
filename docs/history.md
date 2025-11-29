@@ -1,5 +1,26 @@
 # Version History
 
+## [0.13.2] - 2024
+
+### Fixed
+- **Command Queue Saturation** - Critical fix for patch loading reliability
+  - Increased command buffer from 1024 to 16384 entries
+  - Added `send_blocking()` method for reliable patch loading
+  - Commands no longer silently dropped when buffer is full
+- **Real-time Safety** - Modules now dropped on main thread, not audio thread
+  - New return channel sends removed modules back to GUI for cleanup
+  - Prevents audio dropouts (glitches) during module removal
+  - `cleanup_dropped_modules()` called each frame in GUI
+
+### Technical Details
+- `COMMAND_BUFFER_SIZE` increased to 16384
+- `EngineHandle::send_blocking()` waits for queue space with timeout protection
+- `DroppedModule` wrapper and return channel (`RETURN_BUFFER_SIZE: 256`)
+- `ModuleGraph::remove_module_and_return()` for deferred cleanup
+- `load_patch_data()` uses blocking sends for ClearAllModules, Connect, and settings
+
+---
+
 ## [0.13.1] - 2024
 
 ### Added

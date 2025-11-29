@@ -156,11 +156,19 @@ impl ModuleGraph {
         self.order_dirty = true;
     }
 
-    /// Remove a module from the graph.
-    pub fn remove_module(&mut self, id: ModuleId) -> Option<Box<dyn VoiceModule>> {
+    /// Remove a module from the graph (drops the module).
+    pub fn remove_module(&mut self, id: ModuleId) {
         // Remove all connections involving this module
         self.connections.retain(|c| c.from_module != id && c.to_module != id);
-        
+        self.order_dirty = true;
+        self.nodes.remove(&id);
+    }
+
+    /// Remove a module from the graph and return it.
+    /// Use this to defer dropping to a non-audio thread.
+    pub fn remove_module_and_return(&mut self, id: ModuleId) -> Option<Box<dyn VoiceModule>> {
+        // Remove all connections involving this module
+        self.connections.retain(|c| c.from_module != id && c.to_module != id);
         self.order_dirty = true;
         self.nodes.remove(&id).map(|n| n.module)
     }
