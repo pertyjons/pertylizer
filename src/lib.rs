@@ -88,6 +88,7 @@ pub mod visualizers;
 pub mod ui;
 pub mod gui;
 pub mod patch;
+pub mod sequencer;
 
 #[cfg(test)]
 mod tests;
@@ -127,3 +128,23 @@ pub use gui::{GuiBackend, GuiType, SynthGuiConfig, create_backend, print_availab
 
 // Re-export patch system
 pub use patch::{Patch, PatchError, ModuleState, ModuleType, ConnectionState, PatchSettings, example_patches};
+
+// Re-export sequencer types
+pub use sequencer::{
+    // Core types
+    Song, Pattern, Track, Note,
+    // Time types
+    Tick, PatternTick, Duration, TimeSignature, TICKS_PER_QUARTER,
+    // Pitch/velocity
+    Pitch, Velocity, NoteName,
+    // IDs
+    PatternId, TrackId, InstrumentId, NoteId,
+    // Automation
+    AutomationLane, AutomationPoint, AutomationTarget, CurveType,
+    // Effects
+    EffectCommand,
+    // Events and input
+    SequencerEvent, InputCommand, InputSource,
+    // View helpers
+    TrackerRow, TrackerCell, TrackerViewConfig,
+};
