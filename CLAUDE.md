@@ -1,4 +1,3 @@
-- När du gör ändringar så vill jag att du uppdaterar versionen i Cargo.yml, små ändringar skall bara uppdatera sista siffran, större ändringar uppdaterar andra och den sista låter vi vara tills vi har en första version vi kan releasa.
-- Jag vill att du lägger till en kommentar på vad som är implementerat i en verisionshistorik i en egen fil som heter history.md och den skall ligga i katalogen docs
-- om jag skriver git commit vill jag att du committar alla ändringar till git med en kort kommentar.
-- Jag vill att du skriver en kommentar i history.md om vad som är implementerat, och att du uppdaterar den med varje commit.
+
+- När jag skriver 'git commit' vill jag att du skall du uppdatera Cargo.toml med en ny version och sen docs/history.md med samma version och kommentar om vad som är implementerat. Efter det committar alla ändringar till git med en kort kommentar.
+
