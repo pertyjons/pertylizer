@@ -1071,6 +1071,7 @@ pub enum VisualizerType {
 #[derive(Debug, Clone, Copy)]
 pub enum PaletteSelection {
     Category(ModuleCategory),
+    MathOscillator,
     Effect(EffectType),
     Visualizer(VisualizerType),
     StereoOutput,
@@ -1084,8 +1085,23 @@ impl ModulePalette {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Add Module:").color(colors::TEXT_SECONDARY));
 
-            let categories = [
-                (ModuleCategory::Oscillator, "Oscillator", "🎵"),
+            // Oscillator submenu (Basic + Math)
+            let osc_color = category_color(ModuleCategory::Oscillator);
+            ui.menu_button(
+                egui::RichText::new("🎵 Oscillator").color(osc_color),
+                |ui| {
+                    if ui.button("🎵 Basic").clicked() {
+                        selected = Some(PaletteSelection::Category(ModuleCategory::Oscillator));
+                        ui.close();
+                    }
+                    if ui.button("🔢 Math").clicked() {
+                        selected = Some(PaletteSelection::MathOscillator);
+                        ui.close();
+                    }
+                },
+            );
+
+            let other_categories = [
                 (ModuleCategory::Filter, "Filter", "🔊"),
                 (ModuleCategory::Envelope, "Envelope", "📈"),
                 (ModuleCategory::LFO, "LFO", "〰"),
@@ -1093,7 +1109,7 @@ impl ModulePalette {
                 (ModuleCategory::Mixer, "Mixer", "🎚"),
             ];
 
-            for (category, name, icon) in categories {
+            for (category, name, icon) in other_categories {
                 let color = category_color(category);
                 let button = egui::Button::new(
                     egui::RichText::new(format!("{} {}", icon, name)).color(color),

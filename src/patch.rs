@@ -75,6 +75,7 @@ pub struct ModuleState {
 #[serde(rename_all = "snake_case")]
 pub enum ModuleType {
     Oscillator,
+    MathOscillator,
     Filter,
     Envelope,
     Lfo,
@@ -94,6 +95,7 @@ impl ModuleType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Oscillator => "oscillator",
+            Self::MathOscillator => "math_oscillator",
             Self::Filter => "filter",
             Self::Envelope => "envelope",
             Self::Lfo => "lfo",
@@ -113,6 +115,7 @@ impl ModuleType {
     pub fn prefix(&self) -> &'static str {
         match self {
             Self::Oscillator => "osc",
+            Self::MathOscillator => "mth",
             Self::Filter => "flt",
             Self::Envelope => "env",
             Self::Lfo => "lfo",
@@ -347,6 +350,11 @@ impl ModuleBuilder {
         self.param_choice("mode", mode)
     }
 
+    /// Convenience: set algorithm for math oscillator.
+    pub fn algorithm(self, algo: &str) -> Self {
+        self.param_choice("algorithm", algo)
+    }
+
     pub fn build(self) -> ModuleState {
         self.state
     }
@@ -369,6 +377,13 @@ pub fn example_patches() -> Vec<Patch> {
         patch_pluck_synth(),
         patch_fm_bell(),
         patch_noise_sweep(),
+        // Math oscillator patches
+        patch_chaos_drone(),
+        patch_karplus_guitar(),
+        patch_shepard_riser(),
+        patch_bytebeat_glitch(),
+        patch_wave_folder_bass(),
+        patch_formant_voice(),
     ]
 }
 
@@ -1541,6 +1556,552 @@ different effect speeds. Great for transitions, buildups, and risers.
     // Route to oscilloscope and output
     patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
     patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+
+    patch
+}
+
+// ============================================================================
+// MATH OSCILLATOR PATCHES
+// ============================================================================
+
+/// Chaos Drone - Evolving chaotic textures using Lorenz attractor.
+pub fn patch_chaos_drone() -> Patch {
+    let mut patch = Patch::new("Chaos Drone");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Evolving chaotic textures using the Lorenz strange attractor.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+The Math Oscillator uses the Lorenz chaos algorithm to create unpredictable,
+evolving waveforms. The Lorenz attractor is a famous mathematical system
+that exhibits chaotic behavior - small changes lead to vastly different outcomes.
+
+PARAMETERS:
+- Param A: Controls the chaos speed (higher = faster evolution)
+- Param B: Controls the output scaling/amplitude
+- Param C: Not used by Lorenz algorithm
+
+The output is filtered through a lowpass filter to tame harsh frequencies,
+then processed with reverb for an ethereal, spacious sound.
+
+MODULATION:
+An LFO slowly modulates Param A, causing the chaos to speed up and slow down
+over time, creating organic variation in the texture.
+
+TRY: Play sustained notes and let the chaos evolve. Each note will sound
+different due to the chaotic nature of the algorithm.
+"#.to_string());
+    patch.tags = vec!["math".into(), "chaos".into(), "drone".into(), "experimental".into(), "ambient".into()];
+
+    // Math Oscillator - Lorenz chaos (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("lorenz")
+        .param_f("param_a", 0.5)
+        .param_f("param_b", 0.7)
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.8)
+        .build());
+
+    // Filter - Smooth out harsh chaos (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("lowpass")
+        .param_f("cutoff", 2000.0)
+        .param_f("resonance", 0.3)
+        .build());
+
+    // Amp Envelope - Long pad envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 2.0)
+        .param_f("decay", 0.5)
+        .param_f("sustain", 0.7)
+        .param_f("release", 4.0)
+        .build());
+
+    // LFO - Modulate chaos speed (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
+        .position(250.0, 300.0)
+        .waveform("sine")
+        .param_f("rate", 0.05)
+        .param_f("depth", 0.3)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.6)
+        .build());
+
+    // Reverb - Spacious (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
+        .position(650.0, 50.0)
+        .param_f("room_size", 0.9)
+        .param_f("damping", 0.3)
+        .param_f("mix", 0.5)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.7)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("lfo-1", "out", "mth-1", "param_a");
+    patch.add_connection("amp-1", "out", "rev-1", "in_l");
+    patch.add_connection("rev-1", "out_l", "out-1", "in_l");
+    patch.add_connection("rev-1", "out_r", "out-1", "in_r");
+
+    patch.settings.octave_offset = -1;
+    patch
+}
+
+/// Karplus Guitar - Physical modeling plucked string sound.
+pub fn patch_karplus_guitar() -> Patch {
+    let mut patch = Patch::new("Karplus Guitar");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Physical modeling plucked string using Karplus-Strong synthesis.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+The Karplus-Strong algorithm simulates a vibrating string. When a note is
+triggered, a burst of noise fills a delay line. The output is fed back through
+a low-pass filter, creating decaying harmonics like a real plucked string.
+
+PARAMETERS:
+- Param A: String damping (0.9-0.99) - higher = longer sustain
+- Param B: Pluck strength - intensity of the initial burst
+- Param C: Not actively used
+
+This creates remarkably realistic guitar and string-like tones using pure
+mathematics - no samples required!
+
+EFFECTS:
+A subtle chorus adds width, and reverb places the guitar in an acoustic space.
+
+TRY: Play melodic lines. Try different octaves - lower notes sound like bass
+guitar, higher notes like acoustic guitar or harp.
+"#.to_string());
+    patch.tags = vec!["math".into(), "physical_modeling".into(), "guitar".into(), "pluck".into(), "string".into()];
+
+    // Math Oscillator - Karplus-Strong (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("karplus_strong")
+        .param_f("param_a", 0.7)  // Damping
+        .param_f("param_b", 0.8)  // Pluck strength
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.9)
+        .build());
+
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 0.001)
+        .param_f("decay", 0.1)
+        .param_f("sustain", 0.8)
+        .param_f("release", 0.5)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(250.0, 50.0)
+        .param_f("level", 0.7)
+        .build());
+
+    // Chorus - Add width (chr-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Chorus)
+        .position(450.0, 50.0)
+        .param_f("rate", 0.8)
+        .param_f("depth", 0.2)
+        .param_f("mix", 0.25)
+        .build());
+
+    // Reverb - Room sound (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
+        .position(650.0, 50.0)
+        .param_f("room_size", 0.5)
+        .param_f("damping", 0.4)
+        .param_f("mix", 0.3)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "chr-1", "in_l");
+    patch.add_connection("chr-1", "out_l", "rev-1", "in_l");
+    patch.add_connection("chr-1", "out_r", "rev-1", "in_r");
+    patch.add_connection("rev-1", "out_l", "out-1", "in_l");
+    patch.add_connection("rev-1", "out_r", "out-1", "in_r");
+
+    patch
+}
+
+/// Shepard Riser - Infinite rising tone effect.
+pub fn patch_shepard_riser() -> Patch {
+    let mut patch = Patch::new("Shepard Riser");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("The Shepard tone - an auditory illusion of endlessly rising pitch.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+The Shepard tone is a famous auditory illusion where multiple octaves of
+a tone rise in pitch, with the amplitudes carefully balanced so that as
+high frequencies fade out, low frequencies fade in. The result sounds
+like it's perpetually rising without ever getting higher.
+
+PARAMETERS:
+- Param A: Frequency center point (where the loudest octave is)
+- Param B: Rise speed (negative = falling, positive = rising)
+- Param C: Not actively used
+
+PERFECT FOR:
+- Transitions and buildups in music
+- Sound design for film/games
+- Psychoacoustic experiments
+
+TRY: Hold a note and listen - it seems to rise forever! Adjust Param B
+to control speed, or set it negative for a falling effect.
+"#.to_string());
+    patch.tags = vec!["math".into(), "shepard".into(), "illusion".into(), "riser".into(), "experimental".into()];
+
+    // Math Oscillator - Shepard tone (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("shepard")
+        .param_f("param_a", 0.5)  // Center frequency
+        .param_f("param_b", 0.7)  // Rising speed
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.7)
+        .build());
+
+    // Filter - Smooth (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("lowpass")
+        .param_f("cutoff", 4000.0)
+        .param_f("resonance", 0.1)
+        .build());
+
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 1.0)
+        .param_f("decay", 0.5)
+        .param_f("sustain", 0.8)
+        .param_f("release", 2.0)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.6)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(650.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "out-1", "in_l");
+
+    patch
+}
+
+/// Bytebeat Glitch - Retro digital music formula.
+pub fn patch_bytebeat_glitch() -> Patch {
+    let mut patch = Patch::new("Bytebeat Glitch");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Algorithmic music using bytebeat formula synthesis.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+Bytebeat is a style of algorithmic music where sound is generated from
+simple mathematical formulas. The classic formula is:
+  t * ((t >> A) | (t >> B))
+
+where t is a time counter and A, B are bitshift amounts.
+
+PARAMETERS:
+- Param A: First bitshift amount (creates rhythm/melody)
+- Param B: Second bitshift amount (creates harmony/texture)
+- Param C: Not actively used
+
+Different parameter combinations create completely different "songs"!
+Some sound melodic, others chaotic, many sound retro and 8-bit.
+
+TRY: Play notes and experiment with different Param A/B values.
+Small changes can create vastly different musical results!
+"#.to_string());
+    patch.tags = vec!["math".into(), "bytebeat".into(), "glitch".into(), "8bit".into(), "retro".into(), "experimental".into()];
+
+    // Math Oscillator - Bytebeat (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("bytebeat")
+        .param_f("param_a", 0.4)  // Bitshift A
+        .param_f("param_b", 0.6)  // Bitshift B
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.6)
+        .build());
+
+    // Filter - Tame harsh highs (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("lowpass")
+        .param_f("cutoff", 3000.0)
+        .param_f("resonance", 0.2)
+        .build());
+
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 0.01)
+        .param_f("decay", 0.1)
+        .param_f("sustain", 0.7)
+        .param_f("release", 0.2)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.5)
+        .build());
+
+    // Delay - Add rhythm (dly-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Delay)
+        .position(650.0, 50.0)
+        .delay_mode("ping_pong")
+        .param_f("time", 0.15)
+        .param_f("feedback", 0.3)
+        .param_f("mix", 0.3)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.7)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "dly-1", "in_l");
+    patch.add_connection("dly-1", "out_l", "out-1", "in_l");
+    patch.add_connection("dly-1", "out_r", "out-1", "in_r");
+
+    patch
+}
+
+/// Wave Folder Bass - West coast synthesis bass.
+pub fn patch_wave_folder_bass() -> Patch {
+    let mut patch = Patch::new("Wave Folder Bass");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Rich, harmonically complex bass using wave folding.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+Wave folding is a classic West Coast synthesis technique. When a waveform
+exceeds a threshold, it "folds" back, creating rich harmonics. More folding
+= more harmonics = brighter, more complex sound.
+
+PARAMETERS:
+- Param A: Fold amount (more = richer harmonics)
+- Param B: DC offset (shifts the folding point)
+- Param C: Not actively used
+
+Unlike subtractive synthesis (filtering harmonics out), wave folding
+ADDS harmonics, creating sounds impossible with traditional oscillators.
+
+ENVELOPE MODULATION:
+The filter envelope modulates the fold amount, creating dynamic harmonic
+content - bright attack that settles into a warm sustain.
+
+TRY: Play bass lines and adjust Param A for different harmonic density.
+Low values = warm, high values = aggressive and metallic.
+"#.to_string());
+    patch.tags = vec!["math".into(), "wave_folder".into(), "bass".into(), "west_coast".into()];
+
+    // Math Oscillator - Wave folder (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("wave_folder")
+        .param_f("param_a", 0.4)  // Fold amount
+        .param_f("param_b", 0.3)  // Offset
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.9)
+        .build());
+
+    // Filter - Shape the bass (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("lowpass")
+        .param_f("cutoff", 600.0)
+        .param_f("resonance", 0.4)
+        .build());
+
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 0.005)
+        .param_f("decay", 0.2)
+        .param_f("sustain", 0.6)
+        .param_f("release", 0.15)
+        .build());
+
+    // Filter Envelope (env-2)
+    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
+        .position(250.0, 300.0)
+        .param_f("attack", 0.001)
+        .param_f("decay", 0.15)
+        .param_f("sustain", 0.2)
+        .param_f("release", 0.1)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.8)
+        .build());
+
+    // Distortion - Add grit (dst-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
+        .position(650.0, 50.0)
+        .distortion_mode("tube")
+        .param_f("drive", 0.3)
+        .param_f("mix", 0.4)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.7)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
+    patch.add_connection("env-2", "out", "mth-1", "param_a");
+    patch.add_connection("amp-1", "out", "dst-1", "in");
+    patch.add_connection("dst-1", "out", "out-1", "in_l");
+
+    patch.settings.octave_offset = -2;
+    patch
+}
+
+/// Formant Voice - Vocal-like synthesis.
+pub fn patch_formant_voice() -> Patch {
+    let mut patch = Patch::new("Formant Voice");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Vocal-like sounds using formant synthesis.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+Formant synthesis creates vocal-like sounds by simulating the resonances
+of the human vocal tract. The formant algorithm generates a carrier
+wave with decaying resonant peaks at specific frequencies.
+
+PARAMETERS:
+- Param A: Formant frequency ratio (vowel character)
+- Param B: Decay rate (how quickly each cycle fades)
+- Param C: Not actively used
+
+Different Param A values create different "vowels":
+- Low values (~0.2-0.3): "oo" sounds
+- Mid values (~0.5): "ah" sounds
+- High values (~0.8-0.9): "ee" sounds
+
+TRY: Play melody lines and slowly sweep Param A to create "talking"
+or "singing" effects. LFO modulation adds natural movement.
+"#.to_string());
+    patch.tags = vec!["math".into(), "formant".into(), "voice".into(), "vocal".into()];
+
+    // Math Oscillator - Formant (mth-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
+        .position(50.0, 50.0)
+        .algorithm("formant")
+        .param_f("param_a", 0.5)  // Formant frequency
+        .param_f("param_b", 0.4)  // Decay
+        .param_f("param_c", 0.5)
+        .param_f("level", 0.8)
+        .build());
+
+    // Filter (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("lowpass")
+        .param_f("cutoff", 3500.0)
+        .param_f("resonance", 0.2)
+        .build());
+
+    // Amp Envelope (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 0.02)
+        .param_f("decay", 0.3)
+        .param_f("sustain", 0.7)
+        .param_f("release", 0.4)
+        .build());
+
+    // LFO - Modulate formant (lfo-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
+        .position(250.0, 300.0)
+        .waveform("sine")
+        .param_f("rate", 0.3)
+        .param_f("depth", 0.15)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.7)
+        .build());
+
+    // Chorus - Add width (chr-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Chorus)
+        .position(650.0, 50.0)
+        .param_f("rate", 0.6)
+        .param_f("depth", 0.3)
+        .param_f("mix", 0.3)
+        .build());
+
+    // Reverb (rev-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
+        .position(850.0, 50.0)
+        .param_f("room_size", 0.6)
+        .param_f("damping", 0.4)
+        .param_f("mix", 0.3)
+        .build());
+
+    // Stereo Output (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(1050.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections
+    patch.add_connection("mth-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("lfo-1", "out", "mth-1", "param_a");
+    patch.add_connection("amp-1", "out", "chr-1", "in_l");
+    patch.add_connection("chr-1", "out_l", "rev-1", "in_l");
+    patch.add_connection("chr-1", "out_r", "rev-1", "in_r");
+    patch.add_connection("rev-1", "out_l", "out-1", "in_l");
+    patch.add_connection("rev-1", "out_r", "out-1", "in_r");
 
     patch
 }

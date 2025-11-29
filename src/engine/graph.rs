@@ -541,6 +541,10 @@ impl ModuleGraph {
                 if let Some(output_buf) = from_node.outputs.get(from_port) {
                     // Sum inputs if multiple connections to same port
                     if let Some(existing) = self.input_buffers.get_mut(to_port) {
+                        // Ensure buffer is correctly sized before adding
+                        if existing.len() < context.samples {
+                            existing.resize(context.samples);
+                        }
                         existing.add_from(output_buf);
                     } else {
                         // Need to insert a new buffer - ensure it's sized correctly
@@ -576,6 +580,10 @@ impl ModuleGraph {
                 for buf in node.outputs.values_mut() {
                     buf.resize(size);
                 }
+            }
+            // Also resize the input buffer cache to prevent out-of-bounds access
+            for buf in self.input_buffers.values_mut() {
+                buf.resize(size);
             }
         }
     }

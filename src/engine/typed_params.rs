@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModuleType {
     Oscillator,
+    MathOscillator,
     Filter,
     Envelope,
     Lfo,
@@ -52,6 +53,7 @@ impl ModuleType {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Oscillator => "Oscillator",
+            Self::MathOscillator => "Math Oscillator",
             Self::Filter => "Filter",
             Self::Envelope => "Envelope",
             Self::Lfo => "LFO",
@@ -79,6 +81,7 @@ impl ModuleType {
     pub fn prefix(&self) -> &'static str {
         match self {
             Self::Oscillator => "osc",
+            Self::MathOscillator => "mth",
             Self::Filter => "flt",
             Self::Envelope => "env",
             Self::Lfo => "lfo",
@@ -106,6 +109,7 @@ impl ModuleType {
     pub fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix {
             "osc" => Some(Self::Oscillator),
+            "mth" => Some(Self::MathOscillator),
             "flt" => Some(Self::Filter),
             "env" => Some(Self::Envelope),
             "lfo" => Some(Self::Lfo),
@@ -135,6 +139,7 @@ impl ModuleType {
         use crate::patch::ModuleType as PM;
         match self {
             Self::Oscillator => PM::Oscillator,
+            Self::MathOscillator => PM::MathOscillator,
             Self::Filter => PM::Filter,
             Self::Envelope => PM::Envelope,
             Self::Lfo => PM::Lfo,
@@ -510,6 +515,135 @@ impl LoopMode {
 }
 
 // ============================================================================
+// MATH OSCILLATOR ALGORITHM ENUM
+// ============================================================================
+
+/// Math oscillator algorithm types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum MathAlgo {
+    #[default]
+    SineFM,
+    TanChaos,
+    SuperSaw,
+    BitWise,
+    WaveFolder,
+    Formant,
+    PhaseDist,
+    Metallic,
+    Fractal,
+    Chebyshev,
+    Bytebeat,
+    Lorenz,
+    KarplusStrong,
+    Walsh,
+    Logistic,
+    Pulsar,
+    Shepard,
+    FeedbackFM,
+}
+
+impl MathAlgo {
+    pub const ALL: [Self; 18] = [
+        Self::SineFM,
+        Self::TanChaos,
+        Self::SuperSaw,
+        Self::BitWise,
+        Self::WaveFolder,
+        Self::Formant,
+        Self::PhaseDist,
+        Self::Metallic,
+        Self::Fractal,
+        Self::Chebyshev,
+        Self::Bytebeat,
+        Self::Lorenz,
+        Self::KarplusStrong,
+        Self::Walsh,
+        Self::Logistic,
+        Self::Pulsar,
+        Self::Shepard,
+        Self::FeedbackFM,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::SineFM => "Sine FM",
+            Self::TanChaos => "Tan Chaos",
+            Self::SuperSaw => "Super Saw",
+            Self::BitWise => "BitWise",
+            Self::WaveFolder => "Wave Folder",
+            Self::Formant => "Formant",
+            Self::PhaseDist => "Phase Dist",
+            Self::Metallic => "Metallic",
+            Self::Fractal => "Fractal",
+            Self::Chebyshev => "Chebyshev",
+            Self::Bytebeat => "Bytebeat",
+            Self::Lorenz => "Lorenz",
+            Self::KarplusStrong => "Karplus-Strong",
+            Self::Walsh => "Walsh",
+            Self::Logistic => "Logistic",
+            Self::Pulsar => "Pulsar",
+            Self::Shepard => "Shepard",
+            Self::FeedbackFM => "Feedback FM",
+        }
+    }
+
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::SineFM => "sine_fm",
+            Self::TanChaos => "tan_chaos",
+            Self::SuperSaw => "super_saw",
+            Self::BitWise => "bitwise",
+            Self::WaveFolder => "wave_folder",
+            Self::Formant => "formant",
+            Self::PhaseDist => "phase_dist",
+            Self::Metallic => "metallic",
+            Self::Fractal => "fractal",
+            Self::Chebyshev => "chebyshev",
+            Self::Bytebeat => "bytebeat",
+            Self::Lorenz => "lorenz",
+            Self::KarplusStrong => "karplus_strong",
+            Self::Walsh => "walsh",
+            Self::Logistic => "logistic",
+            Self::Pulsar => "pulsar",
+            Self::Shepard => "shepard",
+            Self::FeedbackFM => "feedback_fm",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "sine_fm" => Some(Self::SineFM),
+            "tan_chaos" => Some(Self::TanChaos),
+            "super_saw" => Some(Self::SuperSaw),
+            "bitwise" => Some(Self::BitWise),
+            "wave_folder" => Some(Self::WaveFolder),
+            "formant" => Some(Self::Formant),
+            "phase_dist" => Some(Self::PhaseDist),
+            "metallic" => Some(Self::Metallic),
+            "fractal" => Some(Self::Fractal),
+            "chebyshev" => Some(Self::Chebyshev),
+            "bytebeat" => Some(Self::Bytebeat),
+            "lorenz" => Some(Self::Lorenz),
+            "karplus_strong" => Some(Self::KarplusStrong),
+            "walsh" => Some(Self::Walsh),
+            "logistic" => Some(Self::Logistic),
+            "pulsar" => Some(Self::Pulsar),
+            "shepard" => Some(Self::Shepard),
+            "feedback_fm" => Some(Self::FeedbackFM),
+            _ => None,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    pub fn index(&self) -> usize {
+        Self::ALL.iter().position(|a| a == self).unwrap_or(0)
+    }
+}
+
+// ============================================================================
 // MODULE-SPECIFIC PARAMETER ENUMS
 // ============================================================================
 
@@ -530,6 +664,23 @@ pub enum OscillatorParam {
     Level,
     /// Initial phase (0.0 to 1.0)
     Phase,
+}
+
+/// Math oscillator parameters - only valid for math oscillator modules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MathOscillatorParam {
+    /// Algorithm selection
+    Algorithm,
+    /// Base frequency in Hz
+    Frequency,
+    /// Parameter A (0.0 to 1.0)
+    ParamA,
+    /// Parameter B (0.0 to 1.0)
+    ParamB,
+    /// Parameter C (0.0 to 1.0)
+    ParamC,
+    /// Output level (0.0 to 1.0)
+    Level,
 }
 
 /// Filter parameters - only valid for filter modules.
@@ -824,6 +975,7 @@ pub enum LevelMeterParam {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TypedParam {
     Oscillator(OscillatorParam),
+    MathOscillator(MathOscillatorParam),
     Filter(FilterParam),
     Envelope(EnvelopeParam),
     Lfo(LfoParam),
@@ -848,6 +1000,7 @@ impl TypedParam {
     pub fn module_type(&self) -> ModuleType {
         match self {
             Self::Oscillator(_) => ModuleType::Oscillator,
+            Self::MathOscillator(_) => ModuleType::MathOscillator,
             Self::Filter(_) => ModuleType::Filter,
             Self::Envelope(_) => ModuleType::Envelope,
             Self::Lfo(_) => ModuleType::Lfo,
@@ -879,6 +1032,14 @@ impl TypedParam {
                 OscillatorParam::PulseWidth => "Pulse Width",
                 OscillatorParam::Level => "Level",
                 OscillatorParam::Phase => "Phase",
+            },
+            Self::MathOscillator(p) => match p {
+                MathOscillatorParam::Algorithm => "Algorithm",
+                MathOscillatorParam::Frequency => "Frequency",
+                MathOscillatorParam::ParamA => "Param A",
+                MathOscillatorParam::ParamB => "Param B",
+                MathOscillatorParam::ParamC => "Param C",
+                MathOscillatorParam::Level => "Level",
             },
             Self::Filter(p) => match p {
                 FilterParam::Mode => "Mode",
@@ -1041,6 +1202,8 @@ pub enum TypedValue {
     DistortionMode(DistortionMode),
     /// Loop mode
     LoopMode(LoopMode),
+    /// Math oscillator algorithm
+    MathAlgo(MathAlgo),
 }
 
 impl TypedValue {
@@ -1066,6 +1229,7 @@ impl TypedValue {
             Self::DelayMode(m) => Some(*m as i32),
             Self::DistortionMode(m) => Some(*m as i32),
             Self::LoopMode(m) => Some(*m as i32),
+            Self::MathAlgo(a) => Some(*a as i32),
         }
     }
 }
@@ -1103,6 +1267,12 @@ impl From<LfoWaveform> for TypedValue {
 impl From<FilterMode> for TypedValue {
     fn from(v: FilterMode) -> Self {
         Self::FilterMode(v)
+    }
+}
+
+impl From<MathAlgo> for TypedValue {
+    fn from(v: MathAlgo) -> Self {
+        Self::MathAlgo(v)
     }
 }
 

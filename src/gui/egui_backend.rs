@@ -29,7 +29,7 @@ use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::modules::{
     Describable, ModuleCategory, ModuleDescriptor,
-    Oscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
+    Oscillator, MathOscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
 };
 use crate::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use crate::visualizers::{Oscilloscope, LevelMeter};
@@ -353,6 +353,9 @@ impl eframe::App for SynthApp {
                         PaletteSelection::Category(category) => {
                             self.add_module_of_category(category);
                         }
+                        PaletteSelection::MathOscillator => {
+                            self.add_math_oscillator_module();
+                        }
                         PaletteSelection::Effect(effect_type) => {
                             self.add_effect_module(effect_type);
                         }
@@ -550,14 +553,28 @@ impl SynthApp {
 
         let next_id = self.next_module_id(module_type);
         self.rack_view.add_module(next_id, descriptor);
-        
+
         // Send pre-created module to engine (real-time safe - just moves a pointer)
         self.handle.send(EngineCommand::AddModuleInstance {
             id: next_id,
             module,
         });
     }
-    
+
+    fn add_math_oscillator_module(&mut self) {
+        let m = MathOscillator::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::MathOscillator);
+        self.rack_view.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            id: next_id,
+            module,
+        });
+    }
+
     fn add_effect_module(&mut self, effect_type: EffectType) {
         // Create effect in GUI thread (real-time safe allocation)
         let (effect, descriptor, module_type): (Box<dyn crate::modules::EffectModule>, _, TypedModuleType) = match effect_type {
@@ -931,6 +948,17 @@ impl SynthApp {
                     });
                     self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
                 }
+                PatchModuleType::MathOscillator => {
+                    let m = MathOscillator::new();
+                    let descriptor = m.descriptor();
+                    self.rack_view.add_module_at(module_id, descriptor.clone(),
+                        Pos2::new(module_state.position.0, module_state.position.1));
+                    self.handle.send(EngineCommand::AddModuleInstance {
+                        id: module_id,
+                        module: Box::new(m),
+                    });
+                    self.apply_module_parameters(module_id, &descriptor, &module_state.parameters, None);
+                }
                 PatchModuleType::Filter => {
                     let m = Filter::new();
                     let descriptor = m.descriptor();
@@ -1007,7 +1035,7 @@ impl SynthApp {
                         effect: Box::new(e),
                     });
                     self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(crate::engine::commands::EffectType::Delay));
+                        Some(EffectType::Delay));
                 }
                 PatchModuleType::Reverb => {
                     let e = Reverb::new();
@@ -1019,7 +1047,7 @@ impl SynthApp {
                         effect: Box::new(e),
                     });
                     self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(crate::engine::commands::EffectType::Reverb));
+                        Some(EffectType::Reverb));
                 }
                 PatchModuleType::Distortion => {
                     let e = Distortion::new();
@@ -1031,7 +1059,7 @@ impl SynthApp {
                         effect: Box::new(e),
                     });
                     self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(crate::engine::commands::EffectType::Distortion));
+                        Some(EffectType::Distortion));
                 }
                 PatchModuleType::Chorus => {
                     let e = Chorus::new();
@@ -1043,7 +1071,7 @@ impl SynthApp {
                         effect: Box::new(e),
                     });
                     self.apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                        Some(crate::engine::commands::EffectType::Chorus));
+                        Some(EffectType::Chorus));
                 }
                 PatchModuleType::Oscilloscope => {
                     let descriptor = Oscilloscope::new().descriptor();
@@ -1091,11 +1119,11 @@ impl SynthApp {
 
                 // Send connection to engine
                 self.handle.send(EngineCommand::Connect {
-                    from: crate::engine::commands::PortId {
+                    from: PortId {
                         module: from_id,
                         port: conn.from.1.clone(),
                     },
-                    to: crate::engine::commands::PortId {
+                    to: PortId {
                         module: to_id,
                         port: conn.to.1.clone(),
                     },
@@ -1114,9 +1142,9 @@ impl SynthApp {
     fn apply_module_parameters(
         &mut self,
         module_id: ModuleId,
-        descriptor: &crate::modules::ModuleDescriptor,
+        descriptor: &ModuleDescriptor,
         parameters: &HashMap<String, crate::patch::ParamValue>,
-        effect_type: Option<crate::engine::commands::EffectType>,
+        effect_type: Option<EffectType>,
     ) {
         for (param_name, value) in parameters {
             if let Some(typed_param) = self.find_param_by_name(descriptor, param_name) {
@@ -1180,7 +1208,7 @@ impl SynthApp {
                     _ => continue,
                 };
 
-                let mut param_map = std::collections::HashMap::new();
+                let mut param_map = HashMap::new();
                 for (typed_param, value) in params {
                     if let Some(name) = self.typed_param_to_name(typed_param) {
                         param_map.insert(name, crate::patch::ParamValue::Float(value));
@@ -1319,15 +1347,15 @@ impl SynthApp {
     }
 
     /// Get the EffectType for a module from its descriptor.
-    fn get_effect_type_from_module(&self, module_id: ModuleId) -> Option<crate::engine::commands::EffectType> {
+    fn get_effect_type_from_module(&self, module_id: ModuleId) -> Option<EffectType> {
         let desc = self.rack_view.module_descriptor(module_id)?;
         
         // Match based on type_id
         match desc.type_id.0.as_str() {
-            "chorus" => Some(crate::engine::commands::EffectType::Chorus),
-            "delay" => Some(crate::engine::commands::EffectType::Delay),
-            "reverb" => Some(crate::engine::commands::EffectType::Reverb),
-            "distortion" => Some(crate::engine::commands::EffectType::Distortion),
+            "chorus" => Some(EffectType::Chorus),
+            "delay" => Some(EffectType::Delay),
+            "reverb" => Some(EffectType::Reverb),
+            "distortion" => Some(EffectType::Distortion),
             _ => None,
         }
     }

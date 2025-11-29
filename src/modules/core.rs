@@ -760,7 +760,7 @@ pub trait EffectModule: Describable + Send {
 
 // Re-export waveform and filter types from typed_params
 pub use crate::engine::typed_params::{
-    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, LoopMode,
+    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
 };
 
 // Type alias for backward compatibility
@@ -790,6 +790,15 @@ impl FilterMode {
         Self::ALL
             .iter()
             .map(|f| ChoiceOption::new(f.id(), f.name()))
+            .collect()
+    }
+}
+
+impl MathAlgo {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|a| ChoiceOption::new(a.id(), a.name()))
             .collect()
     }
 }

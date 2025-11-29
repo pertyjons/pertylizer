@@ -308,6 +308,7 @@ impl<'a> ParameterWidget<'a> {
             TypedValue::DelayMode(m) => format!("{:?}", m),
             TypedValue::DistortionMode(m) => format!("{:?}", m),
             TypedValue::LoopMode(m) => format!("{:?}", m),
+            TypedValue::MathAlgo(a) => format!("{:?}", a),
         }
     }
 }
