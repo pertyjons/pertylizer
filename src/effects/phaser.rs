@@ -5,6 +5,7 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
+use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate};
 
 /// Number of all-pass filter stages (fixed at 6 for classic phaser sound).
 const NUM_STAGES: usize = 6;
@@ -34,48 +35,48 @@ impl AllPassStage {
 /// Phaser effect with LFO-modulated all-pass filter stages.
 pub struct Phaser {
     // Parameters
-    rate: f32,        // LFO rate in Hz
-    depth: f32,       // Modulation depth 0-1
-    feedback: f32,    // Feedback amount -1 to 1
-    center_freq: f32, // Center frequency in Hz
-    mix: f32,         // Dry/wet mix 0-1
+    rate: Hertz,
+    depth: NormalizedValue,
+    feedback: BipolarValue,
+    center_freq: Hertz,
+    mix: NormalizedValue,
 
     // All-pass filter stages (stereo)
     stages_l: [AllPassStage; NUM_STAGES],
     stages_r: [AllPassStage; NUM_STAGES],
 
     // LFO state
-    lfo_phase: f32,
+    lfo_phase: Phase,
 
     // Feedback state
     feedback_l: f32,
     feedback_r: f32,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Phaser {
     pub fn new() -> Self {
         Self {
-            rate: 0.5,
-            depth: 0.7,
-            feedback: 0.7,
-            center_freq: 1000.0,
-            mix: 0.5,
+            rate: Hertz::new(0.5),
+            depth: NormalizedValue::new(0.7),
+            feedback: BipolarValue::new(0.7),
+            center_freq: Hertz::new(1000.0),
+            mix: NormalizedValue::CENTER,
             stages_l: [AllPassStage::default(); NUM_STAGES],
             stages_r: [AllPassStage::default(); NUM_STAGES],
-            lfo_phase: 0.0,
+            lfo_phase: Phase::ZERO,
             feedback_l: 0.0,
             feedback_r: 0.0,
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     /// Calculate all-pass coefficient from frequency.
     #[inline]
     fn freq_to_coeff(&self, freq: f32) -> f32 {
-        let tan_val = (std::f32::consts::PI * freq / self.sample_rate).tan();
+        let tan_val = (std::f32::consts::PI * freq / self.sample_rate.as_f32()).tan();
         (tan_val - 1.0) / (tan_val + 1.0)
     }
 }
@@ -146,8 +147,8 @@ impl Describable for Phaser {
 
 impl EffectModule for Phaser {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
-        let phase_inc = self.rate / self.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
+        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
 
         // Process stereo interleaved
         let channels = 2;
@@ -163,36 +164,39 @@ impl EffectModule for Phaser {
             };
 
             // Calculate LFO value (sine wave)
-            let lfo = (self.lfo_phase * std::f32::consts::TAU).sin();
-            self.lfo_phase = (self.lfo_phase + phase_inc).rem_euclid(1.0);
+            let lfo = (self.lfo_phase.as_f32() * std::f32::consts::TAU).sin();
+            self.lfo_phase = Phase::new((self.lfo_phase.as_f32() + phase_inc).rem_euclid(1.0));
 
             // Calculate modulated frequency
-            let freq_mod = self.center_freq * (1.0 + lfo * self.depth * 0.8);
-            let freq_mod = freq_mod.clamp(100.0, self.sample_rate * 0.45);
+            let depth = self.depth.as_f32();
+            let freq_mod = self.center_freq.as_f32() * (1.0 + lfo * depth * 0.8);
+            let freq_mod = freq_mod.clamp(100.0, self.sample_rate.as_f32() * 0.45);
 
             // Calculate coefficient for all-pass filters
             let coeff = self.freq_to_coeff(freq_mod);
 
             // Process left channel through all-pass cascade
-            let mut sample_l = in_l + self.feedback_l * self.feedback;
+            let feedback = self.feedback.as_f32();
+            let mut sample_l = in_l + self.feedback_l * feedback;
             for stage in &mut self.stages_l {
                 sample_l = stage.process(sample_l, coeff);
             }
             self.feedback_l = sample_l;
 
             // Process right channel (slightly offset phase for stereo width)
-            let mut sample_r = in_r + self.feedback_r * self.feedback;
+            let mut sample_r = in_r + self.feedback_r * feedback;
             for stage in &mut self.stages_r {
                 sample_r = stage.process(sample_r, coeff);
             }
             self.feedback_r = sample_r;
 
             // Mix dry/wet
+            let mix = self.mix.as_f32();
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + sample_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + sample_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + sample_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + sample_r * mix;
             }
         }
     }
@@ -206,15 +210,15 @@ impl EffectModule for Phaser {
         }
         self.feedback_l = 0.0;
         self.feedback_r = 0.0;
-        self.lfo_phase = 0.0;
+        self.lfo_phase = Phase::ZERO;
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -222,17 +226,17 @@ impl EffectModule for Phaser {
             match phaser_param {
                 PhaserParam::Rate => {
                     if let Some(r) = value.as_float() {
-                        self.rate = r.clamp(0.05, 5.0);
+                        self.rate = Hertz::new(r.clamp(0.05, 5.0));
                     }
                 }
                 PhaserParam::Depth => {
                     if let Some(d) = value.as_float() {
-                        self.depth = d.clamp(0.0, 1.0);
+                        self.depth = NormalizedValue::new(d);
                     }
                 }
                 PhaserParam::Feedback => {
                     if let Some(f) = value.as_float() {
-                        self.feedback = f.clamp(-0.95, 0.95);
+                        self.feedback = BipolarValue::new(f.clamp(-0.95, 0.95));
                     }
                 }
                 PhaserParam::Stages => {
@@ -240,12 +244,12 @@ impl EffectModule for Phaser {
                 }
                 PhaserParam::CenterFreq => {
                     if let Some(f) = value.as_float() {
-                        self.center_freq = f.clamp(100.0, 4000.0);
+                        self.center_freq = Hertz::new(f.clamp(100.0, 4000.0));
                     }
                 }
                 PhaserParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
@@ -255,12 +259,12 @@ impl EffectModule for Phaser {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Phaser(phaser_param) = param {
             match phaser_param {
-                PhaserParam::Rate => Some(TypedValue::Float(self.rate)),
-                PhaserParam::Depth => Some(TypedValue::Float(self.depth)),
-                PhaserParam::Feedback => Some(TypedValue::Float(self.feedback)),
+                PhaserParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
+                PhaserParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
+                PhaserParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
                 PhaserParam::Stages => Some(TypedValue::Int(NUM_STAGES as i32)),
-                PhaserParam::CenterFreq => Some(TypedValue::Float(self.center_freq)),
-                PhaserParam::Mix => Some(TypedValue::Float(self.mix)),
+                PhaserParam::CenterFreq => Some(TypedValue::Float(self.center_freq.as_f32())),
+                PhaserParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None

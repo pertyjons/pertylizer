@@ -5,6 +5,7 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
+use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay time in milliseconds.
 const MAX_DELAY_MS: f32 = 20.0;
@@ -12,11 +13,11 @@ const MAX_DELAY_MS: f32 = 20.0;
 /// Flanger effect with modulated delay line and feedback.
 pub struct Flanger {
     // Parameters
-    rate: f32,     // LFO rate in Hz
-    depth: f32,    // Modulation depth 0-1
-    feedback: f32, // Feedback amount -1 to 1
-    delay: f32,    // Base delay time in ms
-    mix: f32,      // Dry/wet mix 0-1
+    rate: Hertz,
+    depth: NormalizedValue,
+    feedback: BipolarValue,
+    delay_ms: f32,  // Base delay time in ms (kept as f32 for ms precision)
+    mix: NormalizedValue,
 
     // Delay buffers (stereo)
     buffer_l: Vec<f32>,
@@ -24,36 +25,36 @@ pub struct Flanger {
     write_pos: usize,
 
     // LFO state
-    lfo_phase: f32,
+    lfo_phase: Phase,
 
     // Feedback state
     feedback_l: f32,
     feedback_r: f32,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Flanger {
     pub fn new() -> Self {
         Self {
-            rate: 0.3,
-            depth: 0.7,
-            feedback: 0.7,
-            delay: 2.0,
-            mix: 0.5,
+            rate: Hertz::new(0.3),
+            depth: NormalizedValue::new(0.7),
+            feedback: BipolarValue::new(0.7),
+            delay_ms: 2.0,
+            mix: NormalizedValue::CENTER,
             buffer_l: vec![0.0; 4800], // Will be resized
             buffer_r: vec![0.0; 4800],
             write_pos: 0,
-            lfo_phase: 0.0,
+            lfo_phase: Phase::ZERO,
             feedback_l: 0.0,
             feedback_r: 0.0,
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     fn resize_buffers(&mut self) {
-        let size = (MAX_DELAY_MS / 1000.0 * self.sample_rate) as usize + 1;
+        let size = (MAX_DELAY_MS / 1000.0 * self.sample_rate.as_f32()) as usize + 1;
         if self.buffer_l.len() != size {
             self.buffer_l.resize(size, 0.0);
             self.buffer_r.resize(size, 0.0);
@@ -136,11 +137,11 @@ impl Describable for Flanger {
 
 impl EffectModule for Flanger {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffers();
 
-        let phase_inc = self.rate / self.sample_rate;
-        let max_mod_ms = self.delay.min(MAX_DELAY_MS - self.delay);
+        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
+        let max_mod_ms = self.delay_ms.min(MAX_DELAY_MS - self.delay_ms);
 
         // Process stereo interleaved
         let channels = 2;
@@ -156,20 +157,23 @@ impl EffectModule for Flanger {
             };
 
             // Calculate LFO value (triangle wave for smoother flanging)
-            let lfo = if self.lfo_phase < 0.5 {
-                self.lfo_phase * 4.0 - 1.0
+            let phase = self.lfo_phase.as_f32();
+            let lfo = if phase < 0.5 {
+                phase * 4.0 - 1.0
             } else {
-                3.0 - self.lfo_phase * 4.0
+                3.0 - phase * 4.0
             };
-            self.lfo_phase = (self.lfo_phase + phase_inc).rem_euclid(1.0);
+            self.lfo_phase = Phase::new((phase + phase_inc).rem_euclid(1.0));
 
             // Calculate modulated delay time
-            let delay_ms = self.delay + lfo * max_mod_ms * self.depth;
-            let delay_samples = (delay_ms / 1000.0 * self.sample_rate).max(1.0);
+            let depth = self.depth.as_f32();
+            let delay_ms = self.delay_ms + lfo * max_mod_ms * depth;
+            let delay_samples = (delay_ms / 1000.0 * self.sample_rate.as_f32()).max(1.0);
 
             // Write input + feedback to delay buffer
-            self.buffer_l[self.write_pos] = in_l + self.feedback_l * self.feedback;
-            self.buffer_r[self.write_pos] = in_r + self.feedback_r * self.feedback;
+            let feedback = self.feedback.as_f32();
+            self.buffer_l[self.write_pos] = in_l + self.feedback_l * feedback;
+            self.buffer_r[self.write_pos] = in_r + self.feedback_r * feedback;
 
             // Read from delay with interpolation
             let wet_l = Self::read_interpolated(&self.buffer_l, self.write_pos, delay_samples);
@@ -183,11 +187,12 @@ impl EffectModule for Flanger {
             self.write_pos = (self.write_pos + 1) % self.buffer_l.len();
 
             // Mix dry/wet
+            let mix = self.mix.as_f32();
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + wet_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + wet_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
             }
         }
     }
@@ -198,15 +203,15 @@ impl EffectModule for Flanger {
         self.write_pos = 0;
         self.feedback_l = 0.0;
         self.feedback_r = 0.0;
-        self.lfo_phase = 0.0;
+        self.lfo_phase = Phase::ZERO;
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -214,27 +219,27 @@ impl EffectModule for Flanger {
             match flanger_param {
                 FlangerParam::Rate => {
                     if let Some(r) = value.as_float() {
-                        self.rate = r.clamp(0.05, 5.0);
+                        self.rate = Hertz::new(r.clamp(0.05, 5.0));
                     }
                 }
                 FlangerParam::Depth => {
                     if let Some(d) = value.as_float() {
-                        self.depth = d.clamp(0.0, 1.0);
+                        self.depth = NormalizedValue::new(d);
                     }
                 }
                 FlangerParam::Feedback => {
                     if let Some(f) = value.as_float() {
-                        self.feedback = f.clamp(-0.95, 0.95);
+                        self.feedback = BipolarValue::new(f.clamp(-0.95, 0.95));
                     }
                 }
                 FlangerParam::Delay => {
                     if let Some(d) = value.as_float() {
-                        self.delay = d.clamp(0.1, 10.0);
+                        self.delay_ms = d.clamp(0.1, 10.0);
                     }
                 }
                 FlangerParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
@@ -244,11 +249,11 @@ impl EffectModule for Flanger {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Flanger(flanger_param) = param {
             match flanger_param {
-                FlangerParam::Rate => Some(TypedValue::Float(self.rate)),
-                FlangerParam::Depth => Some(TypedValue::Float(self.depth)),
-                FlangerParam::Feedback => Some(TypedValue::Float(self.feedback)),
-                FlangerParam::Delay => Some(TypedValue::Float(self.delay)),
-                FlangerParam::Mix => Some(TypedValue::Float(self.mix)),
+                FlangerParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
+                FlangerParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
+                FlangerParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
+                FlangerParam::Delay => Some(TypedValue::Float(self.delay_ms)),
+                FlangerParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None

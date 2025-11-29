@@ -5,77 +5,63 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
+use crate::types::{Decibels, NormalizedValue, SampleRate};
 
 /// Compressor effect with envelope follower.
 pub struct Compressor {
     // Parameters
-    threshold: f32, // dB (-60 to 0)
-    ratio: f32,     // Compression ratio (1:1 to 20:1)
-    attack: f32,    // Attack time in ms
-    release: f32,   // Release time in ms
-    makeup: f32,    // Makeup gain in dB
-    mix: f32,       // Dry/wet mix 0-1
+    threshold: Decibels,
+    ratio: f32,         // Compression ratio (1:1 to 20:1) - kept as f32
+    attack_ms: f32,     // Attack time in ms - kept as f32
+    release_ms: f32,    // Release time in ms - kept as f32
+    makeup: Decibels,
+    mix: NormalizedValue,
 
     // Envelope state
     envelope: f32,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Compressor {
     pub fn new() -> Self {
         Self {
-            threshold: -20.0,
+            threshold: Decibels::new(-20.0),
             ratio: 4.0,
-            attack: 10.0,
-            release: 100.0,
-            makeup: 0.0,
-            mix: 1.0,
+            attack_ms: 10.0,
+            release_ms: 100.0,
+            makeup: Decibels::new(0.0),
+            mix: NormalizedValue::MAX,
             envelope: 0.0,
-            sample_rate: 48000.0,
-        }
-    }
-
-    /// Convert dB to linear gain.
-    #[inline]
-    fn db_to_linear(db: f32) -> f32 {
-        10.0_f32.powf(db / 20.0)
-    }
-
-    /// Convert linear gain to dB.
-    #[inline]
-    fn linear_to_db(linear: f32) -> f32 {
-        if linear > 1e-10 {
-            20.0 * linear.log10()
-        } else {
-            -200.0
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     /// Calculate attack coefficient.
     #[inline]
     fn attack_coeff(&self) -> f32 {
-        (-1.0 / (self.attack * 0.001 * self.sample_rate)).exp()
+        (-1.0 / (self.attack_ms * 0.001 * self.sample_rate.as_f32())).exp()
     }
 
     /// Calculate release coefficient.
     #[inline]
     fn release_coeff(&self) -> f32 {
-        (-1.0 / (self.release * 0.001 * self.sample_rate)).exp()
+        (-1.0 / (self.release_ms * 0.001 * self.sample_rate.as_f32())).exp()
     }
 
     /// Calculate gain reduction for a given input level.
     #[inline]
     fn compute_gain(&self, input_db: f32) -> f32 {
-        if input_db > self.threshold {
+        let threshold = self.threshold.as_f32();
+        if input_db > threshold {
             // Calculate gain reduction
-            let overshoot = input_db - self.threshold;
+            let overshoot = input_db - threshold;
             let compressed = overshoot / self.ratio;
             let gain_reduction = compressed - overshoot;
-            Self::db_to_linear(gain_reduction + self.makeup)
+            Decibels::new(gain_reduction + self.makeup.as_f32()).to_linear()
         } else {
-            Self::db_to_linear(self.makeup)
+            self.makeup.to_linear()
         }
     }
 }
@@ -165,7 +151,7 @@ impl Describable for Compressor {
 
 impl EffectModule for Compressor {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
 
         let attack_coeff = self.attack_coeff();
         let release_coeff = self.release_coeff();
@@ -185,7 +171,7 @@ impl EffectModule for Compressor {
 
             // Get peak level (stereo linked)
             let peak = in_l.abs().max(in_r.abs());
-            let peak_db = Self::linear_to_db(peak);
+            let peak_db = Decibels::from_linear(peak).as_f32();
 
             // Envelope follower with attack/release
             let coeff = if peak_db > self.envelope {
@@ -203,11 +189,12 @@ impl EffectModule for Compressor {
             let wet_r = in_r * gain;
 
             // Mix dry/wet (parallel compression)
+            let mix = self.mix.as_f32();
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + wet_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + wet_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
             }
         }
     }
@@ -217,11 +204,11 @@ impl EffectModule for Compressor {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -229,7 +216,7 @@ impl EffectModule for Compressor {
             match comp_param {
                 CompressorParam::Threshold => {
                     if let Some(t) = value.as_float() {
-                        self.threshold = t.clamp(-60.0, 0.0);
+                        self.threshold = Decibels::new(t.clamp(-60.0, 0.0));
                     }
                 }
                 CompressorParam::Ratio => {
@@ -239,22 +226,22 @@ impl EffectModule for Compressor {
                 }
                 CompressorParam::Attack => {
                     if let Some(a) = value.as_float() {
-                        self.attack = a.clamp(0.1, 100.0);
+                        self.attack_ms = a.clamp(0.1, 100.0);
                     }
                 }
                 CompressorParam::Release => {
                     if let Some(r) = value.as_float() {
-                        self.release = r.clamp(10.0, 1000.0);
+                        self.release_ms = r.clamp(10.0, 1000.0);
                     }
                 }
                 CompressorParam::Makeup => {
                     if let Some(m) = value.as_float() {
-                        self.makeup = m.clamp(0.0, 24.0);
+                        self.makeup = Decibels::new(m.clamp(0.0, 24.0));
                     }
                 }
                 CompressorParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
@@ -264,12 +251,12 @@ impl EffectModule for Compressor {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Compressor(comp_param) = param {
             match comp_param {
-                CompressorParam::Threshold => Some(TypedValue::Float(self.threshold)),
+                CompressorParam::Threshold => Some(TypedValue::Float(self.threshold.as_f32())),
                 CompressorParam::Ratio => Some(TypedValue::Float(self.ratio)),
-                CompressorParam::Attack => Some(TypedValue::Float(self.attack)),
-                CompressorParam::Release => Some(TypedValue::Float(self.release)),
-                CompressorParam::Makeup => Some(TypedValue::Float(self.makeup)),
-                CompressorParam::Mix => Some(TypedValue::Float(self.mix)),
+                CompressorParam::Attack => Some(TypedValue::Float(self.attack_ms)),
+                CompressorParam::Release => Some(TypedValue::Float(self.release_ms)),
+                CompressorParam::Makeup => Some(TypedValue::Float(self.makeup.as_f32())),
+                CompressorParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None

@@ -8,6 +8,7 @@
 
 use crate::engine::typed_params::{TypedParam, TypedValue, ReverbParam, ModuleType};
 use crate::modules::core::*;
+use crate::types::{NormalizedValue, SampleRate, Seconds};
 
 /// Comb filter for reverb.
 struct CombFilter {
@@ -107,11 +108,11 @@ impl AllpassFilter {
 /// Schroeder reverb.
 pub struct Reverb {
     // Parameters
-    room_size: f32,     // 0-1
-    damping: f32,       // 0-1
-    mix: f32,           // 0-1
-    pre_delay: f32,     // Seconds
-    stereo_spread: f32, // 0-1
+    room_size: NormalizedValue,
+    damping: NormalizedValue,
+    mix: NormalizedValue,
+    pre_delay: Seconds,
+    stereo_spread: NormalizedValue,
 
     // Comb filters (8 for stereo)
     combs_l: [CombFilter; 4],
@@ -126,7 +127,7 @@ pub struct Reverb {
     pre_delay_index: usize,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Reverb {
@@ -143,11 +144,11 @@ impl Reverb {
         let allpass_fb = 0.5;
 
         Self {
-            room_size: 0.5,
-            damping: 0.5,
-            mix: 0.3,
-            pre_delay: 0.0,
-            stereo_spread: 1.0,
+            room_size: NormalizedValue::CENTER,
+            damping: NormalizedValue::CENTER,
+            mix: NormalizedValue::new(0.3),
+            pre_delay: Seconds::ZERO,
+            stereo_spread: NormalizedValue::MAX,
 
             combs_l: [
                 CombFilter::new(Self::COMB_TUNING[0], feedback, damp),
@@ -173,46 +174,46 @@ impl Reverb {
             pre_delay_buffer: vec![0.0; 48000], // 1 second max
             pre_delay_index: 0,
 
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     /// Update filter parameters based on room size and damping.
     fn update_filters(&mut self) {
         // Convert room size to feedback coefficient
-        let feedback = 0.4 + self.room_size * 0.55;
+        let feedback = 0.4 + self.room_size.as_f32() * 0.55;
 
         for comb in &mut self.combs_l {
             comb.set_feedback(feedback);
-            comb.set_damp(self.damping);
+            comb.set_damp(self.damping.as_f32());
         }
         for comb in &mut self.combs_r {
             comb.set_feedback(feedback);
-            comb.set_damp(self.damping);
+            comb.set_damp(self.damping.as_f32());
         }
     }
 
     /// Scale filter sizes for sample rate.
     fn resize_for_sample_rate(&mut self) {
-        let scale = self.sample_rate / 44100.0;
-        
+        let scale = self.sample_rate.as_f32() / 44100.0;
+
         for (i, comb) in self.combs_l.iter_mut().enumerate() {
             comb.resize((Self::COMB_TUNING[i] as f32 * scale) as usize);
         }
         for (i, comb) in self.combs_r.iter_mut().enumerate() {
-            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread * scale) as usize;
+            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
             comb.resize((Self::COMB_TUNING[i] as f32 * scale) as usize + spread);
         }
         for (i, ap) in self.allpasses_l.iter_mut().enumerate() {
             ap.resize((Self::ALLPASS_TUNING[i] as f32 * scale) as usize);
         }
         for (i, ap) in self.allpasses_r.iter_mut().enumerate() {
-            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread * scale) as usize;
+            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
             ap.resize((Self::ALLPASS_TUNING[i] as f32 * scale) as usize + spread);
         }
 
         // Pre-delay buffer
-        let max_pre_delay = (0.5 * self.sample_rate) as usize;
+        let max_pre_delay = (0.5 * self.sample_rate.as_f32()) as usize;
         if self.pre_delay_buffer.len() != max_pre_delay {
             self.pre_delay_buffer.resize(max_pre_delay, 0.0);
             self.pre_delay_index = 0;
@@ -272,14 +273,14 @@ impl Describable for Reverb {
 
 impl EffectModule for Reverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        if (self.sample_rate - context.sample_rate).abs() > 1.0 {
-            self.sample_rate = context.sample_rate;
+        if (self.sample_rate.as_f32() - context.sample_rate).abs() > 1.0 {
+            self.sample_rate = SampleRate::new(context.sample_rate);
             self.resize_for_sample_rate();
         }
 
         self.update_filters();
 
-        let pre_delay_samples = ((self.pre_delay * self.sample_rate) as usize)
+        let pre_delay_samples = ((self.pre_delay.as_f32() * self.sample_rate.as_f32()) as usize)
             .min(self.pre_delay_buffer.len() - 1);
 
         // Process assuming interleaved stereo
@@ -328,11 +329,12 @@ impl EffectModule for Reverb {
             }
 
             // Mix
+            let mix = self.mix.as_f32();
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + wet_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + wet_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
             }
         }
     }
@@ -355,65 +357,65 @@ impl EffectModule for Reverb {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn tail_samples(&self) -> usize {
         // Estimate based on room size
-        let decay_time = 1.0 + self.room_size * 4.0;
-        (decay_time * self.sample_rate) as usize
+        let decay_time = 1.0 + self.room_size.as_f32() * 4.0;
+        (decay_time * self.sample_rate.as_f32()) as usize
     }
-    
+
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
         if let TypedParam::Reverb(reverb_param) = param {
             match reverb_param {
                 ReverbParam::RoomSize => {
                     if let Some(s) = value.as_float() {
-                        self.room_size = s.clamp(0.0, 1.0);
+                        self.room_size = NormalizedValue::new(s);
                     }
                 }
                 ReverbParam::Damping => {
                     if let Some(d) = value.as_float() {
-                        self.damping = d.clamp(0.0, 1.0);
+                        self.damping = NormalizedValue::new(d);
                     }
                 }
                 ReverbParam::PreDelay => {
                     if let Some(p) = value.as_float() {
-                        self.pre_delay = p.clamp(0.0, 0.5);
+                        self.pre_delay = Seconds::new(p.clamp(0.0, 0.5));
                     }
                 }
                 ReverbParam::Width => {
                     if let Some(w) = value.as_float() {
-                        self.stereo_spread = w.clamp(0.0, 1.0);
+                        self.stereo_spread = NormalizedValue::new(w);
                     }
                 }
                 ReverbParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Reverb(reverb_param) = param {
             match reverb_param {
-                ReverbParam::RoomSize => Some(TypedValue::Float(self.room_size)),
-                ReverbParam::Damping => Some(TypedValue::Float(self.damping)),
-                ReverbParam::PreDelay => Some(TypedValue::Float(self.pre_delay)),
-                ReverbParam::Width => Some(TypedValue::Float(self.stereo_spread)),
-                ReverbParam::Mix => Some(TypedValue::Float(self.mix)),
+                ReverbParam::RoomSize => Some(TypedValue::Float(self.room_size.as_f32())),
+                ReverbParam::Damping => Some(TypedValue::Float(self.damping.as_f32())),
+                ReverbParam::PreDelay => Some(TypedValue::Float(self.pre_delay.as_f32())),
+                ReverbParam::Width => Some(TypedValue::Float(self.stereo_spread.as_f32())),
+                ReverbParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None
         }
     }
-    
+
     fn module_type(&self) -> ModuleType {
         ModuleType::Reverb
     }
@@ -426,14 +428,14 @@ mod tests {
     #[test]
     fn test_reverb_creation() {
         let reverb = Reverb::new();
-        assert!((reverb.room_size - 0.5).abs() < 0.001);
+        assert!((reverb.room_size.as_f32() - 0.5).abs() < 0.001);
     }
 
     #[test]
     fn test_reverb_stability() {
         let mut reverb = Reverb::new();
-        reverb.sample_rate = 48000.0;
-        reverb.room_size = 0.9;
+        reverb.sample_rate = SampleRate::DVD_QUALITY;
+        reverb.room_size = NormalizedValue::new(0.9);
         reverb.resize_for_sample_rate();
 
         let context = ProcessContext {

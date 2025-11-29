@@ -1,5 +1,26 @@
 # Version History
 
+## [0.23.0] - 2024
+
+### Refactored - Strong Types in Effect Modules
+
+- **Effect Modules Refactored** (`src/effects/`)
+  - `reverb.rs`: Uses `NormalizedValue`, `SampleRate`, `Seconds`
+  - `distortion.rs` (Distortion): Uses `NormalizedValue`, `SampleRate`
+  - `distortion.rs` (Chorus): Uses `Hertz`, `NormalizedValue`, `Phase`, `SampleRate`
+  - `phaser.rs`: Uses `Hertz`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleRate`
+  - `flanger.rs`: Uses `Hertz`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleRate`
+  - `compressor.rs`: Uses `Decibels`, `NormalizedValue`, `SampleRate`
+  - `eq.rs`: Uses `Hertz`, `Decibels`, `NormalizedValue`, `SampleRate`
+
+### Technical Details
+- Eliminated raw `f32` for domain-specific values in all effect modules
+- Consistent use of `.as_f32()` accessor pattern
+- Type-safe parameter handling with `TypedParam`/`TypedValue`
+- All 229 unit tests passing
+
+---
+
 ## [0.22.0] - 2024
 
 ### Added - Dynamic Multitimbrality

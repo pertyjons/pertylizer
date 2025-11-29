@@ -5,6 +5,7 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
+use crate::types::{Decibels, Hertz, NormalizedValue, SampleRate};
 
 /// Biquad filter coefficients.
 #[derive(Clone, Copy, Default)]
@@ -61,14 +62,14 @@ impl BiquadState {
 /// 3-band parametric EQ with low shelf, mid peak, and high shelf.
 pub struct Eq {
     // Parameters
-    low_freq: f32,  // Hz
-    low_gain: f32,  // dB
-    mid_freq: f32,  // Hz
-    mid_gain: f32,  // dB
-    mid_q: f32,     // Q factor
-    high_freq: f32, // Hz
-    high_gain: f32, // dB
-    mix: f32,       // Dry/wet
+    low_freq: Hertz,
+    low_gain: Decibels,
+    mid_freq: Hertz,
+    mid_gain: Decibels,
+    mid_q: f32,  // Q factor - dimensionless, kept as f32
+    high_freq: Hertz,
+    high_gain: Decibels,
+    mix: NormalizedValue,
 
     // Filter state
     low_state: BiquadState,
@@ -81,28 +82,28 @@ pub struct Eq {
     high_coeffs: BiquadCoeffs,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
     coeffs_dirty: bool,
 }
 
 impl Eq {
     pub fn new() -> Self {
         let mut eq = Self {
-            low_freq: 200.0,
-            low_gain: 0.0,
-            mid_freq: 1000.0,
-            mid_gain: 0.0,
+            low_freq: Hertz::new(200.0),
+            low_gain: Decibels::new(0.0),
+            mid_freq: Hertz::new(1000.0),
+            mid_gain: Decibels::new(0.0),
             mid_q: 1.0,
-            high_freq: 4000.0,
-            high_gain: 0.0,
-            mix: 1.0,
+            high_freq: Hertz::new(4000.0),
+            high_gain: Decibels::new(0.0),
+            mix: NormalizedValue::MAX,
             low_state: BiquadState::default(),
             mid_state: BiquadState::default(),
             high_state: BiquadState::default(),
             low_coeffs: BiquadCoeffs::default(),
             mid_coeffs: BiquadCoeffs::default(),
             high_coeffs: BiquadCoeffs::default(),
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             coeffs_dirty: true,
         };
         eq.update_coefficients();
@@ -111,8 +112,8 @@ impl Eq {
 
     /// Calculate low shelf filter coefficients.
     fn calc_low_shelf(&mut self) {
-        let a = 10.0_f32.powf(self.low_gain / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.low_freq / self.sample_rate;
+        let a = 10.0_f32.powf(self.low_gain.as_f32() / 40.0);
+        let w0 = 2.0 * std::f32::consts::PI * self.low_freq.as_f32() / self.sample_rate.as_f32();
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / 0.9 - 1.0) + 2.0).sqrt();
@@ -136,8 +137,8 @@ impl Eq {
 
     /// Calculate peaking EQ filter coefficients.
     fn calc_mid_peak(&mut self) {
-        let a = 10.0_f32.powf(self.mid_gain / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.mid_freq / self.sample_rate;
+        let a = 10.0_f32.powf(self.mid_gain.as_f32() / 40.0);
+        let w0 = 2.0 * std::f32::consts::PI * self.mid_freq.as_f32() / self.sample_rate.as_f32();
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / (2.0 * self.mid_q);
@@ -160,8 +161,8 @@ impl Eq {
 
     /// Calculate high shelf filter coefficients.
     fn calc_high_shelf(&mut self) {
-        let a = 10.0_f32.powf(self.high_gain / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.high_freq / self.sample_rate;
+        let a = 10.0_f32.powf(self.high_gain.as_f32() / 40.0);
+        let w0 = 2.0 * std::f32::consts::PI * self.high_freq.as_f32() / self.sample_rate.as_f32();
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / 0.9 - 1.0) + 2.0).sqrt();
@@ -280,8 +281,8 @@ impl Describable for Eq {
 impl EffectModule for Eq {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         // Update sample rate and recalculate coefficients if needed
-        if (self.sample_rate - context.sample_rate).abs() > 1.0 {
-            self.sample_rate = context.sample_rate;
+        if (self.sample_rate.as_f32() - context.sample_rate).abs() > 1.0 {
+            self.sample_rate = SampleRate::new(context.sample_rate);
             self.coeffs_dirty = true;
         }
         self.update_coefficients();
@@ -305,11 +306,12 @@ impl EffectModule for Eq {
             let (wet_l, wet_r) = self.high_state.process(mid_l, mid_r, &self.high_coeffs);
 
             // Mix dry/wet
+            let mix = self.mix.as_f32();
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - self.mix) + wet_l * self.mix;
+                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - self.mix) + wet_r * self.mix;
+                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
             }
         }
     }
@@ -321,11 +323,11 @@ impl EffectModule for Eq {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -333,25 +335,25 @@ impl EffectModule for Eq {
             match eq_param {
                 EqParam::LowFreq => {
                     if let Some(f) = value.as_float() {
-                        self.low_freq = f.clamp(20.0, 500.0);
+                        self.low_freq = Hertz::new(f.clamp(20.0, 500.0));
                         self.coeffs_dirty = true;
                     }
                 }
                 EqParam::LowGain => {
                     if let Some(g) = value.as_float() {
-                        self.low_gain = g.clamp(-12.0, 12.0);
+                        self.low_gain = Decibels::new(g.clamp(-12.0, 12.0));
                         self.coeffs_dirty = true;
                     }
                 }
                 EqParam::MidFreq => {
                     if let Some(f) = value.as_float() {
-                        self.mid_freq = f.clamp(200.0, 5000.0);
+                        self.mid_freq = Hertz::new(f.clamp(200.0, 5000.0));
                         self.coeffs_dirty = true;
                     }
                 }
                 EqParam::MidGain => {
                     if let Some(g) = value.as_float() {
-                        self.mid_gain = g.clamp(-12.0, 12.0);
+                        self.mid_gain = Decibels::new(g.clamp(-12.0, 12.0));
                         self.coeffs_dirty = true;
                     }
                 }
@@ -363,19 +365,19 @@ impl EffectModule for Eq {
                 }
                 EqParam::HighFreq => {
                     if let Some(f) = value.as_float() {
-                        self.high_freq = f.clamp(1000.0, 16000.0);
+                        self.high_freq = Hertz::new(f.clamp(1000.0, 16000.0));
                         self.coeffs_dirty = true;
                     }
                 }
                 EqParam::HighGain => {
                     if let Some(g) = value.as_float() {
-                        self.high_gain = g.clamp(-12.0, 12.0);
+                        self.high_gain = Decibels::new(g.clamp(-12.0, 12.0));
                         self.coeffs_dirty = true;
                     }
                 }
                 EqParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
@@ -385,14 +387,14 @@ impl EffectModule for Eq {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Eq(eq_param) = param {
             match eq_param {
-                EqParam::LowFreq => Some(TypedValue::Float(self.low_freq)),
-                EqParam::LowGain => Some(TypedValue::Float(self.low_gain)),
-                EqParam::MidFreq => Some(TypedValue::Float(self.mid_freq)),
-                EqParam::MidGain => Some(TypedValue::Float(self.mid_gain)),
+                EqParam::LowFreq => Some(TypedValue::Float(self.low_freq.as_f32())),
+                EqParam::LowGain => Some(TypedValue::Float(self.low_gain.as_f32())),
+                EqParam::MidFreq => Some(TypedValue::Float(self.mid_freq.as_f32())),
+                EqParam::MidGain => Some(TypedValue::Float(self.mid_gain.as_f32())),
                 EqParam::MidQ => Some(TypedValue::Float(self.mid_q)),
-                EqParam::HighFreq => Some(TypedValue::Float(self.high_freq)),
-                EqParam::HighGain => Some(TypedValue::Float(self.high_gain)),
-                EqParam::Mix => Some(TypedValue::Float(self.mix)),
+                EqParam::HighFreq => Some(TypedValue::Float(self.high_freq.as_f32())),
+                EqParam::HighGain => Some(TypedValue::Float(self.high_gain.as_f32())),
+                EqParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None

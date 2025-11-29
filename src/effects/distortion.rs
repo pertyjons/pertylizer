@@ -11,6 +11,7 @@ use crate::engine::typed_params::{
     DistortionMode,
 };
 use crate::modules::core::*;
+use crate::types::{Hertz, NormalizedValue, Phase, SampleRate};
 
 // DistortionMode is imported from typed_params
 // Type alias for local use
@@ -30,28 +31,28 @@ impl DistortionMode {
 pub struct Distortion {
     // Parameters
     dist_type: DistortionType,
-    drive: f32,      // 0-1 (maps to gain)
-    tone: f32,       // 0-1 (lowpass cutoff)
-    mix: f32,        // 0-1
-    bit_depth: f32,  // For bitcrush (1-16)
+    drive: NormalizedValue,
+    tone: NormalizedValue,
+    mix: NormalizedValue,
+    bit_depth: f32,  // For bitcrush (1-16) - not a normalized value
 
     // Filter state
     filter_state: f32,
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Distortion {
     pub fn new() -> Self {
         Self {
             dist_type: DistortionType::SoftClip,
-            drive: 0.5,
-            tone: 0.8,
-            mix: 1.0,
+            drive: NormalizedValue::CENTER,
+            tone: NormalizedValue::new(0.8),
+            mix: NormalizedValue::MAX,
             bit_depth: 8.0,
             filter_state: 0.0,
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
@@ -59,7 +60,8 @@ impl Distortion {
     #[inline]
     fn distort(&self, input: f32) -> f32 {
         // Apply drive (exponential curve for more usable range)
-        let gain = 1.0 + self.drive * self.drive * 50.0;
+        let drive = self.drive.as_f32();
+        let gain = 1.0 + drive * drive * 50.0;
         let driven = input * gain;
 
         match self.dist_type {
@@ -111,8 +113,9 @@ impl Distortion {
     #[inline]
     fn apply_tone(&mut self, input: f32) -> f32 {
         // Map tone parameter to cutoff frequency
-        let cutoff = 200.0 + self.tone * self.tone * 15000.0;
-        let coef = (-std::f32::consts::TAU * cutoff / self.sample_rate).exp();
+        let tone = self.tone.as_f32();
+        let cutoff = 200.0 + tone * tone * 15000.0;
+        let coef = (-std::f32::consts::TAU * cutoff / self.sample_rate.as_f32()).exp();
         self.filter_state = input * (1.0 - coef) + self.filter_state * coef;
         self.filter_state
     }
@@ -169,13 +172,14 @@ impl Describable for Distortion {
 
 impl EffectModule for Distortion {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
+        let mix = self.mix.as_f32();
 
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
             let distorted = self.distort(dry);
             let filtered = self.apply_tone(distorted);
-            output[i] = dry * (1.0 - self.mix) + filtered * self.mix;
+            output[i] = dry * (1.0 - mix) + filtered * mix;
         }
     }
 
@@ -184,11 +188,11 @@ impl EffectModule for Distortion {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
@@ -196,23 +200,22 @@ impl EffectModule for Distortion {
             match dist_param {
                 DistortionParam::Mode => {
                     if let TypedValue::DistortionMode(mode) = value {
-                        // Direct assignment - same type now!
                         self.dist_type = mode;
                     }
                 }
                 DistortionParam::Drive => {
                     if let Some(d) = value.as_float() {
-                        self.drive = d.clamp(0.0, 1.0);
+                        self.drive = NormalizedValue::new(d);
                     }
                 }
                 DistortionParam::Tone => {
                     if let Some(t) = value.as_float() {
-                        self.tone = t.clamp(0.0, 1.0);
+                        self.tone = NormalizedValue::new(t);
                     }
                 }
                 DistortionParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
             }
@@ -222,13 +225,10 @@ impl EffectModule for Distortion {
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Distortion(dist_param) = param {
             match dist_param {
-                DistortionParam::Mode => {
-                    // Direct use - same type now!
-                    Some(TypedValue::DistortionMode(self.dist_type))
-                }
-                DistortionParam::Drive => Some(TypedValue::Float(self.drive)),
-                DistortionParam::Tone => Some(TypedValue::Float(self.tone)),
-                DistortionParam::Mix => Some(TypedValue::Float(self.mix)),
+                DistortionParam::Mode => Some(TypedValue::DistortionMode(self.dist_type)),
+                DistortionParam::Drive => Some(TypedValue::Float(self.drive.as_f32())),
+                DistortionParam::Tone => Some(TypedValue::Float(self.tone.as_f32())),
+                DistortionParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {
             None
@@ -243,9 +243,9 @@ impl EffectModule for Distortion {
 /// Chorus effect.
 pub struct Chorus {
     // Parameters
-    rate: f32,       // Hz
-    depth: f32,      // 0-1
-    mix: f32,        // 0-1
+    rate: Hertz,
+    depth: NormalizedValue,
+    mix: NormalizedValue,
     voices: u32,     // 1-4
 
     // Delay buffer
@@ -253,10 +253,10 @@ pub struct Chorus {
     write_pos: usize,
 
     // LFO state (per voice)
-    lfo_phases: [f32; 4],
+    lfo_phases: [Phase; 4],
 
     // State
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Chorus {
@@ -264,19 +264,24 @@ impl Chorus {
 
     pub fn new() -> Self {
         Self {
-            rate: 0.5,
-            depth: 0.5,
-            mix: 0.5,
+            rate: Hertz::new(0.5),
+            depth: NormalizedValue::CENTER,
+            mix: NormalizedValue::CENTER,
             voices: 2,
             buffer: vec![0.0; 48000], // Will be resized
             write_pos: 0,
-            lfo_phases: [0.0, 0.25, 0.5, 0.75], // Spread phases
-            sample_rate: 48000.0,
+            lfo_phases: [
+                Phase::new(0.0),
+                Phase::new(0.25),
+                Phase::new(0.5),
+                Phase::new(0.75),
+            ],
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     fn resize_buffer(&mut self) {
-        let size = (Self::MAX_DELAY_MS / 1000.0 * self.sample_rate) as usize;
+        let size = (Self::MAX_DELAY_MS / 1000.0 * self.sample_rate.as_f32()) as usize;
         if self.buffer.len() != size {
             self.buffer.resize(size, 0.0);
             self.write_pos = 0;
@@ -340,12 +345,12 @@ impl Describable for Chorus {
 
 impl EffectModule for Chorus {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffer();
 
         let base_delay_ms = 7.0;
-        let mod_depth_ms = self.depth * 5.0;
-        let phase_inc = self.rate / self.sample_rate;
+        let mod_depth_ms = self.depth.as_f32() * 5.0;
+        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
 
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
@@ -356,14 +361,14 @@ impl EffectModule for Chorus {
             // Sum chorus voices
             let mut wet = 0.0f32;
             for v in 0..self.voices as usize {
-                let lfo = (self.lfo_phases[v] * std::f32::consts::TAU).sin();
+                let lfo = (self.lfo_phases[v].as_f32() * std::f32::consts::TAU).sin();
                 let delay_ms = base_delay_ms + mod_depth_ms * lfo;
-                let delay_samples = delay_ms / 1000.0 * self.sample_rate;
+                let delay_samples = delay_ms / 1000.0 * self.sample_rate.as_f32();
 
                 wet += self.read_interpolated(delay_samples);
 
                 // Advance LFO
-                self.lfo_phases[v] = (self.lfo_phases[v] + phase_inc).rem_euclid(1.0);
+                self.lfo_phases[v] = Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
             }
 
             wet /= self.voices as f32;
@@ -371,7 +376,8 @@ impl EffectModule for Chorus {
             // Advance write position
             self.write_pos = (self.write_pos + 1) % self.buffer.len();
 
-            output[i] = dry * (1.0 - self.mix) + wet * self.mix;
+            let mix = self.mix.as_f32();
+            output[i] = dry * (1.0 - mix) + wet * mix;
         }
     }
 
@@ -381,29 +387,29 @@ impl EffectModule for Chorus {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix.clamp(0.0, 1.0);
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
-    
+
     fn set_param(&mut self, param: TypedParam, value: TypedValue) {
         if let TypedParam::Chorus(chorus_param) = param {
             match chorus_param {
                 ChorusParam::Rate => {
                     if let Some(r) = value.as_float() {
-                        self.rate = r.clamp(0.1, 5.0);
+                        self.rate = Hertz::new(r.clamp(0.1, 5.0));
                     }
                 }
                 ChorusParam::Depth => {
                     if let Some(d) = value.as_float() {
-                        self.depth = d.clamp(0.0, 1.0);
+                        self.depth = NormalizedValue::new(d);
                     }
                 }
                 ChorusParam::Mix => {
                     if let Some(m) = value.as_float() {
-                        self.mix = m.clamp(0.0, 1.0);
+                        self.mix = NormalizedValue::new(m);
                     }
                 }
                 ChorusParam::Voices => {
@@ -415,13 +421,13 @@ impl EffectModule for Chorus {
             }
         }
     }
-    
+
     fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
         if let TypedParam::Chorus(chorus_param) = param {
             match chorus_param {
-                ChorusParam::Rate => Some(TypedValue::Float(self.rate)),
-                ChorusParam::Depth => Some(TypedValue::Float(self.depth)),
-                ChorusParam::Mix => Some(TypedValue::Float(self.mix)),
+                ChorusParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
+                ChorusParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
+                ChorusParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
                 ChorusParam::Voices => Some(TypedValue::Int(self.voices as i32)),
                 _ => None,
             }
@@ -442,7 +448,7 @@ mod tests {
     #[test]
     fn test_distortion_types() {
         let mut dist = Distortion::new();
-        dist.sample_rate = 48000.0;
+        dist.sample_rate = SampleRate::new(48000.0);
 
         for dt in DistortionType::ALL {
             dist.dist_type = dt;
