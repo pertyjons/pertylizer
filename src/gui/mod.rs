@@ -50,6 +50,9 @@ pub mod rack_view;
 #[cfg(feature = "gui-egui")]
 pub mod theme;
 
+#[cfg(feature = "gui-egui")]
+pub mod dialogs;
+
 use crate::engine::{EngineHandle, SynthEngine, AllocatorConfig};
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;

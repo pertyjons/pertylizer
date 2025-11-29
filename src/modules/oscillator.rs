@@ -12,6 +12,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, ModuleType};
 use crate::modules::core::*;
+use crate::types::{Hertz, Cents};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -103,10 +104,12 @@ impl Oscillator {
     }
 
     /// Calculate the actual frequency including detune.
+    /// Uses type-safe Cents for the detune calculation.
     #[inline]
     fn actual_frequency(&self) -> f32 {
-        // exp2 is faster than powf(2.0, x)
-        self.frequency * (self.detune / 1200.0).exp2()
+        // Use Cents type for type-safe interval calculation
+        let detune = Cents::new(self.detune);
+        Hertz::new(self.frequency).transpose(detune.to_semitones().as_f32()).as_f32()
     }
 
     /// PolyBLEP correction for band-limited waveforms.
@@ -204,9 +207,20 @@ impl Oscillator {
         sample * self.level
     }
 
-    /// Set frequency from MIDI note.
+    /// Set frequency from MIDI note using type-safe conversion.
     pub fn set_note(&mut self, note: u8) {
-        self.frequency = 440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
+        // Uses Hertz::from_midi for type-safe frequency conversion
+        self.frequency = Hertz::from_midi(note).as_f32();
+    }
+
+    /// Set frequency using the type-safe Hertz type.
+    pub fn set_frequency(&mut self, freq: Hertz) {
+        self.frequency = freq.as_f32();
+    }
+
+    /// Get current frequency as type-safe Hertz.
+    pub fn get_frequency(&self) -> Hertz {
+        Hertz::new(self.frequency)
     }
 }
 

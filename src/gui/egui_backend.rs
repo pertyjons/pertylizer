@@ -24,6 +24,7 @@ use crate::engine::{
 };
 use crate::engine::graph::Connection;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
+use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_settings_dialog, show_about_dialog, show_load_patch_dialog, show_save_patch_dialog, show_status_toast};
 use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
@@ -143,18 +144,13 @@ struct SynthApp {
     keyboard: PianoKeyboard,
     pressed_keys: HashMap<u8, bool>, // For computer keyboard tracking
 
-    // Dialogs
-    show_settings: bool,
-    show_about: bool,
+    // Dialog state (centralized in dialogs module)
+    dialog_state: DialogState,
     show_add_module: bool,
-    show_load_patch: bool,
-    show_save_patch: bool,
 
     // Patch state
     current_patch_name: String,
     current_patch_path: Option<PathBuf>,
-    patch_save_name: String,
-    status_message: Option<(String, std::time::Instant)>,
 
     // Global synth settings
     glide_time: f32,
@@ -249,15 +245,10 @@ impl SynthApp {
             instance_counters: HashMap::new(),
             keyboard: PianoKeyboard::new(),
             pressed_keys: HashMap::new(),
-            show_settings: false,
-            show_about: false,
+            dialog_state: DialogState::new(),
             show_add_module: false,
-            show_load_patch: false,
-            show_save_patch: false,
             current_patch_name: "Spacey Bass".to_string(),
             current_patch_path: None,
-            patch_save_name: String::new(),
-            status_message: None,
             glide_time: 0.0,
         }
     }
@@ -286,12 +277,12 @@ impl eframe::App for SynthApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("📂 Load Patch...").clicked() {
-                        self.show_load_patch = true;
+                        self.dialog_state.show_load_patch = true;
                         ui.close();
                     }
                     if ui.button("💾 Save Patch...").clicked() {
-                        self.patch_save_name = self.current_patch_name.clone();
-                        self.show_save_patch = true;
+                        self.dialog_state.patch_save_name = self.current_patch_name.clone();
+                        self.dialog_state.show_save_patch = true;
                         ui.close();
                     }
                     ui.separator();
@@ -300,17 +291,14 @@ impl eframe::App for SynthApp {
                             if ui.button(&patch.name).clicked() {
                                 self.load_patch_data(&patch);
                                 self.current_patch_name = patch.name.clone();
-                                self.status_message = Some((
-                                    format!("Loaded: {}", patch.name),
-                                    std::time::Instant::now()
-                                ));
+                                self.dialog_state.set_status(format!("Loaded: {}", patch.name));
                                 ui.close();
                             }
                         }
                     });
                     ui.separator();
                     if ui.button("⚙ Settings...").clicked() {
-                        self.show_settings = true;
+                        self.dialog_state.show_settings = true;
                         ui.close();
                     }
                     ui.separator();
@@ -318,10 +306,10 @@ impl eframe::App for SynthApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
-                
+
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
-                        self.show_about = true;
+                        self.dialog_state.show_about = true;
                         ui.close();
                     }
                 });
@@ -780,138 +768,44 @@ impl SynthApp {
     }
     
     fn show_dialogs(&mut self, ctx: &egui::Context) {
+        // Update dialog state (clears expired status messages)
+        self.dialog_state.update();
+
         // Settings dialog
-        if self.show_settings {
-            egui::Window::new("Settings")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    ui.label("Audio settings coming soon...");
-                    ui.add_space(16.0);
-                    if ui.button("Close").clicked() {
-                        self.show_settings = false;
-                    }
-                });
-        }
-        
+        show_settings_dialog(ctx, &mut self.dialog_state.show_settings);
+
         // About dialog
-        if self.show_about {
-            egui::Window::new("About")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    ui.heading("Modular Synthesizer");
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.add_space(8.0);
-                    ui.label("A modular synthesizer written in Rust.");
-                    ui.add_space(8.0);
-                    ui.label("Keyboard controls:");
-                    ui.label("  Z-M: Lower octave");
-                    ui.label("  Q-I: Upper octave");
-                    ui.label("  -/+: Change octave");
-                    ui.add_space(16.0);
-                    if ui.button("Close").clicked() {
-                        self.show_about = false;
-                    }
-                });
-        }
-        
+        show_about_dialog(ctx, &mut self.dialog_state.show_about);
+
         // Load patch dialog
-        if self.show_load_patch {
-            egui::Window::new("Load Patch")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label("Select a patch to load:");
-                    ui.add_space(8.0);
-                    
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        ui.heading("Built-in Patches");
-                        for patch in example_patches() {
-                            ui.horizontal(|ui| {
-                                if ui.button(&patch.name).clicked() {
-                                    self.load_patch_data(&patch);
-                                    self.current_patch_name = patch.name.clone();
-                                    self.show_load_patch = false;
-                                    self.status_message = Some((
-                                        format!("Loaded: {}", patch.name),
-                                        std::time::Instant::now()
-                                    ));
-                                }
-                                if let Some(ref desc) = patch.description {
-                                    ui.label(RichText::new(desc).small().color(colors::TEXT_DIM));
-                                }
-                            });
-                        }
-                    });
-                    
-                    ui.add_space(16.0);
-                    if ui.button("Cancel").clicked() {
-                        self.show_load_patch = false;
-                    }
-                });
-        }
-        
-        // Save patch dialog
-        if self.show_save_patch {
-            egui::Window::new("Save Patch")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label("Enter a name for your patch:");
-                    ui.add_space(8.0);
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("Name:");
-                        ui.text_edit_singleline(&mut self.patch_save_name);
-                    });
-                    
-                    ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() && !self.patch_save_name.is_empty() {
-                            if let Some(patch) = self.create_patch_from_rack() {
-                                let filename = format!("{}.json", 
-                                    self.patch_save_name.to_lowercase().replace(' ', "_"));
-                                if let Err(e) = patch.save(&filename) {
-                                    self.status_message = Some((
-                                        format!("Error saving: {}", e),
-                                        std::time::Instant::now()
-                                    ));
-                                } else {
-                                    self.current_patch_name = self.patch_save_name.clone();
-                                    self.current_patch_path = Some(PathBuf::from(&filename));
-                                    self.status_message = Some((
-                                        format!("Saved: {}", filename),
-                                        std::time::Instant::now()
-                                    ));
-                                }
-                            }
-                            self.show_save_patch = false;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.show_save_patch = false;
-                        }
-                    });
-                });
-        }
-        
-        // Status message toast
-        if let Some((ref msg, instant)) = self.status_message {
-            if instant.elapsed().as_secs() < 3 {
-                egui::Window::new("Status")
-                    .collapsible(false)
-                    .resizable(false)
-                    .title_bar(false)
-                    .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -50.0])
-                    .show(ctx, |ui| {
-                        ui.label(RichText::new(msg).color(colors::ACCENT_GREEN));
-                    });
-            } else {
-                self.status_message = None;
+        match show_load_patch_dialog(ctx, &mut self.dialog_state.show_load_patch) {
+            LoadPatchResult::LoadBuiltin(patch) => {
+                self.load_patch_data(&patch);
+                self.current_patch_name = patch.name.clone();
+                self.dialog_state.set_status(format!("Loaded: {}", patch.name));
             }
+            LoadPatchResult::Cancelled | LoadPatchResult::None => {}
         }
+
+        // Save patch dialog
+        match show_save_patch_dialog(ctx, &mut self.dialog_state.show_save_patch, &mut self.dialog_state.patch_save_name) {
+            SavePatchResult::Save(name) => {
+                if let Some(patch) = self.create_patch_from_rack() {
+                    let filename = format!("{}.json", name.to_lowercase().replace(' ', "_"));
+                    if let Err(e) = patch.save(&filename) {
+                        self.dialog_state.set_status(format!("Error saving: {}", e));
+                    } else {
+                        self.current_patch_name = name;
+                        self.current_patch_path = Some(PathBuf::from(&filename));
+                        self.dialog_state.set_status(format!("Saved: {}", filename));
+                    }
+                }
+            }
+            SavePatchResult::Cancelled | SavePatchResult::None => {}
+        }
+
+        // Status message toast
+        show_status_toast(ctx, &mut self.dialog_state);
     }
     
     /// Load a patch into the rack view.
@@ -1194,7 +1088,7 @@ impl SynthApp {
     
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
-        let mut patch = Patch::new(&self.patch_save_name);
+        let mut patch = Patch::new(&self.dialog_state.patch_save_name);
         patch.author = Some("User".to_string());
 
         // Add modules

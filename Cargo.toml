@@ -30,6 +30,9 @@ thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# File system paths
+dirs = "6.0"
+
 # GUI - egui (optional)
 eframe = { version = "0.33", optional = true, default-features = false, features = [
     "default_fonts",
@@ -42,6 +45,7 @@ egui = { version = "0.33", optional = true }
 
 [dev-dependencies]
 criterion = "0.7"
+tempfile = "3.20"
 
 [[bench]]
 name = "audio_processing"

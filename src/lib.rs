@@ -89,6 +89,8 @@ pub mod ui;
 pub mod gui;
 pub mod patch;
 pub mod sequencer;
+pub mod types;
+pub mod io;
 
 #[cfg(test)]
 mod tests;
@@ -128,6 +130,9 @@ pub use gui::{GuiBackend, GuiType, SynthGuiConfig, create_backend, print_availab
 
 // Re-export patch system
 pub use patch::{Patch, PatchError, ModuleState, ModuleType, ConnectionState, PatchSettings, example_patches};
+
+// Re-export I/O
+pub use io::{PatchManager, PatchInfo};
 
 // Re-export sequencer types
 pub use sequencer::{
