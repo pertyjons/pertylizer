@@ -42,78 +42,6 @@ const RETURN_BUFFER_SIZE: usize = 256;
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
 
-/// Pre-allocated buffers for voice processing.
-/// This avoids heap allocations in the audio thread.
-struct VoiceProcessingBuffers {
-    // LFO buffers
-    lfo_out: AudioBuffer,
-    retrigger: AudioBuffer,
-
-    // Oscillator buffers
-    osc1_out: AudioBuffer,
-    osc2_out: AudioBuffer,
-    osc_mixed: AudioBuffer,
-    fm_buffer: AudioBuffer,
-    pwm_buffer: AudioBuffer,
-
-    // Filter buffers
-    filter_out: AudioBuffer,
-    filter_env_out: AudioBuffer,
-    cutoff_cv: AudioBuffer,
-    res_cv: AudioBuffer,
-
-    // Amp buffers
-    amp_env_out: AudioBuffer,
-    amp_left: AudioBuffer,
-    amp_right: AudioBuffer,
-    amp_cv: AudioBuffer,
-    pan_cv: AudioBuffer,
-}
-
-impl VoiceProcessingBuffers {
-    fn new() -> Self {
-        Self {
-            lfo_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            retrigger: AudioBuffer::new(MAX_BUFFER_SIZE),
-            osc1_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            osc2_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            osc_mixed: AudioBuffer::new(MAX_BUFFER_SIZE),
-            fm_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
-            pwm_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
-            filter_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            filter_env_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            cutoff_cv: AudioBuffer::new(MAX_BUFFER_SIZE),
-            res_cv: AudioBuffer::new(MAX_BUFFER_SIZE),
-            amp_env_out: AudioBuffer::new(MAX_BUFFER_SIZE),
-            amp_left: AudioBuffer::new(MAX_BUFFER_SIZE),
-            amp_right: AudioBuffer::new(MAX_BUFFER_SIZE),
-            amp_cv: AudioBuffer::new(MAX_BUFFER_SIZE),
-            pan_cv: AudioBuffer::new(MAX_BUFFER_SIZE),
-        }
-    }
-
-    /// Clear all buffers for reuse.
-    #[inline]
-    fn clear_all(&mut self) {
-        self.lfo_out.clear();
-        self.retrigger.clear();
-        self.osc1_out.clear();
-        self.osc2_out.clear();
-        self.osc_mixed.clear();
-        self.fm_buffer.clear();
-        self.pwm_buffer.clear();
-        self.filter_out.clear();
-        self.filter_env_out.clear();
-        self.cutoff_cv.clear();
-        self.res_cv.clear();
-        self.amp_env_out.clear();
-        self.amp_left.clear();
-        self.amp_right.clear();
-        self.amp_cv.clear();
-        self.pan_cv.clear();
-    }
-}
-
 /// Wrapper for modules returned from audio thread.
 /// This allows dropping to happen on the main thread.
 pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
@@ -320,12 +248,11 @@ pub struct SynthEngine {
 
     // === Buffers ===
     voice_buffer: AudioBuffer,
+    voice_left: AudioBuffer,
+    voice_right: AudioBuffer,
     mix_buffer: AudioBuffer,
     effect_buffer: AudioBuffer,
     graph_output: AudioBuffer,
-
-    // === Pre-allocated voice processing buffers ===
-    voice_buffers: VoiceProcessingBuffers,
 
     // === Metering ===
     meter_counter: usize,
@@ -411,10 +338,11 @@ impl SynthEngine {
             sample_rate: 48000.0,
             master_volume: 1.0,
             voice_buffer: AudioBuffer::new(256),
+            voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
+            voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             mix_buffer: AudioBuffer::new(512),
             effect_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(256),
-            voice_buffers: VoiceProcessingBuffers::new(),
             meter_counter: 0,
             meter_interval: 2048,
             peak_left: 0.0,
@@ -790,194 +718,58 @@ impl SynthEngine {
         // Ensure buffers are sized correctly
         self.mix_buffer.resize(buffer_size);
         self.mix_buffer.clear();
-        self.voice_buffer.resize(samples);
+        self.voice_left.resize(samples);
+        self.voice_right.resize(samples);
 
         let mut active_count = 0u32;
 
-        // Process each voice
+        // Process each voice using the new process_audio method
         for voice in self.voice_allocator.voices_mut() {
             if !voice.is_active() {
                 continue;
             }
 
             active_count += 1;
-            self.voice_buffer.clear();
 
-            // Clear pre-allocated buffers for this voice
-            self.voice_buffers.clear_all();
+            // Update glide and increment age
+            let delta_time = samples as f32 / context.sample_rate;
+            voice.glide.update(delta_time);
+            voice.age += samples as u64;
 
-            // Note frequency (one octave down for bass)
-            let freq = 440.0 * 2.0f32.powf((voice.note as f32 - 69.0 - 12.0) / 12.0);
-            let velocity = voice.velocity;
-            let voice_age = voice.age;
-
-            // Set oscillator frequencies using typed API
-            if let Some(osc) = voice.get_module_mut("osc1") {
-                osc.set_param(
-                    TypedParam::Oscillator(OscillatorParam::Frequency),
-                    TypedValue::Float(freq)
-                );
-            }
-            if let Some(osc) = voice.get_module_mut("osc2") {
-                osc.set_param(
-                    TypedParam::Oscillator(OscillatorParam::Frequency),
-                    TypedValue::Float(freq)
-                );
+            // Handle stealing fade-out
+            if voice.state == crate::engine::voice::VoiceState::Stealing {
+                if voice.steal_fade_counter == 0 {
+                    voice.reset();
+                    continue;
+                }
             }
 
-            // === Process LFO with retrigger on note start ===
-            if voice_age == 0 {
-                self.voice_buffers.retrigger[0] = 1.0;
-            }
+            // Clear output buffers
+            self.voice_left.clear();
+            self.voice_right.clear();
 
-            // Use pre-allocated buffers with HashMap (small allocation for HashMap itself,
-            // but AudioBuffer data is pre-allocated)
-            let lfo_inputs: HashMap<String, &AudioBuffer> =
-                [("retrigger".to_string(), &self.voice_buffers.retrigger as &AudioBuffer)]
-                .into_iter().collect();
+            // Process the voice signal chain
+            voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
 
-            let mut lfo_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.lfo_out))]
-                .into_iter().collect();
-
-            if let Some(lfo) = voice.get_module_mut("lfo") {
-                lfo.process(&lfo_inputs, &mut lfo_outputs, context);
-            }
-
-            // Take buffer back
-            if let Some(buf) = lfo_outputs.remove("out") {
-                self.voice_buffers.lfo_out = buf;
-            }
-
-            // === Process Oscillator 1 with FM and PWM ===
-            for i in 0..samples {
-                self.voice_buffers.fm_buffer[i] = self.voice_buffers.lfo_out[i] * 0.025;
-                self.voice_buffers.pwm_buffer[i] = self.voice_buffers.lfo_out[i] * 0.3;
-            }
-
-            let osc1_inputs: HashMap<String, &AudioBuffer> = [
-                ("fm".to_string(), &self.voice_buffers.fm_buffer as &AudioBuffer),
-                ("pwm".to_string(), &self.voice_buffers.pwm_buffer as &AudioBuffer),
-            ].into_iter().collect();
-
-            let mut osc1_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.osc1_out))]
-                .into_iter().collect();
-
-            if let Some(osc) = voice.get_module_mut("osc1") {
-                osc.process(&osc1_inputs, &mut osc1_outputs, context);
-            }
-
-            if let Some(buf) = osc1_outputs.remove("out") {
-                self.voice_buffers.osc1_out = buf;
-            }
-
-            // === Process Oscillator 2 ===
-            let osc2_inputs: HashMap<String, &AudioBuffer> = [
-                ("fm".to_string(), &self.voice_buffers.fm_buffer as &AudioBuffer),
-                ("pwm".to_string(), &self.voice_buffers.pwm_buffer as &AudioBuffer),
-            ].into_iter().collect();
-
-            let mut osc2_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.osc2_out))]
-                .into_iter().collect();
-
-            if let Some(osc) = voice.get_module_mut("osc2") {
-                osc.process(&osc2_inputs, &mut osc2_outputs, context);
-            }
-
-            if let Some(buf) = osc2_outputs.remove("out") {
-                self.voice_buffers.osc2_out = buf;
-            }
-
-            // === Mix oscillators ===
-            for i in 0..samples {
-                self.voice_buffers.osc_mixed[i] = self.voice_buffers.osc1_out[i] + self.voice_buffers.osc2_out[i];
-            }
-
-            // === Process Filter Envelope ===
-            let empty_inputs: HashMap<String, &AudioBuffer> = HashMap::new();
-            let mut filter_env_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.filter_env_out))]
-                .into_iter().collect();
-
-            if let Some(env) = voice.get_module_mut("filter_env") {
-                env.process(&empty_inputs, &mut filter_env_outputs, context);
-            }
-
-            if let Some(buf) = filter_env_outputs.remove("out") {
-                self.voice_buffers.filter_env_out = buf;
-            }
-
-            // === Process Filter ===
-            for i in 0..samples {
-                self.voice_buffers.cutoff_cv[i] = self.voice_buffers.lfo_out[i] * 0.2 + self.voice_buffers.filter_env_out[i] * 0.6;
-                self.voice_buffers.res_cv[i] = self.voice_buffers.lfo_out[i] * 0.1;
-            }
-
-            let filter_inputs: HashMap<String, &AudioBuffer> = [
-                ("in".to_string(), &self.voice_buffers.osc_mixed as &AudioBuffer),
-                ("cutoff_cv".to_string(), &self.voice_buffers.cutoff_cv as &AudioBuffer),
-                ("res_cv".to_string(), &self.voice_buffers.res_cv as &AudioBuffer),
-            ].into_iter().collect();
-
-            let mut filter_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.filter_out))]
-                .into_iter().collect();
-
-            if let Some(filter) = voice.get_module_mut("filter") {
-                filter.process(&filter_inputs, &mut filter_outputs, context);
-            }
-
-            if let Some(buf) = filter_outputs.remove("out") {
-                self.voice_buffers.filter_out = buf;
-            }
-
-            // === Process Amp Envelope ===
-            let mut amp_env_outputs: HashMap<String, AudioBuffer> =
-                [("out".to_string(), std::mem::take(&mut self.voice_buffers.amp_env_out))]
-                .into_iter().collect();
-
-            if let Some(env) = voice.get_module_mut("amp_env") {
-                env.process(&empty_inputs, &mut amp_env_outputs, context);
-            }
-
-            if let Some(buf) = amp_env_outputs.remove("out") {
-                self.voice_buffers.amp_env_out = buf;
-            }
-
-            // === Process Amplifier ===
-            for i in 0..samples {
-                self.voice_buffers.amp_cv[i] = self.voice_buffers.amp_env_out[i] * velocity;
-                self.voice_buffers.pan_cv[i] = self.voice_buffers.lfo_out[i] * 0.15;
-            }
-
-            let amp_inputs: HashMap<String, &AudioBuffer> = [
-                ("in".to_string(), &self.voice_buffers.filter_out as &AudioBuffer),
-                ("cv".to_string(), &self.voice_buffers.amp_cv as &AudioBuffer),
-                ("pan_cv".to_string(), &self.voice_buffers.pan_cv as &AudioBuffer),
-            ].into_iter().collect();
-
-            let mut amp_outputs: HashMap<String, AudioBuffer> = [
-                ("left".to_string(), std::mem::take(&mut self.voice_buffers.amp_left)),
-                ("right".to_string(), std::mem::take(&mut self.voice_buffers.amp_right)),
-            ].into_iter().collect();
-
-            if let Some(amp) = voice.get_module_mut("amp") {
-                amp.process(&amp_inputs, &mut amp_outputs, context);
-            }
-
-            if let Some(buf) = amp_outputs.remove("left") {
-                self.voice_buffers.amp_left = buf;
-            }
-            if let Some(buf) = amp_outputs.remove("right") {
-                self.voice_buffers.amp_right = buf;
+            // Apply stealing fade-out if needed
+            if voice.state == crate::engine::voice::VoiceState::Stealing {
+                let fade_samples = voice.steal_fade_counter.min(samples);
+                for i in 0..samples {
+                    let fade = if i < fade_samples {
+                        (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
+                    } else {
+                        0.0
+                    };
+                    self.voice_left[i] *= fade;
+                    self.voice_right[i] *= fade;
+                }
+                voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
             }
 
             // Mix stereo output into mix buffer
             for i in 0..samples {
-                self.mix_buffer[i * 2] += self.voice_buffers.amp_left[i];
-                self.mix_buffer[i * 2 + 1] += self.voice_buffers.amp_right[i];
+                self.mix_buffer[i * 2] += self.voice_left[i];
+                self.mix_buffer[i * 2 + 1] += self.voice_right[i];
             }
         }
 

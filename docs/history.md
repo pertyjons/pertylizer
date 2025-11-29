@@ -1,5 +1,22 @@
 # Version History
 
+## [0.17.0] - 2024
+
+### Refactored
+- **Voice Architecture** - Moved DSP logic from SynthEngine to Voice
+  - New `Voice::process_audio()` method contains complete signal chain
+  - `VoiceProcessingBuffers` moved from SynthEngine to Voice struct
+  - Each voice now owns its pre-allocated buffers (avoids heap allocations)
+  - `SynthEngine::process_voices()` reduced from ~200 to ~70 lines
+
+### Technical Details
+- Signal chain in `Voice::process_audio()`: LFO → Oscillators → Filter → Amplifier
+- Exposed `glide`, `steal_fade_samples`, `steal_fade_counter` for engine access
+- Better encapsulation: Engine orchestrates, Voice processes
+- Easier to test voices in isolation and extend with new architectures
+
+---
+
 ## [0.16.0] - 2024
 
 ### Changed
