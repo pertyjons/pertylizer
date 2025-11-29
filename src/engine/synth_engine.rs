@@ -20,9 +20,11 @@ use crate::engine::params::{
     AmplifierParam, EnvelopeParam, FilterParam, LfoParam, LfoWaveform, ModuleType, OscillatorParam,
     TypedParam, TypedValue, Waveform,
 };
+use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
 use crate::engine::voice::Voice;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
+use crate::types::SampleCount;
 use crate::modules::{
     Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
     VoiceModule as VoiceModuleTrait,
@@ -237,6 +239,9 @@ pub struct SynthEngine {
     // === Metering ===
     metering: MeteringSystem,
 
+    // === Sequencer ===
+    sequencer: SequencerEngine,
+
     // === Performance monitoring ===
     callback_duration_sum: f32,
     callback_count: u32,
@@ -288,6 +293,7 @@ impl SynthEngine {
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(256),
             metering: MeteringSystem::new(48000.0),
+            sequencer: SequencerEngine::new(crate::types::SampleRate::DVD_QUALITY),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -749,6 +755,29 @@ impl AudioProcessor for SynthEngine {
         // Process commands
         self.process_commands();
 
+        // Process sequencer with type-safe sample count
+        let sample_count = SampleCount::new(context.frames);
+        let sequencer_events = self.sequencer.process(sample_count);
+
+        // TODO: Convert sequencer events to engine note on/off commands
+        // For now, we just process them but don't trigger voices yet
+        for event in sequencer_events {
+            match event {
+                crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, .. } => {
+                    // Convert pitch to frequency and trigger voice
+                    let freq = pitch.frequency(440.0);
+                    let vel = velocity.as_f32();
+                    // self.voice_allocator.note_on(pitch.as_midi(), vel);
+                    let _ = (freq, vel); // Suppress unused warning for now
+                }
+                crate::sequencer::SequencerEvent::NoteOff { pitch, .. } => {
+                    // self.voice_allocator.note_off(pitch.as_midi());
+                    let _ = pitch; // Suppress unused warning for now
+                }
+                _ => {}
+            }
+        }
+
         let process_context = ProcessContext {
             sample_rate: context.sample_rate.as_f32(),
             samples: context.frames,
@@ -805,6 +834,7 @@ impl AudioProcessor for SynthEngine {
         self.sample_rate = info.sample_rate.as_f32();
         self.state.sample_rate.store(info.sample_rate.0);
         self.metering.set_sample_rate(self.sample_rate);
+        self.sequencer.set_sample_rate(crate::types::SampleRate::new(self.sample_rate));
     }
 
     fn on_stream_stop(&mut self) {

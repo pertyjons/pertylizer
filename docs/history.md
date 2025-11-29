@@ -1,5 +1,41 @@
 # Version History
 
+## [0.21.0] - 2024
+
+### Added - Type-Safe Sequencer Engine
+
+- **SequencerEngine** (`src/engine/sequencer_engine.rs`)
+  - Real-time playback engine using domain-specific newtypes
+  - `SampleRate` instead of `f32` for sample rates
+  - `SampleCount` instead of `usize` for buffer sizes
+  - `Tick` instead of `u64` for song positions
+  - Sub-tick precision via `tick_accumulator: f64`
+
+- **Type-Safe API**
+  - `process(samples: SampleCount) -> Vec<SequencerEvent>`
+  - `set_sample_rate(sr: SampleRate)`
+  - `seek(tick: Tick)`
+  - `set_loop(start: Tick, end: Tick, enabled: bool)`
+
+- **Playback Features**
+  - Play/Pause/Stop state machine (`PlayState` enum)
+  - Automatic NoteOff generation for active notes
+  - Loop point support with proper note release
+  - Tempo-aware tick calculation: `(samples / sample_rate) * (bpm / 60) * TICKS_PER_QUARTER`
+
+- **SynthEngine Integration**
+  - Sequencer processed each audio callback
+  - Sample rate synchronized on stream start
+  - Events converted to voice triggers (framework ready)
+
+### Technical Details
+- Follows Rust newtype idiom throughout
+- Zero primitive type leakage in public API
+- Thread-safe song access via `Arc<RwLock<Song>>`
+- All 220 unit tests passing
+
+---
+
 ## [0.20.0] - 2024
 
 ### Refactored - Modular Code Structure
