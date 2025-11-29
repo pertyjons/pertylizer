@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+use super::part::{MidiChannel, PartId, SynthPart};
 use super::typed_params::{ModuleType, TypedParam, TypedValue};
 
 /// Unique identifier for a module instance.
@@ -236,18 +237,47 @@ impl PortId {
 /// These commands are processed in the audio callback, so they must
 /// be designed to be handled without blocking.
 pub enum EngineCommand {
+    // === Part management ===
+    /// Add a new synth part (pre-created in GUI thread for real-time safety).
+    AddPart {
+        part: Box<SynthPart>,
+    },
+
+    /// Remove a synth part by ID.
+    RemovePart {
+        part_id: PartId,
+    },
+
+    /// Set a parameter on a specific part.
+    SetPartParameter {
+        part_id: PartId,
+        param: PartParam,
+    },
+
+    /// Set the MIDI channel for a part.
+    SetPartMidiChannel {
+        part_id: PartId,
+        channel: MidiChannel,
+    },
+
+    /// Enable or disable a part.
+    SetPartEnabled {
+        part_id: PartId,
+        enabled: bool,
+    },
+
     // === Note control ===
     /// Start a note.
     NoteOn {
         note: u8,
         velocity: f32,
-        channel: u8,
+        channel: MidiChannel,
     },
 
     /// Stop a note.
     NoteOff {
         note: u8,
-        channel: u8,
+        channel: MidiChannel,
     },
 
     /// All notes off.
@@ -256,20 +286,20 @@ pub enum EngineCommand {
     /// Pitch bend.
     PitchBend {
         value: f32, // -1.0 to 1.0
-        channel: u8,
+        channel: MidiChannel,
     },
 
     /// Aftertouch.
     Aftertouch {
         value: f32,
-        channel: u8,
+        channel: MidiChannel,
     },
 
     /// Per-note aftertouch.
     PolyAftertouch {
         note: u8,
         value: f32,
-        channel: u8,
+        channel: MidiChannel,
     },
 
     // === Parameter control ===
@@ -459,6 +489,23 @@ impl EffectType {
     }
 }
 
+/// Part-specific parameters that can be set via commands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PartParam {
+    /// Part volume (0.0 to 1.0+).
+    Volume(crate::types::Gain),
+    /// Part pan (-1.0 left to +1.0 right).
+    Pan(crate::types::BipolarValue),
+    /// Glide/portamento time in seconds.
+    GlideTime(f32),
+    /// Voice allocation mode.
+    AllocationMode(super::voice_allocator::AllocationMode),
+    /// Voice stealing strategy.
+    StealingStrategy(super::voice_allocator::StealingStrategy),
+    /// Maximum polyphony for this part.
+    MaxVoices(usize),
+}
+
 /// Events sent from the audio engine to the UI.
 ///
 /// These are for visualization (meters, waveforms) and state updates.
@@ -509,6 +556,35 @@ pub enum EngineEvent {
 impl std::fmt::Debug for EngineCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // Part commands
+            Self::AddPart { part } => {
+                f.debug_struct("AddPart")
+                    .field("part_id", &part.id())
+                    .field("name", &part.name())
+                    .finish()
+            }
+            Self::RemovePart { part_id } => {
+                f.debug_struct("RemovePart").field("part_id", part_id).finish()
+            }
+            Self::SetPartParameter { part_id, param } => {
+                f.debug_struct("SetPartParameter")
+                    .field("part_id", part_id)
+                    .field("param", param)
+                    .finish()
+            }
+            Self::SetPartMidiChannel { part_id, channel } => {
+                f.debug_struct("SetPartMidiChannel")
+                    .field("part_id", part_id)
+                    .field("channel", channel)
+                    .finish()
+            }
+            Self::SetPartEnabled { part_id, enabled } => {
+                f.debug_struct("SetPartEnabled")
+                    .field("part_id", part_id)
+                    .field("enabled", enabled)
+                    .finish()
+            }
+            // Note commands
             Self::NoteOn { note, velocity, channel } => {
                 f.debug_struct("NoteOn")
                     .field("note", note)

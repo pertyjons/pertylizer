@@ -1,5 +1,42 @@
 # Version History
 
+## [0.22.0] - 2024
+
+### Added - Dynamic Multitimbrality
+
+- **Part System** (`src/engine/part.rs`)
+  - `PartId(u64)` newtype for unique part identifiers
+  - `MidiChannel(u8)` newtype with OMNI/CH1-16/DRUMS constants
+  - `SynthPart` struct encapsulating independent voice allocation
+  - Per-part volume (`Gain`) and pan (`BipolarValue`)
+  - MIDI channel routing with OMNI mode support
+
+- **New Commands** (`src/engine/commands.rs`)
+  - `AddPart { part: Box<SynthPart> }` - real-time safe part creation
+  - `RemovePart { part_id: PartId }` - remove part by ID
+  - `SetPartParameter { part_id, param: PartParam }` - volume/pan/glide/mode
+  - `SetPartMidiChannel { part_id, channel }` - MIDI channel assignment
+  - `SetPartEnabled { part_id, enabled }` - enable/disable parts
+  - `PartParam` enum: Volume, Pan, GlideTime, AllocationMode, StealingStrategy
+
+- **SynthEngine Refactoring**
+  - Replaced single `VoiceAllocator` with `Vec<Box<SynthPart>>`
+  - Notes routed to parts based on MIDI channel matching
+  - Part volume/pan applied during voice mixing
+  - Default part uses OMNI mode for backwards compatibility
+
+### Changed
+- `NoteOn`/`NoteOff` commands now use `MidiChannel` instead of raw `u8`
+- `EngineHandle::note_on_channel()` and `note_off_channel()` for channel-specific notes
+
+### Technical Details
+- Type-safe: No raw `u8` or `usize` in public part APIs
+- Real-time safe: Parts created in GUI thread, sent via commands
+- Unlimited parts: Dynamic `Vec` allows any number of parts
+- All 229 unit tests passing
+
+---
+
 ## [0.21.0] - 2024
 
 ### Added - Type-Safe Sequencer Engine

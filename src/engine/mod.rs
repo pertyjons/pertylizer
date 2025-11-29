@@ -15,6 +15,7 @@ pub mod effect_chain;
 pub mod graph;
 pub mod metering;
 pub mod params;
+pub mod part;
 pub mod sequencer_engine;
 pub mod state;
 pub mod synth_engine;
@@ -33,13 +34,17 @@ pub mod shared_state;
 pub mod transactions;
 pub mod visual_state;
 
-pub use commands::*;
+pub use commands::{
+    ModuleId, VoiceModule, ModuleTypeId, PortId, EngineCommand, VisualizerType, EffectType,
+    PartParam, EngineEvent,
+};
 pub use state::*;
 pub use synth_engine::{SynthEngine, EngineHandle};
 pub use sequencer_engine::{SequencerEngine, PlayState};
 pub use voice::{Voice, VoiceState};
 pub use voice_allocator::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy, NotePriority};
 pub use graph::{ModuleGraph, Connection, GraphError};
+pub use part::{PartId, MidiChannel, SynthPart};
 
 // Re-export typed parameter system
 pub use params::{

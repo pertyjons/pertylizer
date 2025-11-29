@@ -434,7 +434,32 @@ impl Clone for EngineCommand {
                     enabled: *enabled,
                 }
             }
+            // Part management commands
+            EngineCommand::RemovePart { part_id } => {
+                EngineCommand::RemovePart { part_id: *part_id }
+            }
+            EngineCommand::SetPartParameter { part_id, param } => {
+                EngineCommand::SetPartParameter {
+                    part_id: *part_id,
+                    param: *param,
+                }
+            }
+            EngineCommand::SetPartMidiChannel { part_id, channel } => {
+                EngineCommand::SetPartMidiChannel {
+                    part_id: *part_id,
+                    channel: *channel,
+                }
+            }
+            EngineCommand::SetPartEnabled { part_id, enabled } => {
+                EngineCommand::SetPartEnabled {
+                    part_id: *part_id,
+                    enabled: *enabled,
+                }
+            }
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
+            EngineCommand::AddPart { .. } => {
+                panic!("AddPart cannot be cloned - part instances are unique")
+            }
             EngineCommand::AddModuleInstance { .. } => {
                 panic!("AddModuleInstance cannot be cloned - module instances are unique")
             }

@@ -22,6 +22,7 @@ use crate::engine::params::{
 };
 use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
+use crate::engine::part::{MidiChannel, PartId, SynthPart};
 use crate::engine::voice::Voice;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::types::SampleCount;
@@ -105,18 +106,35 @@ impl EngineHandle {
         }
     }
 
-    /// Send a note on event.
+    /// Send a note on event to the default channel.
     pub fn note_on(&mut self, note: u8, velocity: f32) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
-            channel: 0,
+            channel: super::part::MidiChannel::CH1,
         })
     }
 
-    /// Send a note off event.
+    /// Send a note off event to the default channel.
     pub fn note_off(&mut self, note: u8) -> bool {
-        self.send(EngineCommand::NoteOff { note, channel: 0 })
+        self.send(EngineCommand::NoteOff {
+            note,
+            channel: super::part::MidiChannel::CH1,
+        })
+    }
+
+    /// Send a note on event to a specific channel.
+    pub fn note_on_channel(&mut self, note: u8, velocity: f32, channel: super::part::MidiChannel) -> bool {
+        self.send(EngineCommand::NoteOn {
+            note,
+            velocity,
+            channel,
+        })
+    }
+
+    /// Send a note off event to a specific channel.
+    pub fn note_off_channel(&mut self, note: u8, channel: super::part::MidiChannel) -> bool {
+        self.send(EngineCommand::NoteOff { note, channel })
     }
 
     /// Set a voice module parameter using the type-safe API.
@@ -209,9 +227,11 @@ pub struct SynthEngine {
     /// Shared state.
     state: Arc<EngineState>,
 
-    // === Voice management ===
-    /// Voice allocator.
-    voice_allocator: VoiceAllocator,
+    // === Part management (multitimbral) ===
+    /// All synthesizer parts (each with its own voice allocator).
+    parts: Vec<Box<SynthPart>>,
+    /// Counter for generating unique part IDs.
+    next_part_id: u64,
     /// Template module graph for voices.
     voice_template: ModuleGraph,
 
@@ -272,15 +292,23 @@ impl SynthEngine {
         // Create voice template with default signal chain
         let voice_template = Self::create_default_voice_template();
 
-        // Create voice allocator with template
-        let voice_allocator = VoiceAllocator::with_template(config, &Self::create_template_voice(&voice_template));
+        // Create default part with OMNI channel (responds to all MIDI channels)
+        let mut default_part = SynthPart::with_config(PartId::FIRST, "Default", config);
+        default_part.set_midi_channel(MidiChannel::OMNI);
+
+        // Initialize allocator with template voice
+        *default_part.allocator_mut() = VoiceAllocator::with_template(
+            default_part.allocator().config().clone(),
+            &Self::create_template_voice(&voice_template),
+        );
 
         let engine = Self {
             command_consumer,
             event_producer,
             return_producer,
             state: Arc::clone(&state),
-            voice_allocator,
+            parts: vec![Box::new(default_part)],
+            next_part_id: 1, // 0 is used by default part
             voice_template,
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
@@ -476,16 +504,67 @@ impl SynthEngine {
     /// Handle a single command.
     fn handle_command(&mut self, command: EngineCommand) {
         match command {
-            EngineCommand::NoteOn { note, velocity, channel: _ } => {
-                self.voice_allocator.note_on(note, velocity);
+            // === Part management commands ===
+            EngineCommand::AddPart { part } => {
+                self.parts.push(part);
+            }
+
+            EngineCommand::RemovePart { part_id } => {
+                self.parts.retain(|p| p.id() != part_id);
+            }
+
+            EngineCommand::SetPartParameter { part_id, param } => {
+                use crate::engine::commands::PartParam;
+                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
+                    match param {
+                        PartParam::Volume(vol) => part.set_volume(vol),
+                        PartParam::Pan(pan) => part.set_pan(pan),
+                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time),
+                        PartParam::AllocationMode(mode) => part.allocator_mut().set_mode(mode),
+                        PartParam::StealingStrategy(strategy) => part.allocator_mut().set_stealing(strategy),
+                        PartParam::MaxVoices(_) => {
+                            // Cannot change max voices at runtime without reallocating
+                            // This would require recreating the allocator
+                        }
+                    }
+                }
+            }
+
+            EngineCommand::SetPartMidiChannel { part_id, channel } => {
+                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
+                    part.set_midi_channel(channel);
+                }
+            }
+
+            EngineCommand::SetPartEnabled { part_id, enabled } => {
+                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
+                    part.set_enabled(enabled);
+                }
+            }
+
+            // === Note control - route to parts by channel ===
+            EngineCommand::NoteOn { note, velocity, channel } => {
+                // Route to all parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        part.note_on(note, velocity);
+                    }
+                }
                 // Also trigger note on in the modular graph
                 if self.use_modular_routing {
                     self.module_graph.note_on(note, velocity);
                 }
             }
 
-            EngineCommand::NoteOff { note, channel: _ } => {
-                self.voice_allocator.note_off(note);
+            EngineCommand::NoteOff { note, channel } => {
+                // Route to all parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        part.note_off(note);
+                    }
+                }
                 // Also trigger note off in the modular graph
                 if self.use_modular_routing {
                     self.module_graph.note_off();
@@ -493,7 +572,10 @@ impl SynthEngine {
             }
 
             EngineCommand::AllNotesOff => {
-                self.voice_allocator.all_notes_off();
+                // Release notes on all parts
+                for part in &mut self.parts {
+                    part.all_notes_off();
+                }
                 if self.use_modular_routing {
                     self.module_graph.reset();
                 }
@@ -507,21 +589,26 @@ impl SynthEngine {
             EngineCommand::SetGlideTime(time) => {
                 // Clamp to reasonable range: 0-5 seconds
                 let time = time.clamp(0.0, 5.0);
-                self.voice_allocator.set_glide_time(time);
+                // Apply to all parts
+                for part in &mut self.parts {
+                    part.allocator_mut().set_glide_time(time);
+                }
             }
 
             EngineCommand::SetVoiceParameter { target, param, value } => {
                 // Use VoiceModule enum to get the module name - no magic numbers!
                 let module_name = target.internal_name();
-                
-                // Apply to all voices using the typed API
-                for voice in self.voice_allocator.voices_mut() {
-                    if let Some(module) = voice.get_module_mut(module_name) {
-                        module.set_param(param.clone(), value.clone());
+
+                // Apply to all voices in all parts using the typed API
+                for part in &mut self.parts {
+                    for voice in part.allocator_mut().voices_mut() {
+                        if let Some(module) = voice.get_module_mut(module_name) {
+                            module.set_param(param.clone(), value.clone());
+                        }
                     }
                 }
             }
-            
+
             EngineCommand::SetModuleParameter { module_id, param, value } => {
                 // Set parameter on module in the global graph
                 if let Some(module) = self.module_graph.get_module_mut(module_id) {
@@ -530,13 +617,18 @@ impl SynthEngine {
             }
 
             EngineCommand::Reset => {
-                self.voice_allocator.panic();
+                // Panic all parts
+                for part in &mut self.parts {
+                    part.panic();
+                }
                 self.effect_chain.reset();
             }
 
             EngineCommand::ClearAllModules => {
-                // Clear all modules for patch loading
-                self.voice_allocator.panic();
+                // Clear all modules for patch loading - panic all parts
+                for part in &mut self.parts {
+                    part.panic();
+                }
                 self.effect_chain.clear();
                 self.module_graph.clear();
                 self.use_modular_routing = false;
@@ -636,7 +728,7 @@ impl SynthEngine {
         }
     }
 
-    /// Process all active voices and mix.
+    /// Process all active voices across all parts and mix.
     fn process_voices(&mut self, context: &ProcessContext) {
         let num_channels = 2;
         let buffer_size = context.samples * num_channels;
@@ -650,61 +742,73 @@ impl SynthEngine {
 
         let mut active_count = 0u32;
 
-        // Process each voice using the new process_audio method
-        for voice in self.voice_allocator.voices_mut() {
-            if !voice.is_active() {
+        // Process each part
+        for part in &mut self.parts {
+            if !part.is_enabled() {
                 continue;
             }
 
-            active_count += 1;
+            // Get part's stereo gain (includes volume and pan)
+            let (left_gain, right_gain) = part.stereo_gain();
+            let left_gain = left_gain.as_f32();
+            let right_gain = right_gain.as_f32();
 
-            // Update glide and increment age
-            let delta_time = samples as f32 / context.sample_rate;
-            voice.glide.update(delta_time);
-            voice.age += samples as u64;
-
-            // Handle stealing fade-out
-            if voice.state == crate::engine::voice::VoiceState::Stealing {
-                if voice.steal_fade_counter == 0 {
-                    voice.reset();
+            // Process each voice in this part
+            for voice in part.allocator_mut().voices_mut() {
+                if !voice.is_active() {
                     continue;
                 }
-            }
 
-            // Clear output buffers
-            self.voice_left.clear();
-            self.voice_right.clear();
+                active_count += 1;
 
-            // Process the voice signal chain
-            voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
+                // Update glide and increment age
+                let delta_time = samples as f32 / context.sample_rate;
+                voice.glide.update(delta_time);
+                voice.age += samples as u64;
 
-            // Apply stealing fade-out if needed
-            if voice.state == crate::engine::voice::VoiceState::Stealing {
-                let fade_samples = voice.steal_fade_counter.min(samples);
-                for i in 0..samples {
-                    let fade = if i < fade_samples {
-                        (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
-                    } else {
-                        0.0
-                    };
-                    self.voice_left[i] *= fade;
-                    self.voice_right[i] *= fade;
+                // Handle stealing fade-out
+                if voice.state == crate::engine::voice::VoiceState::Stealing {
+                    if voice.steal_fade_counter == 0 {
+                        voice.reset();
+                        continue;
+                    }
                 }
-                voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
+
+                // Clear output buffers
+                self.voice_left.clear();
+                self.voice_right.clear();
+
+                // Process the voice signal chain
+                voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
+
+                // Apply stealing fade-out if needed
+                if voice.state == crate::engine::voice::VoiceState::Stealing {
+                    let fade_samples = voice.steal_fade_counter.min(samples);
+                    for i in 0..samples {
+                        let fade = if i < fade_samples {
+                            (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
+                        } else {
+                            0.0
+                        };
+                        self.voice_left[i] *= fade;
+                        self.voice_right[i] *= fade;
+                    }
+                    voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
+                }
+
+                // Mix stereo output into mix buffer with part volume/pan
+                for i in 0..samples {
+                    self.mix_buffer[i * 2] += self.voice_left[i] * left_gain;
+                    self.mix_buffer[i * 2 + 1] += self.voice_right[i] * right_gain;
+                }
             }
 
-            // Mix stereo output into mix buffer
-            for i in 0..samples {
-                self.mix_buffer[i * 2] += self.voice_left[i];
-                self.mix_buffer[i * 2 + 1] += self.voice_right[i];
-            }
+            // Advance this part's allocator time
+            part.allocator_mut().advance_time(context.samples as u64);
         }
 
-        // Update voice count
+        // Update total voice count across all parts
         self.state.voice_count.store(active_count);
-
-        // Advance allocator time
-        self.voice_allocator.advance_time(context.samples as u64);
     }
 
     /// Process the global module graph.
@@ -838,7 +942,10 @@ impl AudioProcessor for SynthEngine {
     }
 
     fn on_stream_stop(&mut self) {
-        self.voice_allocator.panic();
+        // Panic all parts
+        for part in &mut self.parts {
+            part.panic();
+        }
     }
 
     fn on_error(&mut self, error: crate::audio::AudioError) {
@@ -877,7 +984,42 @@ mod tests {
         // Process commands
         engine.process_commands();
 
-        // Should have 3 active voices
-        assert_eq!(engine.voice_allocator.active_voice_count(), 3);
+        // Should have 3 active voices across all parts
+        let total_active: usize = engine.parts.iter()
+            .map(|p| p.active_voice_count())
+            .sum();
+        assert_eq!(total_active, 3);
+    }
+
+    #[test]
+    fn test_default_part_exists() {
+        let (engine, _handle) = SynthEngine::new();
+
+        // Engine should have one default part
+        assert_eq!(engine.parts.len(), 1);
+        assert_eq!(engine.parts[0].id(), crate::engine::part::PartId::FIRST);
+        assert_eq!(engine.parts[0].name(), "Default");
+        assert!(engine.parts[0].midi_channel().is_omni());
+    }
+
+    #[test]
+    fn test_part_channel_routing() {
+        let (mut engine, mut handle) = SynthEngine::new();
+
+        // Modify default part to listen to channel 1 only
+        engine.parts[0].set_midi_channel(
+            crate::engine::part::MidiChannel::from_one_indexed(1).unwrap()
+        );
+
+        // Send note on channel 1 - should be received
+        handle.note_on_channel(60, 0.8, crate::engine::part::MidiChannel::CH1);
+        engine.process_commands();
+        assert_eq!(engine.parts[0].active_voice_count(), 1);
+
+        // Send note on channel 2 - should NOT be received
+        let ch2 = crate::engine::part::MidiChannel::from_one_indexed(2).unwrap();
+        handle.note_on_channel(64, 0.8, ch2);
+        engine.process_commands();
+        assert_eq!(engine.parts[0].active_voice_count(), 1); // Still 1
     }
 }
