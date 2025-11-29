@@ -11,12 +11,17 @@
 //! - Transactional command batching
 
 pub mod commands;
+pub mod effect_chain;
+pub mod graph;
+pub mod metering;
+pub mod params;
 pub mod state;
 pub mod synth_engine;
 pub mod voice;
 pub mod voice_allocator;
-pub mod graph;
-pub mod typed_params;
+
+// Backwards compatibility alias
+pub use params as typed_params;
 
 // GUI-Engine communication modules (spec implementation)
 pub mod connectivity;
@@ -35,15 +40,16 @@ pub use voice_allocator::{VoiceAllocator, AllocatorConfig, AllocationMode, Steal
 pub use graph::{ModuleGraph, Connection, GraphError};
 
 // Re-export typed parameter system
-pub use typed_params::{
+pub use params::{
     ModuleType, TypedParam, TypedValue, Port,
     // Module-specific params
-    OscillatorParam, FilterParam, EnvelopeParam, LfoParam,
+    OscillatorParam, MathOscillatorParam, FilterParam, EnvelopeParam, LfoParam,
     AmplifierParam, MixerParam, DelayParam, ReverbParam,
-    DistortionParam, ChorusParam, SamplePlayerParam, GranularParam,
+    DistortionParam, ChorusParam, PhaserParam, FlangerParam, CompressorParam, EqParam,
+    SamplePlayerParam, GranularParam, OscilloscopeParam, LevelMeterParam,
     // Type-safe enums
     Waveform as TypedWaveform, LfoWaveform as TypedLfoWaveform,
-    FilterMode, DelayMode, DistortionMode, LoopMode,
+    FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
     // Ports
     AudioPort, ControlPort,
 };

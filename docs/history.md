@@ -1,5 +1,45 @@
 # Version History
 
+## [0.20.0] - 2024
+
+### Refactored - Modular Code Structure
+
+- **GUI Widgets Split** (`src/gui/widgets/`)
+  - Split monolithic `widgets.rs` (1032 lines) into 8 focused modules
+  - `knob.rs` - Rotary knob widget with response curves
+  - `meter.rs` - Audio level meters (peak, RMS, stereo)
+  - `port.rs` - Port widget with direction/type enums
+  - `cable.rs` - Bezier cable drawing utilities
+  - `scope.rs` - Oscilloscope display widget
+  - `envelope.rs` - ADSR visualization and interactive editor
+  - `waveform.rs` - Waveform selector with visual preview
+  - `frame.rs` - Module frame container
+
+- **Parameter System Split** (`src/engine/params/`)
+  - Split `typed_params.rs` (1427 lines) into logical groups
+  - `oscillators.rs` - `Waveform`, `MathAlgo`, oscillator params
+  - `filters.rs` - `FilterMode`, `FilterParam`
+  - `envelopes.rs` - `EnvelopeParam`
+  - `lfo.rs` - `LfoWaveform`, `LfoParam`
+  - `effects.rs` - All effect modes and parameters
+  - `modules.rs` - Amplifier, mixer, sample, visualizer params
+  - `mod.rs` - `ModuleType`, `TypedParam`, `TypedValue`, `Port`
+
+- **Engine Subsystems Extracted** (`src/engine/`)
+  - `metering.rs` - `MeteringSystem` for peak/RMS tracking
+  - `effect_chain.rs` - `EffectChain`, `EffectSlot`, `VisualizerSlot`
+
+- **SynthEngine Cleanup** (`src/engine/synth_engine.rs`)
+  - Delegates to `EffectChain` and `MeteringSystem`
+  - Reduced complexity through composition
+
+### Technical Details
+- Backwards compatibility preserved via `pub use params as typed_params`
+- All 213 unit tests passing
+- Zero functional changes - pure structural refactoring
+
+---
+
 ## [0.19.0] - 2024
 
 ### Added

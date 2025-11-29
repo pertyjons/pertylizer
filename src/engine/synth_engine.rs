@@ -12,22 +12,22 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
-use crate::effects::{Delay, Reverb, Chorus};
 use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
+use crate::engine::effect_chain::{EffectChain, EffectSlot};
+use crate::engine::graph::ModuleGraph;
+use crate::engine::metering::MeteringSystem;
+use crate::engine::params::{
+    AmplifierParam, EnvelopeParam, FilterParam, LfoParam, LfoWaveform, ModuleType, OscillatorParam,
+    TypedParam, TypedValue, Waveform,
+};
 use crate::engine::state::EngineState;
 use crate::engine::voice::Voice;
-use crate::engine::voice_allocator::{VoiceAllocator, AllocatorConfig};
-use crate::engine::graph::ModuleGraph;
-use crate::engine::typed_params::{
-    ModuleType, TypedParam, TypedValue,
-    OscillatorParam, FilterParam, EnvelopeParam, LfoParam, AmplifierParam,
-    Waveform, LfoWaveform,
-};
+use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{
-    Oscillator, Filter, Envelope, Lfo, Amplifier,
-    AudioBuffer, ProcessContext, EffectModule, VoiceModule as VoiceModuleTrait,
+    Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
+    VoiceModule as VoiceModuleTrait,
 };
-use crate::visualizers::{Oscilloscope, LevelMeter, VisualizationBuffer};
+use crate::visualizers::{LevelMeter, Oscilloscope, VisualizationBuffer};
 
 /// Size of the command ring buffer.
 /// Large enough to handle patch loading (100+ modules with params/connections).
@@ -196,22 +196,6 @@ impl EngineHandle {
     }
 }
 
-/// Effect slot in the effect chain.
-struct EffectSlot {
-    module_id: ModuleId,
-    effect: Box<dyn EffectModule>,
-    module_type: ModuleType,
-    enabled: bool,
-}
-
-/// Visualizer slot with shared buffer.
-struct VisualizerSlot {
-    module_id: ModuleId,
-    visualizer: Box<dyn EffectModule>,
-    buffer: Arc<VisualizationBuffer>,
-    enabled: bool,
-}
-
 /// The main synthesizer engine with polyphony.
 pub struct SynthEngine {
     /// Receive commands from UI.
@@ -237,10 +221,7 @@ pub struct SynthEngine {
     use_modular_routing: bool,
 
     // === Effect chain ===
-    effects: Vec<EffectSlot>,
-
-    // === Visualizers ===
-    visualizers: Vec<VisualizerSlot>,
+    effect_chain: EffectChain,
 
     // === Audio state ===
     sample_rate: f32,
@@ -251,16 +232,10 @@ pub struct SynthEngine {
     voice_left: AudioBuffer,
     voice_right: AudioBuffer,
     mix_buffer: AudioBuffer,
-    effect_buffer: AudioBuffer,
     graph_output: AudioBuffer,
 
     // === Metering ===
-    meter_counter: usize,
-    meter_interval: usize,
-    peak_left: f32,
-    peak_right: f32,
-    rms_sum_left: f32,
-    rms_sum_right: f32,
+    metering: MeteringSystem,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -295,35 +270,6 @@ impl SynthEngine {
         // Create voice allocator with template
         let voice_allocator = VoiceAllocator::with_template(config, &Self::create_template_voice(&voice_template));
 
-        // Create default effect chain
-        // Each effect has a ModuleType for type-safe lookup
-        let effects = vec![
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Chorus, 1),
-                effect: Box::new(Chorus::new()),
-                module_type: ModuleType::Chorus,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Delay, 1),
-                effect: Box::new(Delay::new()),
-                module_type: ModuleType::Delay,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Reverb, 1),
-                effect: Box::new(Reverb::new()),
-                module_type: ModuleType::Reverb,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Distortion, 1),
-                effect: Box::new(crate::effects::Distortion::new()),
-                module_type: ModuleType::Distortion,
-                enabled: false,
-            },
-        ];
-
         let engine = Self {
             command_consumer,
             event_producer,
@@ -333,22 +279,15 @@ impl SynthEngine {
             voice_template,
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
-            effects,
-            visualizers: Vec::new(),
+            effect_chain: EffectChain::new(),
             sample_rate: 48000.0,
             master_volume: 1.0,
             voice_buffer: AudioBuffer::new(256),
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             mix_buffer: AudioBuffer::new(512),
-            effect_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(256),
-            meter_counter: 0,
-            meter_interval: 2048,
-            peak_left: 0.0,
-            peak_right: 0.0,
-            rms_sum_left: 0.0,
-            rms_sum_right: 0.0,
+            metering: MeteringSystem::new(48000.0),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -366,12 +305,12 @@ impl SynthEngine {
 
     /// Find an effect slot by its module type.
     fn find_effect_by_type(&mut self, module_type: ModuleType) -> Option<&mut EffectSlot> {
-        self.effects.iter_mut().find(|slot| slot.module_type == module_type)
+        self.effect_chain.find_effect_by_type(module_type)
     }
 
     /// Find an effect slot by its module ID.
     fn find_effect_by_id(&mut self, module_id: ModuleId) -> Option<&mut EffectSlot> {
-        self.effects.iter_mut().find(|slot| slot.module_id == module_id)
+        self.effect_chain.find_effect_by_id(module_id)
     }
 
     /// Create the default voice template graph.
@@ -586,16 +525,13 @@ impl SynthEngine {
 
             EngineCommand::Reset => {
                 self.voice_allocator.panic();
-                for effect in &mut self.effects {
-                    effect.effect.reset();
-                }
+                self.effect_chain.reset();
             }
 
             EngineCommand::ClearAllModules => {
                 // Clear all modules for patch loading
                 self.voice_allocator.panic();
-                self.effects.clear();
-                self.visualizers.clear();
+                self.effect_chain.clear();
                 self.module_graph.clear();
                 self.use_modular_routing = false;
             }
@@ -626,41 +562,26 @@ impl SynthEngine {
 
             EngineCommand::AddVisualizer { id, visualizer_type, buffer } => {
                 use crate::engine::commands::VisualizerType;
-                
+                use crate::modules::EffectModule;
+
                 let visualizer: Box<dyn EffectModule> = match visualizer_type {
                     VisualizerType::Oscilloscope => Box::new(Oscilloscope::new()),
                     VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
                 };
-                
-                self.visualizers.push(VisualizerSlot {
-                    module_id: id,
-                    visualizer,
-                    buffer,
-                    enabled: true,
-                });
+
+                self.effect_chain.add_visualizer(id, visualizer, buffer);
             }
 
             EngineCommand::RemoveVisualizer { id } => {
-                self.visualizers.retain(|slot| slot.module_id != id);
+                self.effect_chain.remove_visualizer(id);
             }
 
-            EngineCommand::AddEffectInstance { id, mut effect } => {
-                // Set sample rate on the pre-created effect
-                effect.set_sample_rate(self.sample_rate);
-                
-                // Get module type directly from effect (already typed_params::ModuleType)
-                let module_type = effect.module_type();
-                
-                self.effects.push(EffectSlot {
-                    module_id: id,
-                    module_type,
-                    effect,
-                    enabled: true,
-                });
+            EngineCommand::AddEffectInstance { id, effect } => {
+                self.effect_chain.add_effect(id, effect, self.sample_rate);
             }
 
             EngineCommand::RemoveEffect { id } => {
-                self.effects.retain(|slot| slot.module_id != id);
+                self.effect_chain.remove_effect(id);
             }
 
             // === Modular routing commands ===
@@ -806,74 +727,12 @@ impl SynthEngine {
 
     /// Process the effect chain.
     fn process_effects(&mut self, context: &ProcessContext) {
-        self.effect_buffer.resize(context.samples * 2);
-
-        for slot in &mut self.effects {
-            if slot.enabled {
-                // Copy mix to effect buffer
-                self.effect_buffer.copy_from(&self.mix_buffer);
-                
-                // Process effect (in-place)
-                slot.effect.process(
-                    self.effect_buffer.as_slice(),
-                    self.mix_buffer.as_mut_slice(),
-                    context,
-                );
-            }
-        }
-
-        // Process visualizers (they don't modify the signal, just capture it)
-        self.process_visualizers(context);
-    }
-
-    /// Process visualizers - capture audio data for display.
-    /// Uses interleaved methods to avoid heap allocation in audio thread.
-    fn process_visualizers(&mut self, _context: &ProcessContext) {
-        for slot in &mut self.visualizers {
-            if !slot.enabled {
-                continue;
-            }
-
-            // Write directly from interleaved mix buffer - NO ALLOCATION!
-            slot.buffer.write_interleaved(self.mix_buffer.as_slice());
-            slot.buffer.update_levels_interleaved(self.mix_buffer.as_slice());
-        }
+        self.effect_chain.process(&mut self.mix_buffer, context);
     }
 
     /// Update metering.
     fn update_meters(&mut self, output: &[f32]) {
-        let channels = 2;
-        
-        for frame in output.chunks(channels) {
-            let left = frame.get(0).copied().unwrap_or(0.0);
-            let right = frame.get(1).copied().unwrap_or(left);
-
-            self.peak_left = self.peak_left.max(left.abs());
-            self.peak_right = self.peak_right.max(right.abs());
-            self.rms_sum_left += left * left;
-            self.rms_sum_right += right * right;
-        }
-
-        self.meter_counter += output.len() / channels;
-
-        if self.meter_counter >= self.meter_interval {
-            self.state.meters.update_peak(self.peak_left, self.peak_right);
-
-            let rms_left = (self.rms_sum_left / self.meter_counter as f32).sqrt();
-            let rms_right = (self.rms_sum_right / self.meter_counter as f32).sqrt();
-            self.state.meters.update_rms(rms_left, rms_right);
-
-            let _ = self.event_producer.try_push(EngineEvent::PeakMeter {
-                left: self.peak_left,
-                right: self.peak_right,
-            });
-
-            self.peak_left = 0.0;
-            self.peak_right = 0.0;
-            self.rms_sum_left = 0.0;
-            self.rms_sum_right = 0.0;
-            self.meter_counter = 0;
-        }
+        self.metering.update(output, &self.state, &mut self.event_producer);
     }
 }
 
@@ -945,7 +804,7 @@ impl AudioProcessor for SynthEngine {
     fn on_stream_start(&mut self, info: &StreamInfo) {
         self.sample_rate = info.sample_rate.as_f32();
         self.state.sample_rate.store(info.sample_rate.0);
-        self.meter_interval = (self.sample_rate / 24.0) as usize;
+        self.metering.set_sample_rate(self.sample_rate);
     }
 
     fn on_stream_stop(&mut self) {
