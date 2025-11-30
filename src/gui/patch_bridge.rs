@@ -436,8 +436,8 @@ pub fn convert_param_value_to_typed(param: TypedParam, value: &ParamValue) -> Ty
                         "sawtooth" => TypedWaveform::Sawtooth,
                         "square" => TypedWaveform::Square,
                         "pulse" => TypedWaveform::Pulse,
-                        "noise" => TypedWaveform::Noise,
-                        "pink_noise" => TypedWaveform::PinkNoise,
+                        // Legacy support: map noise to sine (use NoiseGenerator module instead)
+                        "noise" | "pink_noise" => TypedWaveform::Sine,
                         _ => TypedWaveform::Sawtooth,
                     };
                     TypedValue::Waveform(wf)

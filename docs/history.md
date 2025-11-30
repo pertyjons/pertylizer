@@ -1,5 +1,45 @@
 # Version History
 
+## [0.32.4] - 2024
+
+### Fixed - Waveform Selection Bug
+
+- **Waveform changes now update engine** (`src/gui/rack_view.rs`)
+  - GUI was sending `TypedValue::Int(index)` but modules expected `TypedValue::Waveform`
+  - Added proper conversion from index to typed waveform value
+  - `OscillatorParam::Waveform` → `TypedValue::Waveform(Waveform::from_index(...))`
+  - `LfoParam::Waveform` → `TypedValue::LfoWaveform(LfoWaveform::from_index(...))`
+
+### Removed - Noise Waveforms from Oscillator
+
+Noise generation has been moved to the dedicated `NoiseGenerator` module.
+
+- **Waveform enum** (`src/engine/params/oscillators.rs`)
+  - Removed `Noise` and `PinkNoise` variants
+  - `Waveform::ALL` now has 5 elements (was 7)
+  - `from_id()` maps legacy `"noise"` and `"pink_noise"` to `Sine` for backward compatibility
+
+- **Oscillator module** (`src/modules/oscillator.rs`)
+  - Removed `pink_rows`, `pink_running_sum`, `pink_index` fields
+  - Removed `white_noise()` and `pink_noise()` methods
+  - Removed `Waveform::Noise` and `Waveform::PinkNoise` match arms
+  - Simplified `reset()` method
+
+- **GUI widget** (`src/gui/widgets/waveform.rs`)
+  - Removed `Noise` and `PinkNoise` from `WaveformType` enum
+  - `WaveformType::all()` now returns 5 waveforms
+
+- **Patch loading** (`src/gui/patch_bridge.rs`)
+  - Legacy patches with noise waveforms map to `Sine`
+
+### Technical Details
+
+- All 235 unit tests passing
+- Use `NoiseGenerator` module for noise (white, pink, brown noise types)
+- No breaking changes for existing patches (graceful fallback)
+
+---
+
 ## [0.32.3] - 2024
 
 ### Fixed - CV Modulation Parameter Drift Bugs

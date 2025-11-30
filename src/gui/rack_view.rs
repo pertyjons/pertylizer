@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 
 use crate::engine::{EngineHandle, ModuleId};
-use crate::engine::typed_params::{TypedParam, TypedValue};
+use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, LfoParam, Waveform, LfoWaveform};
 use crate::engine::graph::Connection;
 use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
@@ -1050,8 +1050,21 @@ fn draw_module_panel_params(
                 .show(ui)
             {
                 state.param_values.insert(param.id, selected as f32);
-                // Send the index as Int since modules use index-based selection
-                param_changes.push((param.id, TypedValue::Int(selected as i32)));
+                // Convert index to proper TypedValue based on parameter type
+                let typed_value = match param.id {
+                    TypedParam::Oscillator(OscillatorParam::Waveform) => {
+                        Waveform::from_index(selected)
+                            .map(TypedValue::Waveform)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    TypedParam::Lfo(LfoParam::Waveform) => {
+                        LfoWaveform::from_index(selected)
+                            .map(TypedValue::LfoWaveform)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    _ => TypedValue::Int(selected as i32),
+                };
+                param_changes.push((param.id, typed_value));
             }
             
             // Show selected name

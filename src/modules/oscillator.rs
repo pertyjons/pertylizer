@@ -29,11 +29,6 @@ pub struct Oscillator {
     phase: Phase,
     sample_rate: SampleRate,
 
-    // For pink noise (Voss-McCartney algorithm)
-    pink_rows: [f32; 16],
-    pink_running_sum: f32,
-    pink_index: u32,
-
     // Outputs
     output_buffer: AudioBuffer,
 }
@@ -57,44 +52,8 @@ impl Oscillator {
             fm_mode: FmMode::Exponential,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
-            pink_rows: [0.0; 16],
-            pink_running_sum: 0.0,
-            pink_index: 0,
             output_buffer: AudioBuffer::new(256),
         }
-    }
-
-    /// Generate white noise sample using fastrand (thread-local, lock-free).
-    #[inline]
-    fn white_noise(&self) -> f32 {
-        // Convert [0, 1) to [-1, 1)
-        fastrand::f32() * 2.0 - 1.0
-    }
-
-    /// Generate pink noise using Voss-McCartney algorithm with fastrand source.
-    /// Pink noise has equal energy per octave (-3dB/octave slope).
-    #[inline]
-    fn pink_noise(&mut self) -> f32 {
-        let white = self.white_noise();
-
-        // Voss-McCartney algorithm: update rows based on trailing zeros of index
-        let last_index = self.pink_index;
-        self.pink_index = self.pink_index.wrapping_add(1);
-        let changed = last_index ^ self.pink_index;
-
-        // Find which rows need updating (trailing zeros indicate the row)
-        for i in 0..16 {
-            if (changed & (1 << i)) != 0 {
-                // Subtract old value, add new random value (using fastrand)
-                self.pink_running_sum -= self.pink_rows[i];
-                self.pink_rows[i] = (fastrand::f32() * 2.0 - 1.0) * 0.5;
-                self.pink_running_sum += self.pink_rows[i];
-                break; // Only update one row per sample
-            }
-        }
-
-        // Combine running sum with current white noise and normalize
-        (self.pink_running_sum + white) / 5.0
     }
 
     /// Calculate the actual frequency including detune.
@@ -174,16 +133,6 @@ impl Oscillator {
                 pulse += self.poly_blep(phase, dt);
                 pulse -= self.poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse
-            }
-
-            Waveform::Noise => {
-                // White noise using xorshift
-                self.white_noise()
-            }
-
-            Waveform::PinkNoise => {
-                // Pink noise (-3dB/octave, equal energy per octave)
-                self.pink_noise()
             }
         };
 
@@ -411,10 +360,6 @@ impl VoiceModule for Oscillator {
 
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
-        // Reset pink noise state
-        self.pink_rows = [0.0; 16];
-        self.pink_running_sum = 0.0;
-        self.pink_index = 0;
     }
 
     fn note_on(&mut self, note: u8, _velocity: f32) {

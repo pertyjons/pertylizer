@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Oscillator waveform types.
+/// Note: Noise waveforms have been moved to the dedicated NoiseGenerator module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Waveform {
     #[default]
@@ -15,19 +16,15 @@ pub enum Waveform {
     Sawtooth,
     Square,
     Pulse,
-    Noise,
-    PinkNoise,
 }
 
 impl Waveform {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 5] = [
         Self::Sine,
         Self::Triangle,
         Self::Sawtooth,
         Self::Square,
         Self::Pulse,
-        Self::Noise,
-        Self::PinkNoise,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -37,8 +34,6 @@ impl Waveform {
             Self::Sawtooth => "Sawtooth",
             Self::Square => "Square",
             Self::Pulse => "Pulse",
-            Self::Noise => "White Noise",
-            Self::PinkNoise => "Pink Noise",
         }
     }
 
@@ -49,8 +44,6 @@ impl Waveform {
             Self::Sawtooth => "sawtooth",
             Self::Square => "square",
             Self::Pulse => "pulse",
-            Self::Noise => "noise",
-            Self::PinkNoise => "pink_noise",
         }
     }
 
@@ -61,8 +54,8 @@ impl Waveform {
             "sawtooth" => Some(Self::Sawtooth),
             "square" => Some(Self::Square),
             "pulse" => Some(Self::Pulse),
-            "noise" => Some(Self::Noise),
-            "pink_noise" => Some(Self::PinkNoise),
+            // Legacy support: map noise to sine (use NoiseGenerator module instead)
+            "noise" | "pink_noise" => Some(Self::Sine),
             _ => None,
         }
     }
