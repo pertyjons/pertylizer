@@ -11,7 +11,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, MathOscillatorParam, MathAlgo, ModuleType};
 use crate::modules::core::*;
-use crate::types::{BufferIndex, FrameCount, Hertz, NormalizedValue, NoiseState, Phase, SampleRate};
+use crate::types::{BufferIndex, FrameCount, Hertz, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -48,9 +48,6 @@ pub struct MathOscillator {
     // Bytebeat state
     time_counter: u32,
 
-    // Noise state for algorithms that need it
-    noise_state: NoiseState,
-
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -75,7 +72,6 @@ impl MathOscillator {
             write_pos: BufferIndex::ZERO,
             burst_remaining: FrameCount::ZERO,
             time_counter: 0,
-            noise_state: NoiseState::DEFAULT,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -85,10 +81,11 @@ impl MathOscillator {
         self.frequency = Hertz::from_midi(note);
     }
 
-    /// Generate white noise sample.
+    /// Generate white noise sample using fastrand (thread-local, lock-free).
     #[inline]
-    fn noise(&mut self) -> f32 {
-        self.noise_state.next()
+    fn noise(&self) -> f32 {
+        // Convert [0, 1) to [-1, 1)
+        fastrand::f32() * 2.0 - 1.0
     }
 
     /// Generate a sample using the current algorithm.

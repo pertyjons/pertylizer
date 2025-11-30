@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate, NoiseState};
+use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -28,9 +28,6 @@ pub struct Oscillator {
     // State
     phase: Phase,
     sample_rate: SampleRate,
-
-    // For noise generation
-    noise_state: NoiseState,
 
     // For pink noise (Voss-McCartney algorithm)
     pink_rows: [f32; 16],
@@ -60,7 +57,6 @@ impl Oscillator {
             fm_mode: FmMode::Exponential,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
-            noise_state: NoiseState::DEFAULT,
             pink_rows: [0.0; 16],
             pink_running_sum: 0.0,
             pink_index: 0,
@@ -68,13 +64,14 @@ impl Oscillator {
         }
     }
 
-    /// Generate white noise sample using xorshift.
+    /// Generate white noise sample using fastrand (thread-local, lock-free).
     #[inline]
-    fn white_noise(&mut self) -> f32 {
-        self.noise_state.next()
+    fn white_noise(&self) -> f32 {
+        // Convert [0, 1) to [-1, 1)
+        fastrand::f32() * 2.0 - 1.0
     }
 
-    /// Generate pink noise using Voss-McCartney algorithm.
+    /// Generate pink noise using Voss-McCartney algorithm with fastrand source.
     /// Pink noise has equal energy per octave (-3dB/octave slope).
     #[inline]
     fn pink_noise(&mut self) -> f32 {
@@ -88,9 +85,9 @@ impl Oscillator {
         // Find which rows need updating (trailing zeros indicate the row)
         for i in 0..16 {
             if (changed & (1 << i)) != 0 {
-                // Subtract old value, add new random value
+                // Subtract old value, add new random value (using fastrand)
                 self.pink_running_sum -= self.pink_rows[i];
-                self.pink_rows[i] = self.white_noise() * 0.5;
+                self.pink_rows[i] = (fastrand::f32() * 2.0 - 1.0) * 0.5;
                 self.pink_running_sum += self.pink_rows[i];
                 break; // Only update one row per sample
             }

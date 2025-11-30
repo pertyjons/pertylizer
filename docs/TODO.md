@@ -1,65 +1,55 @@
-# TODO - Modular Synth
+# TODO - Modular Synth (v0.25.0)
 
-## 🟢 Prioritet 1: Sampling & Audio Assets (Nytt Fokus)
-För att kunna importera Tracker-filer och skapa beats måste vi kunna hantera ljudfiler.
+## 🟢 Prioritet 1: Sampling & Audio Assets
+Nu när motorn klarar flera instrument måste vi kunna spela upp samplingar (trummor, tracker-import).
 
 - [ ] **Beroenden**
-   - Lägg till `hound` (WAV) och `rfd` (File Dialog) i `Cargo.toml`.
+  - [ ] Lägg till `hound` (WAV) och `rfd` (File Dialog) i `Cargo.toml`.
 - [ ] **Datatyper (`src/types/sample.rs`)**
-   - Skapa `struct Sample` som håller ljuddata (`Arc<Vec<f32>>`), sample rate och metadata trådsäkert.
+  - [ ] Skapa `struct Sample` som håller ljuddata (`Arc<Vec<f32>>`), sample rate och metadata trådsäkert.
 - [ ] **Laddare (`src/io/sample_loader.rs`)**
-   - Implementera inläsning av WAV-filer från disk.
+  - [ ] Implementera inläsning av WAV-filer från disk (i GUI-tråden).
 - [ ] **SamplePlayer Modul (`src/modules/sample_player.rs`)**
-   - Implementera en `VoiceModule` som spelar upp en `Sample` med resampling (pitch-shifting) för att kunna spelas kromatiskt.
+  - [ ] Implementera en `VoiceModule` som spelar upp en `Sample`.
+  - [ ] Implementera resampling (pitch-shifting) för kromatisk uppspelning.
 - [ ] **Integration**
-   - Lägg till `LoadSample` i `EngineCommand`.
-   - Lägg till `SamplePlayer` i `ModuleType` och GUI.
+  - [ ] Lägg till `LoadSample` i `EngineCommand`.
 
-## 🟡 Prioritet 2: Integration av Arkitektur (The Big Rewire)
-Vi har byggstenarna (`SequencerEngine`, `SynthPart`) men de måste kopplas ihop i `SynthEngine` för att ljud ska komma ut.
+## 🟡 Prioritet 2: Slutför Expressivitet
+Vi har lagt till kommandon för Pitch Bend/Mod Wheel, men de måste implementeras fullt ut i DSP-koden.
 
-- [ ] **Dynamisk Multitimbralitet (Parts)**
-   - [x] `SynthPart` struct definierad.
-   - [ ] **Refaktorera `SynthEngine`:** Byt ut `voice_allocator` mot `parts: Vec<Box<SynthPart>>`.
-   - [ ] Implementera `AddPart` / `RemovePart` kommandon.
-   - [ ] Uppdatera `NoteOn` att routa till rätt Part baserat på kanal.
-- [ ] **Sequencer Integration**
-   - [x] `SequencerEngine` logik klar.
-   - [ ] **Koppla in:** Anropa `sequencer.process()` i `SynthEngine`s ljudloop.
-   - [ ] **Routing:** Se till att sequencer-events (`NoteOn`) skickas till rätt `Part` i motorn.
+- [ ] **Implementera Fastrand**
+  - [ ] Gå igenom `Oscillator`, `Lfo`, `MathOscillator` och byt ut `NoiseState` mot `fastrand`.
+- [ ] **DSP-implementering i Voice**
+  - [ ] Se till att `pitch_bend` faktiskt påverkar oscillatorernas frekvens i `Voice::process_audio`.
+  - [ ] Koppla `mod_wheel` till vibrato-djup (LFO -> Osc FM).
+  - [ ] Koppla Velocity till Filter Cutoff.
 
-## 🟡 Prioritet 3: Expressivitet & Modulation
-Gör synthen mer levande att spela på.
+## 🟡 Prioritet 3: Sequencer GUI
+Motorn kan spela, men vi har inget gränssnitt för att skapa musiken än.
 
-- [ ] **Modulations-kopplingar**
-   - [ ] LFO → Pitch (Vibrato).
-   - [ ] LFO → Amplitude (Tremolo).
-   - [ ] Velocity → Filter Cutoff & Amp Level.
-- [ ] **Makro-kontroller**
-   - [ ] Pitch Bend & Mod Wheel stöd.
-- [ ] **Byt Slumptalsgenerator**
-   - [ ] Byt manuell Xorshift mot `fastrand` i `Cargo.toml` och moduler för bättre brus.
+- [ ] **Transport Bar**
+  - [ ] Knappar för Play, Stop, Rewind kopplade till `EngineHandle`.
+  - [ ] BPM-kontroll och Loop-knapp.
+- [ ] **Part Manager (Instrument Rack)**
+  - [ ] En lista i GUI som visar aktiva Parts.
+  - [ ] Knapp: "+ Add Instrument" (skapar ny Part).
+  - [ ] Väljare för vilket ljud (Oscillator/Sampler) varje part ska ha.
+- [ ] **Tracker View / Pattern Editor**
+  - [ ] Implementera rendering av `Pattern` data i ett rutnät.
+  - [ ] Implementera inmatning av noter.
 
-## 🔵 Prioritet 4: GUI för Musikskapande
-När motorn kan spela upp låtar bygger vi gränssnittet för att skapa dem.
+## 🔵 Prioritet 4: Tracker Import (.MOD/.XM)
+När `SamplePlayer` fungerar kan vi börja importera riktig musik.
 
-- [ ] **Sequencer Transport UI** (Play/Stop/BPM).
-- [ ] **Part Manager UI** (Lägg till/ta bort instrument, välj ljud för varje part).
-- [ ] **Tracker View / Pattern Editor**.
-- [ ] **Song Mode Editor**.
-
-## 🟣 Framtida Mål (Långsiktigt)
-
-- [ ] **Tracker Import (.MOD/.XM)** (Kräver fungerande SamplePlayer + Sequencer).
-- [ ] **Avancerade Visualiseringar** (Spectrum Analyzer, Vectorscope i separat fönster).
-- [ ] **VST/Plugin-stöd**.
+- [ ] Skapa `src/io/import/mod_import.rs`.
+- [ ] Mappa Tracker-instrument till `SynthPart` + `SamplePlayer`.
+- [ ] Mappa Tracker-noter till `Pattern` data.
 
 ---
 
 ## ✅ Klart (Historik)
-- [x] **Starka Typer:** `Hertz`, `Seconds`, `Gain`, `Phase` etc. implementerade.
-- [x] **"Zero-Cost" Aritmetik:** Makron för smidig användning av typerna utan `.as_f32()`.
-- [x] **Modul-refaktorisering:** Alla kärnmoduler (`Oscillator`, `Filter`, `Envelope`, `LFO`, `Amp`) och effekter (`Delay`, `Reverb`, `Distortion` etc) använder nu starka typer internt.
-- [x] **Filstruktur:** Uppdelat i `src/engine/params/`, `src/gui/widgets/` och `src/io/`.
-- [x] **IO Separation:** `PatchManager` hanterar filer.
-- [x] **Sequencer Datamodell:** `Song`, `Pattern`, `Track` strukturerna är klara.
+- [x] **Dynamisk Multitimbralitet:** `SynthEngine` har nu `Vec<SynthPart>` och kan hantera flera instrument.
+- [x] **Sequencer Integration:** `SequencerEngine` körs i ljudloopen och routar noter till rätt Part.
+- [x] **Stark Typsäkerhet:** `PartId`, `MidiChannel`, `Gain` används konsekvent i `EngineCommand`.
+- [x] **Arkitektur:** Separation mellan GUI, Engine, Sequencer och Parts är mycket tydlig.

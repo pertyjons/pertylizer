@@ -694,9 +694,13 @@ impl Voice {
         }
 
         // === Prepare Filter CV ===
+        // Velocity scales filter envelope: harder hits open filter more
+        let vel_scale = 0.5 + 0.5 * velocity; // Minimum 50% effect, 100% at full velocity
         for i in 0..samples {
+            // Scale filter envelope by velocity for expressive filter response
+            let env_mod = self.processing_buffers.filter_env_out[i] * vel_scale;
             self.processing_buffers.cutoff_cv[i] = self.processing_buffers.lfo_out[i] * 0.2
-                + self.processing_buffers.filter_env_out[i] * 0.6;
+                + env_mod * 0.6;
             self.processing_buffers.res_cv[i] = self.processing_buffers.lfo_out[i] * 0.1;
         }
 

@@ -1,5 +1,29 @@
 # Version History
 
+## [0.26.0] - 2024
+
+### Added - Complete Expressiveness DSP & Fastrand
+
+- **DSP Implementation** (`src/engine/voice.rs`)
+  - Pitch bend: exponential frequency calculation `2^(semitones/12)`
+  - Mod wheel: scales vibrato depth `lfo * mod_wheel * 0.025`
+  - Velocity → Filter: harder hits open filter more `0.5 + 0.5 * velocity`
+  - Velocity → Amp: direct amplitude scaling
+
+- **Replaced NoiseState with fastrand**
+  - `oscillator.rs`: White/pink noise now uses `fastrand::f32()`
+  - `lfo.rs`: Sample & Hold random uses `fastrand::f32()`
+  - `math_oscillator.rs`: Chaos/noise algorithms use `fastrand::f32()`
+  - Removed `noise_state: NoiseState` field from all oscillator structs
+  - Thread-local storage (TLS) - lock-free and audio-safe
+
+### Technical Details
+- `fastrand` is thread-local and lock-free - safe for audio thread
+- Pitch bend calculation done once per block (outside sample loop)
+- All 229 unit tests passing
+
+---
+
 ## [0.25.0] - 2024
 
 ### Added - Expressiveness & Total Type Safety
@@ -9,7 +33,6 @@
   - Added `mod_wheel: NormalizedValue` field (scales vibrato depth)
   - Added `aftertouch: NormalizedValue` field
   - Velocity changed from `f32` to `NormalizedValue`
-  - Pitch bend applied in `process_audio()` using exponential frequency calculation
 
 - **New `Bpm` Type** (`src/types/time.rs`)
   - Type-safe tempo representation
