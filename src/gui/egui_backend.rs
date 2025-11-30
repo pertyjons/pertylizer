@@ -31,7 +31,8 @@ use crate::gui::patch_bridge;
 use crate::gui::performance_panel::{self, PerformanceState};
 use crate::modules::{
     Describable, ModuleCategory,
-    Oscillator, MathOscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
+    Oscillator, MathOscillator, SubOscillator, NoiseGenerator,
+    Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
 };
 use crate::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use crate::visualizers::{Oscilloscope, LevelMeter};
@@ -354,6 +355,12 @@ impl eframe::App for SynthApp {
                         PaletteSelection::MathOscillator => {
                             self.add_math_oscillator_module();
                         }
+                        PaletteSelection::SubOscillator => {
+                            self.add_sub_oscillator_module();
+                        }
+                        PaletteSelection::Noise => {
+                            self.add_noise_module();
+                        }
                         PaletteSelection::Effect(effect_type) => {
                             self.add_effect_module(effect_type);
                         }
@@ -585,6 +592,34 @@ impl SynthApp {
         let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MathOscillator);
+        self.rack_view.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_sub_oscillator_module(&mut self) {
+        let m = SubOscillator::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::SubOscillator);
+        self.rack_view.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_noise_module(&mut self) {
+        let m = NoiseGenerator::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::Noise);
         self.rack_view.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {

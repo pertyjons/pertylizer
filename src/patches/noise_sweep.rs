@@ -38,10 +38,10 @@ different effect speeds. Great for transitions, buildups, and risers.
 "#.to_string());
     patch.tags = vec!["effect".into(), "sweep".into(), "noise".into(), "riser".into(), "experimental".into()];
 
-    // OSC - Noise (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
+    // Noise Generator - Pink for natural sweep (nse-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Noise)
         .position(50.0, 50.0)
-        .waveform("noise")
+        .param_choice("type", "pink")  // Pink noise for more natural sweep
         .param_f("level", 0.9)
         .build());
 
@@ -106,7 +106,7 @@ different effect speeds. Great for transitions, buildups, and risers.
         .build());
 
     // Connections (using string IDs: type-instance)
-    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("nse-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
     patch.add_connection("env-1", "out", "amp-1", "cv");

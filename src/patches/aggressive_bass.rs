@@ -35,7 +35,15 @@ style bass lines. Try different octaves for different characters.
     patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
         .position(50.0, 50.0)
         .waveform("square")
-        .param_f("level", 0.9)
+        .param_f("level", 0.7)  // Reduced to make room for sub
+        .build());
+
+    // Sub-Oscillator for bass weight (sub-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::SubOscillator)
+        .position(50.0, 150.0)
+        .param_choice("waveform", "sine")  // Pure sine for clean sub
+        .param_choice("octave", "minus1")  // One octave down
+        .param_f("level", 0.6)
         .build());
 
     // Filter - Resonant lowpass (flt-1)
@@ -46,22 +54,28 @@ style bass lines. Try different octaves for different characters.
         .param_f("resonance", 0.6)
         .build());
 
-    // Amp Envelope - Punchy (env-1)
+    // Amp Envelope - Punchy with curves (env-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.002)
         .param_f("decay", 0.15)
         .param_f("sustain", 0.6)
         .param_f("release", 0.1)
+        .param_f("attack_curve", -0.8)  // Fast punch
+        .param_f("decay_curve", -0.4)   // Quick initial drop
+        .param_f("release_curve", -0.3)
         .build());
 
-    // Filter Envelope - Sweep (env-2)
+    // Filter Envelope - Sweep with curves (env-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.25)
         .param_f("sustain", 0.2)
         .param_f("release", 0.1)
+        .param_f("attack_curve", -0.9)  // Instant filter open
+        .param_f("decay_curve", -0.5)   // Quick sweep down
+        .param_f("release_curve", -0.3)
         .build());
 
     // Amplifier (amp-1)
@@ -94,6 +108,7 @@ style bass lines. Try different octaves for different characters.
 
     // Connections (using string IDs: type-instance)
     patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("sub-1", "out", "flt-1", "in");  // Sub-osc adds bass weight
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");

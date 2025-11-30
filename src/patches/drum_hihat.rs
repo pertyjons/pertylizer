@@ -34,10 +34,10 @@ for open hi-hats. The filter cutoff affects brightness.
 "#.to_string());
     patch.tags = vec!["drum".into(), "hihat".into(), "percussion".into(), "cymbal".into()];
 
-    // OSC - Noise (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
+    // Noise Generator - White noise for metallic character (nse-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Noise)
         .position(50.0, 50.0)
-        .waveform("noise")
+        .param_choice("type", "white")  // Crisp white noise for hi-hat
         .param_f("level", 0.8)
         .build());
 
@@ -49,13 +49,16 @@ for open hi-hats. The filter cutoff affects brightness.
         .param_f("resonance", 0.4)
         .build());
 
-    // Amp Envelope - Very short (env-1)
+    // Amp Envelope - Very short with punchy curves (env-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 300.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.05)
         .param_f("sustain", 0.0)
         .param_f("release", 0.03)
+        .param_f("attack_curve", -1.0)  // Instant snap
+        .param_f("decay_curve", -0.5)   // Quick fade
+        .param_f("release_curve", -0.6) // Tight cutoff
         .build());
 
     // Amplifier (amp-1)
@@ -78,7 +81,7 @@ for open hi-hats. The filter cutoff affects brightness.
         .build());
 
     // Connections (using string IDs: type-instance)
-    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("nse-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     // Route to oscilloscope and output

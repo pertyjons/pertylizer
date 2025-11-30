@@ -76,6 +76,8 @@ pub struct ModuleState {
 pub enum ModuleType {
     Oscillator,
     MathOscillator,
+    SubOscillator,
+    Noise,
     Filter,
     Envelope,
     Lfo,
@@ -96,6 +98,8 @@ impl ModuleType {
         match self {
             Self::Oscillator => "oscillator",
             Self::MathOscillator => "math_oscillator",
+            Self::SubOscillator => "sub_oscillator",
+            Self::Noise => "noise",
             Self::Filter => "filter",
             Self::Envelope => "envelope",
             Self::Lfo => "lfo",
@@ -116,6 +120,8 @@ impl ModuleType {
         match self {
             Self::Oscillator => "osc",
             Self::MathOscillator => "mth",
+            Self::SubOscillator => "sub",
+            Self::Noise => "nse",
             Self::Filter => "flt",
             Self::Envelope => "env",
             Self::Lfo => "lfo",

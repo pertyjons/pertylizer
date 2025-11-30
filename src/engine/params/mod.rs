@@ -173,6 +173,8 @@ impl ModuleType {
         match self {
             Self::Oscillator => PM::Oscillator,
             Self::MathOscillator => PM::MathOscillator,
+            Self::SubOscillator => PM::SubOscillator,
+            Self::Noise => PM::Noise,
             Self::Filter => PM::Filter,
             Self::Envelope => PM::Envelope,
             Self::Lfo => PM::Lfo,
@@ -186,9 +188,7 @@ impl ModuleType {
             Self::Oscilloscope => PM::Oscilloscope,
             Self::LevelMeter => PM::LevelMeter,
             // These don't have patch equivalents yet, default to Mixer
-            Self::SubOscillator
-            | Self::Noise
-            | Self::Phaser
+            Self::Phaser
             | Self::Flanger
             | Self::Compressor
             | Self::Eq

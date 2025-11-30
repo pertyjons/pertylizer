@@ -23,7 +23,8 @@ use crate::gui::rack_view::{RackView, EffectType};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::modules::{
     Describable, ModuleCategory, ModuleDescriptor,
-    Oscillator, MathOscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
+    Oscillator, MathOscillator, SubOscillator, NoiseGenerator,
+    Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
 };
 use crate::effects::{Chorus, Delay, Distortion, Reverb};
 use crate::visualizers::{Oscilloscope, LevelMeter};
@@ -127,6 +128,26 @@ fn load_module(
         }
         PatchModuleType::MathOscillator => {
             let m = MathOscillator::new();
+            let descriptor = m.descriptor();
+            rack_view.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, rack_view, handle);
+        }
+        PatchModuleType::SubOscillator => {
+            let m = SubOscillator::new();
+            let descriptor = m.descriptor();
+            rack_view.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, rack_view, handle);
+        }
+        PatchModuleType::Noise => {
+            let m = NoiseGenerator::new();
             let descriptor = m.descriptor();
             rack_view.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {

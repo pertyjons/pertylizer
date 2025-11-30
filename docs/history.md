@@ -1,5 +1,42 @@
 # Version History
 
+## [0.31.0] - 2024
+
+### Added - GUI Module Support and New Patches
+
+- **GUI Support for New Modules** (`src/gui/egui_backend.rs`, `src/gui/rack_view.rs`)
+  - Added SubOscillator to module palette menu ("🔈 Sub" in Oscillators)
+  - Added NoiseGenerator to module palette menu ("🌫 Noise" in Oscillators)
+  - New `PaletteSelection` variants: `SubOscillator`, `Noise`
+  - Methods: `add_sub_oscillator_module()`, `add_noise_module()`
+
+- **Patch System Updates** (`src/patch.rs`)
+  - Added `SubOscillator` and `Noise` to `ModuleType` enum
+  - Module prefixes: `sub` (sub-osc), `nse` (noise)
+  - Full serialization support for new modules
+
+- **Patch Bridge** (`src/gui/patch_bridge.rs`)
+  - Handlers for loading `SubOscillator` and `Noise` modules from patches
+
+- **Updated Example Patches** (using new DSP features)
+  - `drum_kick.rs`: Punchy envelope curves (-0.8 to -1.0)
+  - `drum_snare.rs`: NoiseGenerator (white) + punchy curves
+  - `drum_hihat.rs`: NoiseGenerator (white) + punchy curves
+  - `aggressive_bass.rs`: SubOscillator (sine, -1 oct) + punchy curves
+  - `noise_sweep.rs`: NoiseGenerator (pink) for natural sweep
+
+- **New Example Patches** (3 new patches)
+  - `sub_bass.rs`: Deep bass showcasing SubOscillator module
+  - `brown_drone.rs`: Dark ambient drone using brown noise
+  - `punchy_stab.rs`: Aggressive synth stab demonstrating envelope curves
+
+### Technical Details
+
+- Total example patches: 19 (was 16)
+- All 235 unit tests passing
+
+---
+
 ## [0.30.0] - 2024
 
 ### Added - DSP Improvements for Sound Quality

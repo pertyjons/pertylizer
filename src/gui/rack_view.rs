@@ -1200,6 +1200,8 @@ pub enum VisualizerType {
 pub enum PaletteSelection {
     Category(ModuleCategory),
     MathOscillator,
+    SubOscillator,
+    Noise,
     Effect(EffectType),
     Visualizer(VisualizerType),
     StereoOutput,
@@ -1213,7 +1215,7 @@ impl ModulePalette {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Add Module:").color(colors::TEXT_SECONDARY));
 
-            // Oscillator submenu (Basic + Math)
+            // Oscillator submenu (Basic, Math, Sub, Noise)
             let osc_color = category_color(ModuleCategory::Oscillator);
             ui.menu_button(
                 egui::RichText::new("🎵 Oscillator").color(osc_color),
@@ -1224,6 +1226,14 @@ impl ModulePalette {
                     }
                     if ui.button("🔢 Math").clicked() {
                         selected = Some(PaletteSelection::MathOscillator);
+                        ui.close();
+                    }
+                    if ui.button("🔈 Sub").clicked() {
+                        selected = Some(PaletteSelection::SubOscillator);
+                        ui.close();
+                    }
+                    if ui.button("🌫 Noise").clicked() {
+                        selected = Some(PaletteSelection::Noise);
                         ui.close();
                     }
                 },

@@ -41,22 +41,28 @@ kick characters. Works well in the lowest octave.
         .param_f("level", 1.0)
         .build());
 
-    // Pitch Envelope - Fast sweep (env-1)
+    // Pitch Envelope - Fast sweep with punchy curve (env-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 250.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.05)
         .param_f("sustain", 0.0)
         .param_f("release", 0.01)
+        .param_f("attack_curve", -0.8)  // Punchy, fast attack
+        .param_f("decay_curve", -0.6)   // Quick punch decay
+        .param_f("release_curve", -0.5) // Tight release
         .build());
 
-    // Amp Envelope (env-2)
+    // Amp Envelope with punchy curves (env-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 250.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.15)
         .param_f("sustain", 0.0)
         .param_f("release", 0.05)
+        .param_f("attack_curve", -1.0)  // Instant punch
+        .param_f("decay_curve", -0.7)   // Fast initial drop for punch
+        .param_f("release_curve", -0.5) // Tight cutoff
         .build());
 
     // Amplifier (amp-1)

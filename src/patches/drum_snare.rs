@@ -40,10 +40,10 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
         .param_f("level", 0.6)
         .build());
 
-    // OSC2 - Noise for snare (osc-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
+    // Noise Generator for snare rattle (nse-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Noise)
         .position(50.0, 200.0)
-        .waveform("noise")
+        .param_choice("type", "white")  // Crisp white noise for snare
         .param_f("level", 0.7)
         .build());
 
@@ -61,22 +61,28 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
         .param_f("level", 0.8)
         .build());
 
-    // Pitch Envelope (env-1)
+    // Pitch Envelope with punchy curves (env-1)
     patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
         .position(50.0, 400.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.03)
         .param_f("sustain", 0.0)
         .param_f("release", 0.01)
+        .param_f("attack_curve", -0.9)  // Instant snap
+        .param_f("decay_curve", -0.8)   // Quick pitch drop
+        .param_f("release_curve", -0.5)
         .build());
 
-    // Amp Envelope (env-2)
+    // Amp Envelope with punchy curves (env-2)
     patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
         .position(250.0, 400.0)
         .param_f("attack", 0.001)
         .param_f("decay", 0.12)
         .param_f("sustain", 0.0)
         .param_f("release", 0.08)
+        .param_f("attack_curve", -1.0)  // Instant transient
+        .param_f("decay_curve", -0.6)   // Punchy body
+        .param_f("release_curve", -0.4)
         .build());
 
     // Amplifier (amp-1)
@@ -100,7 +106,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
 
     // Connections (using string IDs: type-instance)
     patch.add_connection("osc-1", "out", "mix-1", "in1");
-    patch.add_connection("osc-2", "out", "flt-1", "in");
+    patch.add_connection("nse-1", "out", "flt-1", "in");  // Noise generator to filter
     patch.add_connection("flt-1", "out", "mix-1", "in2");
     patch.add_connection("mix-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "osc-1", "fm");
