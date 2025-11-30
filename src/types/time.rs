@@ -268,9 +268,165 @@ impl std::fmt::Display for Bpm {
     }
 }
 
+/// Beat division for tempo-synced timing.
+///
+/// Represents note values as fractions of a whole note:
+/// - 4.0 = whole note
+/// - 2.0 = half note
+/// - 1.0 = quarter note
+/// - 0.5 = eighth note
+/// - 0.25 = sixteenth note
+/// - 0.125 = thirty-second note
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct BeatDivision(pub f32);
+
+impl BeatDivision {
+    /// Create a new beat division.
+    #[inline]
+    pub const fn new(beats: f32) -> Self {
+        Self(beats)
+    }
+
+    /// Thirty-second note (1/32).
+    pub const THIRTY_SECOND: Self = Self(0.125);
+
+    /// Sixteenth note (1/16).
+    pub const SIXTEENTH: Self = Self(0.25);
+
+    /// Eighth note (1/8).
+    pub const EIGHTH: Self = Self(0.5);
+
+    /// Quarter note (1/4).
+    pub const QUARTER: Self = Self(1.0);
+
+    /// Half note (1/2).
+    pub const HALF: Self = Self(2.0);
+
+    /// Whole note.
+    pub const WHOLE: Self = Self(4.0);
+
+    /// Dotted quarter (1.5 beats).
+    pub const DOTTED_QUARTER: Self = Self(1.5);
+
+    /// Dotted eighth (0.75 beats).
+    pub const DOTTED_EIGHTH: Self = Self(0.75);
+
+    /// Triplet quarter (2/3 beat).
+    pub const TRIPLET_QUARTER: Self = Self(2.0 / 3.0);
+
+    /// Triplet eighth (1/3 beat).
+    pub const TRIPLET_EIGHTH: Self = Self(1.0 / 3.0);
+
+    /// Get the raw value in beats.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Convert to duration at a given tempo.
+    #[inline]
+    pub fn to_duration(self, tempo: Bpm) -> Seconds {
+        let beat_duration = tempo.beat_duration();
+        Seconds::new(beat_duration.as_f32() * self.0)
+    }
+
+    /// Convert to sample count at a given tempo and sample rate.
+    #[inline]
+    pub fn to_samples(self, tempo: Bpm, sample_rate: SampleRate) -> usize {
+        self.to_duration(tempo).to_samples(sample_rate)
+    }
+
+    /// Get dotted version (1.5x duration).
+    #[inline]
+    pub fn dotted(self) -> Self {
+        Self(self.0 * 1.5)
+    }
+
+    /// Get triplet version (2/3 duration).
+    #[inline]
+    pub fn triplet(self) -> Self {
+        Self(self.0 * (2.0 / 3.0))
+    }
+
+    /// Clamp to valid note division range (1/32 to 4 whole notes).
+    #[inline]
+    pub fn clamp_typical(self) -> Self {
+        Self(self.0.clamp(0.125, 16.0))
+    }
+
+    /// Get the note name for display.
+    pub fn name(&self) -> &'static str {
+        match self.0 {
+            x if (x - 0.125).abs() < 0.01 => "1/32",
+            x if (x - 0.25).abs() < 0.01 => "1/16",
+            x if (x - 0.5).abs() < 0.01 => "1/8",
+            x if (x - 0.75).abs() < 0.01 => "1/8.",
+            x if (x - 1.0).abs() < 0.01 => "1/4",
+            x if (x - 1.5).abs() < 0.01 => "1/4.",
+            x if (x - 2.0).abs() < 0.01 => "1/2",
+            x if (x - 3.0).abs() < 0.01 => "1/2.",
+            x if (x - 4.0).abs() < 0.01 => "1/1",
+            _ => "custom",
+        }
+    }
+
+    /// All common note divisions for UI dropdowns.
+    pub const ALL_COMMON: [Self; 9] = [
+        Self::THIRTY_SECOND,
+        Self::SIXTEENTH,
+        Self::EIGHTH,
+        Self::DOTTED_EIGHTH,
+        Self::QUARTER,
+        Self::DOTTED_QUARTER,
+        Self::HALF,
+        Self::WHOLE,
+        Self(8.0), // 2 bars
+    ];
+}
+
+impl Default for BeatDivision {
+    fn default() -> Self {
+        Self::QUARTER
+    }
+}
+
+impl From<f32> for BeatDivision {
+    fn from(beats: f32) -> Self {
+        Self(beats.max(0.0))
+    }
+}
+
+impl From<BeatDivision> for f32 {
+    fn from(div: BeatDivision) -> Self {
+        div.0
+    }
+}
+
+impl std::fmt::Display for BeatDivision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_beat_division_to_duration() {
+        let quarter = BeatDivision::QUARTER;
+        let tempo = Bpm::new(120.0);
+        let duration = quarter.to_duration(tempo);
+        assert!((duration.as_f32() - 0.5).abs() < 0.001); // At 120 BPM, quarter = 0.5s
+    }
+
+    #[test]
+    fn test_beat_division_dotted() {
+        let eighth = BeatDivision::EIGHTH;
+        let dotted = eighth.dotted();
+        assert!((dotted.0 - 0.75).abs() < 0.001);
+    }
 
     #[test]
     fn test_seconds_to_frequency() {

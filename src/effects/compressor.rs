@@ -5,15 +5,15 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{Decibels, NormalizedValue, SampleRate};
+use crate::types::{Decibels, Milliseconds, NormalizedValue, Ratio, SampleRate};
 
 /// Compressor effect with envelope follower.
 pub struct Compressor {
     // Parameters
     threshold: Decibels,
-    ratio: f32,         // Compression ratio (1:1 to 20:1) - kept as f32
-    attack_ms: f32,     // Attack time in ms - kept as f32
-    release_ms: f32,    // Release time in ms - kept as f32
+    ratio: Ratio,
+    attack: Milliseconds,
+    release: Milliseconds,
     makeup: Decibels,
     mix: NormalizedValue,
 
@@ -28,9 +28,9 @@ impl Compressor {
     pub fn new() -> Self {
         Self {
             threshold: Decibels::new(-20.0),
-            ratio: 4.0,
-            attack_ms: 10.0,
-            release_ms: 100.0,
+            ratio: Ratio::MEDIUM,
+            attack: Milliseconds::new(10.0),
+            release: Milliseconds::new(100.0),
             makeup: Decibels::new(0.0),
             mix: NormalizedValue::MAX,
             envelope: 0.0,
@@ -38,16 +38,18 @@ impl Compressor {
         }
     }
 
-    /// Calculate attack coefficient.
+    /// Calculate attack coefficient using type-safe Milliseconds.
     #[inline]
     fn attack_coeff(&self) -> f32 {
-        (-1.0 / (self.attack_ms * 0.001 * self.sample_rate.as_f32())).exp()
+        let attack_secs = self.attack.to_seconds();
+        (-1.0 / (attack_secs.as_f32() * self.sample_rate.as_f32())).exp()
     }
 
-    /// Calculate release coefficient.
+    /// Calculate release coefficient using type-safe Milliseconds.
     #[inline]
     fn release_coeff(&self) -> f32 {
-        (-1.0 / (self.release_ms * 0.001 * self.sample_rate.as_f32())).exp()
+        let release_secs = self.release.to_seconds();
+        (-1.0 / (release_secs.as_f32() * self.sample_rate.as_f32())).exp()
     }
 
     /// Calculate gain reduction for a given input level.
@@ -55,9 +57,9 @@ impl Compressor {
     fn compute_gain(&self, input_db: f32) -> f32 {
         let threshold = self.threshold.as_f32();
         if input_db > threshold {
-            // Calculate gain reduction
+            // Calculate gain reduction using type-safe Ratio
             let overshoot = input_db - threshold;
-            let compressed = overshoot / self.ratio;
+            let compressed = self.ratio.compress(overshoot);
             let gain_reduction = compressed - overshoot;
             Decibels::new(gain_reduction + self.makeup.as_f32()).to_linear()
         } else {
@@ -221,17 +223,17 @@ impl EffectModule for Compressor {
                 }
                 CompressorParam::Ratio => {
                     if let Some(r) = value.as_float() {
-                        self.ratio = r.clamp(1.0, 20.0);
+                        self.ratio = Ratio::new(r).clamp_typical();
                     }
                 }
                 CompressorParam::Attack => {
                     if let Some(a) = value.as_float() {
-                        self.attack_ms = a.clamp(0.1, 100.0);
+                        self.attack = Milliseconds::new(a.clamp(0.1, 100.0));
                     }
                 }
                 CompressorParam::Release => {
                     if let Some(r) = value.as_float() {
-                        self.release_ms = r.clamp(10.0, 1000.0);
+                        self.release = Milliseconds::new(r.clamp(10.0, 1000.0));
                     }
                 }
                 CompressorParam::Makeup => {
@@ -252,9 +254,9 @@ impl EffectModule for Compressor {
         if let TypedParam::Compressor(comp_param) = param {
             match comp_param {
                 CompressorParam::Threshold => Some(TypedValue::Float(self.threshold.as_f32())),
-                CompressorParam::Ratio => Some(TypedValue::Float(self.ratio)),
-                CompressorParam::Attack => Some(TypedValue::Float(self.attack_ms)),
-                CompressorParam::Release => Some(TypedValue::Float(self.release_ms)),
+                CompressorParam::Ratio => Some(TypedValue::Float(self.ratio.as_f32())),
+                CompressorParam::Attack => Some(TypedValue::Float(self.attack.as_f32())),
+                CompressorParam::Release => Some(TypedValue::Float(self.release.as_f32())),
                 CompressorParam::Makeup => Some(TypedValue::Float(self.makeup.as_f32())),
                 CompressorParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }

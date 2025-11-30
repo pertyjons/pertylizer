@@ -9,7 +9,7 @@
 
 use crate::engine::typed_params::{TypedParam, TypedValue, DelayParam, ModuleType, DelayMode};
 use crate::modules::core::*;
-use crate::types::{BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds};
+use crate::types::{BeatDivision, Bpm, BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds};
 
 /// Maximum delay time in seconds.
 const MAX_DELAY_SECONDS: f32 = 2.0;
@@ -37,8 +37,7 @@ pub struct Delay {
 
     // Tempo sync
     tempo_sync: bool,
-    /// Sync division in beats (0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, 2.0 = 1/2, 4.0 = whole)
-    sync_division: f32,
+    sync_division: BeatDivision,
 
     // Delay buffers
     buffer_left: Vec<f32>,
@@ -64,7 +63,7 @@ impl Delay {
             mix: NormalizedValue::CENTER,
             high_cut: Hertz::new(8000.0),
             tempo_sync: false,
-            sync_division: 1.0, // Default: quarter note
+            sync_division: BeatDivision::QUARTER,
             buffer_left: vec![0.0; buffer_size],
             buffer_right: vec![0.0; buffer_size],
             write_pos: BufferIndex::ZERO,
@@ -76,15 +75,15 @@ impl Delay {
 
     /// Calculate delay time in seconds from BPM and sync division.
     ///
-    /// Formula: delay_seconds = (60.0 / bpm) * sync_division
-    /// Where sync_division is in beats (1.0 = quarter note)
+    /// Uses type-safe BeatDivision for tempo-synced timing.
     #[inline]
     fn synced_delay_time(&self, bpm: f32) -> Seconds {
         if bpm <= 0.0 {
             return self.time_left; // Fallback to manual time
         }
-        let beat_duration = 60.0 / bpm;
-        Seconds::new((beat_duration * self.sync_division).min(MAX_DELAY_SECONDS))
+        let tempo = Bpm::new(bpm);
+        let duration = self.sync_division.to_duration(tempo);
+        Seconds::new(duration.as_f32().min(MAX_DELAY_SECONDS))
     }
 
     /// Resize buffers for new sample rate.
@@ -330,8 +329,7 @@ impl EffectModule for Delay {
                 }
                 DelayParam::SyncDivision => {
                     if let Some(div) = value.as_float() {
-                        // Clamp to valid note divisions (1/32 to 4 whole notes)
-                        self.sync_division = div.clamp(0.125, 16.0);
+                        self.sync_division = BeatDivision::new(div).clamp_typical();
                     }
                 }
             }
@@ -349,7 +347,7 @@ impl EffectModule for Delay {
                 DelayParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
                 DelayParam::Damping => Some(TypedValue::Float(self.high_cut.as_f32())),
                 DelayParam::TempoSync => Some(TypedValue::Bool(self.tempo_sync)),
-                DelayParam::SyncDivision => Some(TypedValue::Float(self.sync_division)),
+                DelayParam::SyncDivision => Some(TypedValue::Float(self.sync_division.as_f32())),
             }
         } else {
             None

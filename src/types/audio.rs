@@ -326,9 +326,103 @@ impl From<Amplitude> for f32 {
     }
 }
 
+/// Voice count for polyphony and chorus effects.
+///
+/// Represents the number of simultaneous voices in a module.
+/// Typical range is 1-16 for polyphonic synths, 1-4 for chorus effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct VoiceCount(pub u8);
+
+impl VoiceCount {
+    /// Create a new voice count.
+    #[inline]
+    pub const fn new(count: u8) -> Self {
+        Self(count)
+    }
+
+    /// Single voice (monophonic).
+    pub const MONO: Self = Self(1);
+
+    /// Dual voices.
+    pub const DUAL: Self = Self(2);
+
+    /// Four voices (common for chorus).
+    pub const QUAD: Self = Self(4);
+
+    /// Eight voices.
+    pub const OCTO: Self = Self(8);
+
+    /// Sixteen voices.
+    pub const SIXTEEN: Self = Self(16);
+
+    /// Get the raw voice count.
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as usize for array indexing.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Clamp to a chorus-appropriate range (1-4).
+    #[inline]
+    pub fn clamp_chorus(self) -> Self {
+        Self(self.0.clamp(1, 4))
+    }
+
+    /// Clamp to a synth polyphony range (1-16).
+    #[inline]
+    pub fn clamp_polyphony(self) -> Self {
+        Self(self.0.clamp(1, 16))
+    }
+}
+
+impl From<u8> for VoiceCount {
+    fn from(count: u8) -> Self {
+        Self(count.max(1))
+    }
+}
+
+impl From<u32> for VoiceCount {
+    fn from(count: u32) -> Self {
+        Self((count.clamp(1, 255)) as u8)
+    }
+}
+
+impl From<VoiceCount> for u8 {
+    fn from(count: VoiceCount) -> Self {
+        count.0
+    }
+}
+
+impl From<VoiceCount> for usize {
+    fn from(count: VoiceCount) -> Self {
+        count.0 as usize
+    }
+}
+
+impl std::fmt::Display for VoiceCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_voice_count() {
+        let voices = VoiceCount::QUAD;
+        assert_eq!(voices.as_usize(), 4);
+
+        let clamped = VoiceCount::new(10).clamp_chorus();
+        assert_eq!(clamped.as_u8(), 4);
+    }
 
     #[test]
     fn test_tempo() {

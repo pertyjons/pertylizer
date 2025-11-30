@@ -280,9 +280,121 @@ impl Not for bool {
     }
 }
 
+/// Compression ratio (e.g., 4:1, 10:1).
+///
+/// A ratio of 1.0 means no compression, infinity would be limiting.
+/// Typical values range from 1.0 (no compression) to 20.0 (heavy limiting).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct Ratio(pub f32);
+
+impl Ratio {
+    /// Create a new compression ratio.
+    #[inline]
+    pub const fn new(ratio: f32) -> Self {
+        Self(ratio)
+    }
+
+    /// No compression (1:1).
+    pub const UNITY: Self = Self(1.0);
+
+    /// Light compression (2:1).
+    pub const LIGHT: Self = Self(2.0);
+
+    /// Medium compression (4:1).
+    pub const MEDIUM: Self = Self(4.0);
+
+    /// Heavy compression (10:1).
+    pub const HEAVY: Self = Self(10.0);
+
+    /// Limiting (20:1).
+    pub const LIMITING: Self = Self(20.0);
+
+    /// Get the raw ratio value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Calculate the compressed output level.
+    ///
+    /// Given an input level in dB above threshold, returns the output level in dB.
+    /// Formula: output = input / ratio
+    #[inline]
+    pub fn compress(&self, overshoot_db: f32) -> f32 {
+        if self.0 > 0.0 {
+            overshoot_db / self.0
+        } else {
+            overshoot_db
+        }
+    }
+
+    /// Clamp to a typical compression range (1:1 to 20:1).
+    #[inline]
+    pub fn clamp_typical(self) -> Self {
+        Self(self.0.clamp(1.0, 20.0))
+    }
+
+    /// Format as ratio string (e.g., "4:1").
+    pub fn to_ratio_string(&self) -> String {
+        if self.0 >= 20.0 {
+            "∞:1".to_string()
+        } else {
+            format!("{:.1}:1", self.0)
+        }
+    }
+}
+
+impl Default for Ratio {
+    fn default() -> Self {
+        Self::MEDIUM
+    }
+}
+
+impl Clampable for Ratio {
+    fn clamp(self) -> Self {
+        self.clamp_typical()
+    }
+
+    fn is_valid(&self) -> bool {
+        self.0.is_finite() && self.0 >= 1.0
+    }
+}
+
+impl From<f32> for Ratio {
+    fn from(ratio: f32) -> Self {
+        Self(ratio.max(1.0))
+    }
+}
+
+impl From<Ratio> for f32 {
+    fn from(ratio: Ratio) -> Self {
+        ratio.0
+    }
+}
+
+impl std::fmt::Display for Ratio {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_ratio_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ratio_compression() {
+        let ratio = Ratio::MEDIUM; // 4:1
+        let compressed = ratio.compress(12.0); // 12dB overshoot
+        assert!((compressed - 3.0).abs() < 0.001); // Should be 3dB
+    }
+
+    #[test]
+    fn test_ratio_display() {
+        assert_eq!(Ratio::MEDIUM.to_string(), "4.0:1");
+        assert_eq!(Ratio::LIMITING.to_string(), "∞:1");
+    }
 
     #[test]
     fn test_gain_to_db() {

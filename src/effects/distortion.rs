@@ -11,7 +11,7 @@ use crate::engine::typed_params::{
     DistortionMode,
 };
 use crate::modules::core::*;
-use crate::types::{Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
 
 // DistortionMode is imported from typed_params
 // Type alias for local use
@@ -246,7 +246,7 @@ pub struct Chorus {
     rate: Hertz,
     depth: NormalizedValue,
     mix: NormalizedValue,
-    voices: u32,     // 1-4
+    voices: VoiceCount,
 
     // Delay buffer
     buffer: Vec<f32>,
@@ -267,7 +267,7 @@ impl Chorus {
             rate: Hertz::new(0.5),
             depth: NormalizedValue::CENTER,
             mix: NormalizedValue::CENTER,
-            voices: 2,
+            voices: VoiceCount::DUAL,
             buffer: vec![0.0; 48000], // Will be resized
             write_pos: 0,
             lfo_phases: [
@@ -360,7 +360,8 @@ impl EffectModule for Chorus {
 
             // Sum chorus voices
             let mut wet = 0.0f32;
-            for v in 0..self.voices as usize {
+            let voice_count = self.voices.as_usize();
+            for v in 0..voice_count {
                 let lfo = (self.lfo_phases[v].as_f32() * std::f32::consts::TAU).sin();
                 let delay_ms = base_delay_ms + mod_depth_ms * lfo;
                 let delay_samples = delay_ms / 1000.0 * self.sample_rate.as_f32();
@@ -371,7 +372,7 @@ impl EffectModule for Chorus {
                 self.lfo_phases[v] = Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
             }
 
-            wet /= self.voices as f32;
+            wet /= voice_count as f32;
 
             // Advance write position
             self.write_pos = (self.write_pos + 1) % self.buffer.len();
@@ -414,7 +415,7 @@ impl EffectModule for Chorus {
                 }
                 ChorusParam::Voices => {
                     if let Some(v) = value.as_int() {
-                        self.voices = (v as u32).clamp(1, 4);
+                        self.voices = VoiceCount::new(v as u8).clamp_chorus();
                     }
                 }
                 _ => {}
@@ -428,7 +429,7 @@ impl EffectModule for Chorus {
                 ChorusParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
                 ChorusParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
                 ChorusParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-                ChorusParam::Voices => Some(TypedValue::Int(self.voices as i32)),
+                ChorusParam::Voices => Some(TypedValue::Int(self.voices.as_u8() as i32)),
                 _ => None,
             }
         } else {

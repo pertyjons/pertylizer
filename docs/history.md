@@ -1,5 +1,54 @@
 # Version History
 
+## [0.32.5] - 2024
+
+### Added - New Domain Types for Effects
+
+Extended newtype pattern coverage with three new audio domain types:
+
+- **`Ratio`** (`src/types/amplitude.rs`)
+  - Type-safe compression ratio (1:1 to 20:1)
+  - Constants: `UNITY`, `LIGHT`, `MEDIUM`, `HEAVY`, `LIMITING`
+  - Methods: `compress(overshoot_db)`, `clamp_typical()`, `to_ratio_string()`
+  - Display format: "4.0:1", "∞:1"
+
+- **`BeatDivision`** (`src/types/time.rs`)
+  - Type-safe tempo-synced note divisions
+  - Constants: `THIRTY_SECOND`, `SIXTEENTH`, `EIGHTH`, `QUARTER`, `HALF`, `WHOLE`
+  - Dotted/triplet variants: `DOTTED_QUARTER`, `DOTTED_EIGHTH`, `TRIPLET_QUARTER`
+  - Methods: `to_duration(Bpm)`, `to_samples(Bpm, SampleRate)`, `dotted()`, `triplet()`, `name()`
+  - Display: "1/4", "1/8.", "1/16", etc.
+
+- **`VoiceCount`** (`src/types/audio.rs`)
+  - Type-safe voice/polyphony count (u8)
+  - Constants: `MONO`, `DUAL`, `QUAD`, `OCTO`, `SIXTEEN`
+  - Methods: `clamp_chorus()` (1-4), `clamp_polyphony()` (1-16)
+
+### Refactored - Effect Modules with Strong Types
+
+- **Compressor** (`src/effects/compressor.rs`)
+  - `ratio: Ratio` (was `f32`)
+  - `attack: Milliseconds` (was `f32`)
+  - `release: Milliseconds` (was `f32`)
+  - Uses `Ratio::compress()` for gain calculation
+
+- **Delay** (`src/effects/delay.rs`)
+  - `sync_division: BeatDivision` (was `f32`)
+  - Uses `BeatDivision::to_duration(Bpm)` for tempo-synced delay time
+
+- **Chorus** (`src/effects/distortion.rs`)
+  - `voices: VoiceCount` (was `u32`)
+  - Uses `VoiceCount::clamp_chorus()` for voice count validation
+
+### Technical Details
+
+- All new types implement `Copy`, `Clone`, `Debug`, `PartialEq`, `Display`
+- `#[repr(transparent)]` for zero-cost abstraction
+- Consistent `as_f32()`, `as_u8()`, `as_usize()` accessor methods
+- All 240 unit tests passing
+
+---
+
 ## [0.32.4] - 2024
 
 ### Fixed - Waveform Selection Bug
