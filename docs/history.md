@@ -1,5 +1,36 @@
 # Version History
 
+## [0.27.0] - 2024
+
+### Added - Configurable Expression Settings with Strong Types
+
+- **ExpressionSettings Struct** (`src/engine/voice.rs`)
+  - New `ExpressionSettings` type for configurable expressiveness
+  - `pitch_bend_range: Semitones` - configurable range (default ±2 semitones)
+  - `vibrato_depth: NormalizedValue` - max mod wheel vibrato (default 2.5%)
+  - `velocity_to_amp: NormalizedValue` - amplitude sensitivity (default 100%)
+  - `velocity_to_filter: NormalizedValue` - filter cutoff sensitivity (default 50%)
+  - Added to `Voice` struct as `expression: ExpressionSettings`
+
+- **Type-Safe Pitch Bend DSP**
+  - Uses `Semitones::apply(Hertz) -> Hertz` for frequency calculation
+  - Eliminates manual `2^(semitones/12)` calculation
+  - Pitch bend range now configurable per-voice
+
+- **Configurable Velocity Sensitivity**
+  - Formula: `scale = (1 - sensitivity) + sensitivity * velocity`
+  - At sensitivity=0: constant output (no velocity effect)
+  - At sensitivity=1: full dynamic range
+  - Applied to both amplitude and filter cutoff independently
+
+### Technical Details
+- `Semitones * f32 -> Semitones` multiplication used for pitch bend scaling
+- `NormalizedValue * NormalizedValue -> NormalizedValue` for vibrato depth
+- Expression settings copied in `Voice::clone_structure()`
+- All 229 unit tests passing
+
+---
+
 ## [0.26.0] - 2024
 
 ### Added - Complete Expressiveness DSP & Fastrand

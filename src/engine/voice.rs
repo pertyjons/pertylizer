@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 use crate::engine::typed_params::{TypedParam, TypedValue};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, NormalizedValue, Semitones};
+use crate::types::{BipolarValue, Hertz, NormalizedValue, Semitones};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -210,8 +210,37 @@ impl GlideState {
     }
 }
 
-/// Pitch bend range in semitones (standard MIDI is ±2).
-pub const PITCH_BEND_RANGE: Semitones = Semitones(2.0);
+/// Default pitch bend range in semitones (standard MIDI is ±2).
+pub const DEFAULT_PITCH_BEND_RANGE: Semitones = Semitones(2.0);
+
+/// Default maximum vibrato depth (2.5% = ~43 cents at full mod wheel).
+pub const DEFAULT_VIBRATO_DEPTH: NormalizedValue = NormalizedValue(0.025);
+
+/// Performance expression settings for a voice/part.
+///
+/// These control how MIDI controllers affect the sound.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpressionSettings {
+    /// Pitch bend range in semitones (typically 2-24).
+    pub pitch_bend_range: Semitones,
+    /// Maximum vibrato depth when mod wheel is at 100% (0.0-0.1 typical).
+    pub vibrato_depth: NormalizedValue,
+    /// How much velocity affects amplitude (0 = constant, 1 = full dynamic).
+    pub velocity_to_amp: NormalizedValue,
+    /// How much velocity affects filter cutoff (0 = none, 1 = full).
+    pub velocity_to_filter: NormalizedValue,
+}
+
+impl Default for ExpressionSettings {
+    fn default() -> Self {
+        Self {
+            pitch_bend_range: DEFAULT_PITCH_BEND_RANGE,
+            vibrato_depth: DEFAULT_VIBRATO_DEPTH,
+            velocity_to_amp: NormalizedValue::MAX,       // Full velocity sensitivity
+            velocity_to_filter: NormalizedValue::CENTER, // 50% velocity to filter
+        }
+    }
+}
 
 /// A single synthesizer voice.
 pub struct Voice {
@@ -235,6 +264,9 @@ pub struct Voice {
     pub mod_wheel: NormalizedValue,
     /// Aftertouch amount (0.0 to 1.0, type-safe).
     pub aftertouch: NormalizedValue,
+
+    /// Expression settings (pitch bend range, velocity sensitivity, etc.).
+    pub expression: ExpressionSettings,
 
     /// Voice modules in processing order.
     pub modules: Vec<Box<dyn VoiceModule>>,
@@ -271,6 +303,7 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
+            expression: ExpressionSettings::default(),
             modules: Vec::new(),
             module_names: Vec::new(),
             buffers: HashMap::new(),
@@ -558,6 +591,7 @@ impl Voice {
     pub fn clone_structure(&self) -> Self {
         let mut new_voice = Voice::new(self.id);
         new_voice.glide_time = self.glide_time;
+        new_voice.expression = self.expression;
 
         for (idx, module) in self.modules.iter().enumerate() {
             new_voice.add_module(
@@ -587,22 +621,21 @@ impl Voice {
         context: &ProcessContext,
     ) {
         let samples = context.samples;
-        let velocity = self.velocity.as_f32();
 
         // Clear pre-allocated buffers for this voice
         self.processing_buffers.clear_all();
 
-        // Calculate note frequency (accounting for glide)
-        let base_freq = self.glide.get_frequency();
+        // === Calculate frequency with pitch bend using strong types ===
+        // base_freq: the note's base frequency (accounting for glide)
+        let base_freq = Hertz::new(self.glide.get_frequency());
 
-        // Apply pitch bend: bend_amount = pitch_bend * range (in semitones)
-        // Frequency multiplier = 2^(semitones/12)
-        let bend_semitones = self.pitch_bend.as_f32() * PITCH_BEND_RANGE.as_f32();
-        let pitch_multiplier = 2.0f32.powf(bend_semitones / 12.0);
-        let freq = base_freq * pitch_multiplier;
+        // Apply pitch bend: bend_semitones = pitch_bend * range
+        // Using Semitones::apply() for type-safe frequency calculation
+        let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
+        let freq = bend_semitones.apply(base_freq);
 
         // Set oscillator frequencies (before processing)
-        self.set_oscillator_frequency(freq);
+        self.set_oscillator_frequency(freq.as_f32());
 
         // === Process LFO with retrigger on note start ===
         if self.age == 0 {
@@ -627,9 +660,9 @@ impl Voice {
         }
 
         // === Prepare FM and PWM buffers ===
-        // Mod wheel scales the vibrato (FM) depth: lfo * mod_wheel * base_depth
-        let mod_wheel = self.mod_wheel.as_f32();
-        let vibrato_depth = 0.025 * mod_wheel; // Vibrato depth scaled by mod wheel
+        // Mod wheel scales vibrato depth: lfo * mod_wheel * max_depth
+        // NormalizedValue * NormalizedValue -> NormalizedValue, then extract f32
+        let vibrato_depth = (self.expression.vibrato_depth * self.mod_wheel).as_f32();
         for i in 0..samples {
             self.processing_buffers.fm_buffer[i] = self.processing_buffers.lfo_out[i] * vibrato_depth;
             self.processing_buffers.pwm_buffer[i] = self.processing_buffers.lfo_out[i] * 0.3;
@@ -695,7 +728,11 @@ impl Voice {
 
         // === Prepare Filter CV ===
         // Velocity scales filter envelope: harder hits open filter more
-        let vel_scale = 0.5 + 0.5 * velocity; // Minimum 50% effect, 100% at full velocity
+        // vel_scale: interpolate between (1 - sensitivity) and 1.0 based on velocity
+        // At sensitivity=0: vel_scale = 1.0 (no velocity effect)
+        // At sensitivity=1: vel_scale = velocity (full velocity effect)
+        let filter_sens = self.expression.velocity_to_filter.as_f32();
+        let vel_scale = (1.0 - filter_sens) + filter_sens * self.velocity.as_f32();
         for i in 0..samples {
             // Scale filter envelope by velocity for expressive filter response
             let env_mod = self.processing_buffers.filter_env_out[i] * vel_scale;
@@ -739,8 +776,13 @@ impl Voice {
         }
 
         // === Prepare Amp CV ===
+        // Velocity sensitivity for amplitude:
+        // At sensitivity=0: amp_scale = 1.0 (no velocity effect, constant volume)
+        // At sensitivity=1: amp_scale = velocity (full dynamic range)
+        let amp_sens = self.expression.velocity_to_amp.as_f32();
+        let amp_scale = (1.0 - amp_sens) + amp_sens * self.velocity.as_f32();
         for i in 0..samples {
-            self.processing_buffers.amp_cv[i] = self.processing_buffers.amp_env_out[i] * velocity;
+            self.processing_buffers.amp_cv[i] = self.processing_buffers.amp_env_out[i] * amp_scale;
             self.processing_buffers.pan_cv[i] = self.processing_buffers.lfo_out[i] * 0.15;
         }
 
