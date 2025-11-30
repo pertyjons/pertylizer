@@ -7,6 +7,7 @@
 use crate::engine::{EngineHandle, ModuleId};
 use crate::engine::typed_params::{TypedParam, TypedValue};
 use crate::modules::{ModuleDescriptor, ParameterDescriptor, WidgetHint};
+use crate::types::{Gain, NormalizedValue};
 
 // ============================================================================
 // UI Events
@@ -16,7 +17,7 @@ use crate::modules::{ModuleDescriptor, ParameterDescriptor, WidgetHint};
 #[derive(Debug, Clone)]
 pub enum UiEvent {
     /// Trigger a note on.
-    NoteOn { note: u8, velocity: f32 },
+    NoteOn { note: u8, velocity: NormalizedValue },
     /// Trigger a note off.
     NoteOff { note: u8 },
     /// All notes off.
@@ -28,7 +29,7 @@ pub enum UiEvent {
         value: TypedValue,
     },
     /// Set master volume.
-    SetMasterVolume(f32),
+    SetMasterVolume(Gain),
     /// Panic - kill all voices immediately.
     Panic,
 }
@@ -126,7 +127,7 @@ impl UiState {
     }
 
     /// Send a note on event.
-    pub fn note_on(&mut self, note: u8, velocity: f32) {
+    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue) {
         self.handle.note_on(note, velocity);
     }
 
@@ -136,7 +137,7 @@ impl UiState {
     }
 
     /// Set master volume.
-    pub fn set_master_volume(&mut self, volume: f32) {
+    pub fn set_master_volume(&mut self, volume: Gain) {
         self.handle.set_master_volume(volume);
     }
 

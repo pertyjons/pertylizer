@@ -28,6 +28,7 @@ use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::gui::patch_bridge;
+use crate::types::NormalizedValue;
 use crate::gui::performance_panel::{self, PerformanceState};
 use crate::modules::{
     Describable, ModuleCategory,
@@ -284,6 +285,11 @@ impl eframe::App for SynthApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    if ui.button("📄 New Patch").clicked() {
+                        self.reset_to_new_patch();
+                        self.dialog_state.set_status("New patch created".to_string());
+                        ui.close();
+                    }
                     if ui.button("📂 Load Patch...").clicked() {
                         self.dialog_state.show_load_patch = true;
                         ui.close();
@@ -773,7 +779,7 @@ impl SynthApp {
 
         // Handle note events from mouse interaction
         if let Some(note) = event.note_on {
-            self.handle.note_on(note, 0.8);
+            self.handle.note_on(note, NormalizedValue::new(0.8));
         }
         for note in event.note_off {
             self.handle.note_off(note);
@@ -807,7 +813,7 @@ impl SynthApp {
                 let note = note_i32 as u8;
 
                 if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
-                    self.handle.note_on(note, 0.8);
+                    self.handle.note_on(note, NormalizedValue::new(0.8));
                     self.pressed_keys.insert(note, true);
                     self.keyboard.set_note_pressed(note, true);
                 }
@@ -884,6 +890,28 @@ impl SynthApp {
             &mut self.keyboard,
             &mut self.glide_time,
         );
+    }
+
+    /// Reset to a new empty patch.
+    /// Clears all modules and adds a default StereoOutput for immediate sound.
+    fn reset_to_new_patch(&mut self) {
+        // 1. Clear GUI state
+        self.rack_view.clear();
+        self.instance_counters.clear();
+        self.handle.visualization_buffers.clear();
+
+        // 2. Send clear command to engine (blocking to ensure it completes)
+        self.handle.send_blocking(EngineCommand::ClearAllModules);
+
+        // 3. Reset keyboard state
+        self.keyboard = PianoKeyboard::new();
+        self.glide_time = 0.0;
+
+        // 4. Add default StereoOutput so user gets sound immediately
+        self.add_stereo_output_module();
+
+        // 5. Update patch name
+        self.current_patch_name = "New Patch".to_string();
     }
 
     /// Create a patch from current rack state.

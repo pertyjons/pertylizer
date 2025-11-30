@@ -537,7 +537,7 @@ mod engine_integration {
     fn test_engine_note_on_off() {
         let (_engine, mut handle) = SynthEngine::new();
 
-        handle.note_on(60, 0.8);
+        handle.note_on(60, crate::types::NormalizedValue::new(0.8));
         handle.note_off(60);
         // Commands are queued, processing happens in audio thread
     }
@@ -550,7 +550,7 @@ mod engine_integration {
         let info = make_stream_info();
         engine.on_stream_start(&info);
 
-        handle.note_on(60, 0.8);
+        handle.note_on(60, crate::types::NormalizedValue::new(0.8));
 
         // Process some audio
         let mut output = vec![0.0f32; 512];
@@ -574,7 +574,7 @@ mod engine_integration {
         let info = make_stream_info();
         engine.on_stream_start(&info);
 
-        handle.set_master_volume(0.5);
+        handle.set_master_volume(crate::types::Gain::new(0.5));
 
         // Process audio to trigger command processing
         let mut output = vec![0.0f32; 512];

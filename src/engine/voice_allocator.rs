@@ -6,7 +6,7 @@
 //! - Glide/portamento support
 
 use crate::engine::voice::{Voice, VoiceState};
-use crate::types::NormalizedValue;
+use crate::types::{Cents, NormalizedValue, Seconds};
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,9 +59,9 @@ pub struct AllocatorConfig {
     /// Note priority (for mono modes).
     pub priority: NotePriority,
     /// Glide time in seconds.
-    pub glide_time: f32,
-    /// Unison detune amount in cents.
-    pub unison_detune: f32,
+    pub glide_time: Seconds,
+    /// Unison detune amount (type-safe Cents).
+    pub unison_detune: Cents,
 }
 
 impl Default for AllocatorConfig {
@@ -71,8 +71,8 @@ impl Default for AllocatorConfig {
             mode: AllocationMode::Polyphonic,
             stealing: StealingStrategy::Oldest,
             priority: NotePriority::Last,
-            glide_time: 0.0,
-            unison_detune: 10.0,
+            glide_time: Seconds::ZERO,
+            unison_detune: Cents::new(10.0),
         }
     }
 }
@@ -142,7 +142,7 @@ impl VoiceAllocator {
     }
 
     /// Set glide time.
-    pub fn set_glide_time(&mut self, time: f32) {
+    pub fn set_glide_time(&mut self, time: Seconds) {
         self.config.glide_time = time;
     }
 
@@ -318,7 +318,7 @@ impl VoiceAllocator {
         for i in 0..num_voices {
             // Apply detune spread: voices spread evenly around center pitch
             // e.g. with 4 voices and 10 cents total: -7.5, -2.5, +2.5, +7.5
-            let detune = (i as f32 - (num_voices as f32 - 1.0) / 2.0) * detune_per_voice;
+            let detune = detune_per_voice * (i as f32 - (num_voices as f32 - 1.0) / 2.0);
             
             self.voices[i].note_on(note, velocity, self.time);
             

@@ -209,7 +209,7 @@ fn handle_chord(handle: &mut EngineHandle, parts: &[&str]) {
 fn handle_volume(handle: &mut EngineHandle, parts: &[&str]) {
     if let Some(&vol_str) = parts.get(1) {
         if let Ok(vol) = vol_str.parse::<f32>() {
-            handle.set_master_volume(vol);
+            handle.set_master_volume(crate::types::Gain::new(vol));
             println!("Volume: {:.0}%", vol * 100.0);
         }
     } else {

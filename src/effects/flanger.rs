@@ -5,7 +5,7 @@ use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate, Seconds};
 
 /// Maximum delay time in milliseconds.
 const MAX_DELAY_MS: f32 = 20.0;
@@ -16,7 +16,7 @@ pub struct Flanger {
     rate: Hertz,
     depth: NormalizedValue,
     feedback: BipolarValue,
-    delay_ms: f32,  // Base delay time in ms (kept as f32 for ms precision)
+    delay_base: Seconds,  // Base delay time (type-safe)
     mix: NormalizedValue,
 
     // Delay buffers (stereo)
@@ -41,7 +41,7 @@ impl Flanger {
             rate: Hertz::new(0.3),
             depth: NormalizedValue::new(0.7),
             feedback: BipolarValue::new(0.7),
-            delay_ms: 2.0,
+            delay_base: Seconds::from_millis(2.0),
             mix: NormalizedValue::CENTER,
             buffer_l: vec![0.0; 4800], // Will be resized
             buffer_r: vec![0.0; 4800],
@@ -141,7 +141,8 @@ impl EffectModule for Flanger {
         self.resize_buffers();
 
         let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
-        let max_mod_ms = self.delay_ms.min(MAX_DELAY_MS - self.delay_ms);
+        let delay_ms = self.delay_base.as_millis();
+        let max_mod_ms = delay_ms.min(MAX_DELAY_MS - delay_ms);
 
         // Process stereo interleaved
         let channels = 2;
@@ -167,8 +168,8 @@ impl EffectModule for Flanger {
 
             // Calculate modulated delay time
             let depth = self.depth.as_f32();
-            let delay_ms = self.delay_ms + lfo * max_mod_ms * depth;
-            let delay_samples = (delay_ms / 1000.0 * self.sample_rate.as_f32()).max(1.0);
+            let mod_delay_ms = delay_ms + lfo * max_mod_ms * depth;
+            let delay_samples = (mod_delay_ms / 1000.0 * self.sample_rate.as_f32()).max(1.0);
 
             // Write input + feedback to delay buffer
             let feedback = self.feedback.as_f32();
@@ -234,7 +235,7 @@ impl EffectModule for Flanger {
                 }
                 FlangerParam::Delay => {
                     if let Some(d) = value.as_float() {
-                        self.delay_ms = d.clamp(0.1, 10.0);
+                        self.delay_base = Seconds::from_millis(d.clamp(0.1, 10.0));
                     }
                 }
                 FlangerParam::Mix => {
@@ -252,7 +253,7 @@ impl EffectModule for Flanger {
                 FlangerParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
                 FlangerParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
                 FlangerParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
-                FlangerParam::Delay => Some(TypedValue::Float(self.delay_ms)),
+                FlangerParam::Delay => Some(TypedValue::Float(self.delay_base.as_millis())),
                 FlangerParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
             }
         } else {

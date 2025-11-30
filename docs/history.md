@@ -1,5 +1,40 @@
 # Version History
 
+## [0.32.0] - 2024
+
+### Added - Type Safety Refactoring & GUI Improvements
+
+- **Type-Safe Public APIs** (New Type Idiom compliance)
+  - `Voice::set_glide_time(Seconds)` - glide time uses `Seconds` type
+  - `Voice::set_oscillator_detune(Cents)` - detune uses `Cents` type
+  - `Voice::set_oscillator_frequency(Hertz)` - frequency uses `Hertz` type
+  - `VoiceAllocator`: `glide_time: Seconds`, `unison_detune: Cents`
+  - `SynthEngineHandle::set_master_volume(Gain)` - volume uses `Gain` type
+  - `SynthEngineHandle::note_on(u8, NormalizedValue)` - velocity uses `NormalizedValue`
+  - `Flanger::delay_base: Seconds` - delay time uses `Seconds` type
+
+- **New Pitch Type Operations** (`src/types/pitch.rs`)
+  - Added `impl Div<f32> for Cents` for unison spread calculations
+
+- **GUI: New Patch Feature** (`src/gui/egui_backend.rs`)
+  - Added "📄 New Patch" menu item in File menu
+  - `reset_to_new_patch()` method clears all modules and resets state
+  - Sends `ClearAllModules` command to engine
+  - Automatically adds default StereoOutput module
+
+- **UI Type Safety** (`src/ui/mod.rs`)
+  - `UiEvent::SetMasterVolume(Gain)` - type-safe volume events
+  - `UiEvent::NoteOn { velocity: NormalizedValue }` - type-safe velocity
+  - `UiAdapter::set_master_volume(Gain)` - type-safe API
+
+### Technical Details
+
+- All 235 unit tests passing
+- No breaking changes to internal audio processing (VoiceModule trait unchanged)
+- Parameter descriptors still use f32 for GUI compatibility (conversion at boundaries)
+
+---
+
 ## [0.31.0] - 2024
 
 ### Added - GUI Module Support and New Patches

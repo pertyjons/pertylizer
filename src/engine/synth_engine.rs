@@ -25,7 +25,7 @@ use crate::engine::state::EngineState;
 use crate::engine::part::{MidiChannel, PartId, SynthPart};
 use crate::engine::voice::Voice;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use crate::types::SampleCount;
+use crate::types::{Gain, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
     Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
     VoiceModule as VoiceModuleTrait,
@@ -126,11 +126,10 @@ impl EngineHandle {
     }
 
     /// Send a note on event to the default channel.
-    /// Velocity is converted from f32 [0.0, 1.0] to NormalizedValue internally.
-    pub fn note_on(&mut self, note: u8, velocity: f32) -> bool {
+    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
-            velocity: crate::types::NormalizedValue::new(velocity),
+            velocity,
             channel: super::part::MidiChannel::CH1,
         })
     }
@@ -144,11 +143,10 @@ impl EngineHandle {
     }
 
     /// Send a note on event to a specific channel.
-    /// Velocity is converted from f32 [0.0, 1.0] to NormalizedValue internally.
-    pub fn note_on_channel(&mut self, note: u8, velocity: f32, channel: super::part::MidiChannel) -> bool {
+    pub fn note_on_channel(&mut self, note: u8, velocity: NormalizedValue, channel: super::part::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
-            velocity: crate::types::NormalizedValue::new(velocity),
+            velocity,
             channel,
         })
     }
@@ -187,9 +185,8 @@ impl EngineHandle {
     }
 
     /// Set master volume.
-    /// Volume is converted from f32 to Gain internally.
-    pub fn set_master_volume(&mut self, volume: f32) -> bool {
-        self.send(EngineCommand::SetMasterVolume(crate::types::Gain::new(volume)))
+    pub fn set_master_volume(&mut self, volume: Gain) -> bool {
+        self.send(EngineCommand::SetMasterVolume(volume))
     }
 
     /// Poll for events from the engine.
@@ -554,7 +551,7 @@ impl SynthEngine {
                     match param {
                         PartParam::Volume(vol) => part.set_volume(vol),
                         PartParam::Pan(pan) => part.set_pan(pan),
-                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time.as_f32()),
+                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time),
                         PartParam::AllocationMode(mode) => part.allocator_mut().set_mode(mode),
                         PartParam::StealingStrategy(strategy) => part.allocator_mut().set_stealing(strategy),
                         PartParam::MaxVoices(_) => {
@@ -681,7 +678,7 @@ impl SynthEngine {
 
             EngineCommand::SetGlideTime(time) => {
                 // Clamp to reasonable range: 0-5 seconds
-                let time_secs = time.as_f32().clamp(0.0, 5.0);
+                let time_secs = Seconds::new(time.as_f32().clamp(0.0, 5.0));
                 // Apply to all parts
                 for part in &mut self.parts {
                     part.allocator_mut().set_glide_time(time_secs);
@@ -1025,9 +1022,9 @@ mod tests {
         let (mut engine, mut handle) = SynthEngine::with_config(config);
 
         // Send multiple notes
-        handle.note_on(60, 0.8);
-        handle.note_on(64, 0.8);
-        handle.note_on(67, 0.8);
+        handle.note_on(60, NormalizedValue::new(0.8));
+        handle.note_on(64, NormalizedValue::new(0.8));
+        handle.note_on(67, NormalizedValue::new(0.8));
 
         // Process commands
         engine.process_commands();
@@ -1060,13 +1057,13 @@ mod tests {
         );
 
         // Send note on channel 1 - should be received
-        handle.note_on_channel(60, 0.8, crate::engine::part::MidiChannel::CH1);
+        handle.note_on_channel(60, NormalizedValue::new(0.8), crate::engine::part::MidiChannel::CH1);
         engine.process_commands();
         assert_eq!(engine.parts[0].active_voice_count(), 1);
 
         // Send note on channel 2 - should NOT be received
         let ch2 = crate::engine::part::MidiChannel::from_one_indexed(2).unwrap();
-        handle.note_on_channel(64, 0.8, ch2);
+        handle.note_on_channel(64, NormalizedValue::new(0.8), ch2);
         engine.process_commands();
         assert_eq!(engine.parts[0].active_voice_count(), 1); // Still 1
     }

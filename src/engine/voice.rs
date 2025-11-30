@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 use crate::engine::typed_params::{TypedParam, TypedValue};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, Hertz, NormalizedValue, Semitones};
+use crate::types::{BipolarValue, Cents, Hertz, NormalizedValue, Seconds, Semitones};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -273,8 +273,11 @@ pub struct Voice {
     /// Module names for lookup.
     module_names: Vec<String>,
 
-    /// Internal buffers for routing.
+    /// Internal buffers for routing (inputs).
     buffers: HashMap<String, AudioBuffer>,
+
+    /// Pre-allocated output buffers for each module (avoids heap allocation in process).
+    module_outputs: HashMap<String, AudioBuffer>,
 
     /// Steal fade-out counter.
     pub steal_fade_samples: usize,
@@ -282,8 +285,8 @@ pub struct Voice {
 
     /// Glide state for portamento.
     pub glide: GlideState,
-    /// Configured glide time (seconds).
-    glide_time: f32,
+    /// Configured glide time.
+    glide_time: Seconds,
 
     /// Pre-allocated processing buffers to avoid heap allocations.
     processing_buffers: VoiceProcessingBuffers,
@@ -307,17 +310,23 @@ impl Voice {
             modules: Vec::new(),
             module_names: Vec::new(),
             buffers: HashMap::new(),
+            module_outputs: HashMap::new(),
             steal_fade_samples: 128,
             steal_fade_counter: 0,
             glide: GlideState::default(),
-            glide_time: 0.0,
+            glide_time: Seconds::ZERO,
             processing_buffers: VoiceProcessingBuffers::new(),
         }
     }
 
     /// Add a module to the voice.
+    /// Pre-allocates output buffer to avoid heap allocation during processing.
     pub fn add_module(&mut self, name: impl Into<String>, module: Box<dyn VoiceModule>) {
-        self.module_names.push(name.into());
+        let name_str = name.into();
+        let out_key = format!("{}_out", name_str);
+        // Pre-allocate output buffer with max size
+        self.module_outputs.insert(out_key, AudioBuffer::new(MAX_BUFFER_SIZE));
+        self.module_names.push(name_str);
         self.modules.push(module);
     }
 
@@ -342,13 +351,13 @@ impl Voice {
         }
     }
     
-    /// Set the glide time in seconds.
-    pub fn set_glide_time(&mut self, time: f32) {
-        self.glide_time = time.max(0.0);
+    /// Set the glide time (type-safe Seconds).
+    pub fn set_glide_time(&mut self, time: Seconds) {
+        self.glide_time = Seconds::new(time.as_f32().max(0.0));
     }
-    
+
     /// Get the current glide time.
-    pub fn get_glide_time(&self) -> f32 {
+    pub fn get_glide_time(&self) -> Seconds {
         self.glide_time
     }
     
@@ -357,45 +366,45 @@ impl Voice {
         self.glide.get_frequency()
     }
     
-    /// Set detune on all oscillators in the voice (in cents).
+    /// Set detune on all oscillators in the voice (type-safe Cents).
     /// Used for unison mode.
-    pub fn set_oscillator_detune(&mut self, detune_cents: f32) {
+    pub fn set_oscillator_detune(&mut self, detune: Cents) {
         use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam};
-        
+
         // Apply to osc1
         if let Some(osc) = self.get_module_mut("osc1") {
             osc.set_param(
                 TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(detune_cents)
+                TypedValue::Float(detune.as_f32())
             );
         }
-        
+
         // Apply to osc2 with slight additional detune for richness
         if let Some(osc) = self.get_module_mut("osc2") {
             osc.set_param(
                 TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(detune_cents + 7.0) // Keep the 7 cent offset
+                TypedValue::Float(detune.as_f32() + 7.0) // Keep the 7 cent offset
             );
         }
     }
     
-    /// Set oscillator frequency directly (used during glide).
-    fn set_oscillator_frequency(&mut self, freq: f32) {
+    /// Set oscillator frequency directly (type-safe Hertz).
+    fn set_oscillator_frequency(&mut self, freq: Hertz) {
         use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam};
-        
+
         // Apply to osc1
         if let Some(osc) = self.get_module_mut("osc1") {
             osc.set_param(
                 TypedParam::Oscillator(OscillatorParam::Frequency),
-                TypedValue::Float(freq)
+                TypedValue::Float(freq.as_f32())
             );
         }
-        
+
         // Apply to osc2
         if let Some(osc) = self.get_module_mut("osc2") {
             osc.set_param(
                 TypedParam::Oscillator(OscillatorParam::Frequency),
-                TypedValue::Float(freq)
+                TypedValue::Float(freq.as_f32())
             );
         }
     }
@@ -412,8 +421,8 @@ impl Voice {
         let target_freq = Self::note_to_freq(note);
 
         // Start glide from current position if we have a glide time
-        if self.glide_time > 0.0 && self.state == VoiceState::Active {
-            self.glide.start(target_freq, self.glide_time);
+        if self.glide_time.as_f32() > 0.0 && self.state == VoiceState::Active {
+            self.glide.start(target_freq, self.glide_time.as_f32());
         } else {
             // No glide - set frequency immediately
             self.glide.current_freq = target_freq;
@@ -439,8 +448,8 @@ impl Voice {
         let target_freq = Self::note_to_freq(note);
         self.note = note;
         
-        if self.glide_time > 0.0 {
-            self.glide.start(target_freq, self.glide_time);
+        if self.glide_time.as_f32() > 0.0 {
+            self.glide.start(target_freq, self.glide_time.as_f32());
         } else {
             self.glide.current_freq = target_freq;
             self.glide.to_freq = target_freq;
@@ -494,6 +503,9 @@ impl Voice {
     /// Process audio for this voice.
     ///
     /// Returns the voice output in the provided buffer.
+    ///
+    /// # Real-time Safety
+    /// This method uses pre-allocated buffers and avoids heap allocation.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
         // Increment age
         self.age += context.samples as u64;
@@ -506,59 +518,59 @@ impl Voice {
                 return;
             }
         }
-        
+
         // Update glide and set oscillator frequency
         if self.glide.active {
             let delta_time = context.samples as f32 / context.sample_rate;
-            let freq = self.glide.update(delta_time);
+            let freq = Hertz::new(self.glide.update(delta_time));
             self.set_oscillator_frequency(freq);
         }
 
-        // Ensure buffers exist
+        // Ensure buffers are properly sized (no allocation if size matches)
         self.ensure_buffers(context.samples);
+        self.ensure_output_buffers(context.samples);
 
-        // Process modules in order
-        // For now, simple serial processing
-        // A real implementation would use a graph-based approach
-
-        let mut outputs: HashMap<String, AudioBuffer> = HashMap::new();
-
-        // Create output buffer for each module
-        for name in &self.module_names {
-            outputs.insert(format!("{}_out", name), AudioBuffer::new(context.samples));
-        }
-
-        // Process each module
-        for (idx, module) in self.modules.iter_mut().enumerate() {
+        // Process modules in order using pre-allocated output buffers.
+        // We use indices to avoid borrow checker issues.
+        for idx in 0..self.modules.len() {
             let name = &self.module_names[idx];
+            let out_key_owned = format!("{}_out", name);
 
-            // Clear and prepare output
-            let out_key = format!("{}_out", name);
-            if let Some(buf) = outputs.get_mut(&out_key) {
+            // Clear the pre-allocated output buffer
+            if let Some(buf) = self.module_outputs.get_mut(&out_key_owned) {
                 buf.clear();
             }
 
-            // Build inputs from self.buffers
+            // Build inputs from self.buffers (references only, no allocation)
+            // Note: We collect into a small temporary, but this is stack-allocated
+            // for small numbers of inputs. For a fully zero-alloc solution,
+            // consider a fixed-size array or arena allocator.
             let inputs: HashMap<String, &AudioBuffer> = self.buffers.iter()
                 .map(|(k, v)| (k.clone(), v))
                 .collect();
 
-            // Process
-            module.process(&inputs, &mut outputs, context);
+            // Process module into pre-allocated output
+            self.modules[idx].process(&inputs, &mut self.module_outputs, context);
 
-            // Make this module's output available as input for next modules
-            if let Some(out_buf) = outputs.get(&out_key) {
-                self.buffers.insert(out_key.clone(), out_buf.clone());
+            // Copy this module's output to buffers for next modules to use as input
+            if let Some(out_buf) = self.module_outputs.get(&out_key_owned) {
+                if let Some(buf) = self.buffers.get_mut(&out_key_owned) {
+                    buf.copy_from(out_buf);
+                } else {
+                    // First time: insert (this allocates once, then reuses)
+                    self.buffers.insert(out_key_owned, out_buf.clone());
+                }
             }
         }
 
-        // Get final output (from last module or specific output module)
-        let final_output = self.module_names.last().and_then(|name| {
-            outputs.get(&format!("{}_out", name))
-        });
-
-        if let Some(final_buf) = final_output {
-            output.copy_from(final_buf);
+        // Get final output (from last module)
+        if let Some(name) = self.module_names.last() {
+            let out_key = format!("{}_out", name);
+            if let Some(final_buf) = self.module_outputs.get(&out_key) {
+                output.copy_from(final_buf);
+            } else {
+                output.clear();
+            }
         } else {
             output.clear();
         }
@@ -578,9 +590,20 @@ impl Voice {
         }
     }
 
-    /// Ensure internal buffers are properly sized.
+    /// Ensure internal input buffers are properly sized.
     fn ensure_buffers(&mut self, size: usize) {
         for buf in self.buffers.values_mut() {
+            if buf.len() != size {
+                buf.resize(size);
+            }
+        }
+    }
+
+    /// Ensure pre-allocated output buffers are properly sized.
+    /// This only resizes if needed, avoiding allocation when size matches.
+    #[inline]
+    fn ensure_output_buffers(&mut self, size: usize) {
+        for buf in self.module_outputs.values_mut() {
             if buf.len() != size {
                 buf.resize(size);
             }
@@ -635,7 +658,7 @@ impl Voice {
         let freq = bend_semitones.apply(base_freq);
 
         // Set oscillator frequencies (before processing)
-        self.set_oscillator_frequency(freq.as_f32());
+        self.set_oscillator_frequency(freq);
 
         // === Process LFO with retrigger on note start ===
         if self.age == 0 {

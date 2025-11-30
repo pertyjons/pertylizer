@@ -1,6 +1,6 @@
 //! Pitch-related types for type-safe audio processing.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use super::Hertz;
 
@@ -92,6 +92,15 @@ impl Mul<f32> for Cents {
     #[inline]
     fn mul(self, rhs: f32) -> Self::Output {
         Self(self.0 * rhs)
+    }
+}
+
+impl Div<f32> for Cents {
+    type Output = Self;
+
+    #[inline]
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs)
     }
 }
 
