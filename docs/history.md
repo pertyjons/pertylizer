@@ -1,5 +1,20 @@
 # Version History
 
+## [0.32.1] - 2024
+
+### Fixed - Ghost Sound Bug
+
+- **ClearAllModules now disables parts** (`src/engine/synth_engine.rs`)
+  - Parts are now disabled when `ClearAllModules` is sent
+  - Prevents "ghost sound" from hardcoded polyphonic voices after clearing rack
+  - Clean slate for "New Patch" - no residual audio from previous state
+
+### Technical Details
+
+- All 235 unit tests passing
+
+---
+
 ## [0.32.0] - 2024
 
 ### Added - Type Safety Refactoring & GUI Improvements

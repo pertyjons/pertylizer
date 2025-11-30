@@ -715,9 +715,11 @@ impl SynthEngine {
             }
 
             EngineCommand::ClearAllModules => {
-                // Clear all modules for patch loading - panic all parts
+                // Clear all modules for patch loading - panic and disable all parts
+                // to prevent "ghost sound" from hardcoded voice templates
                 for part in &mut self.parts {
                     part.panic();
+                    part.set_enabled(false);
                 }
                 self.effect_chain.clear();
                 self.module_graph.clear();
