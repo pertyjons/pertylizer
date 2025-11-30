@@ -35,6 +35,11 @@ pub struct Delay {
     mix: NormalizedValue,
     high_cut: Hertz,
 
+    // Tempo sync
+    tempo_sync: bool,
+    /// Sync division in beats (0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, 2.0 = 1/2, 4.0 = whole)
+    sync_division: f32,
+
     // Delay buffers
     buffer_left: Vec<f32>,
     buffer_right: Vec<f32>,
@@ -58,6 +63,8 @@ impl Delay {
             feedback: NormalizedValue::new(0.4),
             mix: NormalizedValue::CENTER,
             high_cut: Hertz::new(8000.0),
+            tempo_sync: false,
+            sync_division: 1.0, // Default: quarter note
             buffer_left: vec![0.0; buffer_size],
             buffer_right: vec![0.0; buffer_size],
             write_pos: BufferIndex::ZERO,
@@ -65,6 +72,19 @@ impl Delay {
             filter_right: FilterState::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
         }
+    }
+
+    /// Calculate delay time in seconds from BPM and sync division.
+    ///
+    /// Formula: delay_seconds = (60.0 / bpm) * sync_division
+    /// Where sync_division is in beats (1.0 = quarter note)
+    #[inline]
+    fn synced_delay_time(&self, bpm: f32) -> Seconds {
+        if bpm <= 0.0 {
+            return self.time_left; // Fallback to manual time
+        }
+        let beat_duration = 60.0 / bpm;
+        Seconds::new((beat_duration * self.sync_division).min(MAX_DELAY_SECONDS))
     }
 
     /// Resize buffers for new sample rate.
@@ -161,8 +181,20 @@ impl EffectModule for Delay {
         self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffers();
 
-        let delay_samples_left = (self.time_left.as_f32() * self.sample_rate.as_f32()).min((self.buffer_left.len() - 1) as f32);
-        let delay_samples_right = (self.time_right.as_f32() * self.sample_rate.as_f32()).min((self.buffer_right.len() - 1) as f32);
+        // Calculate effective delay time (synced or manual)
+        let effective_time = if self.tempo_sync {
+            self.synced_delay_time(context.tempo)
+        } else {
+            self.time_left
+        };
+
+        let delay_samples_left = (effective_time.as_f32() * self.sample_rate.as_f32()).min((self.buffer_left.len() - 1) as f32);
+        // For stereo mode, right channel can have different time; for synced mode, use same
+        let delay_samples_right = if self.tempo_sync {
+            delay_samples_left
+        } else {
+            (self.time_right.as_f32() * self.sample_rate.as_f32()).min((self.buffer_right.len() - 1) as f32)
+        };
 
         let len = self.buffer_left.len();
         let feedback = self.feedback.as_f32();
@@ -292,7 +324,15 @@ impl EffectModule for Delay {
                     }
                 }
                 DelayParam::TempoSync => {
-                    // Not yet implemented
+                    if let TypedValue::Bool(sync) = value {
+                        self.tempo_sync = sync;
+                    }
+                }
+                DelayParam::SyncDivision => {
+                    if let Some(div) = value.as_float() {
+                        // Clamp to valid note divisions (1/32 to 4 whole notes)
+                        self.sync_division = div.clamp(0.125, 16.0);
+                    }
                 }
             }
         }
@@ -308,7 +348,8 @@ impl EffectModule for Delay {
                 DelayParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
                 DelayParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
                 DelayParam::Damping => Some(TypedValue::Float(self.high_cut.as_f32())),
-                DelayParam::TempoSync => None,
+                DelayParam::TempoSync => Some(TypedValue::Bool(self.tempo_sync)),
+                DelayParam::SyncDivision => Some(TypedValue::Float(self.sync_division)),
             }
         } else {
             None

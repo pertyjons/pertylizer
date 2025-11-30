@@ -518,6 +518,10 @@ pub enum PartParam {
     StealingStrategy(super::voice_allocator::StealingStrategy),
     /// Maximum polyphony for this part.
     MaxVoices(usize),
+    /// Velocity to amplitude sensitivity (0 = constant, 1 = full dynamic).
+    VelocityAmpSensitivity(NormalizedValue),
+    /// Velocity to filter cutoff sensitivity (0 = none, 1 = full).
+    VelocityFilterSensitivity(NormalizedValue),
 }
 
 /// Events sent from the audio engine to the UI.

@@ -288,6 +288,7 @@ impl TypedParam {
                 LfoParam::Depth => "Depth",
                 LfoParam::Phase => "Phase",
                 LfoParam::TempoSync => "Tempo Sync",
+                LfoParam::SyncDivision => "Division",
                 LfoParam::Retrigger => "Retrigger",
             },
             Self::Amplifier(p) => match p {
@@ -312,6 +313,7 @@ impl TypedParam {
                 DelayParam::Mix => "Mix",
                 DelayParam::Damping => "Damping",
                 DelayParam::TempoSync => "Tempo Sync",
+                DelayParam::SyncDivision => "Division",
             },
             Self::Reverb(p) => match p {
                 ReverbParam::RoomSize => "Room Size",

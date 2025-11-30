@@ -8,7 +8,8 @@
 use eframe::egui::{self, Color32, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::engine::{EngineCommand, EngineHandle};
-use crate::engine::part::MidiChannel;
+use crate::engine::commands::PartParam;
+use crate::engine::part::{MidiChannel, PartId};
 use crate::types::{BipolarValue, NormalizedValue};
 use crate::gui::widgets::{colors, module_frame, Knob};
 
@@ -105,7 +106,7 @@ fn draw_macro_controllers(ui: &mut Ui, state: &mut PerformanceState, handle: &mu
 }
 
 /// Draw velocity sensitivity knobs.
-fn draw_velocity_mapping(ui: &mut Ui, state: &mut PerformanceState, _handle: &mut EngineHandle) {
+fn draw_velocity_mapping(ui: &mut Ui, state: &mut PerformanceState, handle: &mut EngineHandle) {
     ui.label(egui::RichText::new("Velocity Mapping").color(colors::TEXT_SECONDARY).small());
     ui.add_space(4.0);
 
@@ -120,7 +121,13 @@ fn draw_velocity_mapping(ui: &mut Ui, state: &mut PerformanceState, _handle: &mu
                 .show(ui);
 
             if response.changed() {
-                // TODO: Send command to update voice expression settings
+                // Send to first part (applies to all voices in that part)
+                handle.send(EngineCommand::SetPartParameter {
+                    part_id: PartId::FIRST,
+                    param: PartParam::VelocityAmpSensitivity(
+                        NormalizedValue::new(state.velocity_amp_sens)
+                    ),
+                });
             }
         });
 
@@ -136,7 +143,13 @@ fn draw_velocity_mapping(ui: &mut Ui, state: &mut PerformanceState, _handle: &mu
                 .show(ui);
 
             if response.changed() {
-                // TODO: Send command to update voice expression settings
+                // Send to first part (applies to all voices in that part)
+                handle.send(EngineCommand::SetPartParameter {
+                    part_id: PartId::FIRST,
+                    param: PartParam::VelocityFilterSensitivity(
+                        NormalizedValue::new(state.velocity_filter_sens)
+                    ),
+                });
             }
         });
     });

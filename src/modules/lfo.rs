@@ -249,6 +249,12 @@ impl VoiceModule for Lfo {
                         self.tempo_sync = sync;
                     }
                 }
+                LfoParam::SyncDivision => {
+                    if let Some(div) = value.as_float() {
+                        // Clamp to valid note divisions (1/32 to 16 bars)
+                        self.sync_division = div.clamp(0.125, 64.0);
+                    }
+                }
                 LfoParam::Retrigger => {
                     // Not yet stored as parameter
                 }
@@ -267,6 +273,7 @@ impl VoiceModule for Lfo {
                 LfoParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
                 LfoParam::Phase => Some(TypedValue::Float(self.phase_offset.as_f32())),
                 LfoParam::TempoSync => Some(TypedValue::Bool(self.tempo_sync)),
+                LfoParam::SyncDivision => Some(TypedValue::Float(self.sync_division)),
                 LfoParam::Retrigger => None,
             }
         } else {

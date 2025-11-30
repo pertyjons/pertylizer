@@ -42,7 +42,12 @@ pub struct Envelope {
     sustain: NormalizedValue,
     release: Seconds,
 
-    // Curve type
+    // Per-stage curve shapes (-1.0 = log, 0.0 = linear, 1.0 = exp)
+    attack_curve: f32,
+    decay_curve: f32,
+    release_curve: f32,
+
+    // Legacy curve type (used for backwards compatibility)
     curve: EnvelopeCurve,
 
     // Velocity sensitivity
@@ -68,6 +73,9 @@ impl Envelope {
             decay: Seconds::new(0.1),
             sustain: NormalizedValue::new(0.7),
             release: Seconds::new(0.3),
+            attack_curve: 0.5,  // Slightly exponential for snappy attack
+            decay_curve: 0.5,   // Exponential decay sounds natural
+            release_curve: 0.5, // Exponential release sounds natural
             curve: EnvelopeCurve::Exponential,
             velocity_sensitivity: NormalizedValue::MAX,
             stage: EnvelopeStage::Idle,
@@ -76,6 +84,28 @@ impl Envelope {
             sample_rate: SampleRate::DVD_QUALITY,
             target_level: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(256),
+        }
+    }
+
+    /// Apply curve shaping to a linear ramp value (0.0 to 1.0).
+    ///
+    /// `curve`: -1.0 = logarithmic, 0.0 = linear, 1.0 = exponential
+    /// `x`: input value in 0.0..1.0 range
+    ///
+    /// Returns shaped value in 0.0..1.0 range
+    #[inline]
+    fn apply_curve(x: f32, curve: f32) -> f32 {
+        if curve.abs() < 0.01 {
+            // Nearly linear - just return x
+            x
+        } else if curve > 0.0 {
+            // Exponential curve (fast start, slow end for attack; slow start, fast end for decay)
+            // Using power function: x^(1 + curve*3) for smooth exponential
+            x.powf(1.0 + curve * 3.0)
+        } else {
+            // Logarithmic curve (slow start, fast end for attack; fast start, slow end for decay)
+            // Using power function: x^(1 / (1 - curve*3))
+            x.powf(1.0 / (1.0 - curve * 3.0))
         }
     }
 
@@ -342,8 +372,21 @@ impl VoiceModule for Envelope {
                         self.velocity_sensitivity = NormalizedValue::new(v);
                     }
                 }
-                // Curve parameters not yet implemented in base Envelope
-                EnvelopeParam::AttackCurve | EnvelopeParam::DecayCurve | EnvelopeParam::ReleaseCurve => {}
+                EnvelopeParam::AttackCurve => {
+                    if let Some(c) = value.as_float() {
+                        self.attack_curve = c.clamp(-1.0, 1.0);
+                    }
+                }
+                EnvelopeParam::DecayCurve => {
+                    if let Some(c) = value.as_float() {
+                        self.decay_curve = c.clamp(-1.0, 1.0);
+                    }
+                }
+                EnvelopeParam::ReleaseCurve => {
+                    if let Some(c) = value.as_float() {
+                        self.release_curve = c.clamp(-1.0, 1.0);
+                    }
+                }
             }
         }
     }
@@ -356,7 +399,9 @@ impl VoiceModule for Envelope {
                 EnvelopeParam::Sustain => Some(TypedValue::Float(self.sustain.as_f32())),
                 EnvelopeParam::Release => Some(TypedValue::Float(self.release.as_f32())),
                 EnvelopeParam::VelocitySensitivity => Some(TypedValue::Float(self.velocity_sensitivity.as_f32())),
-                _ => None,
+                EnvelopeParam::AttackCurve => Some(TypedValue::Float(self.attack_curve)),
+                EnvelopeParam::DecayCurve => Some(TypedValue::Float(self.decay_curve)),
+                EnvelopeParam::ReleaseCurve => Some(TypedValue::Float(self.release_curve)),
             }
         } else {
             None

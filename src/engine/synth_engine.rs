@@ -561,6 +561,12 @@ impl SynthEngine {
                             // Cannot change max voices at runtime without reallocating
                             // This would require recreating the allocator
                         }
+                        PartParam::VelocityAmpSensitivity(sens) => {
+                            part.set_velocity_amp_sensitivity(sens);
+                        }
+                        PartParam::VelocityFilterSensitivity(sens) => {
+                            part.set_velocity_filter_sensitivity(sens);
+                        }
                     }
                 }
             }

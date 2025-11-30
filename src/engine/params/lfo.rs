@@ -83,6 +83,8 @@ pub enum LfoParam {
     Phase,
     /// Sync to tempo
     TempoSync,
+    /// Sync division in beats (0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, etc.)
+    SyncDivision,
     /// Retrigger on note
     Retrigger,
 }

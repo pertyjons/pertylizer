@@ -1,5 +1,49 @@
 # Version History
 
+## [0.28.1] - 2024
+
+### Added - Performance Fixes & Module Visualization
+
+- **Performance Panel Velocity Mapping** (`src/engine/commands.rs`, `src/engine/part.rs`)
+  - Added `PartParam::VelocityAmpSensitivity(NormalizedValue)` command
+  - Added `PartParam::VelocityFilterSensitivity(NormalizedValue)` command
+  - Connected GUI knobs to engine via `SetPartParameter` commands
+  - Velocity settings now propagate to all voices in part
+
+- **Tempo Sync for Delay** (`src/effects/delay.rs`)
+  - Added `tempo_sync: bool` and `sync_division: f32` fields
+  - New `synced_delay_time()` method calculates delay from BPM
+  - Formula: `delay_seconds = (60.0 / bpm) * sync_division`
+  - Added `DelayParam::SyncDivision` parameter variant
+
+- **Tempo Sync for LFO** (`src/modules/lfo.rs`, `src/engine/params/lfo.rs`)
+  - Added `LfoParam::SyncDivision` parameter variant
+  - LFO tempo sync logic now configurable via parameters
+  - Sync divisions in beats (0.25 = 1/16, 1.0 = 1/4, etc.)
+
+- **Envelope Curves** (`src/modules/envelope.rs`)
+  - Added `attack_curve`, `decay_curve`, `release_curve` fields (-1.0 to 1.0)
+  - New `apply_curve(x, curve)` function for shaping
+  - Formula: `x^(1 + curve*3)` for exponential, `x^(1/(1 - curve*3))` for logarithmic
+  - Negative = logarithmic (fast start), Positive = exponential (slow start)
+
+- **Module Connectivity Visualization** (`src/gui/rack_view.rs`)
+  - New `ModuleConnectivity` enum: `Connected`, `Orphaned`, `Disconnected`
+  - `calculate_connectivity()` uses BFS backwards from output modules
+  - Visual dimming based on connectivity status:
+    - **Connected**: Full opacity (1.0), green indicator ●
+    - **Orphaned**: 60% opacity, yellow indicator ○ (has connections but not routed)
+    - **Disconnected**: 40% opacity, gray indicator ○ (no connections)
+  - Recalculates on module/connection add/remove
+
+### Technical Details
+- Uses type-safe `NormalizedValue` for velocity sensitivity
+- BFS traversal builds reverse adjacency map for connectivity analysis
+- Frame opacity applied via `gamma_multiply(opacity)` on fill and stroke
+- All 229 unit tests passing
+
+---
+
 ## [0.28.0] - 2024
 
 ### Added - Performance Panel GUI

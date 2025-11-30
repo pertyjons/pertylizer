@@ -6,7 +6,7 @@
 //! Modules are rendered as draggable, resizable windows with z-order support.
 //! Cables are rendered in a foreground layer so they appear above modules.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 
 use crate::engine::{EngineHandle, ModuleId};
@@ -16,6 +16,18 @@ use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
 use super::module_panel::{category_color, ModulePanelState, PortPosition};
 use super::widgets::{colors, draw_cable, theme, PortDirection, PortType};
+
+/// Module connectivity status for visualization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModuleConnectivity {
+    /// Module is connected to an output (audio will be heard).
+    Connected,
+    /// Module has connections but doesn't reach an output.
+    Orphaned,
+    /// Module has no connections at all.
+    #[default]
+    Disconnected,
+}
 
 /// State for a pending connection being drawn.
 #[derive(Clone, Debug)]
@@ -52,6 +64,8 @@ pub struct RackView {
     next_module_pos: Pos2,
     /// Module z-order (front to back).
     z_order: Vec<ModuleId>,
+    /// Module connectivity status (updated when connections change).
+    connectivity: HashMap<ModuleId, ModuleConnectivity>,
 }
 
 impl RackView {
@@ -67,6 +81,7 @@ impl RackView {
             descriptors: HashMap::new(),
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
+            connectivity: HashMap::new(),
         }
     }
 
@@ -92,6 +107,7 @@ impl RackView {
         self.descriptors.insert(id, descriptor);
         self.panels.insert(id, state);
         self.z_order.push(id); // Add to front
+        self.calculate_connectivity();
     }
 
     /// Add a module at a specific position.
@@ -108,6 +124,7 @@ impl RackView {
         self.descriptors.insert(id, descriptor);
         self.panels.insert(id, state);
         self.z_order.push(id);
+        self.calculate_connectivity();
     }
 
     /// Clear all modules and connections.
@@ -134,12 +151,14 @@ impl RackView {
         self.panels.remove(&id);
         self.descriptors.remove(&id);
         self.z_order.retain(|&mid| mid != id);
+        self.connectivity.remove(&id);
         // Remove connections involving this module
         self.connections
             .retain(|c| c.from_module != id && c.to_module != id);
         if self.selected_module == Some(id) {
             self.selected_module = None;
         }
+        self.calculate_connectivity();
     }
 
     /// Bring a module to front.
@@ -158,6 +177,7 @@ impl RackView {
     pub fn add_connection(&mut self, connection: Connection) {
         if !self.connections.contains(&connection) {
             self.connections.push(connection);
+            self.calculate_connectivity();
         }
     }
 
@@ -179,6 +199,7 @@ impl RackView {
     #[allow(dead_code)]
     pub fn remove_connection(&mut self, connection: &Connection) {
         self.connections.retain(|c| c != connection);
+        self.calculate_connectivity();
     }
 
     /// Get all connections.
@@ -337,10 +358,28 @@ impl RackView {
 
             let accent_color = category_color(descriptor.category);
             let is_selected = self.selected_module == Some(module_id);
-            
+            let connectivity_status = self.get_connectivity(module_id);
+
+            // Dim modules that aren't connected to output
+            let opacity = match connectivity_status {
+                ModuleConnectivity::Connected => 1.0,
+                ModuleConnectivity::Orphaned => 0.6,
+                ModuleConnectivity::Disconnected => 0.4,
+            };
+
+            let dimmed_accent = accent_color.gamma_multiply(opacity);
+
             let mut open = true;
             let window_id = egui::Id::new(("module_window", module_id.to_string()));
-            
+
+            // Create frame with dimming for disconnected modules
+            let frame = egui::Frame::window(&ui.ctx().style())
+                .stroke(egui::Stroke::new(
+                    if is_selected { 2.0 } else { 1.0 },
+                    if is_selected { dimmed_accent } else { dimmed_accent.gamma_multiply(0.5) }
+                ))
+                .fill(ui.ctx().style().visuals.window_fill().gamma_multiply(opacity));
+
             let window = egui::Window::new(&descriptor.name)
                 .id(window_id)
                 .open(&mut open)
@@ -349,12 +388,7 @@ impl RackView {
                 .default_pos(panel_position + self.canvas_offset)
                 .min_width(180.0)
                 .min_height(100.0)
-                .frame(egui::Frame::window(&ui.ctx().style()).stroke(
-                    egui::Stroke::new(
-                        if is_selected { 2.0 } else { 1.0 },
-                        if is_selected { accent_color } else { accent_color.gamma_multiply(0.5) }
-                    )
-                ));
+                .frame(frame);
 
             // Get processing info for this module
             let proc_position = processing_order.get(&module_id).copied();
@@ -366,7 +400,7 @@ impl RackView {
                 ui.horizontal(|ui| {
                     // Accent color indicator
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, accent_color);
+                    ui.painter().rect_filled(rect, 2.0, dimmed_accent);
 
                     // Processing order number
                     if let Some(pos) = proc_position {
@@ -378,6 +412,28 @@ impl RackView {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Connectivity status indicator
+                        match connectivity_status {
+                            ModuleConnectivity::Connected => {
+                                ui.label(egui::RichText::new("●")
+                                    .small()
+                                    .color(Color32::from_rgb(100, 200, 100)))
+                                    .on_hover_text("Connected to output");
+                            }
+                            ModuleConnectivity::Orphaned => {
+                                ui.label(egui::RichText::new("○")
+                                    .small()
+                                    .color(Color32::from_rgb(200, 200, 100)))
+                                    .on_hover_text("Has connections but not routed to output");
+                            }
+                            ModuleConnectivity::Disconnected => {
+                                ui.label(egui::RichText::new("○")
+                                    .small()
+                                    .color(Color32::from_rgb(100, 100, 100)))
+                                    .on_hover_text("No connections");
+                            }
+                        }
+
                         // Source indicator (no inputs)
                         if is_source {
                             ui.label(egui::RichText::new("▶")
@@ -449,9 +505,12 @@ impl RackView {
 
         // Draw connections in foreground layer and handle cable removal
         let cables_to_remove = self.draw_connections_foreground(ui);
-        for cable in cables_to_remove {
-            self.connections.retain(|c| c != &cable);
-            result.connections_to_remove.push(cable);
+        if !cables_to_remove.is_empty() {
+            for cable in cables_to_remove {
+                self.connections.retain(|c| c != &cable);
+                result.connections_to_remove.push(cable);
+            }
+            self.calculate_connectivity();
         }
 
         // Draw pending connection in foreground
@@ -755,6 +814,75 @@ impl RackView {
     /// Get a module's descriptor.
     pub fn module_descriptor(&self, id: ModuleId) -> Option<&ModuleDescriptor> {
         self.descriptors.get(&id)
+    }
+
+    /// Calculate connectivity status for all modules.
+    /// Uses BFS backwards from output modules to determine which modules
+    /// are actually connected to audio output.
+    pub fn calculate_connectivity(&mut self) {
+        self.connectivity.clear();
+
+        // Find all output modules (sinks that produce audio)
+        let output_modules: Vec<ModuleId> = self.panels.keys()
+            .filter(|&&id| {
+                self.descriptors.get(&id)
+                    .map(|d| d.category == ModuleCategory::Output)
+                    .unwrap_or(false)
+            })
+            .copied()
+            .collect();
+
+        // Build reverse adjacency map (to -> from)
+        let mut reverse_adj: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+        for id in self.panels.keys() {
+            reverse_adj.insert(*id, Vec::new());
+        }
+        for conn in &self.connections {
+            if let Some(adj) = reverse_adj.get_mut(&conn.to_module) {
+                adj.push(conn.from_module);
+            }
+        }
+
+        // BFS backwards from output modules
+        let mut connected: HashSet<ModuleId> = HashSet::new();
+        let mut queue: VecDeque<ModuleId> = VecDeque::new();
+
+        for &output_id in &output_modules {
+            connected.insert(output_id);
+            queue.push_back(output_id);
+        }
+
+        while let Some(id) = queue.pop_front() {
+            if let Some(sources) = reverse_adj.get(&id) {
+                for &source_id in sources {
+                    if !connected.contains(&source_id) {
+                        connected.insert(source_id);
+                        queue.push_back(source_id);
+                    }
+                }
+            }
+        }
+
+        // Determine connectivity status for each module
+        for &id in self.panels.keys() {
+            let has_any_connection = self.connections.iter()
+                .any(|c| c.from_module == id || c.to_module == id);
+
+            let status = if connected.contains(&id) {
+                ModuleConnectivity::Connected
+            } else if has_any_connection {
+                ModuleConnectivity::Orphaned
+            } else {
+                ModuleConnectivity::Disconnected
+            };
+
+            self.connectivity.insert(id, status);
+        }
+    }
+
+    /// Get connectivity status for a module.
+    pub fn get_connectivity(&self, id: ModuleId) -> ModuleConnectivity {
+        self.connectivity.get(&id).copied().unwrap_or(ModuleConnectivity::Disconnected)
     }
 }
 

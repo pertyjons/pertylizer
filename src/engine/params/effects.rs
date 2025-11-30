@@ -133,8 +133,10 @@ pub enum DelayParam {
     Mix,
     /// High-frequency damping
     Damping,
-    /// Tempo sync
+    /// Tempo sync enable
     TempoSync,
+    /// Sync division in beats (0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, 2.0 = 1/2, 4.0 = whole)
+    SyncDivision,
 }
 
 /// Reverb effect parameters.

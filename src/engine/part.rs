@@ -18,7 +18,7 @@ use std::fmt;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Gain};
+use crate::types::{BipolarValue, Gain, NormalizedValue};
 
 /// Unique identifier for a synth part.
 ///
@@ -176,6 +176,10 @@ pub struct SynthPart {
     voice_left: AudioBuffer,
     /// Right channel buffer for voice summing.
     voice_right: AudioBuffer,
+    /// Default velocity-to-amplitude sensitivity for new voices.
+    velocity_amp_sensitivity: NormalizedValue,
+    /// Default velocity-to-filter sensitivity for new voices.
+    velocity_filter_sensitivity: NormalizedValue,
 }
 
 impl SynthPart {
@@ -191,6 +195,8 @@ impl SynthPart {
             enabled: true,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
+            velocity_amp_sensitivity: NormalizedValue::MAX,       // Full dynamic range
+            velocity_filter_sensitivity: NormalizedValue::CENTER, // 50% filter sensitivity
         }
     }
 
@@ -206,6 +212,8 @@ impl SynthPart {
             enabled: true,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
+            velocity_amp_sensitivity: NormalizedValue::MAX,
+            velocity_filter_sensitivity: NormalizedValue::CENTER,
         }
     }
 
@@ -291,6 +299,40 @@ impl SynthPart {
     #[inline]
     pub fn responds_to_channel(&self, channel: u8) -> bool {
         self.enabled && self.midi_channel.matches(channel)
+    }
+
+    /// Get velocity-to-amplitude sensitivity.
+    #[inline]
+    pub fn velocity_amp_sensitivity(&self) -> NormalizedValue {
+        self.velocity_amp_sensitivity
+    }
+
+    /// Set velocity-to-amplitude sensitivity.
+    ///
+    /// This updates all existing voices and will be applied to new voices.
+    pub fn set_velocity_amp_sensitivity(&mut self, sensitivity: NormalizedValue) {
+        self.velocity_amp_sensitivity = sensitivity;
+        // Update all existing voices
+        for voice in self.allocator.voices_mut() {
+            voice.expression.velocity_to_amp = sensitivity;
+        }
+    }
+
+    /// Get velocity-to-filter sensitivity.
+    #[inline]
+    pub fn velocity_filter_sensitivity(&self) -> NormalizedValue {
+        self.velocity_filter_sensitivity
+    }
+
+    /// Set velocity-to-filter sensitivity.
+    ///
+    /// This updates all existing voices and will be applied to new voices.
+    pub fn set_velocity_filter_sensitivity(&mut self, sensitivity: NormalizedValue) {
+        self.velocity_filter_sensitivity = sensitivity;
+        // Update all existing voices
+        for voice in self.allocator.voices_mut() {
+            voice.expression.velocity_to_filter = sensitivity;
+        }
     }
 
     /// Get the number of active voices in this part.
