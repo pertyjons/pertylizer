@@ -1,5 +1,39 @@
 # Version History
 
+## [0.29.0] - 2024
+
+### Refactored - Modular Patch Structure
+
+- **Patch Directory Structure** (`src/patches/`)
+  - Extracted all 16 example patches from `patch.rs` to individual files
+  - New modular structure with one patch per file
+  - Central `mod.rs` with re-exports and `example_patches()` function
+
+- **Patch Files Created:**
+  - `deep_space_pad.rs`, `aggressive_bass.rs`, `vintage_lead.rs`, `ambient_keys.rs`
+  - `drum_kick.rs`, `drum_snare.rs`, `drum_hihat.rs`
+  - `pluck_synth.rs`, `fm_bell.rs`, `noise_sweep.rs`
+  - `chaos_drone.rs`, `karplus_guitar.rs`, `shepard_riser.rs`
+  - `bytebeat_glitch.rs`, `wave_folder_bass.rs`, `formant_voice.rs`
+
+- **Patch Routing Fixed**
+  - Updated 6 math oscillator patches with missing Oscilloscope visualization
+  - All patches now end with: `[Effect] → Oscilloscope → Stereo Output`
+  - Consistent signal flow across all example patches
+
+- **Code Cleanup** (`src/patch.rs`)
+  - Reduced from ~2163 lines to 367 lines
+  - Kept core types: `Patch`, `ModuleState`, `ModuleType`, `ParamValue`, `ConnectionState`, `PatchSettings`, `PatchError`, `ModuleBuilder`
+  - Added re-export: `pub use crate::patches::example_patches;`
+
+### Technical Details
+- Pattern: Each patch file uses `use crate::patch::{Patch, ModuleBuilder, ModuleType};`
+- All patches use fluent `ModuleBuilder` API
+- Backwards compatible: `example_patches()` still returns `Vec<Patch>`
+- All 229 unit tests passing
+
+---
+
 ## [0.28.1] - 2024
 
 ### Added - Performance Fixes & Module Visualization

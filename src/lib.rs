@@ -88,6 +88,7 @@ pub mod visualizers;
 pub mod ui;
 pub mod gui;
 pub mod patch;
+pub mod patches;
 pub mod sequencer;
 pub mod types;
 pub mod io;

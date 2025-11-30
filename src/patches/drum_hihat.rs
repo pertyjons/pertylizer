@@ -1,0 +1,89 @@
+//! Hi-Hat - Metallic electronic hi-hat.
+
+use crate::patch::{Patch, ModuleBuilder, ModuleType};
+
+/// Hi-Hat - Metallic electronic hi-hat.
+pub fn patch_drum_hihat() -> Patch {
+    let mut patch = Patch::new("Hi-Hat");
+    patch.author = Some("Modular Synth".to_string());
+    patch.description = Some("Metallic electronic hi-hat with variable decay.".to_string());
+    patch.notes = Some(r#"
+SIGNAL FLOW:
+Hi-hats are essentially filtered noise with very fast envelopes.
+The metallic quality comes from highpass filtering that removes
+the low frequencies, leaving only the bright, shimmery content.
+
+FILTER:
+A highpass filter at around 7-8kHz removes the "body" of the noise,
+leaving the bright, metallic character. Higher resonance adds a
+slight ring/shimmer.
+
+ENVELOPE:
+The amp envelope is extremely fast:
+- Instant attack (1ms)
+- Very short decay (30-50ms for closed, 200ms+ for open)
+- No sustain - hi-hats are purely percussive
+
+CLOSED vs OPEN:
+Adjust the decay time to switch between closed and open hi-hats:
+- Closed: 30-50ms decay
+- Open: 150-300ms decay
+
+TRY: Play rapid 16th notes for closed hi-hat patterns. Longer notes
+for open hi-hats. The filter cutoff affects brightness.
+"#.to_string());
+    patch.tags = vec!["drum".into(), "hihat".into(), "percussion".into(), "cymbal".into()];
+
+    // OSC - Noise (osc-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
+        .position(50.0, 50.0)
+        .waveform("noise")
+        .param_f("level", 0.8)
+        .build());
+
+    // Filter - Highpass (flt-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
+        .position(250.0, 50.0)
+        .filter_mode("highpass")
+        .param_f("cutoff", 7500.0)
+        .param_f("resonance", 0.4)
+        .build());
+
+    // Amp Envelope - Very short (env-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
+        .position(50.0, 300.0)
+        .param_f("attack", 0.001)
+        .param_f("decay", 0.05)
+        .param_f("sustain", 0.0)
+        .param_f("release", 0.03)
+        .build());
+
+    // Amplifier (amp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
+        .position(450.0, 50.0)
+        .param_f("level", 0.5)
+        .build());
+
+    // Oscilloscope - Waveform visualization (scp-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        .position(650.0, 50.0)
+        .param_f("time", 1.0)
+        .param_f("gain", 1.0)
+        .build());
+
+    // Stereo Output - Final destination (out-1)
+    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
+        .position(850.0, 50.0)
+        .param_f("master", 0.8)
+        .build());
+
+    // Connections (using string IDs: type-instance)
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    // Route to oscilloscope and output
+    patch.add_connection("amp-1", "out", "scp-1", "in_l");
+    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+
+    patch
+}
