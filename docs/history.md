@@ -1,5 +1,41 @@
 # Version History
 
+## [0.32.6] - 2024
+
+### Fixed - Dropdown Parameter Synchronization
+
+Fixed GUI dropdown parameters not updating the synth engine. The issue was that dropdown handlers sent `TypedValue::Int(index)` but modules expected specific typed variants.
+
+- **rack_view.rs** - Added proper type conversion for all dropdown parameters:
+  - `MathOscillatorParam::Algorithm` → `TypedValue::MathAlgo`
+  - `FilterParam::Mode` → `TypedValue::FilterMode`
+  - `DelayParam::Mode` → `TypedValue::DelayMode`
+  - `DistortionParam::Mode` → `TypedValue::DistortionMode`
+
+### Modules Verified
+
+All modules analyzed and verified for correct GUI/Engine synchronization:
+
+| Module | Parameter | TypedValue | Status |
+|--------|-----------|------------|--------|
+| MathOscillator | Algorithm | `MathAlgo` | Fixed |
+| Filter | Mode | `FilterMode` | Fixed |
+| Delay | Mode | `DelayMode` | Fixed |
+| Distortion | Mode | `DistortionMode` | Fixed |
+| Oscillator | Waveform | `Waveform` | OK (WaveformSelector) |
+| LFO | Waveform | `LfoWaveform` | OK (WaveformSelector) |
+| SubOsc | Waveform/Octave | `Int` | OK (uses as_int()) |
+| NoiseGenerator | Type | `Int` | OK (uses as_int()) |
+| Oscillator | FmMode | `Int` | OK (uses as_int()) |
+
+### Technical Details
+
+- Added imports: `FilterParam`, `DelayParam`, `DistortionParam`, `MathOscillatorParam`
+- Added imports: `FilterMode`, `DelayMode`, `DistortionMode`, `MathAlgo`
+- All 240 unit tests passing
+
+---
+
 ## [0.32.5] - 2024
 
 ### Added - New Domain Types for Effects

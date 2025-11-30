@@ -10,7 +10,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 
 use crate::engine::{EngineHandle, ModuleId};
-use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, LfoParam, Waveform, LfoWaveform};
+use crate::engine::typed_params::{
+    TypedParam, TypedValue,
+    OscillatorParam, LfoParam, FilterParam, DelayParam, DistortionParam,
+    MathOscillatorParam,
+    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, MathAlgo,
+};
 use crate::engine::graph::Connection;
 use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
@@ -1143,7 +1148,31 @@ fn draw_module_panel_params(
 
             if selected as f32 != current.round() {
                 state.param_values.insert(param.id, selected as f32);
-                param_changes.push((param.id, TypedValue::Int(selected as i32)));
+                // Convert index to proper TypedValue based on parameter type
+                let typed_value = match param.id {
+                    TypedParam::MathOscillator(MathOscillatorParam::Algorithm) => {
+                        MathAlgo::from_index(selected)
+                            .map(TypedValue::MathAlgo)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    TypedParam::Filter(FilterParam::Mode) => {
+                        FilterMode::from_index(selected)
+                            .map(TypedValue::FilterMode)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    TypedParam::Delay(DelayParam::Mode) => {
+                        DelayMode::from_index(selected)
+                            .map(TypedValue::DelayMode)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    TypedParam::Distortion(DistortionParam::Mode) => {
+                        DistortionMode::from_index(selected)
+                            .map(TypedValue::DistortionMode)
+                            .unwrap_or(TypedValue::Int(selected as i32))
+                    }
+                    _ => TypedValue::Int(selected as i32),
+                };
+                param_changes.push((param.id, typed_value));
             }
         }
     }
