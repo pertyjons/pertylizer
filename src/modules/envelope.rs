@@ -12,7 +12,7 @@ use crate::engine::typed_params::{
     TypedParam, TypedValue, EnvelopeParam, ModuleType,
 };
 use crate::modules::core::*;
-use crate::types::{Seconds, NormalizedValue, SampleRate};
+use crate::types::{Seconds, NormalizedValue, BipolarValue, SampleRate};
 
 /// Envelope stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,14 +25,6 @@ pub enum EnvelopeStage {
     Release,
 }
 
-/// Envelope curve type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EnvelopeCurve {
-    #[default]
-    Linear,
-    Exponential,
-}
-
 /// ADSR envelope generator.
 #[derive(Clone)]
 pub struct Envelope {
@@ -43,12 +35,9 @@ pub struct Envelope {
     release: Seconds,
 
     // Per-stage curve shapes (-1.0 = log, 0.0 = linear, 1.0 = exp)
-    attack_curve: f32,
-    decay_curve: f32,
-    release_curve: f32,
-
-    // Legacy curve type (used for backwards compatibility)
-    curve: EnvelopeCurve,
+    attack_curve: BipolarValue,
+    decay_curve: BipolarValue,
+    release_curve: BipolarValue,
 
     // Velocity sensitivity
     velocity_sensitivity: NormalizedValue,
@@ -73,10 +62,11 @@ impl Envelope {
             decay: Seconds::new(0.1),
             sustain: NormalizedValue::new(0.7),
             release: Seconds::new(0.3),
-            attack_curve: 0.5,  // Slightly exponential for snappy attack
-            decay_curve: 0.5,   // Exponential decay sounds natural
-            release_curve: 0.5, // Exponential release sounds natural
-            curve: EnvelopeCurve::Exponential,
+            // Default to standard exponential (curve = 0)
+            // Negative values = punchy/logarithmic, Positive = slower/more gradual
+            attack_curve: BipolarValue::CENTER,    // 0.0 = standard exponential
+            decay_curve: BipolarValue::CENTER,     // 0.0 = standard exponential
+            release_curve: BipolarValue::CENTER,   // 0.0 = standard exponential
             velocity_sensitivity: NormalizedValue::MAX,
             stage: EnvelopeStage::Idle,
             level: NormalizedValue::MIN,
@@ -136,7 +126,12 @@ impl Envelope {
         }
     }
 
-    /// Process a single sample.
+    /// Process a single sample using per-stage curve shaping.
+    ///
+    /// The curve values modify the exponential coefficients:
+    /// - Negative curves (-1 to 0): Logarithmic feel (punchy attack, fast initial decay)
+    /// - Zero: Standard exponential envelope
+    /// - Positive curves (0 to 1): Slower, more gradual transitions
     #[inline]
     fn process_sample(&mut self) -> f32 {
         let velocity_scale = 1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32());
@@ -147,59 +142,73 @@ impl Envelope {
             }
 
             EnvelopeStage::Attack => {
-                match self.curve {
-                    EnvelopeCurve::Linear => {
-                        if self.attack.as_f32() > 0.0 {
-                            let increment = 1.0 / (self.attack.as_f32() * self.sample_rate.as_f32());
-                            self.level = NormalizedValue::new(self.level.as_f32() + increment);
-                        } else {
-                            self.level = NormalizedValue::MAX;
-                        }
-                    }
-                    EnvelopeCurve::Exponential => {
-                        // Handle zero/very short attack time
-                        if self.attack.as_f32() <= 0.001 {
-                            self.level = NormalizedValue::MAX;
-                        } else {
-                            let coef = self.attack.to_exp_coeff(self.sample_rate);
-                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
-                            self.level = NormalizedValue::new_unchecked(new_level);
-                        }
-                    }
-                }
-
-                if self.level.as_f32() >= 0.999 {
+                // Handle zero/very short attack time
+                if self.attack.as_f32() <= 0.001 {
                     self.level = NormalizedValue::MAX;
                     self.stage = EnvelopeStage::Decay;
                     self.target_level = self.sustain;
+                } else {
+                    // Get base coefficient and apply curve shaping
+                    let base_coef = self.attack.to_exp_coeff(self.sample_rate);
+                    let curve = self.attack_curve.as_f32();
+
+                    // Curve modifies the coefficient:
+                    // - Negative (log): faster approach (coef closer to 0)
+                    // - Positive (exp): slower approach (coef closer to 1)
+                    let effective_coef = if curve.abs() < 0.01 {
+                        base_coef
+                    } else if curve < 0.0 {
+                        // Logarithmic: faster response (more punchy)
+                        base_coef.powf(1.0 + (-curve) * 3.0)
+                    } else {
+                        // Exponential: slower response
+                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
+                    };
+
+                    let target = self.target_level.as_f32();
+                    let current = self.level.as_f32();
+                    let new_level = target + (current - target) * effective_coef;
+                    self.level = NormalizedValue::new_unchecked(new_level);
+
+                    if self.level.as_f32() >= 0.999 {
+                        self.level = NormalizedValue::MAX;
+                        self.stage = EnvelopeStage::Decay;
+                        self.target_level = self.sustain;
+                    }
                 }
             }
 
             EnvelopeStage::Decay => {
-                match self.curve {
-                    EnvelopeCurve::Linear => {
-                        if self.decay.as_f32() > 0.0 {
-                            let decrement = (1.0 - self.sustain.as_f32()) / (self.decay.as_f32() * self.sample_rate.as_f32());
-                            self.level = NormalizedValue::new(self.level.as_f32() - decrement);
-                        } else {
-                            self.level = self.sustain;
-                        }
-                    }
-                    EnvelopeCurve::Exponential => {
-                        // Handle zero/very short decay time
-                        if self.decay.as_f32() <= 0.001 {
-                            self.level = self.sustain;
-                        } else {
-                            let coef = self.decay.to_exp_coeff(self.sample_rate);
-                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
-                            self.level = NormalizedValue::new_unchecked(new_level);
-                        }
-                    }
-                }
-
-                if self.level.as_f32() <= self.sustain.as_f32() + 0.001 {
+                // Handle zero/very short decay time
+                if self.decay.as_f32() <= 0.001 {
                     self.level = self.sustain;
                     self.stage = EnvelopeStage::Sustain;
+                } else {
+                    let base_coef = self.decay.to_exp_coeff(self.sample_rate);
+                    let sustain = self.sustain.as_f32();
+                    let current = self.level.as_f32();
+                    let curve = self.decay_curve.as_f32();
+
+                    // Curve modifies decay character:
+                    // - Negative (log): Fast initial drop, slow tail (punchy drums)
+                    // - Positive (exp): Slow initial, faster end (natural decay)
+                    let effective_coef = if curve.abs() < 0.01 {
+                        base_coef
+                    } else if curve < 0.0 {
+                        // Logarithmic: faster decay (more punchy)
+                        base_coef.powf(1.0 + (-curve) * 3.0)
+                    } else {
+                        // Exponential: slower, more natural decay
+                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
+                    };
+
+                    let new_level = sustain + (current - sustain) * effective_coef;
+                    self.level = NormalizedValue::new_unchecked(new_level.max(sustain));
+
+                    if self.level.as_f32() <= sustain + 0.001 {
+                        self.level = self.sustain;
+                        self.stage = EnvelopeStage::Sustain;
+                    }
                 }
             }
 
@@ -208,30 +217,36 @@ impl Envelope {
             }
 
             EnvelopeStage::Release => {
-                match self.curve {
-                    EnvelopeCurve::Linear => {
-                        if self.release.as_f32() > 0.0 {
-                            let decrement = self.sustain.as_f32() / (self.release.as_f32() * self.sample_rate.as_f32());
-                            self.level = NormalizedValue::new(self.level.as_f32() - decrement);
-                        } else {
-                            self.level = NormalizedValue::MIN;
-                        }
-                    }
-                    EnvelopeCurve::Exponential => {
-                        // Handle zero/very short release time
-                        if self.release.as_f32() <= 0.001 {
-                            self.level = NormalizedValue::MIN;
-                        } else {
-                            let coef = self.release.to_exp_coeff(self.sample_rate);
-                            let new_level = self.target_level.as_f32() + (self.level.as_f32() - self.target_level.as_f32()) * coef;
-                            self.level = NormalizedValue::new_unchecked(new_level);
-                        }
-                    }
-                }
-
-                if self.level.as_f32() <= 0.001 {
+                // Handle zero/very short release time
+                if self.release.as_f32() <= 0.001 {
                     self.level = NormalizedValue::MIN;
                     self.stage = EnvelopeStage::Idle;
+                } else {
+                    let base_coef = self.release.to_exp_coeff(self.sample_rate);
+                    let current = self.level.as_f32();
+                    let curve = self.release_curve.as_f32();
+
+                    // Curve modifies release character:
+                    // - Negative (log): Fast initial drop (gated feel)
+                    // - Positive (exp): Slow, natural fade
+                    let effective_coef = if curve.abs() < 0.01 {
+                        base_coef
+                    } else if curve < 0.0 {
+                        // Logarithmic: faster release
+                        base_coef.powf(1.0 + (-curve) * 3.0)
+                    } else {
+                        // Exponential: slower, natural release
+                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
+                    };
+
+                    // Release always targets zero
+                    let new_level = current * effective_coef;
+                    self.level = NormalizedValue::new_unchecked(new_level.max(0.0));
+
+                    if self.level.as_f32() <= 0.001 {
+                        self.level = NormalizedValue::MIN;
+                        self.stage = EnvelopeStage::Idle;
+                    }
                 }
             }
         }
@@ -295,6 +310,30 @@ impl Describable for Envelope {
                     .range(0.0, 1.0)
                     .default(1.0)
                     .unit(ParameterUnit::Percent)
+                    .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(TypedParam::Envelope(EnvelopeParam::AttackCurve), "Atk Curve")
+                    .description("Attack curve (-1 = punchy/fast, 0 = standard, +1 = slow/gradual)")
+                    .range(-1.0, 1.0)
+                    .default(0.0)
+                    .unit(ParameterUnit::None)
+                    .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(TypedParam::Envelope(EnvelopeParam::DecayCurve), "Dec Curve")
+                    .description("Decay curve (-1 = punchy/fast, 0 = standard, +1 = slow/gradual)")
+                    .range(-1.0, 1.0)
+                    .default(0.0)
+                    .unit(ParameterUnit::None)
+                    .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(TypedParam::Envelope(EnvelopeParam::ReleaseCurve), "Rel Curve")
+                    .description("Release curve (-1 = gated/fast, 0 = standard, +1 = slow/natural)")
+                    .range(-1.0, 1.0)
+                    .default(0.0)
+                    .unit(ParameterUnit::None)
                     .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::gate_input("gate", "Gate").description("Gate input"))
@@ -374,17 +413,17 @@ impl VoiceModule for Envelope {
                 }
                 EnvelopeParam::AttackCurve => {
                     if let Some(c) = value.as_float() {
-                        self.attack_curve = c.clamp(-1.0, 1.0);
+                        self.attack_curve = BipolarValue::new(c);
                     }
                 }
                 EnvelopeParam::DecayCurve => {
                     if let Some(c) = value.as_float() {
-                        self.decay_curve = c.clamp(-1.0, 1.0);
+                        self.decay_curve = BipolarValue::new(c);
                     }
                 }
                 EnvelopeParam::ReleaseCurve => {
                     if let Some(c) = value.as_float() {
-                        self.release_curve = c.clamp(-1.0, 1.0);
+                        self.release_curve = BipolarValue::new(c);
                     }
                 }
             }
@@ -399,9 +438,9 @@ impl VoiceModule for Envelope {
                 EnvelopeParam::Sustain => Some(TypedValue::Float(self.sustain.as_f32())),
                 EnvelopeParam::Release => Some(TypedValue::Float(self.release.as_f32())),
                 EnvelopeParam::VelocitySensitivity => Some(TypedValue::Float(self.velocity_sensitivity.as_f32())),
-                EnvelopeParam::AttackCurve => Some(TypedValue::Float(self.attack_curve)),
-                EnvelopeParam::DecayCurve => Some(TypedValue::Float(self.decay_curve)),
-                EnvelopeParam::ReleaseCurve => Some(TypedValue::Float(self.release_curve)),
+                EnvelopeParam::AttackCurve => Some(TypedValue::Float(self.attack_curve.as_f32())),
+                EnvelopeParam::DecayCurve => Some(TypedValue::Float(self.decay_curve.as_f32())),
+                EnvelopeParam::ReleaseCurve => Some(TypedValue::Float(self.release_curve.as_f32())),
             }
         } else {
             None

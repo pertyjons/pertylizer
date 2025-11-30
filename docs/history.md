@@ -1,5 +1,55 @@
 # Version History
 
+## [0.30.0] - 2024
+
+### Added - DSP Improvements for Sound Quality
+
+- **Envelope Curves** (`src/modules/envelope.rs`)
+  - New per-stage curve parameters: `attack_curve`, `decay_curve`, `release_curve`
+  - Type: `BipolarValue` (-1.0 to +1.0)
+  - Negative values = logarithmic/punchy (fast attack, snappy drums)
+  - Positive values = gradual/slow (natural fades)
+  - Zero = standard exponential (backwards compatible)
+  - Modifies exponential coefficients for precise control
+
+- **Sub-Oscillator Module** (`src/modules/sub_osc.rs`) - NEW
+  - Dedicated bass reinforcement oscillator
+  - Waveforms: Sine, Square, Pulse25
+  - Octave transposition: -1 or -2
+  - Parameters: `SubOscParam::Waveform`, `Octave`, `Level`
+  - Newtypes: Uses `Hertz`, `Phase`, `Gain`, `SampleRate`
+  - Module prefix: `sub`
+
+- **Noise Generator Module** (`src/modules/noise.rs`) - NEW
+  - Spectral colored noise for textures and percussion
+  - Noise colors:
+    - White: Flat spectrum (crisp hi-hats, snares)
+    - Pink: -3dB/octave (natural, cymbals, atmosphere)
+    - Brown: -6dB/octave (dark rumble, thunder)
+    - Blue: +3dB/octave (bright, hissing)
+    - Violet: +6dB/octave (very bright, sharp)
+  - Pink noise: Voss-McCartney algorithm
+  - Brown noise: Leaky integrator
+  - Blue/Violet: Differentiator filters
+  - Parameters: `NoiseParam::Type`, `Level`
+  - Module prefix: `nse`
+
+### Technical Details
+
+- **Type System Updates** (`src/engine/params/`)
+  - New `SubOscParam` enum in `sub_osc.rs`
+  - New `NoiseParam` enum in `noise.rs`
+  - Extended `ModuleType`: `SubOscillator`, `Noise`
+  - Extended `TypedParam`: `SubOsc(SubOscParam)`, `Noise(NoiseParam)`
+
+- **Module Exports** (`src/modules/mod.rs`)
+  - Exports: `SubOscillator`, `SubOscWaveform`, `SubOscOctave`
+  - Exports: `NoiseGenerator`, `NoiseType`
+
+- All 235 unit tests passing
+
+---
+
 ## [0.29.0] - 2024
 
 ### Refactored - Modular Patch Structure

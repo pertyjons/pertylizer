@@ -17,7 +17,9 @@ mod envelopes;
 mod filters;
 mod lfo;
 mod modules;
+mod noise;
 mod oscillators;
+mod sub_osc;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +35,9 @@ pub use modules::{
     AmplifierParam, GranularParam, LevelMeterParam, LoopMode, MixerParam, OscilloscopeParam,
     SamplePlayerParam,
 };
+pub use noise::NoiseParam;
 pub use oscillators::{MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
+pub use sub_osc::SubOscParam;
 
 // ============================================================================
 // MODULE TYPE ENUM
@@ -44,6 +48,8 @@ pub use oscillators::{MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
 pub enum ModuleType {
     Oscillator,
     MathOscillator,
+    SubOscillator,
+    Noise,
     Filter,
     Envelope,
     Lfo,
@@ -75,6 +81,8 @@ impl ModuleType {
         match self {
             Self::Oscillator => "Oscillator",
             Self::MathOscillator => "Math Oscillator",
+            Self::SubOscillator => "Sub Oscillator",
+            Self::Noise => "Noise",
             Self::Filter => "Filter",
             Self::Envelope => "Envelope",
             Self::Lfo => "LFO",
@@ -103,6 +111,8 @@ impl ModuleType {
         match self {
             Self::Oscillator => "osc",
             Self::MathOscillator => "mth",
+            Self::SubOscillator => "sub",
+            Self::Noise => "nse",
             Self::Filter => "flt",
             Self::Envelope => "env",
             Self::Lfo => "lfo",
@@ -131,6 +141,8 @@ impl ModuleType {
         match prefix {
             "osc" => Some(Self::Oscillator),
             "mth" => Some(Self::MathOscillator),
+            "sub" => Some(Self::SubOscillator),
+            "nse" => Some(Self::Noise),
             "flt" => Some(Self::Filter),
             "env" => Some(Self::Envelope),
             "lfo" => Some(Self::Lfo),
@@ -174,7 +186,9 @@ impl ModuleType {
             Self::Oscilloscope => PM::Oscilloscope,
             Self::LevelMeter => PM::LevelMeter,
             // These don't have patch equivalents yet, default to Mixer
-            Self::Phaser
+            Self::SubOscillator
+            | Self::Noise
+            | Self::Phaser
             | Self::Flanger
             | Self::Compressor
             | Self::Eq
@@ -198,6 +212,8 @@ impl ModuleType {
 pub enum TypedParam {
     Oscillator(OscillatorParam),
     MathOscillator(MathOscillatorParam),
+    SubOsc(SubOscParam),
+    Noise(NoiseParam),
     Filter(FilterParam),
     Envelope(EnvelopeParam),
     Lfo(LfoParam),
@@ -223,6 +239,8 @@ impl TypedParam {
         match self {
             Self::Oscillator(_) => ModuleType::Oscillator,
             Self::MathOscillator(_) => ModuleType::MathOscillator,
+            Self::SubOsc(_) => ModuleType::SubOscillator,
+            Self::Noise(_) => ModuleType::Noise,
             Self::Filter(_) => ModuleType::Filter,
             Self::Envelope(_) => ModuleType::Envelope,
             Self::Lfo(_) => ModuleType::Lfo,
@@ -263,6 +281,15 @@ impl TypedParam {
                 MathOscillatorParam::ParamB => "Param B",
                 MathOscillatorParam::ParamC => "Param C",
                 MathOscillatorParam::Level => "Level",
+            },
+            Self::SubOsc(p) => match p {
+                SubOscParam::Waveform => "Waveform",
+                SubOscParam::Octave => "Octave",
+                SubOscParam::Level => "Level",
+            },
+            Self::Noise(p) => match p {
+                NoiseParam::Type => "Type",
+                NoiseParam::Level => "Level",
             },
             Self::Filter(p) => match p {
                 FilterParam::Mode => "Mode",
