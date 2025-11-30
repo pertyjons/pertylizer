@@ -45,7 +45,19 @@ const RETURN_BUFFER_SIZE: usize = 256;
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
 
-/// Wrapper for modules returned from audio thread.
+/// Items returned from audio thread for main thread cleanup.
+/// This prevents memory deallocation from happening on the audio thread.
+pub enum DroppedItem {
+    /// A voice module from the modular graph.
+    Module(Box<dyn VoiceModuleTrait>),
+    /// A synth part with its voice allocator.
+    Part(Box<SynthPart>),
+}
+
+// SAFETY: VoiceModule trait requires Send, and SynthPart is Send
+unsafe impl Send for DroppedItem {}
+
+/// Wrapper for modules returned from audio thread (legacy alias).
 /// This allows dropping to happen on the main thread.
 pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
 
@@ -60,6 +72,8 @@ pub struct EngineHandle {
     event_consumer: ringbuf::HeapCons<EngineEvent>,
     /// Receive dropped modules from audio thread (for main thread cleanup).
     return_consumer: ringbuf::HeapCons<DroppedModule>,
+    /// Receive dropped parts from audio thread (for main thread cleanup).
+    part_return_consumer: ringbuf::HeapCons<Box<SynthPart>>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -98,19 +112,25 @@ impl EngineHandle {
         }
     }
 
-    /// Poll and drop any modules returned from the audio thread.
-    /// Call this regularly from the main thread to clean up removed modules.
+    /// Poll and drop any modules/parts returned from the audio thread.
+    /// Call this regularly from the main thread to clean up removed items.
     pub fn cleanup_dropped_modules(&mut self) {
+        // Clean up dropped voice modules
         while self.return_consumer.try_pop().is_some() {
             // Module is dropped here on the main thread - no audio glitches!
+        }
+        // Clean up dropped parts
+        while self.part_return_consumer.try_pop().is_some() {
+            // Part is dropped here on the main thread - no audio glitches!
         }
     }
 
     /// Send a note on event to the default channel.
+    /// Velocity is converted from f32 [0.0, 1.0] to NormalizedValue internally.
     pub fn note_on(&mut self, note: u8, velocity: f32) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
-            velocity,
+            velocity: crate::types::NormalizedValue::new(velocity),
             channel: super::part::MidiChannel::CH1,
         })
     }
@@ -124,10 +144,11 @@ impl EngineHandle {
     }
 
     /// Send a note on event to a specific channel.
+    /// Velocity is converted from f32 [0.0, 1.0] to NormalizedValue internally.
     pub fn note_on_channel(&mut self, note: u8, velocity: f32, channel: super::part::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
-            velocity,
+            velocity: crate::types::NormalizedValue::new(velocity),
             channel,
         })
     }
@@ -166,8 +187,9 @@ impl EngineHandle {
     }
 
     /// Set master volume.
+    /// Volume is converted from f32 to Gain internally.
     pub fn set_master_volume(&mut self, volume: f32) -> bool {
-        self.send(EngineCommand::SetMasterVolume(volume))
+        self.send(EngineCommand::SetMasterVolume(crate::types::Gain::new(volume)))
     }
 
     /// Poll for events from the engine.
@@ -224,6 +246,8 @@ pub struct SynthEngine {
     event_producer: ringbuf::HeapProd<EngineEvent>,
     /// Send removed modules back to UI for dropping on main thread.
     return_producer: ringbuf::HeapProd<DroppedModule>,
+    /// Send removed parts back to UI for dropping on main thread.
+    part_return_producer: ringbuf::HeapProd<Box<SynthPart>>,
     /// Shared state.
     state: Arc<EngineState>,
 
@@ -250,10 +274,11 @@ pub struct SynthEngine {
     master_volume: f32,
 
     // === Buffers ===
+    /// Temporary buffer for voice processing (used by module graph).
     voice_buffer: AudioBuffer,
-    voice_left: AudioBuffer,
-    voice_right: AudioBuffer,
+    /// Main stereo mix buffer (interleaved L/R).
     mix_buffer: AudioBuffer,
+    /// Output buffer for the global module graph.
     graph_output: AudioBuffer,
 
     // === Metering ===
@@ -289,6 +314,10 @@ impl SynthEngine {
         let return_rb = HeapRb::<DroppedModule>::new(RETURN_BUFFER_SIZE);
         let (return_producer, return_consumer) = return_rb.split();
 
+        // Create return buffer for parts to be dropped on main thread
+        let part_return_rb = HeapRb::<Box<SynthPart>>::new(RETURN_BUFFER_SIZE);
+        let (part_return_producer, part_return_consumer) = part_return_rb.split();
+
         // Create voice template with default signal chain
         let voice_template = Self::create_default_voice_template();
 
@@ -306,6 +335,7 @@ impl SynthEngine {
             command_consumer,
             event_producer,
             return_producer,
+            part_return_producer,
             state: Arc::clone(&state),
             parts: vec![Box::new(default_part)],
             next_part_id: 1, // 0 is used by default part
@@ -316,8 +346,6 @@ impl SynthEngine {
             sample_rate: 48000.0,
             master_volume: 1.0,
             voice_buffer: AudioBuffer::new(256),
-            voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
-            voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(256),
             metering: MeteringSystem::new(48000.0),
@@ -330,6 +358,7 @@ impl SynthEngine {
             command_producer,
             event_consumer,
             return_consumer,
+            part_return_consumer,
             state,
             visualization_buffers: HashMap::new(),
         };
@@ -510,7 +539,13 @@ impl SynthEngine {
             }
 
             EngineCommand::RemovePart { part_id } => {
-                self.parts.retain(|p| p.id() != part_id);
+                // Find and remove the part, sending it back to main thread for dropping
+                // This is real-time safe: no deallocation happens on the audio thread
+                if let Some(idx) = self.parts.iter().position(|p| p.id() == part_id) {
+                    let part = self.parts.swap_remove(idx);
+                    // Send to main thread for dropping - ignore if queue is full
+                    let _ = self.part_return_producer.try_push(part);
+                }
             }
 
             EngineCommand::SetPartParameter { part_id, param } => {
@@ -519,7 +554,7 @@ impl SynthEngine {
                     match param {
                         PartParam::Volume(vol) => part.set_volume(vol),
                         PartParam::Pan(pan) => part.set_pan(pan),
-                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time),
+                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time.as_f32()),
                         PartParam::AllocationMode(mode) => part.allocator_mut().set_mode(mode),
                         PartParam::StealingStrategy(strategy) => part.allocator_mut().set_stealing(strategy),
                         PartParam::MaxVoices(_) => {
@@ -546,14 +581,15 @@ impl SynthEngine {
             EngineCommand::NoteOn { note, velocity, channel } => {
                 // Route to all parts that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
+                let velocity_f32 = velocity.as_f32();
                 for part in &mut self.parts {
                     if part.responds_to_channel(channel_raw) {
-                        part.note_on(note, velocity);
+                        part.note_on(note, velocity_f32);
                     }
                 }
                 // Also trigger note on in the modular graph
                 if self.use_modular_routing {
-                    self.module_graph.note_on(note, velocity);
+                    self.module_graph.note_on(note, velocity_f32);
                 }
             }
 
@@ -581,17 +617,68 @@ impl SynthEngine {
                 }
             }
 
+            EngineCommand::PitchBend { value, channel } => {
+                // Apply pitch bend to all voices in parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        for voice in part.allocator_mut().voices_mut() {
+                            voice.pitch_bend = value;
+                        }
+                    }
+                }
+            }
+
+            EngineCommand::ModWheel { value, channel } => {
+                // Apply mod wheel to all voices in parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        for voice in part.allocator_mut().voices_mut() {
+                            voice.mod_wheel = value;
+                        }
+                    }
+                }
+            }
+
+            EngineCommand::Aftertouch { value, channel } => {
+                // Apply channel aftertouch to all voices in parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        for voice in part.allocator_mut().voices_mut() {
+                            voice.aftertouch = value;
+                        }
+                    }
+                }
+            }
+
+            EngineCommand::PolyAftertouch { note, value, channel } => {
+                // Apply poly aftertouch to specific note in parts that respond to this channel
+                let channel_raw = channel.as_zero_indexed();
+                for part in &mut self.parts {
+                    if part.responds_to_channel(channel_raw) {
+                        for voice in part.allocator_mut().voices_mut() {
+                            if voice.note == note {
+                                voice.aftertouch = value;
+                            }
+                        }
+                    }
+                }
+            }
+
             EngineCommand::SetMasterVolume(vol) => {
-                self.master_volume = vol.clamp(0.0, 2.0);
+                // Clamp gain to reasonable range
+                self.master_volume = vol.as_f32().clamp(0.0, 2.0);
                 self.state.master_volume.store(self.master_volume);
             }
 
             EngineCommand::SetGlideTime(time) => {
                 // Clamp to reasonable range: 0-5 seconds
-                let time = time.clamp(0.0, 5.0);
+                let time_secs = time.as_f32().clamp(0.0, 5.0);
                 // Apply to all parts
                 for part in &mut self.parts {
-                    part.allocator_mut().set_glide_time(time);
+                    part.allocator_mut().set_glide_time(time_secs);
                 }
             }
 
@@ -729,82 +816,24 @@ impl SynthEngine {
     }
 
     /// Process all active voices across all parts and mix.
+    ///
+    /// Delegates to `SynthPart::process` for each part, which handles:
+    /// - Voice processing through the signal chain
+    /// - Part volume and pan application
+    /// - Mixing into the stereo output buffer
     fn process_voices(&mut self, context: &ProcessContext) {
         let num_channels = 2;
         let buffer_size = context.samples * num_channels;
-        let samples = context.samples;
 
-        // Ensure buffers are sized correctly
+        // Ensure mix buffer is sized correctly and cleared
         self.mix_buffer.resize(buffer_size);
         self.mix_buffer.clear();
-        self.voice_left.resize(samples);
-        self.voice_right.resize(samples);
 
         let mut active_count = 0u32;
 
-        // Process each part
+        // Process each part - delegate to SynthPart::process
         for part in &mut self.parts {
-            if !part.is_enabled() {
-                continue;
-            }
-
-            // Get part's stereo gain (includes volume and pan)
-            let (left_gain, right_gain) = part.stereo_gain();
-            let left_gain = left_gain.as_f32();
-            let right_gain = right_gain.as_f32();
-
-            // Process each voice in this part
-            for voice in part.allocator_mut().voices_mut() {
-                if !voice.is_active() {
-                    continue;
-                }
-
-                active_count += 1;
-
-                // Update glide and increment age
-                let delta_time = samples as f32 / context.sample_rate;
-                voice.glide.update(delta_time);
-                voice.age += samples as u64;
-
-                // Handle stealing fade-out
-                if voice.state == crate::engine::voice::VoiceState::Stealing {
-                    if voice.steal_fade_counter == 0 {
-                        voice.reset();
-                        continue;
-                    }
-                }
-
-                // Clear output buffers
-                self.voice_left.clear();
-                self.voice_right.clear();
-
-                // Process the voice signal chain
-                voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
-
-                // Apply stealing fade-out if needed
-                if voice.state == crate::engine::voice::VoiceState::Stealing {
-                    let fade_samples = voice.steal_fade_counter.min(samples);
-                    for i in 0..samples {
-                        let fade = if i < fade_samples {
-                            (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
-                        } else {
-                            0.0
-                        };
-                        self.voice_left[i] *= fade;
-                        self.voice_right[i] *= fade;
-                    }
-                    voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
-                }
-
-                // Mix stereo output into mix buffer with part volume/pan
-                for i in 0..samples {
-                    self.mix_buffer[i * 2] += self.voice_left[i] * left_gain;
-                    self.mix_buffer[i * 2 + 1] += self.voice_right[i] * right_gain;
-                }
-            }
-
-            // Advance this part's allocator time
-            part.allocator_mut().advance_time(context.samples as u64);
+            active_count += part.process(&mut self.mix_buffer, context);
         }
 
         // Update total voice count across all parts
@@ -863,20 +892,33 @@ impl AudioProcessor for SynthEngine {
         let sample_count = SampleCount::new(context.frames);
         let sequencer_events = self.sequencer.process(sample_count);
 
-        // TODO: Convert sequencer events to engine note on/off commands
-        // For now, we just process them but don't trigger voices yet
+        // Route sequencer events to the appropriate parts
+        // InstrumentId maps to part index (0 = first part, 1 = second, etc.)
         for event in sequencer_events {
             match event {
-                crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, .. } => {
-                    // Convert pitch to frequency and trigger voice
-                    let freq = pitch.frequency(440.0);
+                crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, instrument, .. } => {
+                    let note = pitch.as_midi();
                     let vel = velocity.as_f32();
-                    // self.voice_allocator.note_on(pitch.as_midi(), vel);
-                    let _ = (freq, vel); // Suppress unused warning for now
+                    let part_index = instrument.0 as usize;
+
+                    // Trigger note on the matching part, or first part if index out of bounds
+                    if let Some(part) = self.parts.get_mut(part_index) {
+                        part.note_on(note, vel);
+                    } else if let Some(first_part) = self.parts.first_mut() {
+                        // Fallback to first part if instrument index is out of range
+                        first_part.note_on(note, vel);
+                    }
                 }
-                crate::sequencer::SequencerEvent::NoteOff { pitch, .. } => {
-                    // self.voice_allocator.note_off(pitch.as_midi());
-                    let _ = pitch; // Suppress unused warning for now
+                crate::sequencer::SequencerEvent::NoteOff { pitch, instrument, .. } => {
+                    let note = pitch.as_midi();
+                    let part_index = instrument.0 as usize;
+
+                    // Trigger note off on the matching part
+                    if let Some(part) = self.parts.get_mut(part_index) {
+                        part.note_off(note);
+                    } else if let Some(first_part) = self.parts.first_mut() {
+                        first_part.note_off(note);
+                    }
                 }
                 _ => {}
             }

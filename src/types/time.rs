@@ -182,6 +182,92 @@ impl std::fmt::Display for Milliseconds {
     }
 }
 
+/// Tempo in beats per minute (BPM).
+///
+/// Standard range is 20-300 BPM for most music.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[repr(transparent)]
+pub struct Bpm(pub f32);
+
+impl Bpm {
+    /// Create a new tempo value.
+    #[inline]
+    pub const fn new(bpm: f32) -> Self {
+        Self(bpm)
+    }
+
+    /// Default tempo (120 BPM).
+    pub const DEFAULT: Self = Self(120.0);
+
+    /// Minimum typical tempo.
+    pub const MIN: Self = Self(20.0);
+
+    /// Maximum typical tempo.
+    pub const MAX: Self = Self(300.0);
+
+    /// Get the raw BPM value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Convert to beat duration in seconds.
+    #[inline]
+    pub fn beat_duration(self) -> Seconds {
+        if self.0 > 0.0 {
+            Seconds::new(60.0 / self.0)
+        } else {
+            Seconds::new(0.5) // Fallback to 120 BPM
+        }
+    }
+
+    /// Calculate samples per beat at given sample rate.
+    #[inline]
+    pub fn samples_per_beat(self, sample_rate: SampleRate) -> f32 {
+        self.beat_duration().as_f32() * sample_rate.as_f32()
+    }
+
+    /// Calculate beats per sample at given sample rate.
+    #[inline]
+    pub fn beats_per_sample(self, sample_rate: SampleRate) -> f32 {
+        self.0 / 60.0 / sample_rate.as_f32()
+    }
+
+    /// Clamp to typical tempo range.
+    #[inline]
+    pub fn clamp_typical(self) -> Self {
+        Self(self.0.clamp(Self::MIN.0, Self::MAX.0))
+    }
+}
+
+impl Clampable for Bpm {
+    fn clamp(self) -> Self {
+        self.clamp_typical()
+    }
+
+    fn is_valid(&self) -> bool {
+        self.0.is_finite() && self.0 > 0.0
+    }
+}
+
+impl From<f32> for Bpm {
+    fn from(bpm: f32) -> Self {
+        Self(bpm)
+    }
+}
+
+impl From<Bpm> for f32 {
+    fn from(bpm: Bpm) -> Self {
+        bpm.0
+    }
+}
+
+impl std::fmt::Display for Bpm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1} BPM", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

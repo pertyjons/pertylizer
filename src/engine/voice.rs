@@ -2,12 +2,18 @@
 //!
 //! A voice contains a complete signal chain (oscillators, filters, envelopes, etc.)
 //! and handles note events for polyphonic playback.
+//!
+//! ## Macro Controllers
+//!
+//! Each voice stores macro controller state (pitch bend, mod wheel) using type-safe
+//! domain types to prevent unit mismatches.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::engine::typed_params::{TypedParam, TypedValue};
 use crate::modules::core::*;
+use crate::types::{BipolarValue, NormalizedValue, Semitones};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -204,6 +210,9 @@ impl GlideState {
     }
 }
 
+/// Pitch bend range in semitones (standard MIDI is ±2).
+pub const PITCH_BEND_RANGE: Semitones = Semitones(2.0);
+
 /// A single synthesizer voice.
 pub struct Voice {
     /// Unique voice ID.
@@ -212,12 +221,20 @@ pub struct Voice {
     pub state: VoiceState,
     /// Currently playing MIDI note (0-127).
     pub note: u8,
-    /// Note velocity (0.0-1.0).
-    pub velocity: f32,
+    /// Note velocity (type-safe normalized value 0.0-1.0).
+    pub velocity: NormalizedValue,
     /// When this voice was triggered (for voice stealing priority).
     pub trigger_time: u64,
     /// Age in samples (for voice stealing).
     pub age: u64,
+
+    // === Macro controllers (type-safe) ===
+    /// Pitch bend amount (-1.0 to +1.0, type-safe).
+    pub pitch_bend: BipolarValue,
+    /// Mod wheel amount (0.0 to 1.0, type-safe).
+    pub mod_wheel: NormalizedValue,
+    /// Aftertouch amount (0.0 to 1.0, type-safe).
+    pub aftertouch: NormalizedValue,
 
     /// Voice modules in processing order.
     pub modules: Vec<Box<dyn VoiceModule>>,
@@ -247,9 +264,13 @@ impl Voice {
             id,
             state: VoiceState::Idle,
             note: 0,
-            velocity: 0.0,
+            velocity: NormalizedValue::MIN,
             trigger_time: 0,
             age: 0,
+            // Macro controllers default to neutral positions
+            pitch_bend: BipolarValue::CENTER,
+            mod_wheel: NormalizedValue::MIN,
+            aftertouch: NormalizedValue::MIN,
             modules: Vec::new(),
             module_names: Vec::new(),
             buffers: HashMap::new(),
@@ -353,10 +374,10 @@ impl Voice {
         NOTE_FREQ_TABLE[note as usize]
     }
 
-    /// Trigger note on.
-    pub fn note_on(&mut self, note: u8, velocity: f32, time: u64) {
+    /// Trigger note on with type-safe velocity.
+    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue, time: u64) {
         let target_freq = Self::note_to_freq(note);
-        
+
         // Start glide from current position if we have a glide time
         if self.glide_time > 0.0 && self.state == VoiceState::Active {
             self.glide.start(target_freq, self.glide_time);
@@ -367,16 +388,16 @@ impl Voice {
             self.glide.to_freq = target_freq;
             self.glide.active = false;
         }
-        
+
         self.note = note;
         self.velocity = velocity;
         self.trigger_time = time;
         self.age = 0;
         self.state = VoiceState::Active;
 
-        // Notify all modules
+        // Notify all modules (convert to f32 for module interface)
         for module in &mut self.modules {
-            module.note_on(note, velocity);
+            module.note_on(note, velocity.as_f32());
         }
     }
     
@@ -426,9 +447,11 @@ impl Voice {
     pub fn reset(&mut self) {
         self.state = VoiceState::Idle;
         self.note = 0;
-        self.velocity = 0.0;
+        self.velocity = NormalizedValue::MIN;
         self.age = 0;
         self.glide = GlideState::default();
+        // Note: We don't reset macro controllers here since they are channel-wide,
+        // not per-voice. They persist across notes.
 
         for module in &mut self.modules {
             module.reset();
@@ -551,6 +574,11 @@ impl Voice {
     /// This method contains the complete DSP routing logic:
     /// LFO -> Oscillators -> Filter -> Amplifier
     ///
+    /// ## Modulation Sources
+    /// - Pitch bend: Applied to oscillator frequency (±2 semitones default)
+    /// - Mod wheel: Scales vibrato depth from LFO
+    /// - Velocity: Scales amplitude envelope
+    ///
     /// Returns stereo output in left/right buffers.
     pub fn process_audio(
         &mut self,
@@ -559,13 +587,19 @@ impl Voice {
         context: &ProcessContext,
     ) {
         let samples = context.samples;
-        let velocity = self.velocity;
+        let velocity = self.velocity.as_f32();
 
         // Clear pre-allocated buffers for this voice
         self.processing_buffers.clear_all();
 
         // Calculate note frequency (accounting for glide)
-        let freq = self.glide.get_frequency();
+        let base_freq = self.glide.get_frequency();
+
+        // Apply pitch bend: bend_amount = pitch_bend * range (in semitones)
+        // Frequency multiplier = 2^(semitones/12)
+        let bend_semitones = self.pitch_bend.as_f32() * PITCH_BEND_RANGE.as_f32();
+        let pitch_multiplier = 2.0f32.powf(bend_semitones / 12.0);
+        let freq = base_freq * pitch_multiplier;
 
         // Set oscillator frequencies (before processing)
         self.set_oscillator_frequency(freq);
@@ -593,8 +627,11 @@ impl Voice {
         }
 
         // === Prepare FM and PWM buffers ===
+        // Mod wheel scales the vibrato (FM) depth: lfo * mod_wheel * base_depth
+        let mod_wheel = self.mod_wheel.as_f32();
+        let vibrato_depth = 0.025 * mod_wheel; // Vibrato depth scaled by mod wheel
         for i in 0..samples {
-            self.processing_buffers.fm_buffer[i] = self.processing_buffers.lfo_out[i] * 0.025;
+            self.processing_buffers.fm_buffer[i] = self.processing_buffers.lfo_out[i] * vibrato_depth;
             self.processing_buffers.pwm_buffer[i] = self.processing_buffers.lfo_out[i] * 0.3;
         }
 

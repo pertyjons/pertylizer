@@ -6,6 +6,7 @@
 //! - Glide/portamento support
 
 use crate::engine::voice::{Voice, VoiceState};
+use crate::types::NormalizedValue;
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,8 +83,8 @@ pub struct VoiceAllocator {
     config: AllocatorConfig,
     /// All available voices.
     voices: Vec<Voice>,
-    /// Currently held notes (for legato/mono).
-    held_notes: Vec<(u8, f32)>, // (note, velocity)
+    /// Currently held notes (for legato/mono) - (note, velocity).
+    held_notes: Vec<(u8, NormalizedValue)>,
     /// Current time counter.
     time: u64,
     /// Last played note (for glide).
@@ -161,16 +162,18 @@ impl VoiceAllocator {
     }
 
     /// Handle note on event.
+    /// Accepts f32 velocity for backward compatibility (converted internally).
     pub fn note_on(&mut self, note: u8, velocity: f32) -> Option<u32> {
-        // Track held notes
+        // Track held notes with type-safe velocity
+        let velocity_norm = NormalizedValue::new(velocity);
         self.held_notes.retain(|(n, _)| *n != note);
-        self.held_notes.push((note, velocity));
+        self.held_notes.push((note, velocity_norm));
 
         match self.config.mode {
-            AllocationMode::Polyphonic => self.allocate_poly(note, velocity),
-            AllocationMode::Mono => self.allocate_mono(note, velocity, true),
-            AllocationMode::Legato => self.allocate_mono(note, velocity, false),
-            AllocationMode::Unison => self.allocate_unison(note, velocity),
+            AllocationMode::Polyphonic => self.allocate_poly(note, velocity_norm),
+            AllocationMode::Mono => self.allocate_mono(note, velocity_norm, true),
+            AllocationMode::Legato => self.allocate_mono(note, velocity_norm, false),
+            AllocationMode::Unison => self.allocate_unison(note, velocity_norm),
         }
     }
 
@@ -247,7 +250,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for polyphonic mode.
-    fn allocate_poly(&mut self, note: u8, velocity: f32) -> Option<u32> {
+    fn allocate_poly(&mut self, note: u8, velocity: NormalizedValue) -> Option<u32> {
         // First, try to find an idle voice
         if let Some(voice) = self.voices.iter_mut().find(|v| v.is_available()) {
             voice.note_on(note, velocity, self.time);
@@ -271,7 +274,7 @@ impl VoiceAllocator {
         let voice_idx = self.find_voice_to_steal()?;
         let voice = &mut self.voices[voice_idx];
         voice.steal();
-        
+
         // We need to wait for the steal to complete before triggering
         // For now, just trigger immediately (could be improved)
         voice.note_on(note, velocity, self.time);
@@ -280,18 +283,18 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for mono/legato mode.
-    fn allocate_mono(&mut self, note: u8, velocity: f32, retrigger: bool) -> Option<u32> {
+    fn allocate_mono(&mut self, note: u8, velocity: NormalizedValue, retrigger: bool) -> Option<u32> {
         // Find active voice index or use first
         let voice_idx = self.voices.iter()
             .position(|v| v.is_active())
             .unwrap_or(0);
-        
+
         if voice_idx >= self.voices.len() {
             return None;
         }
 
         let voice = &mut self.voices[voice_idx];
-        
+
         // Set glide time on the voice
         voice.set_glide_time(self.config.glide_time);
 
@@ -308,7 +311,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate all voices for unison mode.
-    fn allocate_unison(&mut self, note: u8, velocity: f32) -> Option<u32> {
+    fn allocate_unison(&mut self, note: u8, velocity: NormalizedValue) -> Option<u32> {
         let num_voices = self.voices.len();
         let detune_per_voice = self.config.unison_detune / num_voices as f32;
 
@@ -395,7 +398,7 @@ impl VoiceAllocator {
     }
 
     /// Get the priority note based on configuration.
-    fn get_priority_note(&self) -> Option<&(u8, f32)> {
+    fn get_priority_note(&self) -> Option<&(u8, NormalizedValue)> {
         if self.held_notes.is_empty() {
             return None;
         }

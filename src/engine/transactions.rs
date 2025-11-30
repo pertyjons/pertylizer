@@ -355,6 +355,12 @@ impl Clone for EngineCommand {
                     channel: *channel,
                 }
             }
+            EngineCommand::ModWheel { value, channel } => {
+                EngineCommand::ModWheel {
+                    value: *value,
+                    channel: *channel,
+                }
+            }
             EngineCommand::Aftertouch { value, channel } => {
                 EngineCommand::Aftertouch {
                     value: *value,
@@ -489,8 +495,8 @@ mod tests {
         let mut batch = CommandBatch::new("Test batch");
 
         batch
-            .add(EngineCommand::SetMasterVolume(0.8))
-            .add(EngineCommand::SetTempo(120.0));
+            .add(EngineCommand::SetMasterVolume(crate::types::Gain::new(0.8)))
+            .add(EngineCommand::SetTempo(crate::types::Bpm::new(120.0)));
 
         assert_eq!(batch.len(), 2);
         assert!(!batch.is_empty());
@@ -501,9 +507,9 @@ mod tests {
         let mut batch = CommandBatch::new("Priority test");
 
         // Add in wrong order
-        batch.add_with_priority(EngineCommand::SetMasterVolume(1.0), 100);
+        batch.add_with_priority(EngineCommand::SetMasterVolume(crate::types::Gain::new(1.0)), 100);
         batch.add_with_priority(EngineCommand::ClearAllModules, 1);
-        batch.add_with_priority(EngineCommand::SetTempo(120.0), 50);
+        batch.add_with_priority(EngineCommand::SetTempo(crate::types::Bpm::new(120.0)), 50);
 
         let commands = batch.commands();
 
@@ -518,8 +524,8 @@ mod tests {
         let mut batch = CommandBatch::new("Reversible test");
 
         batch.add_reversible(
-            EngineCommand::SetMasterVolume(0.8),
-            EngineCommand::SetMasterVolume(1.0), // Reverse to original
+            EngineCommand::SetMasterVolume(crate::types::Gain::new(0.8)),
+            EngineCommand::SetMasterVolume(crate::types::Gain::new(1.0)), // Reverse to original
         );
 
         assert!(batch.commands[0].reversible);

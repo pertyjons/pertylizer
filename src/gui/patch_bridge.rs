@@ -84,8 +84,12 @@ pub fn load_patch(
     // Apply settings
     keyboard.set_octave_offset(patch.settings.octave_offset);
     *glide_time = patch.settings.glide_time;
-    handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-    handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
+    handle.send_blocking(EngineCommand::SetMasterVolume(
+        crate::types::Gain::new(patch.settings.master_volume)
+    ));
+    handle.send_blocking(EngineCommand::SetGlideTime(
+        crate::types::Seconds::new(patch.settings.glide_time)
+    ));
 }
 
 /// Load a single module from patch state.

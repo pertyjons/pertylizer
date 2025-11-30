@@ -372,7 +372,9 @@ impl eframe::App for SynthApp {
                         })
                 );
                 if glide_response.changed() {
-                    self.handle.send(EngineCommand::SetGlideTime(self.glide_time));
+                    self.handle.send(EngineCommand::SetGlideTime(
+                        crate::types::Seconds::new(self.glide_time)
+                    ));
                 }
 
                 ui.separator();

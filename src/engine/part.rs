@@ -15,7 +15,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
+use crate::modules::{AudioBuffer, ProcessContext};
 use crate::types::{BipolarValue, Gain};
 
 /// Unique identifier for a synth part.
@@ -144,6 +146,9 @@ impl Default for MidiChannel {
     }
 }
 
+/// Maximum buffer size for part audio buffers.
+const MAX_BUFFER_SIZE: usize = 4096;
+
 /// A synthesizer part - an independent instrument with its own voice allocation.
 ///
 /// Parts enable multitimbral operation where different MIDI channels can
@@ -151,6 +156,7 @@ impl Default for MidiChannel {
 /// - Its own voice allocator (polyphony, mono, legato modes)
 /// - Volume and pan controls
 /// - MIDI channel assignment
+/// - Internal audio buffers for voice processing
 pub struct SynthPart {
     /// Unique identifier for this part.
     id: PartId,
@@ -166,6 +172,10 @@ pub struct SynthPart {
     pan: BipolarValue,
     /// Whether this part is enabled.
     enabled: bool,
+    /// Left channel buffer for voice summing.
+    voice_left: AudioBuffer,
+    /// Right channel buffer for voice summing.
+    voice_right: AudioBuffer,
 }
 
 impl SynthPart {
@@ -179,6 +189,8 @@ impl SynthPart {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
+            voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
+            voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
 
@@ -192,6 +204,8 @@ impl SynthPart {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
+            voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
+            voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
 
@@ -308,6 +322,92 @@ impl SynthPart {
     /// Kill all voices immediately.
     pub fn panic(&mut self) {
         self.allocator.panic();
+    }
+
+    /// Process all active voices in this part and mix into the output buffer.
+    ///
+    /// This method:
+    /// 1. Processes each active voice through its signal chain
+    /// 2. Applies part volume and pan
+    /// 3. Mixes the result into the stereo output buffer
+    ///
+    /// # Arguments
+    /// * `output` - Stereo interleaved output buffer to mix into (samples * 2)
+    /// * `context` - Processing context with sample rate, buffer size, etc.
+    ///
+    /// # Returns
+    /// The number of active voices processed.
+    pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) -> u32 {
+        if !self.enabled {
+            return 0;
+        }
+
+        let samples = context.samples;
+        let mut active_count = 0u32;
+
+        // Ensure internal buffers are sized correctly
+        self.voice_left.resize(samples);
+        self.voice_right.resize(samples);
+
+        // Get part's stereo gain (includes volume and pan)
+        let (left_gain, right_gain) = self.stereo_gain();
+        let left_gain = left_gain.as_f32();
+        let right_gain = right_gain.as_f32();
+
+        // Process each voice in this part
+        for voice in self.allocator.voices_mut() {
+            if !voice.is_active() {
+                continue;
+            }
+
+            active_count += 1;
+
+            // Update glide and increment age
+            let delta_time = samples as f32 / context.sample_rate;
+            voice.glide.update(delta_time);
+            voice.age += samples as u64;
+
+            // Handle stealing fade-out
+            if voice.state == VoiceState::Stealing {
+                if voice.steal_fade_counter == 0 {
+                    voice.reset();
+                    continue;
+                }
+            }
+
+            // Clear voice output buffers
+            self.voice_left.clear();
+            self.voice_right.clear();
+
+            // Process the voice signal chain
+            voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
+
+            // Apply stealing fade-out if needed
+            if voice.state == VoiceState::Stealing {
+                let fade_samples = voice.steal_fade_counter.min(samples);
+                for i in 0..samples {
+                    let fade = if i < fade_samples {
+                        (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
+                    } else {
+                        0.0
+                    };
+                    self.voice_left[i] *= fade;
+                    self.voice_right[i] *= fade;
+                }
+                voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
+            }
+
+            // Mix stereo output into main buffer with part volume/pan
+            for i in 0..samples {
+                output[i * 2] += self.voice_left[i] * left_gain;
+                output[i * 2 + 1] += self.voice_right[i] * right_gain;
+            }
+        }
+
+        // Advance allocator time
+        self.allocator.advance_time(samples as u64);
+
+        active_count
     }
 
     /// Get the stereo gain based on volume and pan.

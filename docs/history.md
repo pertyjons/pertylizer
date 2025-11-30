@@ -1,5 +1,85 @@
 # Version History
 
+## [0.25.0] - 2024
+
+### Added - Expressiveness & Total Type Safety
+
+- **Macro Controllers** (`src/engine/voice.rs`)
+  - Added `pitch_bend: BipolarValue` field to Voice (±2 semitones range)
+  - Added `mod_wheel: NormalizedValue` field (scales vibrato depth)
+  - Added `aftertouch: NormalizedValue` field
+  - Velocity changed from `f32` to `NormalizedValue`
+  - Pitch bend applied in `process_audio()` using exponential frequency calculation
+
+- **New `Bpm` Type** (`src/types/time.rs`)
+  - Type-safe tempo representation
+  - Methods: `beat_duration()`, `samples_per_beat()`, `beats_per_sample()`
+  - Constants: `DEFAULT` (120), `MIN` (20), `MAX` (300)
+
+- **Type-Safe EngineCommand** (`src/engine/commands.rs`)
+  - `NoteOn { velocity: NormalizedValue }` - type-safe velocity
+  - `PitchBend { value: BipolarValue }` - type-safe bipolar value
+  - `ModWheel { value: NormalizedValue }` - NEW command for CC1
+  - `Aftertouch { value: NormalizedValue }` - type-safe aftertouch
+  - `PolyAftertouch { value: NormalizedValue }` - type-safe poly AT
+  - `SetTempo(Bpm)` - type-safe tempo
+  - `SetMasterVolume(Gain)` - type-safe gain
+  - `SetGlideTime(Seconds)` - type-safe duration
+  - `PartParam::GlideTime(Seconds)` - type-safe part glide
+
+- **Command Handlers** (`src/engine/synth_engine.rs`)
+  - PitchBend handler: applies to all voices on matching channel
+  - ModWheel handler: applies to all voices on matching channel
+  - Aftertouch handler: applies to all voices on matching channel
+  - PolyAftertouch handler: applies to specific note's voice
+
+- **Dependency Added**
+  - `fastrand = "2.3"` for fast random number generation
+
+### Technical Details
+- Zero raw `f32` in `EngineCommand` public API
+- MIDI values converted to domain types at API boundary
+- Compiler catches unit mismatches (e.g., frequency vs gain)
+- Voice allocator uses `NormalizedValue` internally
+- All 229 unit tests passing
+
+---
+
+## [0.24.0] - 2024
+
+### Added - The Big Rewire: Multitimbral SynthPart Processing
+
+- **SynthPart Voice Processing** (`src/engine/part.rs`)
+  - Added internal `voice_left` and `voice_right` `AudioBuffer`s to each part
+  - New `SynthPart::process()` method - processes all voices and mixes to output
+  - Voice processing logic moved from `SynthEngine` to `SynthPart`
+  - Per-part volume (`Gain`) and pan (`BipolarValue`) applied during mixing
+  - Handles voice stealing fade-out and glide updates
+
+- **SynthEngine Refactoring** (`src/engine/synth_engine.rs`)
+  - `process_voices()` now delegates to `SynthPart::process()` for each part
+  - Removed redundant `voice_left`/`voice_right` buffers from engine
+  - Cleaner separation: Engine orchestrates, Parts process
+
+- **Sequencer-to-Part Integration**
+  - Sequencer events now trigger notes on correct parts
+  - `InstrumentId` maps to part index (0 = first part, etc.)
+  - Fallback to first part if instrument index out of range
+
+- **Real-time Safety for Part Removal**
+  - Added `part_return_producer`/`part_return_consumer` ring buffer
+  - `RemovePart` command sends parts back to GUI thread for dropping
+  - Prevents memory deallocation on audio thread
+  - `cleanup_dropped_modules()` now cleans up both modules and parts
+
+### Technical Details
+- Voice processing encapsulated in `SynthPart::process()` (~80 lines)
+- `SynthEngine::process_voices()` reduced to ~20 lines
+- Type-safe throughout: uses `VoiceState`, `Gain`, `BipolarValue`, `ProcessContext`
+- All 229 unit tests passing
+
+---
+
 ## [0.23.0] - 2024
 
 ### Refactored - Strong Types in Effect Modules

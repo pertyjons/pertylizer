@@ -344,6 +344,7 @@ impl EngineHub {
             | EngineCommand::NoteOff { .. }
             | EngineCommand::AllNotesOff
             | EngineCommand::PitchBend { .. }
+            | EngineCommand::ModWheel { .. }
             | EngineCommand::Aftertouch { .. }
             | EngineCommand::PolyAftertouch { .. } => perms.can_modify_params,
 

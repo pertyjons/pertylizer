@@ -2,6 +2,9 @@
 //!
 //! These commands are sent from the UI thread to the audio thread
 //! via a lock-free ring buffer.
+//!
+//! All commands use type-safe domain types (Gain, Bpm, NormalizedValue, etc.)
+//! instead of primitive f32 values to prevent unit mismatches at compile time.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -9,6 +12,7 @@ use std::str::FromStr;
 
 use super::part::{MidiChannel, PartId, SynthPart};
 use super::typed_params::{ModuleType, TypedParam, TypedValue};
+use crate::types::{BipolarValue, Bpm, Gain, NormalizedValue, Seconds};
 
 /// Unique identifier for a module instance.
 ///
@@ -267,10 +271,11 @@ pub enum EngineCommand {
     },
 
     // === Note control ===
-    /// Start a note.
+    /// Start a note with type-safe velocity.
     NoteOn {
         note: u8,
-        velocity: f32,
+        /// Velocity as normalized value [0.0, 1.0].
+        velocity: NormalizedValue,
         channel: MidiChannel,
     },
 
@@ -283,22 +288,30 @@ pub enum EngineCommand {
     /// All notes off.
     AllNotesOff,
 
-    /// Pitch bend.
+    /// Pitch bend (type-safe bipolar value).
+    /// GUI/MIDI handler converts raw MIDI (0-16383) to BipolarValue (-1.0 to 1.0).
     PitchBend {
-        value: f32, // -1.0 to 1.0
+        value: BipolarValue,
         channel: MidiChannel,
     },
 
-    /// Aftertouch.
+    /// Mod wheel (CC1) - type-safe normalized value.
+    /// GUI/MIDI handler converts raw MIDI (0-127) to NormalizedValue (0.0 to 1.0).
+    ModWheel {
+        value: NormalizedValue,
+        channel: MidiChannel,
+    },
+
+    /// Aftertouch (channel pressure) - type-safe normalized value.
     Aftertouch {
-        value: f32,
+        value: NormalizedValue,
         channel: MidiChannel,
     },
 
-    /// Per-note aftertouch.
+    /// Per-note aftertouch (polyphonic aftertouch) - type-safe normalized value.
     PolyAftertouch {
         note: u8,
-        value: f32,
+        value: NormalizedValue,
         channel: MidiChannel,
     },
 
@@ -349,8 +362,8 @@ pub enum EngineCommand {
     },
 
     // === Transport control ===
-    /// Set tempo in BPM.
-    SetTempo(f32),
+    /// Set tempo (type-safe BPM).
+    SetTempo(Bpm),
 
     /// Start playback.
     Play,
@@ -371,11 +384,11 @@ pub enum EngineCommand {
     /// Clear all modules (for patch loading).
     ClearAllModules,
 
-    /// Set master volume.
-    SetMasterVolume(f32),
+    /// Set master volume (type-safe gain).
+    SetMasterVolume(Gain),
 
-    /// Set glide/portamento time in seconds.
-    SetGlideTime(f32),
+    /// Set glide/portamento time (type-safe seconds).
+    SetGlideTime(Seconds),
 
     /// Bypass a module.
     SetBypass {
@@ -490,14 +503,15 @@ impl EffectType {
 }
 
 /// Part-specific parameters that can be set via commands.
+/// All parameters use type-safe domain types.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PartParam {
-    /// Part volume (0.0 to 1.0+).
-    Volume(crate::types::Gain),
-    /// Part pan (-1.0 left to +1.0 right).
-    Pan(crate::types::BipolarValue),
-    /// Glide/portamento time in seconds.
-    GlideTime(f32),
+    /// Part volume (type-safe gain).
+    Volume(Gain),
+    /// Part pan (type-safe bipolar value: -1.0 left to +1.0 right).
+    Pan(BipolarValue),
+    /// Glide/portamento time (type-safe seconds).
+    GlideTime(Seconds),
     /// Voice allocation mode.
     AllocationMode(super::voice_allocator::AllocationMode),
     /// Voice stealing strategy.
@@ -601,6 +615,12 @@ impl std::fmt::Debug for EngineCommand {
             Self::AllNotesOff => write!(f, "AllNotesOff"),
             Self::PitchBend { value, channel } => {
                 f.debug_struct("PitchBend")
+                    .field("value", value)
+                    .field("channel", channel)
+                    .finish()
+            }
+            Self::ModWheel { value, channel } => {
+                f.debug_struct("ModWheel")
                     .field("value", value)
                     .field("channel", channel)
                     .finish()
