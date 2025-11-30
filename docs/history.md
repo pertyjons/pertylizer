@@ -1,5 +1,40 @@
 # Version History
 
+## [0.28.0] - 2024
+
+### Added - Performance Panel GUI
+
+- **New Performance Panel** (`src/gui/performance_panel.rs`)
+  - Toggleable side panel for real-time performance controls
+  - Styled with `module_frame` for consistent synth look
+  - `PerformanceState` struct holds panel state
+
+- **Macro Controllers**
+  - **Pitch Bend** - Vertical spring-loaded slider (-1 to +1)
+    - Returns to center on release (`drag_stopped()`)
+    - Sends `EngineCommand::PitchBend` with `BipolarValue`
+  - **Mod Wheel** - Vertical slider (0 to 1)
+    - Stays where released (no spring-back)
+    - Sends `EngineCommand::ModWheel` with `NormalizedValue`
+
+- **Velocity Mapping Knobs**
+  - Amp Sensitivity knob (0-100%)
+  - Filter Sensitivity knob (0-100%)
+  - Uses `Knob` widget for consistent UI
+
+- **GUI Integration** (`src/gui/egui_backend.rs`)
+  - Added `show_performance_panel: bool` state toggle
+  - Added "🎹 Perf" button in toolbar
+  - `SidePanel::left("performance_panel")` with 140px width
+
+### Technical Details
+- Custom `vertical_slider()` function with styled thumb and track
+- Uses `StrokeKind::Outside` for egui 0.33 compatibility
+- Commands sent to `MidiChannel::OMNI` for all parts
+- All 229 unit tests passing
+
+---
+
 ## [0.27.0] - 2024
 
 ### Added - Configurable Expression Settings with Strong Types

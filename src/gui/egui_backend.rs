@@ -28,6 +28,7 @@ use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::gui::patch_bridge;
+use crate::gui::performance_panel::{self, PerformanceState};
 use crate::modules::{
     Describable, ModuleCategory,
     Oscillator, MathOscillator, Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
@@ -154,6 +155,10 @@ struct SynthApp {
 
     // Global synth settings
     glide_time: f32,
+
+    // Performance panel
+    show_performance_panel: bool,
+    performance_state: PerformanceState,
 }
 
 impl SynthApp {
@@ -250,6 +255,8 @@ impl SynthApp {
             current_patch_name: "Spacey Bass".to_string(),
             current_patch_path: None,
             glide_time: 0.0,
+            show_performance_panel: false,
+            performance_state: PerformanceState::default(),
         }
     }
 
@@ -361,6 +368,14 @@ impl eframe::App for SynthApp {
                 
                 ui.separator();
 
+                // Performance panel toggle
+                let perf_text = if self.show_performance_panel { "🎹 Perf ▼" } else { "🎹 Perf" };
+                if ui.selectable_label(self.show_performance_panel, perf_text).clicked() {
+                    self.show_performance_panel = !self.show_performance_panel;
+                }
+
+                ui.separator();
+
                 // Glide/Portamento control
                 ui.label(RichText::new("Glide:").color(colors::TEXT_DIM));
                 let glide_response = ui.add(
@@ -400,7 +415,17 @@ impl eframe::App for SynthApp {
             .show(ctx, |ui| {
                 self.draw_meters(ui);
             });
-        
+
+        // Performance panel (left side, toggleable)
+        if self.show_performance_panel {
+            egui::SidePanel::left("performance_panel")
+                .resizable(false)
+                .exact_width(140.0)
+                .show(ctx, |ui| {
+                    performance_panel::show(ui, &mut self.performance_state, &mut self.handle);
+                });
+        }
+
         // Main content
         egui::CentralPanel::default().show(ctx, |ui| {
             let result = self.rack_view.show(ui, &self.handle);
