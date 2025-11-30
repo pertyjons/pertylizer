@@ -15,13 +15,8 @@ use eframe::egui::{self, Color32, Pos2, RichText, Stroke, Vec2};
 
 use crate::audio::AudioHostTrait;
 use crate::engine::{EngineCommand, EngineHandle, SynthEngine, ModuleId};
-use crate::engine::commands::{VoiceModule, PortId};
-use crate::engine::{
-    ModuleType as TypedModuleType,
-    TypedParam, OscillatorParam, FilterParam, EnvelopeParam, LfoParam,
-    AmplifierParam,
-};
-use crate::engine::graph::Connection;
+use crate::engine::commands::PortId;
+use crate::engine::ModuleType as TypedModuleType;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_settings_dialog, show_about_dialog, show_load_patch_dialog, show_save_patch_dialog, show_status_toast};
 use crate::gui::widgets::colors;
@@ -165,98 +160,59 @@ struct SynthApp {
 
 impl SynthApp {
     fn new(
-        handle: EngineHandle,
+        mut handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
         config: SynthGuiConfig,
         latency: std::time::Duration,
     ) -> Self {
+        // IMPORTANT: We use a startup patch instead of manually building GUI state.
+        // This ensures that GUI and Engine are 100% synchronized from the first millisecond.
+        //
+        // Previously, the GUI built its own visual representation while the engine had
+        // a hardcoded "Spacey Bass" template internally. This caused "ghost sounds" when
+        // modules were removed from the GUI - the engine's hardcoded voices kept playing.
+        //
+        // By loading a patch at startup, we:
+        // 1. Clear the engine completely (ClearAllModules)
+        // 2. Send commands to create each module
+        // 3. Send commands to connect them
+        // 4. Update the GUI to match
+        //
+        // This guarantees GUI and Engine have exactly the same state.
+
         let mut rack_view = RackView::new();
-        
-        // Add default modules to rack view with spacey bass preset values
-        // Use VoiceModule enum for type-safe module IDs
-        
-        // Oscillator 1 - Sawtooth, main sound
-        let osc1 = Oscillator::new();
-        let osc1_id = VoiceModule::Oscillator1.module_id();
-        rack_view.add_module(osc1_id, osc1.descriptor());
-        rack_view.set_parameter(osc1_id, TypedParam::Oscillator(OscillatorParam::Waveform), 2.0); // Sawtooth
-        rack_view.set_parameter(osc1_id, TypedParam::Oscillator(OscillatorParam::Level), 0.6);
+        let mut instance_counters = HashMap::new();
+        let mut keyboard = PianoKeyboard::new();
+        let mut glide_time = 0.0;
 
-        // Oscillator 2 - Sawtooth, detuned for thickness
-        let osc2 = Oscillator::new();
-        let osc2_id = VoiceModule::Oscillator2.module_id();
-        rack_view.add_module(osc2_id, osc2.descriptor());
-        rack_view.set_parameter(osc2_id, TypedParam::Oscillator(OscillatorParam::Waveform), 2.0); // Sawtooth
-        rack_view.set_parameter(osc2_id, TypedParam::Oscillator(OscillatorParam::Level), 0.5);
-        rack_view.set_parameter(osc2_id, TypedParam::Oscillator(OscillatorParam::Detune), 7.0); // +7 cents
+        // Create and load the startup patch - this synchronizes GUI and Engine
+        // Uses send_blocking to ensure commands aren't dropped during startup
+        let startup_patch = crate::patches::patch_spacey_bass();
+        let patch_name = startup_patch.name.clone();
 
-        // Filter - Low pass with moderate resonance
-        let filter = Filter::new();
-        let filter_id = VoiceModule::Filter.module_id();
-        rack_view.add_module(filter_id, filter.descriptor());
-        rack_view.set_parameter(filter_id, TypedParam::Filter(FilterParam::Cutoff), 400.0);
-        rack_view.set_parameter(filter_id, TypedParam::Filter(FilterParam::Resonance), 0.4);
+        patch_bridge::load_patch(
+            &startup_patch,
+            &mut rack_view,
+            &mut instance_counters,
+            &mut handle,
+            &mut keyboard,
+            &mut glide_time,
+        );
 
-        // Amp Envelope - Punchy bass envelope
-        let amp_env = Envelope::new();
-        let amp_env_id = VoiceModule::AmpEnvelope.module_id();
-        rack_view.add_module(amp_env_id, amp_env.descriptor());
-        rack_view.set_parameter(amp_env_id, TypedParam::Envelope(EnvelopeParam::Attack), 0.005);
-        rack_view.set_parameter(amp_env_id, TypedParam::Envelope(EnvelopeParam::Decay), 0.2);
-        rack_view.set_parameter(amp_env_id, TypedParam::Envelope(EnvelopeParam::Sustain), 0.6);
-        rack_view.set_parameter(amp_env_id, TypedParam::Envelope(EnvelopeParam::Release), 0.3);
-
-        // Filter Envelope - Opens filter on attack
-        let filter_env = Envelope::new();
-        let filter_env_id = VoiceModule::FilterEnvelope.module_id();
-        rack_view.add_module(filter_env_id, filter_env.descriptor());
-        rack_view.set_parameter(filter_env_id, TypedParam::Envelope(EnvelopeParam::Attack), 0.001);
-        rack_view.set_parameter(filter_env_id, TypedParam::Envelope(EnvelopeParam::Decay), 0.3);
-        rack_view.set_parameter(filter_env_id, TypedParam::Envelope(EnvelopeParam::Sustain), 0.2);
-        rack_view.set_parameter(filter_env_id, TypedParam::Envelope(EnvelopeParam::Release), 0.4);
-
-        // LFO - Slow sine for movement
-        let lfo = Lfo::new();
-        let lfo_id = VoiceModule::Lfo.module_id();
-        rack_view.add_module(lfo_id, lfo.descriptor());
-        rack_view.set_parameter(lfo_id, TypedParam::Lfo(LfoParam::Rate), 0.3);
-        rack_view.set_parameter(lfo_id, TypedParam::Lfo(LfoParam::Depth), 0.25);
-
-        // Amplifier
-        let amp = Amplifier::new();
-        let amp_id = VoiceModule::Amplifier.module_id();
-        rack_view.add_module(amp_id, amp.descriptor());
-        rack_view.set_parameter(amp_id, TypedParam::Amplifier(AmplifierParam::Level), 0.7);
-        
-        // Add default connections using enum IDs
-        // Osc1 -> Filter, Osc2 -> Filter (both mixed into filter)
-        rack_view.add_connection(Connection::new(osc1_id, "out", filter_id, "in"));
-        rack_view.add_connection(Connection::new(osc2_id, "out", filter_id, "in"));
-        // Filter -> Amp
-        rack_view.add_connection(Connection::new(filter_id, "out", amp_id, "in"));
-        // Amp Env -> Amp CV
-        rack_view.add_connection(Connection::new(amp_env_id, "out", amp_id, "cv"));
-        // Filter Env -> Filter Cutoff CV
-        rack_view.add_connection(Connection::new(filter_env_id, "out", filter_id, "cutoff_cv"));
-        // LFO -> Filter Cutoff CV (mixed with envelope)
-        rack_view.add_connection(Connection::new(lfo_id, "out", filter_id, "cutoff_cv"));
-        // LFO -> Osc1 FM (vibrato)
-        rack_view.add_connection(Connection::new(lfo_id, "out", osc1_id, "fm"));
-        
         Self {
             handle,
             host: Some(host),
             config,
             latency,
             rack_view,
-            instance_counters: HashMap::new(),
-            keyboard: PianoKeyboard::new(),
+            instance_counters,
+            keyboard,
             pressed_keys: HashMap::new(),
             dialog_state: DialogState::new(),
             show_add_module: false,
-            current_patch_name: "Spacey Bass".to_string(),
+            current_patch_name: patch_name,
             current_patch_path: None,
-            glide_time: 0.0,
+            glide_time,
             show_performance_panel: false,
             performance_state: PerformanceState::default(),
         }

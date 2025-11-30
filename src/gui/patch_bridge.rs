@@ -12,6 +12,7 @@ use eframe::egui::Pos2;
 
 use crate::engine::{EngineCommand, EngineHandle, ModuleId};
 use crate::engine::commands::{VoiceModule, PortId};
+use crate::engine::part::PartId;
 use crate::engine::{
     ModuleType as TypedModuleType,
     TypedParam, TypedValue, OscillatorParam, FilterParam, LfoParam,
@@ -91,6 +92,12 @@ pub fn load_patch(
     handle.send_blocking(EngineCommand::SetGlideTime(
         crate::types::Seconds::new(patch.settings.glide_time)
     ));
+
+    // Re-enable first part after loading (ClearAllModules disables all parts)
+    handle.send_blocking(EngineCommand::SetPartEnabled {
+        part_id: PartId::FIRST,
+        enabled: true,
+    });
 }
 
 /// Load a single module from patch state.

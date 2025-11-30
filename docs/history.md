@@ -1,5 +1,26 @@
 # Version History
 
+## [0.32.2] - 2024
+
+### Fixed - GUI/Engine Synchronization at Startup
+
+- **Startup patch system** (`src/gui/egui_backend.rs`)
+  - Added `create_startup_patch()` function that builds the default synth programmatically
+  - `SynthApp::new` now uses `patch_bridge::load_patch()` instead of manual GUI initialization
+  - Ensures GUI and Engine are 100% synchronized from the first millisecond
+  - Prevents "ghost state" where GUI and Engine had different module configurations
+
+- **Removed manual initialization**
+  - Removed all `rack_view.add_module()`, `set_parameter()`, and `add_connection()` calls
+  - Now uses the same robust patch loading flow as when opening a file
+
+### Technical Details
+
+- All 235 unit tests passing
+- No breaking changes to public API
+
+---
+
 ## [0.32.1] - 2024
 
 ### Fixed - Ghost Sound Bug

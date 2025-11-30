@@ -3,6 +3,7 @@
 //! Each patch is defined in its own file for better organization.
 
 mod deep_space_pad;
+mod spacey_bass;
 mod aggressive_bass;
 mod vintage_lead;
 mod ambient_keys;
@@ -23,6 +24,7 @@ mod brown_drone;
 mod punchy_stab;
 
 pub use deep_space_pad::patch_deep_space_pad;
+pub use spacey_bass::patch_spacey_bass;
 pub use aggressive_bass::patch_aggressive_bass;
 pub use vintage_lead::patch_vintage_lead;
 pub use ambient_keys::patch_ambient_keys;
@@ -47,6 +49,7 @@ use crate::patch::Patch;
 /// Get all example patches.
 pub fn example_patches() -> Vec<Patch> {
     vec![
+        patch_spacey_bass(),  // Default startup patch
         patch_deep_space_pad(),
         patch_aggressive_bass(),
         patch_vintage_lead(),
