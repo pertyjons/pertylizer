@@ -73,15 +73,9 @@ impl Lfo {
         fastrand::f32() * 2.0 - 1.0
     }
 
-    /// Generate a single sample.
+    /// Generate a single sample with the given effective rate.
     #[inline]
-    fn generate_sample(&mut self, tempo: f32) -> f32 {
-        let effective_rate = if self.tempo_sync {
-            // Convert beat division to Hz based on tempo
-            Hertz::new(tempo / 60.0 / self.sync_division)
-        } else {
-            self.rate
-        };
+    fn generate_sample(&mut self, effective_rate: Hertz) -> f32 {
 
         let phase_inc = effective_rate.phase_increment(self.sample_rate);
         let phase = self.phase.advance(self.phase_offset.as_f32()).as_f32();
@@ -204,15 +198,24 @@ impl VoiceModule for Lfo {
                 prev_retrigger = val;
             }
 
-            // Rate modulation
-            if let Some(cv) = rate_cv {
+            // Calculate effective rate with tempo sync and CV modulation (without modifying base parameter)
+            let base_rate = if self.tempo_sync {
+                // Convert beat division to Hz based on tempo
+                Hertz::new(context.tempo / 60.0 / self.sync_division)
+            } else {
+                self.rate
+            };
+
+            let effective_rate = if let Some(cv) = rate_cv {
                 let mod_amount = cv[i];
                 // Exponential rate modulation (exp2 is faster than powf)
                 let rate_mult = (mod_amount * 2.0).exp2();
-                self.rate = Hertz::new((self.rate.as_f32() * rate_mult).clamp(0.01, 50.0));
-            }
+                Hertz::new((base_rate.as_f32() * rate_mult).clamp(0.01, 50.0))
+            } else {
+                base_rate
+            };
 
-            self.output_buffer[i] = self.generate_sample(context.tempo);
+            self.output_buffer[i] = self.generate_sample(effective_rate);
         }
 
         if let Some(out) = outputs.get_mut("out") {
@@ -324,8 +327,9 @@ mod tests {
         let mut min = f32::MAX;
         let mut max = f32::MIN;
 
+        let effective_rate = lfo.rate;
         for _ in 0..10000 {
-            let sample = lfo.generate_sample(120.0);
+            let sample = lfo.generate_sample(effective_rate);
             min = min.min(sample);
             max = max.max(sample);
         }
@@ -345,8 +349,9 @@ mod tests {
         let mut min = f32::MAX;
         let mut max = f32::MIN;
 
+        let effective_rate = lfo.rate;
         for _ in 0..10000 {
-            let sample = lfo.generate_sample(120.0);
+            let sample = lfo.generate_sample(effective_rate);
             min = min.min(sample);
             max = max.max(sample);
         }

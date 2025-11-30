@@ -1,5 +1,48 @@
 # Version History
 
+## [0.32.3] - 2024
+
+### Fixed - CV Modulation Parameter Drift Bugs
+
+Critical fixes for parameters that were permanently modified during CV modulation instead of using effective values.
+
+- **LadderFilter cutoff drift** (`src/modules/filter.rs`)
+  - `process_sample()` now takes `effective_cutoff: Hertz` parameter
+  - CV modulation calculates effective cutoff without modifying `self.cutoff`
+  - Prevents filter cutoff from drifting away from user-set value
+
+- **LFO rate drift** (`src/modules/lfo.rs`)
+  - `generate_sample()` now takes `effective_rate: Hertz` parameter
+  - CV modulation and tempo sync calculated in `process()` without modifying `self.rate`
+  - Prevents LFO rate from drifting during modulation
+
+- **Oscillator PWM drift** (`src/modules/oscillator.rs`)
+  - `generate_sample()` now takes `effective_pulse_width: NormalizedValue` parameter
+  - PWM modulation uses local effective value instead of modifying `self.pulse_width`
+  - Prevents pulse width from drifting away from user-set value
+
+### Fixed - Startup Sound Issue
+
+- **Re-enable part after patch load** (`src/gui/patch_bridge.rs`)
+  - Added `SetPartEnabled { part_id: FIRST, enabled: true }` after loading patch
+  - Fixes "no sound on first startup" caused by ClearAllModules disabling parts
+
+### Changed - Spacey Bass Patch
+
+- **Moved to patches module** (`src/patches/spacey_bass.rs`)
+  - Created proper patch file following project conventions
+  - Removed inline `create_startup_patch()` from `egui_backend.rs`
+  - Startup now loads `crate::patches::patch_spacey_bass()`
+  - Added to `example_patches()` as first (default) patch
+
+### Technical Details
+
+- All 235 unit tests passing
+- Fixed tests for new function signatures in LFO and Oscillator
+- No breaking changes to public API
+
+---
+
 ## [0.32.2] - 2024
 
 ### Fixed - GUI/Engine Synchronization at Startup

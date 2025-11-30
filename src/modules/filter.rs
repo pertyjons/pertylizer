@@ -312,10 +312,10 @@ impl LadderFilter {
         x.tanh()
     }
 
-    /// Process a single sample.
+    /// Process a single sample with the given effective cutoff frequency.
     #[inline]
-    fn process_sample(&mut self, input: f32) -> f32 {
-        let cutoff = self.cutoff.as_f32().clamp(20.0, self.sample_rate.as_f32() * 0.49);
+    fn process_sample(&mut self, input: f32, effective_cutoff: Hertz) -> f32 {
+        let cutoff = effective_cutoff.as_f32().clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let g = (PI * cutoff / self.sample_rate.as_f32()).tan();
         let k = self.resonance.as_f32() * 4.0;
 
@@ -405,15 +405,16 @@ impl VoiceModule for LadderFilter {
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
 
-            // Apply cutoff modulation
-            if let Some(cv) = cutoff_cv {
+            // Calculate effective cutoff with CV modulation (without modifying base parameter)
+            let effective_cutoff = if let Some(cv) = cutoff_cv {
                 let mod_amount = cv[i];
                 // Exponential modulation (exp2 is faster than powf)
-                let new_cutoff = (self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0);
-                self.cutoff = Hertz::new(new_cutoff);
-            }
+                Hertz::new((self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0))
+            } else {
+                self.cutoff
+            };
 
-            self.output_buffer[i] = self.process_sample(input);
+            self.output_buffer[i] = self.process_sample(input, effective_cutoff);
         }
 
         if let Some(out) = outputs.get_mut("out") {

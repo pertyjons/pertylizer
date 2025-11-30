@@ -121,7 +121,7 @@ impl Oscillator {
 
     /// Generate a single sample with optional frequency and phase modulation.
     #[inline]
-    fn generate_sample(&mut self, freq_mod: f32, phase_mod: f32) -> f32 {
+    fn generate_sample(&mut self, freq_mod: f32, phase_mod: f32, effective_pulse_width: NormalizedValue) -> f32 {
         // Apply frequency modulation based on mode
         let base_freq = self.actual_frequency();
         let freq = match self.fm_mode {
@@ -168,9 +168,9 @@ impl Oscillator {
 
             Waveform::Pulse => {
                 // Use Phase::pulse() with variable width
-                let mut pulse = Phase::new_unchecked(phase).pulse(self.pulse_width);
+                let mut pulse = Phase::new_unchecked(phase).pulse(effective_pulse_width);
                 // PolyBLEP at both edges
-                let pw = self.pulse_width.as_f32().clamp(0.01, 0.99);
+                let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
                 pulse += self.poly_blep(phase, dt);
                 pulse -= self.poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse
@@ -311,10 +311,12 @@ impl VoiceModule for Oscillator {
             // Get FM modulation amount (normalized -1 to 1)
             let fm = fm_input.map(|f| f[i]).unwrap_or(0.0);
 
-            // PWM modulation
-            if let Some(pwm) = pwm_input {
-                self.pulse_width = NormalizedValue::new((0.5 + pwm[i] * 0.49).clamp(0.01, 0.99));
-            }
+            // Calculate effective pulse width with PWM modulation (without modifying base parameter)
+            let effective_pulse_width = if let Some(pwm) = pwm_input {
+                NormalizedValue::new((self.pulse_width.as_f32() + pwm[i] * 0.49).clamp(0.01, 0.99))
+            } else {
+                self.pulse_width
+            };
 
             // Hard sync - reset phase on rising edge
             if let Some(sync) = sync_input {
@@ -328,8 +330,8 @@ impl VoiceModule for Oscillator {
             // Phase modulation
             let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
 
-            // Generate sample with FM and PM
-            self.output_buffer[i] = self.generate_sample(fm, pm);
+            // Generate sample with FM, PM, and effective pulse width
+            self.output_buffer[i] = self.generate_sample(fm, pm, effective_pulse_width);
         }
 
         // Copy to output
@@ -463,8 +465,9 @@ mod tests {
         osc.sample_rate = SampleRate::DVD_QUALITY;
 
         // Generate a few samples
+        let effective_pulse_width = osc.pulse_width;
         for _ in 0..100 {
-            let sample = osc.generate_sample(0.0, 0.0);
+            let sample = osc.generate_sample(0.0, 0.0, effective_pulse_width);
             assert!(sample >= -1.0 && sample <= 1.0);
         }
     }
