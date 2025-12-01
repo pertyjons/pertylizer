@@ -1,5 +1,41 @@
 # Version History
 
+## [0.32.9] - 2024
+
+### Added - Dynamic Module Routing
+
+Modules are now automatically routed to the correct graph based on their type:
+- **Voice modules** (Oscillator, Filter, Envelope, LFO, Amplifier, etc.) → `voice_template`
+- **Global modules** (effects, visualizers, output) → `module_graph`
+
+This ensures voice modules are properly duplicated per voice while effects remain global.
+
+### Changed - Core Architecture
+
+- **`SynthEngine`** (`src/engine/synth_engine.rs`):
+  - New `is_voice_module(ModuleType) -> bool` classifies module types
+  - New `rebuild_all_voices()` propagates template changes to all voices
+  - `AddModuleInstance` routes to `voice_template` or `module_graph` based on type
+  - `RemoveModule` checks both graphs, removes from correct one
+  - `Connect`/`Disconnect` work correctly across voice and global modules
+  - `DisconnectAll` handles both voice template and global graph
+
+### Voice Module Types
+
+The following modules are classified as voice modules (polyphonic):
+- `Oscillator`, `MathOscillator`, `SubOscillator`, `Noise`
+- `Filter`, `Envelope`, `Lfo`, `Amplifier`
+
+All other module types (effects, visualizers, output) are global.
+
+### Technical Details
+
+- Voice template changes automatically propagate to all active voices
+- Comprehensive regression tests for dynamic routing added
+- All unit tests passing
+
+---
+
 ## [0.32.8] - 2024
 
 ### Refactored - Unified Voice/Graph Architecture

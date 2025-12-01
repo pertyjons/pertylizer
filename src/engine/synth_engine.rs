@@ -364,6 +364,34 @@ impl SynthEngine {
         self.effect_chain.find_effect_by_type(module_type)
     }
 
+    /// Check if a module type belongs to the voice signal chain (polyphonic).
+    ///
+    /// Voice modules are duplicated per voice and process within the voice allocator.
+    /// Global modules (effects, visualizers) exist once and process after voice mixing.
+    fn is_voice_module(module_type: ModuleType) -> bool {
+        matches!(
+            module_type,
+            ModuleType::Oscillator
+                | ModuleType::MathOscillator
+                | ModuleType::SubOscillator
+                | ModuleType::Noise
+                | ModuleType::Filter
+                | ModuleType::Envelope
+                | ModuleType::Lfo
+                | ModuleType::Amplifier
+        )
+    }
+
+    /// Rebuild all voices from the current voice template.
+    ///
+    /// Call this after modifying the voice_template to propagate changes
+    /// to all existing voices in all parts.
+    fn rebuild_all_voices(&mut self) {
+        for part in &mut self.parts {
+            part.allocator_mut().rebuild_from_graph(&self.voice_template);
+        }
+    }
+
     /// Find an effect slot by its module ID.
     fn find_effect_by_id(&mut self, module_id: ModuleId) -> Option<&mut EffectSlot> {
         self.effect_chain.find_effect_by_id(module_id)
@@ -710,43 +738,104 @@ impl SynthEngine {
             // === Modular routing commands ===
 
             EngineCommand::AddModuleInstance { id, module } => {
-                self.module_graph.add_module_with_id(id, module);
-                self.use_modular_routing = true;
+                // Route module to the appropriate graph based on type
+                if Self::is_voice_module(id.module_type) {
+                    // Voice module: add to template and rebuild all voices
+                    self.voice_template.add_module_with_id(id, module);
+                    self.rebuild_all_voices();
+                } else {
+                    // Global module (effects, visualizers): add to global graph
+                    self.module_graph.add_module_with_id(id, module);
+                    self.use_modular_routing = true;
+                }
             }
 
             EngineCommand::RemoveModule { id } => {
-                // Remove module and send it back to main thread for dropping
-                // This avoids deallocation on the audio thread
-                if let Some(module) = self.module_graph.remove_module_and_return(id) {
+                // Try to remove from voice template first
+                if self.voice_template.get_module(id).is_some() {
+                    // Remove from voice template and rebuild all voices
+                    // Note: voice_template module is dropped immediately (not sent to main thread)
+                    // because it's a template, not actively processing audio
+                    self.voice_template.remove_module(id);
+                    self.rebuild_all_voices();
+                } else if let Some(module) = self.module_graph.remove_module_and_return(id) {
+                    // Remove from global graph and send back to main thread for dropping
+                    // This avoids deallocation on the audio thread
                     let _ = self.return_producer.try_push(DroppedModule(module));
                 }
             }
 
             EngineCommand::Connect { from, to } => {
-                if let Err(e) = self.module_graph.connect(
-                    from.module,
-                    &from.port,
-                    to.module,
-                    &to.port,
-                ) {
-                    eprintln!(
-                        "Connection failed: {:?}:{} -> {:?}:{} - {}",
-                        from.module, from.port, to.module, to.port, e
-                    );
+                // Check if both modules exist in the voice template
+                let from_in_voice = self.voice_template.get_module(from.module).is_some();
+                let to_in_voice = self.voice_template.get_module(to.module).is_some();
+
+                if from_in_voice && to_in_voice {
+                    // Both modules are in voice template: connect there and rebuild voices
+                    if let Err(e) = self.voice_template.connect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    ) {
+                        eprintln!(
+                            "Voice template connection failed: {:?}:{} -> {:?}:{} - {}",
+                            from.module, from.port, to.module, to.port, e
+                        );
+                    } else {
+                        // Success: propagate to all voices
+                        self.rebuild_all_voices();
+                    }
+                } else {
+                    // At least one module is in global graph: connect there
+                    if let Err(e) = self.module_graph.connect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    ) {
+                        eprintln!(
+                            "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
+                            from.module, from.port, to.module, to.port, e
+                        );
+                    }
                 }
             }
 
             EngineCommand::Disconnect { from, to } => {
-                self.module_graph.disconnect(
-                    from.module,
-                    &from.port,
-                    to.module,
-                    &to.port,
-                );
+                // Check if both modules exist in the voice template
+                let from_in_voice = self.voice_template.get_module(from.module).is_some();
+                let to_in_voice = self.voice_template.get_module(to.module).is_some();
+
+                if from_in_voice && to_in_voice {
+                    // Disconnect in voice template and rebuild voices
+                    if self.voice_template.disconnect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    ) {
+                        self.rebuild_all_voices();
+                    }
+                } else {
+                    // Disconnect in global graph
+                    self.module_graph.disconnect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    );
+                }
             }
 
             EngineCommand::DisconnectAll { module } => {
-                self.module_graph.disconnect_all(module);
+                // Try voice template first
+                if self.voice_template.get_module(module).is_some() {
+                    self.voice_template.disconnect_all(module);
+                    self.rebuild_all_voices();
+                } else {
+                    self.module_graph.disconnect_all(module);
+                }
             }
 
             _ => {}
@@ -1001,5 +1090,250 @@ mod tests {
         handle.note_on_channel(64, NormalizedValue::new(0.8), ch2);
         engine.process_commands();
         assert_eq!(engine.parts[0].active_voice_count(), 1); // Still 1
+    }
+
+    /// Regression tests for dynamic routing.
+    ///
+    /// These tests verify that modules are correctly routed to either:
+    /// - voice_template (for polyphonic voice modules like Oscillator, Filter, etc.)
+    /// - module_graph (for global effects like Reverb, Delay, etc.)
+    mod dynamic_routing {
+        use super::*;
+        use crate::engine::commands::{EngineCommand, ModuleId, PortId};
+        use crate::modules::{Oscillator, Filter, Mixer};
+
+        /// Test A: Polyphonic Allocation
+        /// An Oscillator should be added to voice_template, NOT to module_graph.
+        #[test]
+        fn test_oscillator_routed_to_voice_template() {
+            let (mut engine, mut handle) = SynthEngine::new();
+
+            // Count existing oscillators in voice template (there are 2 by default)
+            let initial_osc_count = engine.voice_template.module_ids()
+                .filter(|id| id.module_type == ModuleType::Oscillator)
+                .count();
+
+            // Create a new oscillator
+            let osc_id = ModuleId::new(ModuleType::Oscillator, 10);
+            let osc = Box::new(Oscillator::new());
+
+            // Send command to add module
+            handle.send(EngineCommand::AddModuleInstance {
+                id: osc_id,
+                module: osc,
+            });
+            engine.process_commands();
+
+            // Verify: Oscillator should be in voice_template
+            assert!(
+                engine.voice_template.get_module(osc_id).is_some(),
+                "Oscillator should be in voice_template"
+            );
+
+            // Verify: Oscillator should NOT be in module_graph
+            assert!(
+                engine.module_graph.get_module(osc_id).is_none(),
+                "Oscillator should NOT be in module_graph"
+            );
+
+            // Verify: voice_template oscillator count increased
+            let final_osc_count = engine.voice_template.module_ids()
+                .filter(|id| id.module_type == ModuleType::Oscillator)
+                .count();
+            assert_eq!(final_osc_count, initial_osc_count + 1);
+        }
+
+        /// Test B: Global Allocation
+        /// A Reverb should be added to module_graph, NOT to voice_template.
+        #[test]
+        fn test_reverb_routed_to_global_graph() {
+            let (mut engine, mut handle) = SynthEngine::new();
+
+            // Create a new reverb
+            let rev_id = ModuleId::new(ModuleType::Reverb, 1);
+            let rev = Box::new(Reverb::new());
+
+            // Verify: module_graph should be empty initially (or no reverb)
+            assert!(
+                engine.module_graph.get_module(rev_id).is_none(),
+                "Reverb should not exist in module_graph initially"
+            );
+
+            // Send command to add module
+            handle.send(EngineCommand::AddModuleInstance {
+                id: rev_id,
+                module: rev,
+            });
+            engine.process_commands();
+
+            // Verify: Reverb should be in module_graph
+            assert!(
+                engine.module_graph.get_module(rev_id).is_some(),
+                "Reverb should be in module_graph"
+            );
+
+            // Verify: Reverb should NOT be in voice_template
+            assert!(
+                engine.voice_template.get_module(rev_id).is_none(),
+                "Reverb should NOT be in voice_template"
+            );
+
+            // Verify: use_modular_routing should be enabled
+            assert!(
+                engine.use_modular_routing,
+                "use_modular_routing should be true after adding global effect"
+            );
+        }
+
+        /// Test C: Voice Propagation
+        /// Adding a module to voice_template should propagate to all voices in all parts.
+        #[test]
+        fn test_voice_module_propagates_to_voices() {
+            let config = AllocatorConfig {
+                max_voices: 4,
+                mode: AllocationMode::Polyphonic,
+                ..Default::default()
+            };
+            let (mut engine, mut handle) = SynthEngine::with_config(config);
+
+            // Create a new filter with a unique ID
+            let filter_id = ModuleId::new(ModuleType::Filter, 10);
+            let filter = Box::new(Filter::new());
+
+            // First, verify that voices don't have this filter yet
+            for voice in engine.parts[0].allocator().voices() {
+                assert!(
+                    voice.graph.get_module(filter_id).is_none(),
+                    "Voice should not have filter_id before AddModuleInstance"
+                );
+            }
+
+            // Send command to add module
+            handle.send(EngineCommand::AddModuleInstance {
+                id: filter_id,
+                module: filter,
+            });
+            engine.process_commands();
+
+            // Verify: All voices in the default part should have the new filter
+            for (i, voice) in engine.parts[0].allocator().voices().iter().enumerate() {
+                assert!(
+                    voice.graph.get_module(filter_id).is_some(),
+                    "Voice {} should have filter_id after AddModuleInstance", i
+                );
+            }
+        }
+
+        /// Test D: Voice module connections propagate to all voices
+        #[test]
+        fn test_voice_connection_propagates_to_voices() {
+            let config = AllocatorConfig {
+                max_voices: 2,
+                mode: AllocationMode::Polyphonic,
+                ..Default::default()
+            };
+            let (mut engine, mut handle) = SynthEngine::with_config(config);
+
+            // Add a new oscillator and amplifier to voice template
+            let new_osc_id = ModuleId::new(ModuleType::Oscillator, 10);
+            let new_amp_id = ModuleId::new(ModuleType::Amplifier, 10);
+
+            handle.send(EngineCommand::AddModuleInstance {
+                id: new_osc_id,
+                module: Box::new(Oscillator::new()),
+            });
+            handle.send(EngineCommand::AddModuleInstance {
+                id: new_amp_id,
+                module: Box::new(crate::modules::Amplifier::new()),
+            });
+            engine.process_commands();
+
+            // Connect new osc -> new amp in voice template
+            handle.send(EngineCommand::Connect {
+                from: PortId::new(new_osc_id, "out"),
+                to: PortId::new(new_amp_id, "in"),
+            });
+            engine.process_commands();
+
+            // Verify: voice_template has the connection
+            let template_connections: Vec<_> = engine.voice_template.connections().collect();
+            let has_connection = template_connections.iter().any(|c| {
+                c.from_module == new_osc_id && c.to_module == new_amp_id
+            });
+            assert!(has_connection, "voice_template should have the connection");
+
+            // Verify: All voices have the connection
+            for (i, voice) in engine.parts[0].allocator().voices().iter().enumerate() {
+                let voice_connections: Vec<_> = voice.graph.connections().collect();
+                let has_connection = voice_connections.iter().any(|c| {
+                    c.from_module == new_osc_id && c.to_module == new_amp_id
+                });
+                assert!(has_connection, "Voice {} should have the connection", i);
+            }
+        }
+
+        /// Test E: is_voice_module correctly classifies module types
+        #[test]
+        fn test_is_voice_module_classification() {
+            // Voice modules (should be true)
+            assert!(SynthEngine::is_voice_module(ModuleType::Oscillator));
+            assert!(SynthEngine::is_voice_module(ModuleType::MathOscillator));
+            assert!(SynthEngine::is_voice_module(ModuleType::SubOscillator));
+            assert!(SynthEngine::is_voice_module(ModuleType::Noise));
+            assert!(SynthEngine::is_voice_module(ModuleType::Filter));
+            assert!(SynthEngine::is_voice_module(ModuleType::Envelope));
+            assert!(SynthEngine::is_voice_module(ModuleType::Lfo));
+            assert!(SynthEngine::is_voice_module(ModuleType::Amplifier));
+
+            // Global modules (should be false)
+            assert!(!SynthEngine::is_voice_module(ModuleType::Delay));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Reverb));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Chorus));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Distortion));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Phaser));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Flanger));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Compressor));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Eq));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Mixer));
+            assert!(!SynthEngine::is_voice_module(ModuleType::StereoOutput));
+            assert!(!SynthEngine::is_voice_module(ModuleType::Oscilloscope));
+            assert!(!SynthEngine::is_voice_module(ModuleType::LevelMeter));
+        }
+
+        /// Test F: Remove voice module propagates to voices
+        #[test]
+        fn test_remove_voice_module_propagates() {
+            let config = AllocatorConfig {
+                max_voices: 2,
+                ..Default::default()
+            };
+            let (mut engine, mut handle) = SynthEngine::with_config(config);
+
+            // Add a filter
+            let filter_id = ModuleId::new(ModuleType::Filter, 10);
+            handle.send(EngineCommand::AddModuleInstance {
+                id: filter_id,
+                module: Box::new(Filter::new()),
+            });
+            engine.process_commands();
+
+            // Verify it exists
+            assert!(engine.voice_template.get_module(filter_id).is_some());
+            for voice in engine.parts[0].allocator().voices() {
+                assert!(voice.graph.get_module(filter_id).is_some());
+            }
+
+            // Remove it
+            handle.send(EngineCommand::RemoveModule { id: filter_id });
+            engine.process_commands();
+
+            // Verify it's gone from template
+            assert!(engine.voice_template.get_module(filter_id).is_none());
+
+            // Verify it's gone from all voices
+            for voice in engine.parts[0].allocator().voices() {
+                assert!(voice.graph.get_module(filter_id).is_none());
+            }
+        }
     }
 }
