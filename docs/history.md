@@ -1,5 +1,75 @@
 # Version History
 
+## [0.32.8] - 2024
+
+### Refactored - Unified Voice/Graph Architecture
+
+Major architectural change: Each `Voice` now owns a `ModuleGraph` instead of a hardcoded list of modules. This eliminates the "architectural schizophrenia" where voices had a hardcoded DSP chain that ignored the dynamic `ModuleGraph` structure.
+
+**Before:**
+```rust
+// Voice had hardcoded modules and routing
+struct Voice {
+    modules: Vec<Box<dyn VoiceModule>>,
+    module_names: Vec<String>,
+    processing_buffers: VoiceProcessingBuffers,  // Hardcoded buffer names
+}
+
+// process_audio() had explicit LFO→Osc→Filter→Amp routing
+voice.process_audio(left, right, context);
+```
+
+**After:**
+```rust
+// Voice owns a ModuleGraph - fully dynamic routing
+struct Voice {
+    pub graph: ModuleGraph,  // User-configurable signal chain
+    amp_module_id: Option<ModuleId>,  // Cached for stereo output
+}
+
+// Voice delegates to graph for processing
+voice.process_audio(left, right, context);  // Internally uses graph.process()
+```
+
+### Changed - Core Architecture
+
+- **`Voice`** (`src/engine/voice.rs`):
+  - Replaced `modules`, `module_names`, `buffers`, `module_outputs`, `processing_buffers` with `graph: ModuleGraph`
+  - New `from_graph(id, graph)` constructor
+  - `set_param(module_id, param)` delegates to graph
+  - `note_on()`, `note_off()`, `reset()` delegate to graph
+  - `process_audio()` processes graph then extracts stereo from Amplifier
+
+- **`ModuleGraph`** (`src/engine/graph.rs`):
+  - New `get_module_output(module_id, port_name)` for stereo extraction
+  - New `find_module_by_type(ModuleType)` for locating Amplifier
+  - New `set_oscillator_frequency(Hertz)` for voice pitch injection
+
+- **`VoiceAllocator`** (`src/engine/voice_allocator.rs`):
+  - New `with_graph_template(config, &ModuleGraph)` constructor
+  - New `rebuild_from_graph(&ModuleGraph)` for hot-reloading template
+
+- **`SynthEngine`** (`src/engine/synth_engine.rs`):
+  - Removed `create_template_voice()` function (no more hardcoded Voice)
+  - `voice_template: ModuleGraph` now used directly
+  - `SetVoiceParameter` updates both template and all active voices
+
+### Benefits
+
+- **True modularity**: Users can now dynamically configure voice signal routing
+- **Single source of truth**: Template graph defines both structure and parameters
+- **Real-time updates**: Parameter changes apply to template and all voices
+- **Cleaner code**: ~400 lines of hardcoded routing removed
+
+### Technical Details
+
+- All 239 unit tests passing
+- Stereo output extracted from Amplifier's "left"/"right" ports
+- Velocity scaling applied after graph processing
+- Pitch bend applied before graph processing via `set_oscillator_frequency()`
+
+---
+
 ## [0.32.7] - 2024
 
 ### Refactored - Unified Param Architecture

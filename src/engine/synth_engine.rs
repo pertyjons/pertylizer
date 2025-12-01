@@ -23,7 +23,6 @@ use crate::engine::params::{
 use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
 use crate::engine::part::{MidiChannel, PartId, SynthPart};
-use crate::engine::voice::Voice;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::types::{Gain, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
@@ -319,10 +318,10 @@ impl SynthEngine {
         let mut default_part = SynthPart::with_config(PartId::FIRST, "Default", config);
         default_part.set_midi_channel(MidiChannel::OMNI);
 
-        // Initialize allocator with template voice
-        *default_part.allocator_mut() = VoiceAllocator::with_template(
+        // Initialize allocator with template graph (not a hardcoded Voice)
+        *default_part.allocator_mut() = VoiceAllocator::with_graph_template(
             default_part.allocator().config().clone(),
-            &Self::create_template_voice(&voice_template),
+            &voice_template,
         );
 
         let engine = Self {
@@ -371,89 +370,42 @@ impl SynthEngine {
     }
 
     /// Create the default voice template graph.
+    ///
+    /// This graph is cloned for each voice in the synthesizer.
+    /// It defines a basic subtractive synthesis signal chain:
+    /// OSC1 + OSC2 -> Filter -> Amplifier
+    /// with envelope modulation.
     fn create_default_voice_template() -> ModuleGraph {
         use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
 
         let mut graph = ModuleGraph::new();
 
-        // Add modules
-        let osc1_id = graph.add_module(Box::new(Oscillator::new()));
-        let _osc2_id = graph.add_module(Box::new({
-            let mut osc = Oscillator::new();
-            osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(7.0))));
-            osc
-        }));
-
-        let filter_id = graph.add_module(Box::new(Filter::new()));
-        let env_id = graph.add_module(Box::new(Envelope::new()));
-        let filter_env_id = graph.add_module(Box::new({
-            let mut env = Envelope::new();
-            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.001))));
-            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.3))));
-            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.3))));
-            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.5))));
-            env
-        }));
-        let amp_id = graph.add_module(Box::new(Amplifier::new()));
-        let _lfo_id = graph.add_module(Box::new({
-            let mut lfo = Lfo::new();
-            lfo.set_param(Param::Lfo(LfoParam::Rate(Hertz::new(0.5))));
-            lfo.set_param(Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.3))));
-            lfo
-        }));
-
-        // Connect modules
-        // OSC1 -> Filter
-        let _ = graph.connect(osc1_id, "out", filter_id, "in");
-        // OSC2 -> Filter (mixed)
-        // Filter -> Amp
-        let _ = graph.connect(filter_id, "out", amp_id, "in");
-        // Amp Envelope -> Amp CV
-        let _ = graph.connect(env_id, "out", amp_id, "cv");
-        // Filter Envelope -> Filter Cutoff CV
-        let _ = graph.connect(filter_env_id, "out", filter_id, "cutoff_cv");
-        // LFO -> Filter Cutoff (subtle modulation)
-
-        graph
-    }
-
-    /// Create a template voice from the graph.
-    /// Default settings: Spacey bass sound
-    fn create_template_voice(_graph: &ModuleGraph) -> Voice {
-        use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
-
-        let mut voice = Voice::new(0);
-
-        // Oscillator 1 - Sawtooth, main bass sound
-        voice.add_module("osc1", Box::new({
+        // Add oscillators with Spacey Bass preset defaults
+        let osc1_id = graph.add_module(Box::new({
             let mut osc = Oscillator::new();
             osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
             osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.6))));
             osc
         }));
 
-        // Oscillator 2 - Slightly detuned for thickness
-        voice.add_module("osc2", Box::new({
+        let osc2_id = graph.add_module(Box::new({
             let mut osc = Oscillator::new();
             osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
             osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.5))));
-            // Detune +7 cents for classic detuned sound
             osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(7.0))));
             osc
         }));
 
-        // Filter - Low pass with moderate resonance
-        voice.add_module("filter", Box::new({
+        // Add filter
+        let filter_id = graph.add_module(Box::new({
             let mut filter = Filter::new();
-            // Cutoff around 400 Hz for bass
             filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(400.0))));
-            // Some resonance for character
             filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(0.4))));
             filter
         }));
 
-        // Amp Envelope - Punchy but smooth
-        voice.add_module("amp_env", Box::new({
+        // Add amp envelope
+        let amp_env_id = graph.add_module(Box::new({
             let mut env = Envelope::new();
             env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.005))));
             env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.2))));
@@ -462,8 +414,8 @@ impl SynthEngine {
             env
         }));
 
-        // Filter Envelope - Opens up on attack
-        voice.add_module("filter_env", Box::new({
+        // Add filter envelope
+        let filter_env_id = graph.add_module(Box::new({
             let mut env = Envelope::new();
             env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.001))));
             env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.3))));
@@ -472,8 +424,8 @@ impl SynthEngine {
             env
         }));
 
-        // LFO - Slow modulation for movement
-        voice.add_module("lfo", Box::new({
+        // Add LFO
+        let _lfo_id = graph.add_module(Box::new({
             let mut lfo = Lfo::new();
             lfo.set_param(Param::Lfo(LfoParam::Rate(Hertz::new(0.3))));
             lfo.set_param(Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.25))));
@@ -481,14 +433,25 @@ impl SynthEngine {
             lfo
         }));
 
-        // Amplifier
-        voice.add_module("amp", Box::new({
+        // Add amplifier
+        let amp_id = graph.add_module(Box::new({
             let mut amp = Amplifier::new();
             amp.set_param(Param::Amplifier(AmplifierParam::Level(Gain::new(0.7))));
             amp
         }));
 
-        voice
+        // Connect: OSC1 -> Filter
+        let _ = graph.connect(osc1_id, "out", filter_id, "in");
+        // Connect: OSC2 -> Filter (signals are summed at filter input)
+        let _ = graph.connect(osc2_id, "out", filter_id, "in");
+        // Connect: Filter -> Amplifier
+        let _ = graph.connect(filter_id, "out", amp_id, "in");
+        // Connect: Amp Envelope -> Amplifier CV
+        let _ = graph.connect(amp_env_id, "out", amp_id, "cv");
+        // Connect: Filter Envelope -> Filter Cutoff CV
+        let _ = graph.connect(filter_env_id, "out", filter_id, "cutoff_cv");
+
+        graph
     }
 
     /// Process pending commands.
@@ -657,15 +620,16 @@ impl SynthEngine {
             }
 
             EngineCommand::SetVoiceParameter { target, param } => {
-                // Use VoiceModule enum to get the module name - no magic numbers!
-                let module_name = target.internal_name();
+                // Get the ModuleId from the VoiceModule enum
+                let module_id = target.module_id();
 
-                // Apply to all voices in all parts using the typed API
+                // Update the voice template (so new voices get the new value)
+                self.voice_template.set_param(module_id, param.clone());
+
+                // Apply to all existing voices in all parts
                 for part in &mut self.parts {
                     for voice in part.allocator_mut().voices_mut() {
-                        if let Some(module) = voice.get_module_mut(module_name) {
-                            module.set_param(param.clone());
-                        }
+                        voice.graph.set_param(module_id, param.clone());
                     }
                 }
             }

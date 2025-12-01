@@ -126,6 +126,49 @@ impl VoiceAllocator {
         }
     }
 
+    /// Create with a ModuleGraph template.
+    /// Each voice will receive a cloned copy of the graph.
+    pub fn with_graph_template(config: AllocatorConfig, graph_template: &crate::engine::graph::ModuleGraph) -> Self {
+        let voices = (0..config.max_voices)
+            .map(|i| {
+                Voice::from_graph(i as u32, graph_template.clone_structure())
+            })
+            .collect();
+
+        Self {
+            config,
+            voices,
+            held_notes: Vec::new(),
+            time: 0,
+            last_note: None,
+        }
+    }
+
+    /// Rebuild all voices from a new graph template.
+    /// Used when the voice template changes (module added/removed/reconnected).
+    pub fn rebuild_from_graph(&mut self, graph_template: &crate::engine::graph::ModuleGraph) {
+        for (i, voice) in self.voices.iter_mut().enumerate() {
+            let was_active = voice.is_active();
+            let old_note = voice.note;
+            let old_velocity = voice.velocity;
+            let old_state = voice.state;
+            let old_age = voice.age;
+            let old_trigger_time = voice.trigger_time;
+
+            // Replace with new graph
+            *voice = Voice::from_graph(i as u32, graph_template.clone_structure());
+
+            // Restore state if voice was active (preserves playing notes during template changes)
+            if was_active {
+                voice.note = old_note;
+                voice.velocity = old_velocity;
+                voice.state = old_state;
+                voice.age = old_age;
+                voice.trigger_time = old_trigger_time;
+            }
+        }
+    }
+
     /// Get the allocator configuration.
     pub fn config(&self) -> &AllocatorConfig {
         &self.config

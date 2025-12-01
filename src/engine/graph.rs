@@ -362,6 +362,32 @@ impl ModuleGraph {
         }
     }
 
+    /// Get a module's output buffer by port name (for extracting stereo outputs).
+    /// This is useful after processing to get specific output ports.
+    pub fn get_module_output(&self, module_id: ModuleId, port_name: &str) -> Option<&AudioBuffer> {
+        self.nodes.get(&module_id)?.outputs.get(port_name)
+    }
+
+    /// Find a module by type and return its ID.
+    /// Useful for finding the amplifier in a voice graph.
+    pub fn find_module_by_type(&self, module_type: ModuleType) -> Option<ModuleId> {
+        self.nodes.iter()
+            .find(|(id, _)| id.module_type == module_type)
+            .map(|(id, _)| *id)
+    }
+
+    /// Set the base frequency for all oscillator modules in the graph.
+    /// Used by Voice to inject the note frequency before processing.
+    pub fn set_oscillator_frequency(&mut self, freq: crate::types::Hertz) {
+        use crate::engine::typed_params::{Param, OscillatorParam};
+
+        for (&id, node) in self.nodes.iter_mut() {
+            if id.module_type == ModuleType::Oscillator {
+                node.module.set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
+            }
+        }
+    }
+
     /// Get all module IDs.
     pub fn module_ids(&self) -> impl Iterator<Item = ModuleId> + '_ {
         self.nodes.keys().copied()
