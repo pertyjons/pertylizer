@@ -2,6 +2,8 @@
 
 use std::ops::{Add, Mul, Neg, Sub};
 
+use serde::{Deserialize, Serialize};
+
 use super::Clampable;
 
 /// A value normalized to the range [0.0, 1.0].
@@ -12,7 +14,8 @@ use super::Clampable;
 /// - Mix amounts
 /// - Pulse width
 /// - Any parameter where 0 = min and 1 = max
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct NormalizedValue(pub f32);
 
@@ -161,7 +164,8 @@ impl std::fmt::Display for NormalizedValue {
 /// - Modulation amounts
 /// - Pan position
 /// - Any bipolar signal
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct BipolarValue(pub f32);
 
@@ -315,7 +319,8 @@ impl std::fmt::Display for BipolarValue {
 /// Phase value in range [0.0, 1.0), wrapping.
 ///
 /// Used for oscillator phase, LFO position, etc.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Phase(pub f32);
 

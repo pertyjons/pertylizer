@@ -71,8 +71,9 @@ mod audio_safety {
         let context = make_context(256);
         
         // Set extreme resonance
-        use crate::engine::typed_params::{TypedParam, TypedValue, FilterParam};
-        filter.set_param(TypedParam::Filter(FilterParam::Resonance), TypedValue::Float(1.0));
+        use crate::engine::typed_params::{Param, FilterParam};
+        use crate::types::NormalizedValue;
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(1.0))));
         
         // Create input with impulse
         let mut input_buf = AudioBuffer::new(256);
@@ -201,22 +202,24 @@ mod audio_safety {
 
 #[cfg(test)]
 mod parameter_handling {
-    use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, FilterParam, EnvelopeParam};
-    use crate::modules::{Oscillator, Filter, Envelope, VoiceModule, Waveform};
+    use crate::engine::typed_params::{Param, OscillatorParam, FilterParam, EnvelopeParam};
+    use crate::modules::{Oscillator, Filter, Envelope, VoiceModule};
+    use crate::types::{Hertz, NormalizedValue, Seconds};
 
     #[test]
     fn test_oscillator_frequency_clamping() {
         let mut osc = Oscillator::new();
+        let freq_query = Param::Oscillator(OscillatorParam::Frequency(Hertz::new(0.0)));
 
         // Try to set frequency below minimum
-        osc.set_param(TypedParam::Oscillator(OscillatorParam::Frequency), TypedValue::Float(-100.0));
-        if let Some(TypedValue::Float(f)) = osc.get_param(TypedParam::Oscillator(OscillatorParam::Frequency)) {
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(-100.0))));
+        if let Some(f) = osc.get_param(&freq_query) {
             assert!(f >= 20.0, "Frequency should be clamped to minimum");
         }
 
         // Try to set frequency above maximum
-        osc.set_param(TypedParam::Oscillator(OscillatorParam::Frequency), TypedValue::Float(100000.0));
-        if let Some(TypedValue::Float(f)) = osc.get_param(TypedParam::Oscillator(OscillatorParam::Frequency)) {
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(100000.0))));
+        if let Some(f) = osc.get_param(&freq_query) {
             assert!(f <= 20000.0, "Frequency should be clamped to maximum");
         }
     }
@@ -224,15 +227,16 @@ mod parameter_handling {
     #[test]
     fn test_filter_resonance_clamping() {
         let mut filter = Filter::new();
+        let res_query = Param::Filter(FilterParam::Resonance(NormalizedValue::new(0.0)));
 
         // Try extreme values
-        filter.set_param(TypedParam::Filter(FilterParam::Resonance), TypedValue::Float(10.0));
-        if let Some(TypedValue::Float(r)) = filter.get_param(TypedParam::Filter(FilterParam::Resonance)) {
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(10.0))));
+        if let Some(r) = filter.get_param(&res_query) {
             assert!(r <= 1.0, "Resonance should be clamped to maximum 1.0");
         }
 
-        filter.set_param(TypedParam::Filter(FilterParam::Resonance), TypedValue::Float(-1.0));
-        if let Some(TypedValue::Float(r)) = filter.get_param(TypedParam::Filter(FilterParam::Resonance)) {
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(-1.0))));
+        if let Some(r) = filter.get_param(&res_query) {
             assert!(r >= 0.0, "Resonance should be clamped to minimum 0.0");
         }
     }
@@ -240,34 +244,33 @@ mod parameter_handling {
     #[test]
     fn test_envelope_time_parameters() {
         let mut env = Envelope::new();
+        let attack_query = Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.0)));
 
         // Attack should be clamped to reasonable range
-        env.set_param(TypedParam::Envelope(EnvelopeParam::Attack), TypedValue::Float(-1.0));
-        if let Some(TypedValue::Float(a)) = env.get_param(TypedParam::Envelope(EnvelopeParam::Attack)) {
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(-1.0))));
+        if let Some(a) = env.get_param(&attack_query) {
             assert!(a >= 0.0, "Attack should not be negative");
         }
 
         // Very long attack should still work
-        env.set_param(TypedParam::Envelope(EnvelopeParam::Attack), TypedValue::Float(100.0));
-        if let Some(TypedValue::Float(a)) = env.get_param(TypedParam::Envelope(EnvelopeParam::Attack)) {
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(100.0))));
+        if let Some(a) = env.get_param(&attack_query) {
             assert!(a > 0.0 && a.is_finite(), "Attack should be valid");
         }
     }
 
     #[test]
     fn test_typed_param_api() {
+        use crate::engine::typed_params::Waveform;
         let mut osc = Oscillator::new();
+        let waveform_query = Param::Oscillator(OscillatorParam::Waveform(Waveform::default()));
 
         // Test waveform setting via typed API
-        osc.set_param(
-            TypedParam::Oscillator(OscillatorParam::Waveform),
-            TypedValue::Waveform(Waveform::Square)
-        );
+        osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)));
 
-        if let Some(TypedValue::Waveform(w)) = osc.get_param(
-            TypedParam::Oscillator(OscillatorParam::Waveform)
-        ) {
-            assert_eq!(w, Waveform::Square);
+        // Read back the index (waveform is stored as index)
+        if let Some(w) = osc.get_param(&waveform_query) {
+            assert_eq!(w as usize, Waveform::Square.index());
         } else {
             panic!("Expected waveform value");
         }
@@ -276,17 +279,13 @@ mod parameter_handling {
     #[test]
     fn test_typed_param_float_conversion() {
         let mut filter = Filter::new();
+        let cutoff_query = Param::Filter(FilterParam::Cutoff(Hertz::new(0.0)));
 
         // Set via typed API
-        filter.set_param(
-            TypedParam::Filter(FilterParam::Cutoff),
-            TypedValue::Float(5000.0)
-        );
+        filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(5000.0))));
 
         // Read back
-        if let Some(TypedValue::Float(c)) = filter.get_param(
-            TypedParam::Filter(FilterParam::Cutoff)
-        ) {
+        if let Some(c) = filter.get_param(&cutoff_query) {
             assert!((c - 5000.0).abs() < 0.01);
         } else {
             panic!("Expected float value");
@@ -587,16 +586,14 @@ mod engine_integration {
     #[test]
     fn test_engine_parameter_changes() {
         use crate::engine::commands::VoiceModule;
-        use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam};
-        use crate::modules::Waveform;
+        use crate::engine::typed_params::{Param, OscillatorParam, Waveform};
 
         let (_engine, mut handle) = SynthEngine::new();
 
         // Change oscillator waveform
         handle.set_voice_parameter(
             VoiceModule::Oscillator1,
-            TypedParam::Oscillator(OscillatorParam::Waveform),
-            TypedValue::Waveform(Waveform::Square),
+            Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)),
         );
         // Parameter should be queued for application
     }

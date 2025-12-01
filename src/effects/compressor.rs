@@ -1,6 +1,6 @@
 //! Dynamics compressor with adjustable threshold, ratio, attack, and release.
 
-use crate::engine::typed_params::{CompressorParam, ModuleType, TypedParam, TypedValue};
+use crate::engine::typed_params::{CompressorParam, ModuleType, Param};
 use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
@@ -92,7 +92,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    TypedParam::Compressor(CompressorParam::Threshold),
+                    Param::Compressor(CompressorParam::Threshold(Decibels::new(-20.0))),
                     "Threshold",
                 )
                 .description("Compression threshold")
@@ -102,15 +102,18 @@ impl Describable for Compressor {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Compressor(CompressorParam::Ratio), "Ratio")
-                    .description("Compression ratio")
-                    .range(1.0, 20.0)
-                    .default(4.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Compressor(CompressorParam::Ratio(Ratio::MEDIUM)),
+                    "Ratio",
+                )
+                .description("Compression ratio")
+                .range(1.0, 20.0)
+                .default(4.0)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::float(
-                    TypedParam::Compressor(CompressorParam::Attack),
+                    Param::Compressor(CompressorParam::Attack(Milliseconds::new(10.0))),
                     "Attack",
                 )
                 .description("Attack time")
@@ -121,7 +124,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    TypedParam::Compressor(CompressorParam::Release),
+                    Param::Compressor(CompressorParam::Release(Milliseconds::new(100.0))),
                     "Release",
                 )
                 .description("Release time")
@@ -132,7 +135,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    TypedParam::Compressor(CompressorParam::Makeup),
+                    Param::Compressor(CompressorParam::Makeup(Decibels::new(0.0))),
                     "Makeup",
                 )
                 .description("Makeup gain")
@@ -142,11 +145,14 @@ impl Describable for Compressor {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Compressor(CompressorParam::Mix), "Mix")
-                    .description("Dry/wet mix (parallel compression)")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Compressor(CompressorParam::Mix(NormalizedValue::MAX)),
+                    "Mix",
+                )
+                .description("Dry/wet mix (parallel compression)")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -213,56 +219,55 @@ impl EffectModule for Compressor {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Compressor(comp_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Compressor(comp_param) = param {
             match comp_param {
-                CompressorParam::Threshold => {
-                    if let Some(t) = value.as_float() {
-                        self.threshold = Decibels::new(t.clamp(-60.0, 0.0));
-                    }
+                CompressorParam::Threshold(t) => {
+                    self.threshold = Decibels::new(t.as_f32().clamp(-60.0, 0.0));
                 }
-                CompressorParam::Ratio => {
-                    if let Some(r) = value.as_float() {
-                        self.ratio = Ratio::new(r).clamp_typical();
-                    }
+                CompressorParam::Ratio(r) => {
+                    self.ratio = Ratio::new(r.as_f32()).clamp_typical();
                 }
-                CompressorParam::Attack => {
-                    if let Some(a) = value.as_float() {
-                        self.attack = Milliseconds::new(a.clamp(0.1, 100.0));
-                    }
+                CompressorParam::Attack(a) => {
+                    self.attack = Milliseconds::new(a.as_f32().clamp(0.1, 100.0));
                 }
-                CompressorParam::Release => {
-                    if let Some(r) = value.as_float() {
-                        self.release = Milliseconds::new(r.clamp(10.0, 1000.0));
-                    }
+                CompressorParam::Release(r) => {
+                    self.release = Milliseconds::new(r.as_f32().clamp(10.0, 1000.0));
                 }
-                CompressorParam::Makeup => {
-                    if let Some(m) = value.as_float() {
-                        self.makeup = Decibels::new(m.clamp(0.0, 24.0));
-                    }
+                CompressorParam::Makeup(m) => {
+                    self.makeup = Decibels::new(m.as_f32().clamp(0.0, 24.0));
                 }
-                CompressorParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                CompressorParam::Mix(m) => {
+                    self.mix = m;
                 }
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Compressor(comp_param) = param {
-            match comp_param {
-                CompressorParam::Threshold => Some(TypedValue::Float(self.threshold.as_f32())),
-                CompressorParam::Ratio => Some(TypedValue::Float(self.ratio.as_f32())),
-                CompressorParam::Attack => Some(TypedValue::Float(self.attack.as_f32())),
-                CompressorParam::Release => Some(TypedValue::Float(self.release.as_f32())),
-                CompressorParam::Makeup => Some(TypedValue::Float(self.makeup.as_f32())),
-                CompressorParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Compressor(comp_param) = param {
+            Some(match comp_param {
+                CompressorParam::Threshold(_) => self.threshold.as_f32(),
+                CompressorParam::Ratio(_) => self.ratio.as_f32(),
+                CompressorParam::Attack(_) => self.attack.as_f32(),
+                CompressorParam::Release(_) => self.release.as_f32(),
+                CompressorParam::Makeup(_) => self.makeup.as_f32(),
+                CompressorParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Compressor(CompressorParam::Threshold(self.threshold)),
+            Param::Compressor(CompressorParam::Ratio(self.ratio)),
+            Param::Compressor(CompressorParam::Attack(self.attack)),
+            Param::Compressor(CompressorParam::Release(self.release)),
+            Param::Compressor(CompressorParam::Makeup(self.makeup)),
+            Param::Compressor(CompressorParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {

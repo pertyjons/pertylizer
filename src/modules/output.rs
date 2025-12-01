@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use crate::engine::typed_params::{ModuleType, TypedParam, TypedValue, MixerParam};
+use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{Amplitude, BipolarValue, Decibels, Gain};
 
@@ -125,37 +125,61 @@ impl Describable for StereoOutput {
             .description("Master stereo output with volume, pan, and limiting")
             .category(ModuleCategory::Output)
             // Inputs - accepts both mono and stereo
-            .port(PortDescriptor::audio_input("in", "In")
-                .description("Mono audio input (summed to stereo)"))
-            .port(PortDescriptor::audio_input("in_l", "In L")
-                .description("Left channel input"))
-            .port(PortDescriptor::audio_input("in_r", "In R")
-                .description("Right channel input"))
+            .port(
+                PortDescriptor::audio_input("in", "In")
+                    .description("Mono audio input (summed to stereo)"),
+            )
+            .port(
+                PortDescriptor::audio_input("in_l", "In L").description("Left channel input"),
+            )
+            .port(
+                PortDescriptor::audio_input("in_r", "In R").description("Right channel input"),
+            )
             // No audio outputs - this is the final sink
             // Parameters
-            .parameter(ParameterDescriptor::float(TypedParam::Mixer(MixerParam::Master), "Master Level")
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Mixer(MixerParam::Master(Gain::new(0.8))),
+                    "Master Level",
+                )
                 .description("Master output volume")
                 .range(0.0, 1.0)
                 .default(0.8)
                 .unit(ParameterUnit::None)
                 .widget(WidgetHint::Slider)
-                .curve(ResponseCurve::Squared))
-            .parameter(ParameterDescriptor::float(TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan), "Pan")
+                .curve(ResponseCurve::Squared),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Amplifier(AmplifierParam::Pan(BipolarValue::CENTER)),
+                    "Pan",
+                )
                 .description("Master stereo pan")
                 .range(-1.0, 1.0)
                 .default(0.0)
                 .unit(ParameterUnit::None)
-                .widget(WidgetHint::PanKnob))
-            .parameter(ParameterDescriptor::float(TypedParam::Mixer(MixerParam::Limit), "Limiter")
+                .widget(WidgetHint::PanKnob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Mixer(MixerParam::Limit(true)),
+                    "Limiter",
+                )
                 .description("Enable soft limiter to prevent clipping")
                 .range(0.0, 1.0)
                 .default(1.0)
-                .widget(WidgetHint::Toggle))
-            .parameter(ParameterDescriptor::float(TypedParam::Mixer(MixerParam::Mute), "Mute")
+                .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Mixer(MixerParam::Mute(false)),
+                    "Mute",
+                )
                 .description("Mute output")
                 .range(0.0, 1.0)
                 .default(0.0)
-                .widget(WidgetHint::Toggle))
+                .widget(WidgetHint::Toggle),
+            )
             .tag("output")
             .tag("master")
             .tag("stereo")
@@ -243,40 +267,41 @@ impl VoiceModule for StereoOutput {
         }
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
+    fn set_param(&mut self, param: Param) {
         match param {
-            TypedParam::Mixer(MixerParam::Master) => {
-                if let Some(v) = value.as_float() {
-                    self.master_level = Gain::new(v.clamp(0.0, 1.0));
-                }
+            Param::Mixer(MixerParam::Master(g)) => {
+                self.master_level = Gain::new(g.as_f32().clamp(0.0, 1.0));
             }
-            TypedParam::Mixer(MixerParam::Mute) => {
-                if let Some(v) = value.as_float() {
-                    self.muted = v > 0.5;
-                }
+            Param::Mixer(MixerParam::Mute(m)) => {
+                self.muted = m;
             }
-            TypedParam::Mixer(MixerParam::Limit) => {
-                if let Some(v) = value.as_float() {
-                    self.limit_enabled = v > 0.5;
-                }
+            Param::Mixer(MixerParam::Limit(l)) => {
+                self.limit_enabled = l;
             }
-            TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan) => {
-                if let Some(v) = value.as_float() {
-                    self.pan = BipolarValue::new(v);
-                }
+            Param::Amplifier(AmplifierParam::Pan(p)) => {
+                self.pan = p;
             }
             _ => {}
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
+    fn get_param(&self, param: &Param) -> Option<f32> {
         match param {
-            TypedParam::Mixer(MixerParam::Master) => Some(TypedValue::Float(self.master_level.as_f32())),
-            TypedParam::Mixer(MixerParam::Mute) => Some(TypedValue::Float(if self.muted { 1.0 } else { 0.0 })),
-            TypedParam::Mixer(MixerParam::Limit) => Some(TypedValue::Float(if self.limit_enabled { 1.0 } else { 0.0 })),
-            TypedParam::Amplifier(crate::engine::typed_params::AmplifierParam::Pan) => Some(TypedValue::Float(self.pan.as_f32())),
+            Param::Mixer(MixerParam::Master(_)) => Some(self.master_level.as_f32()),
+            Param::Mixer(MixerParam::Mute(_)) => Some(if self.muted { 1.0 } else { 0.0 }),
+            Param::Mixer(MixerParam::Limit(_)) => Some(if self.limit_enabled { 1.0 } else { 0.0 }),
+            Param::Amplifier(AmplifierParam::Pan(_)) => Some(self.pan.as_f32()),
             _ => None,
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Mixer(MixerParam::Master(self.master_level)),
+            Param::Mixer(MixerParam::Mute(self.muted)),
+            Param::Mixer(MixerParam::Limit(self.limit_enabled)),
+            Param::Amplifier(AmplifierParam::Pan(self.pan)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -289,6 +314,9 @@ impl VoiceModule for StereoOutput {
         self.peak_r = Amplitude::ZERO;
         self.output_buffer.clear();
     }
+
+    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
         Box::new(self.clone())
@@ -315,10 +343,10 @@ mod tests {
     #[test]
     fn test_soft_limiting() {
         let output = StereoOutput::new();
-        
+
         // Values below threshold should pass through
         assert!((output.soft_limit(0.5) - 0.5).abs() < 0.01);
-        
+
         // Values above 1.0 should be limited
         let limited = output.soft_limit(2.0);
         assert!(limited <= 1.0);
@@ -349,26 +377,26 @@ mod tests {
     fn test_mute() {
         let mut output = StereoOutput::new();
         let context = ProcessContext::default();
-        
+
         // Create test input
         let mut test_buf = AudioBuffer::new(context.samples);
         for i in 0..context.samples {
             test_buf[i] = 0.5;
         }
-        
+
         let mut inputs = HashMap::new();
         inputs.insert("in".to_string(), &test_buf);
         let mut outputs = HashMap::new();
-        
+
         // Process unmuted
         output.process(&inputs, &mut outputs, &context);
         let unmuted_output = output.get_output().to_vec();
-        
+
         // Process muted
         output.set_muted(true);
         output.process(&inputs, &mut outputs, &context);
         let muted_output = output.get_output();
-        
+
         // Muted should be silence
         assert!(muted_output.iter().all(|&s| s == 0.0));
         // Unmuted should have signal

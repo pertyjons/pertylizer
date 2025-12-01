@@ -24,10 +24,13 @@ pub mod output;
 pub use core::*;
 pub use oscillator::Oscillator;
 pub use math_oscillator::MathOscillator;
-pub use sub_osc::{SubOscillator, SubOscWaveform, SubOscOctave};
-pub use noise::{NoiseGenerator, NoiseType};
+pub use sub_osc::SubOscillator;
+pub use noise::NoiseGenerator;
 pub use filter::{Filter, LadderFilter};
 pub use envelope::{Envelope, EnvelopeStage};
 pub use lfo::Lfo;
 pub use amplifier::{Amplifier, Mixer};
 pub use output::StereoOutput;
+
+// Re-export param types from engine for convenience
+pub use crate::engine::typed_params::{SubOscWaveform, SubOscOctave, NoiseType};

@@ -3,13 +3,16 @@
 use std::f32::consts::FRAC_PI_4;
 use std::ops::{Add, Mul, Sub};
 
+use serde::{Deserialize, Serialize};
+
 use super::{BipolarValue, Clampable};
 
 /// Linear gain factor (amplitude multiplier).
 ///
 /// A value of 1.0 means unity gain (no change).
 /// Values > 1.0 amplify, values < 1.0 attenuate.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Gain(pub f32);
 
@@ -132,7 +135,8 @@ impl std::fmt::Display for Gain {
 /// -6 dB ≈ half amplitude
 /// -20 dB = 0.1 amplitude
 /// -∞ dB = silence
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Decibels(pub f32);
 
@@ -284,7 +288,8 @@ impl Not for bool {
 ///
 /// A ratio of 1.0 means no compression, infinity would be limiting.
 /// Typical values range from 1.0 (no compression) to 20.0 (heavy limiting).
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Ratio(pub f32);
 

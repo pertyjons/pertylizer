@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use crate::engine::typed_params::{TypedParam, TypedValue, MathOscillatorParam, MathAlgo, ModuleType};
+use crate::engine::typed_params::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BufferIndex, FrameCount, Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{BufferIndex, FrameCount, Gain, Hertz, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -25,7 +25,7 @@ pub struct MathOscillator {
     var_a: NormalizedValue,
     var_b: NormalizedValue,
     var_c: NormalizedValue,
-    level: NormalizedValue,
+    level: Gain,
 
     // Standard state
     phase: Phase,
@@ -60,7 +60,7 @@ impl MathOscillator {
             var_a: NormalizedValue::CENTER,
             var_b: NormalizedValue::CENTER,
             var_c: NormalizedValue::CENTER,
-            level: NormalizedValue::MAX,
+            level: Gain::UNITY,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             lorenz_x: 0.1,
@@ -101,7 +101,6 @@ impl MathOscillator {
             // ================================================================
             // CATEGORY A: Phase-based (Stateless)
             // ================================================================
-
             MathAlgo::SineFM => {
                 // Basic FM synthesis: carrier modulated by modulator
                 let mod_index = a * 5.0;
@@ -252,7 +251,6 @@ impl MathOscillator {
             // ================================================================
             // CATEGORY B: Iterative/Chaotic (Stateful)
             // ================================================================
-
             MathAlgo::Bytebeat => {
                 // Classic bytebeat: t * ((t>>A) | (t>>B))
                 let t = self.time_counter;
@@ -307,10 +305,10 @@ impl MathOscillator {
             // ================================================================
             // CATEGORY C: Buffer-based
             // ================================================================
-
             MathAlgo::KarplusStrong => {
                 // Karplus-Strong physical modeling
-                let delay_samples = (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
+                let delay_samples =
+                    (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
                 let delay_samples = delay_samples.clamp(1, MAX_DELAY_SIZE - 1);
 
                 // Read from delay line
@@ -359,7 +357,8 @@ impl MathOscillator {
 
     /// Trigger a burst for Karplus-Strong.
     fn trigger_burst(&mut self) {
-        let delay_samples = (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
+        let delay_samples =
+            (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
         self.burst_remaining = FrameCount::new(delay_samples.min(MAX_DELAY_SIZE));
         // Clear delay line for clean start
         self.delay_line.fill(0.0);
@@ -385,7 +384,7 @@ impl Describable for MathOscillator {
             // Parameters
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::MathOscillator(MathOscillatorParam::Algorithm),
+                    Param::MathOscillator(MathOscillatorParam::Algorithm(MathAlgo::SineFM)),
                     "Algorithm",
                     MathAlgo::to_choices(),
                 )
@@ -393,46 +392,69 @@ impl Describable for MathOscillator {
                 .widget(WidgetHint::Dropdown),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::MathOscillator(MathOscillatorParam::Frequency), "Frequency")
-                    .description("Base frequency")
-                    .range(20.0, 20000.0)
-                    .default(440.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::FrequencySlider)
-                    .curve(ResponseCurve::Logarithmic),
+                ParameterDescriptor::float(
+                    Param::MathOscillator(MathOscillatorParam::Frequency(Hertz::A4)),
+                    "Frequency",
+                )
+                .description("Base frequency")
+                .range(20.0, 20000.0)
+                .default(440.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::FrequencySlider)
+                .curve(ResponseCurve::Logarithmic),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::MathOscillator(MathOscillatorParam::ParamA), "Param A")
-                    .description("Algorithm parameter A")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::MathOscillator(MathOscillatorParam::ParamA(NormalizedValue::CENTER)),
+                    "Param A",
+                )
+                .description("Algorithm parameter A")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::MathOscillator(MathOscillatorParam::ParamB), "Param B")
-                    .description("Algorithm parameter B")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::MathOscillator(MathOscillatorParam::ParamB(NormalizedValue::CENTER)),
+                    "Param B",
+                )
+                .description("Algorithm parameter B")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::MathOscillator(MathOscillatorParam::ParamC), "Param C")
-                    .description("Algorithm parameter C")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::MathOscillator(MathOscillatorParam::ParamC(NormalizedValue::CENTER)),
+                    "Param C",
+                )
+                .description("Algorithm parameter C")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::MathOscillator(MathOscillatorParam::Level), "Level")
-                    .description("Output level")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::MathOscillator(MathOscillatorParam::Level(Gain::UNITY)),
+                    "Level",
+                )
+                .description("Output level")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
             // Ports
-            .port(PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"))
-            .port(PortDescriptor::control_input("param_a", "Mod A").description("Param A modulation"))
-            .port(PortDescriptor::control_input("param_b", "Mod B").description("Param B modulation"))
+            .port(
+                PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
+            )
+            .port(
+                PortDescriptor::control_input("param_a", "Mod A")
+                    .description("Param A modulation"),
+            )
+            .port(
+                PortDescriptor::control_input("param_b", "Mod B")
+                    .description("Param B modulation"),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
     }
 }
@@ -466,10 +488,12 @@ impl VoiceModule for MathOscillator {
             let base_b = self.var_b;
 
             if let Some(ma) = mod_a {
-                self.var_a = NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
+                self.var_a =
+                    NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
             }
             if let Some(mb) = mod_b {
-                self.var_b = NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
+                self.var_b =
+                    NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
             }
 
             self.output_buffer[i] = self.generate_sample();
@@ -485,57 +509,48 @@ impl VoiceModule for MathOscillator {
         }
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::MathOscillator(math_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::MathOscillator(math_param) = param {
             match math_param {
-                MathOscillatorParam::Algorithm => {
-                    if let TypedValue::MathAlgo(algo) = value {
-                        self.algo = algo;
-                        self.reset_state();
-                    }
+                MathOscillatorParam::Algorithm(algo) => {
+                    self.algo = algo;
+                    self.reset_state();
                 }
-                MathOscillatorParam::Frequency => {
-                    if let Some(f) = value.as_float() {
-                        self.frequency = Hertz::new(f.clamp(20.0, 20000.0));
-                    }
+                MathOscillatorParam::Frequency(f) => {
+                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0))
                 }
-                MathOscillatorParam::ParamA => {
-                    if let Some(v) = value.as_float() {
-                        self.var_a = NormalizedValue::new(v);
-                    }
-                }
-                MathOscillatorParam::ParamB => {
-                    if let Some(v) = value.as_float() {
-                        self.var_b = NormalizedValue::new(v);
-                    }
-                }
-                MathOscillatorParam::ParamC => {
-                    if let Some(v) = value.as_float() {
-                        self.var_c = NormalizedValue::new(v);
-                    }
-                }
-                MathOscillatorParam::Level => {
-                    if let Some(l) = value.as_float() {
-                        self.level = NormalizedValue::new(l);
-                    }
-                }
+                MathOscillatorParam::ParamA(v) => self.var_a = v,
+                MathOscillatorParam::ParamB(v) => self.var_b = v,
+                MathOscillatorParam::ParamC(v) => self.var_c = v,
+                MathOscillatorParam::Level(l) => self.level = l,
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::MathOscillator(math_param) = param {
-            match math_param {
-                MathOscillatorParam::Algorithm => Some(TypedValue::MathAlgo(self.algo)),
-                MathOscillatorParam::Frequency => Some(TypedValue::Float(self.frequency.as_f32())),
-                MathOscillatorParam::ParamA => Some(TypedValue::Float(self.var_a.as_f32())),
-                MathOscillatorParam::ParamB => Some(TypedValue::Float(self.var_b.as_f32())),
-                MathOscillatorParam::ParamC => Some(TypedValue::Float(self.var_c.as_f32())),
-                MathOscillatorParam::Level => Some(TypedValue::Float(self.level.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::MathOscillator(math_param) = param {
+            Some(match math_param {
+                MathOscillatorParam::Algorithm(_) => self.algo.index() as f32,
+                MathOscillatorParam::Frequency(_) => self.frequency.as_f32(),
+                MathOscillatorParam::ParamA(_) => self.var_a.as_f32(),
+                MathOscillatorParam::ParamB(_) => self.var_b.as_f32(),
+                MathOscillatorParam::ParamC(_) => self.var_c.as_f32(),
+                MathOscillatorParam::Level(_) => self.level.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::MathOscillator(MathOscillatorParam::Algorithm(self.algo)),
+            Param::MathOscillator(MathOscillatorParam::Frequency(self.frequency)),
+            Param::MathOscillator(MathOscillatorParam::ParamA(self.var_a)),
+            Param::MathOscillator(MathOscillatorParam::ParamB(self.var_b)),
+            Param::MathOscillator(MathOscillatorParam::ParamC(self.var_c)),
+            Param::MathOscillator(MathOscillatorParam::Level(self.level)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -561,10 +576,6 @@ impl VoiceModule for MathOscillator {
 
     fn note_off(&mut self) {
         // Most algorithms don't need special handling
-    }
-
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {
@@ -601,8 +612,12 @@ mod tests {
             let mut has_nonzero = false;
             for _ in 0..100 {
                 let sample = osc.generate_sample();
-                assert!(sample >= -2.0 && sample <= 2.0,
-                    "Algorithm {:?} produced out-of-range sample: {}", algo, sample);
+                assert!(
+                    sample >= -2.0 && sample <= 2.0,
+                    "Algorithm {:?} produced out-of-range sample: {}",
+                    algo,
+                    sample
+                );
                 if sample.abs() > 0.001 {
                     has_nonzero = true;
                 }

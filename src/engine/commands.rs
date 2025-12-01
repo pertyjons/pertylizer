@@ -11,7 +11,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::part::{MidiChannel, PartId, SynthPart};
-use super::typed_params::{ModuleType, TypedParam, TypedValue};
+use super::typed_params::{ModuleType, Param};
 use crate::types::{BipolarValue, Bpm, Gain, NormalizedValue, Seconds};
 
 /// Unique identifier for a module instance.
@@ -318,17 +318,17 @@ pub enum EngineCommand {
     // === Parameter control ===
     /// Set a voice module parameter using the type-safe API.
     /// Use VoiceModule to identify which module within the voice to update.
+    /// The Param contains both the parameter type and its value.
     SetVoiceParameter {
         target: VoiceModule,
-        param: super::typed_params::TypedParam,
-        value: super::typed_params::TypedValue,
+        param: Param,
     },
-    
+
     /// Set a parameter on a module in the global graph.
+    /// The Param contains both the parameter type and its value.
     SetModuleParameter {
         module_id: ModuleId,
-        param: super::typed_params::TypedParam,
-        value: super::typed_params::TypedValue,
+        param: Param,
     },
 
     // === Module control ===
@@ -423,10 +423,10 @@ pub enum EngineCommand {
     },
     
     /// Set an effect parameter using type-safe API.
+    /// The Param contains both the parameter type and its value.
     SetEffectParameter {
         effect_type: EffectType,
-        param: super::typed_params::TypedParam,
-        value: super::typed_params::TypedValue,
+        param: Param,
     },
     
     /// Enable or disable an effect.
@@ -545,10 +545,10 @@ pub enum EngineEvent {
     VoiceCount(u32),
 
     /// Module parameter changed (echo back).
+    /// The Param contains both the parameter type and its value.
     ParameterChanged {
         module: ModuleId,
-        param: TypedParam,
-        value: TypedValue,
+        param: Param,
     },
 
     /// CPU usage.
@@ -642,18 +642,16 @@ impl std::fmt::Debug for EngineCommand {
                     .field("channel", channel)
                     .finish()
             }
-            Self::SetVoiceParameter { target, param, value } => {
+            Self::SetVoiceParameter { target, param } => {
                 f.debug_struct("SetVoiceParameter")
                     .field("target", target)
                     .field("param", param)
-                    .field("value", value)
                     .finish()
             }
-            Self::SetModuleParameter { module_id, param, value } => {
+            Self::SetModuleParameter { module_id, param } => {
                 f.debug_struct("SetModuleParameter")
                     .field("module_id", module_id)
                     .field("param", param)
-                    .field("value", value)
                     .finish()
             }
             Self::AddModuleInstance { id, .. } => {
@@ -714,11 +712,10 @@ impl std::fmt::Debug for EngineCommand {
             Self::RemoveEffect { id } => {
                 f.debug_struct("RemoveEffect").field("id", id).finish()
             }
-            Self::SetEffectParameter { effect_type, param, value } => {
+            Self::SetEffectParameter { effect_type, param } => {
                 f.debug_struct("SetEffectParameter")
                     .field("effect_type", effect_type)
                     .field("param", param)
-                    .field("value", value)
                     .finish()
             }
             Self::SetEffectEnabled { effect_type, enabled } => {

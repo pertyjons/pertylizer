@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam, ModuleType};
+use crate::engine::typed_params::{Param, OscillatorParam, FmMode, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents, Phase, NormalizedValue, SampleRate};
+use crate::types::{Hertz, Cents, Gain, Phase, NormalizedValue, SampleRate, Semitones};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -21,9 +21,11 @@ pub struct Oscillator {
     waveform: Waveform,
     frequency: Hertz,
     detune: Cents,
+    octave: Semitones,
     pulse_width: NormalizedValue,
-    level: NormalizedValue,
-    fm_mode: FmMode,    // Linear or Exponential FM
+    level: Gain,
+    phase_offset: Phase,
+    fm_mode: FmMode,
 
     // State
     phase: Phase,
@@ -33,22 +35,16 @@ pub struct Oscillator {
     output_buffer: AudioBuffer,
 }
 
-/// FM mode selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FmMode {
-    #[default]
-    Exponential,
-    Linear,
-}
-
 impl Oscillator {
     pub fn new() -> Self {
         Self {
             waveform: Waveform::Sawtooth,
             frequency: Hertz::A4,
             detune: Cents::ZERO,
+            octave: Semitones::ZERO,
             pulse_width: NormalizedValue::CENTER,
-            level: NormalizedValue::MAX,
+            level: Gain::UNITY,
+            phase_offset: Phase::ZERO,
             fm_mode: FmMode::Exponential,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
@@ -56,12 +52,11 @@ impl Oscillator {
         }
     }
 
-    /// Calculate the actual frequency including detune.
-    /// Uses type-safe Cents for the detune calculation.
+    /// Calculate the actual frequency including detune and octave.
     #[inline]
     fn actual_frequency(&self) -> Hertz {
-        // Use Cents type for type-safe interval calculation
-        self.detune.apply(self.frequency)
+        let octave_mult = 2.0f32.powf(self.octave.as_f32() / 12.0);
+        Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult)
     }
 
     /// PolyBLEP correction for band-limited waveforms.
@@ -81,17 +76,13 @@ impl Oscillator {
     /// Generate a single sample with optional frequency and phase modulation.
     #[inline]
     fn generate_sample(&mut self, freq_mod: f32, phase_mod: f32, effective_pulse_width: NormalizedValue) -> f32 {
-        // Apply frequency modulation based on mode
         let base_freq = self.actual_frequency();
         let freq = match self.fm_mode {
             FmMode::Exponential => {
-                // Exponential FM (1V/octave style): freq_mod of 1.0 = +2 octaves
                 let freq_mult = (freq_mod * 2.0).exp2();
                 Hertz::new(base_freq.as_f32() * freq_mult)
             }
             FmMode::Linear => {
-                // Linear FM: add Hz directly (scaled by base frequency)
-                // This gives stable harmonic ratios across the keyboard
                 Hertz::new((base_freq.as_f32() + freq_mod * base_freq.as_f32() * 4.0).max(1.0))
             }
         };
@@ -100,35 +91,21 @@ impl Oscillator {
         let phase = self.phase.advance(phase_mod).as_f32();
 
         let sample = match self.waveform {
-            Waveform::Sine => {
-                (phase * TAU).sin()
-            }
-
-            Waveform::Triangle => {
-                // Use Phase::triangle() for cleaner code
-                Phase::new_unchecked(phase).triangle()
-            }
-
+            Waveform::Sine => (phase * TAU).sin(),
+            Waveform::Triangle => Phase::new_unchecked(phase).triangle(),
             Waveform::Sawtooth => {
-                // Use Phase::sawtooth() with PolyBLEP anti-aliasing
                 let mut saw = Phase::new_unchecked(phase).sawtooth();
                 saw -= self.poly_blep(phase, dt);
                 saw
             }
-
             Waveform::Square => {
-                // Use Phase::pulse() for square wave (width = 0.5)
                 let mut sq = Phase::new_unchecked(phase).pulse(NormalizedValue::CENTER);
-                // PolyBLEP at both edges
                 sq += self.poly_blep(phase, dt);
                 sq -= self.poly_blep((phase + 0.5).rem_euclid(1.0), dt);
                 sq
             }
-
             Waveform::Pulse => {
-                // Use Phase::pulse() with variable width
                 let mut pulse = Phase::new_unchecked(phase).pulse(effective_pulse_width);
-                // PolyBLEP at both edges
                 let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
                 pulse += self.poly_blep(phase, dt);
                 pulse -= self.poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
@@ -136,15 +113,12 @@ impl Oscillator {
             }
         };
 
-        // Advance phase
         self.phase = self.phase.advance(dt);
-
         sample * self.level.as_f32()
     }
 
-    /// Set frequency from MIDI note using type-safe conversion.
+    /// Set frequency from MIDI note.
     pub fn set_note(&mut self, note: u8) {
-        // Uses Hertz::from_midi for type-safe frequency conversion
         self.frequency = Hertz::from_midi(note);
     }
 
@@ -172,10 +146,9 @@ impl Describable for Oscillator {
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")
             .tag("source")
-            // Parameters
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::Oscillator(OscillatorParam::Waveform),
+                    Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)),
                     "Waveform",
                     Waveform::to_choices(),
                 )
@@ -183,53 +156,59 @@ impl Describable for Oscillator {
                 .widget(WidgetHint::WaveformSelector),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Oscillator(OscillatorParam::Frequency), "Frequency")
-                    .description("Base frequency")
-                    .range(20.0, 20000.0)
-                    .default(440.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::FrequencySlider)
-                    .curve(ResponseCurve::Logarithmic),
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::Frequency(Hertz::A4)),
+                    "Frequency",
+                )
+                .description("Base frequency")
+                .range(20.0, 20000.0)
+                .default(440.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::FrequencySlider)
+                .curve(ResponseCurve::Logarithmic),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Oscillator(OscillatorParam::Detune), "Detune")
-                    .description("Fine tune in cents")
-                    .range(-100.0, 100.0)
-                    .default(0.0)
-                    .unit(ParameterUnit::Cents)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::Detune(Cents::ZERO)),
+                    "Detune",
+                )
+                .description("Fine tune in cents")
+                .range(-100.0, 100.0)
+                .default(0.0)
+                .unit(ParameterUnit::Cents)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Oscillator(OscillatorParam::PulseWidth), "Pulse Width")
-                    .description("Pulse width for pulse waveform")
-                    .range(0.01, 0.99)
-                    .default(0.5)
-                    .unit(ParameterUnit::Percent)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::PulseWidth(NormalizedValue::CENTER)),
+                    "Pulse Width",
+                )
+                .description("Pulse width for pulse waveform")
+                .range(0.01, 0.99)
+                .default(0.5)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Oscillator(OscillatorParam::Level), "Level")
-                    .description("Output level")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .unit(ParameterUnit::None)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::Level(Gain::UNITY)),
+                    "Level",
+                )
+                .description("Output level")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .unit(ParameterUnit::None)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::Oscillator(OscillatorParam::FmMode),
+                    Param::Oscillator(OscillatorParam::FmMode(FmMode::Exponential)),
                     "FM Mode",
-                    vec![
-                        ChoiceOption::new("exponential", "Exponential")
-                            .with_description("1V/octave style FM (pitch tracking)"),
-                        ChoiceOption::new("linear", "Linear")
-                            .with_description("Hz-based FM (stable harmonics)"),
-                    ],
+                    FmMode::to_choices(),
                 )
                 .description("FM input mode: Exponential (1V/oct) or Linear (Hz)")
                 .widget(WidgetHint::Dropdown),
             )
-            // Ports
             .port(PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"))
             .port(PortDescriptor::control_input("pm", "PM").description("Phase modulation input"))
             .port(PortDescriptor::control_input("pwm", "PWM").description("Pulse width modulation"))
@@ -248,7 +227,6 @@ impl VoiceModule for Oscillator {
         self.sample_rate = SampleRate::new(context.sample_rate);
         self.output_buffer.resize(context.samples);
 
-        // Get modulation inputs
         let fm_input = inputs.get("fm");
         let pm_input = inputs.get("pm");
         let pwm_input = inputs.get("pwm");
@@ -257,17 +235,14 @@ impl VoiceModule for Oscillator {
         let mut prev_sync = 0.0f32;
 
         for i in 0..context.samples {
-            // Get FM modulation amount (normalized -1 to 1)
             let fm = fm_input.map(|f| f[i]).unwrap_or(0.0);
 
-            // Calculate effective pulse width with PWM modulation (without modifying base parameter)
             let effective_pulse_width = if let Some(pwm) = pwm_input {
                 NormalizedValue::new((self.pulse_width.as_f32() + pwm[i] * 0.49).clamp(0.01, 0.99))
             } else {
                 self.pulse_width
             };
 
-            // Hard sync - reset phase on rising edge
             if let Some(sync) = sync_input {
                 let sync_val = sync[i];
                 if sync_val > 0.5 && prev_sync <= 0.5 {
@@ -276,84 +251,60 @@ impl VoiceModule for Oscillator {
                 prev_sync = sync_val;
             }
 
-            // Phase modulation
             let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
-
-            // Generate sample with FM, PM, and effective pulse width
             self.output_buffer[i] = self.generate_sample(fm, pm, effective_pulse_width);
         }
 
-        // Copy to output
         if let Some(out) = outputs.get_mut("out") {
             out.copy_from(&self.output_buffer);
         }
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Oscillator(osc_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Oscillator(osc_param) = param {
             match osc_param {
-                OscillatorParam::Waveform => {
-                    if let TypedValue::Waveform(w) = value {
-                        // Direct assignment - same type now!
-                        self.waveform = w;
-                    }
-                }
-                OscillatorParam::Frequency => {
-                    if let Some(f) = value.as_float() {
-                        self.frequency = Hertz::new(f.clamp(20.0, 20000.0));
-                    }
-                }
-                OscillatorParam::Detune => {
-                    if let Some(d) = value.as_float() {
-                        self.detune = Cents::new(d).clamp_detune();
-                    }
-                }
-                OscillatorParam::PulseWidth => {
-                    if let Some(pw) = value.as_float() {
-                        self.pulse_width = NormalizedValue::new(pw.clamp(0.01, 0.99));
-                    }
-                }
-                OscillatorParam::Level => {
-                    if let Some(l) = value.as_float() {
-                        self.level = NormalizedValue::new(l);
-                    }
-                }
-                OscillatorParam::Octave => {
-                    if let Some(o) = value.as_int() {
-                        self.frequency = self.frequency.octave(o);
-                    }
-                }
-                OscillatorParam::Phase => {
-                    if let Some(p) = value.as_float() {
-                        self.phase = Phase::new(p);
-                    }
-                }
-                OscillatorParam::FmMode => {
-                    if let Some(i) = value.as_int() {
-                        self.fm_mode = if i == 0 { FmMode::Exponential } else { FmMode::Linear };
-                    }
-                }
+                OscillatorParam::Waveform(w) => self.waveform = w,
+                OscillatorParam::Frequency(f) => self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0)),
+                OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
+                OscillatorParam::Octave(o) => self.octave = o,
+                OscillatorParam::PulseWidth(pw) => self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99)),
+                OscillatorParam::Level(l) => self.level = l,
+                OscillatorParam::Phase(p) => self.phase_offset = p,
+                OscillatorParam::FmMode(m) => self.fm_mode = m,
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Oscillator(osc_param) = param {
-            match osc_param {
-                OscillatorParam::Waveform => Some(TypedValue::Waveform(self.waveform)),
-                OscillatorParam::Frequency => Some(TypedValue::Float(self.frequency.as_f32())),
-                OscillatorParam::Detune => Some(TypedValue::Float(self.detune.as_f32())),
-                OscillatorParam::PulseWidth => Some(TypedValue::Float(self.pulse_width.as_f32())),
-                OscillatorParam::Level => Some(TypedValue::Float(self.level.as_f32())),
-                OscillatorParam::Octave => Some(TypedValue::Int(0)),
-                OscillatorParam::Phase => Some(TypedValue::Float(self.phase.as_f32())),
-                OscillatorParam::FmMode => Some(TypedValue::Int(if self.fm_mode == FmMode::Exponential { 0 } else { 1 })),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Oscillator(osc_param) = param {
+            Some(match osc_param {
+                OscillatorParam::Waveform(_) => self.waveform.index() as f32,
+                OscillatorParam::Frequency(_) => self.frequency.as_f32(),
+                OscillatorParam::Detune(_) => self.detune.as_f32(),
+                OscillatorParam::Octave(_) => self.octave.as_f32(),
+                OscillatorParam::PulseWidth(_) => self.pulse_width.as_f32(),
+                OscillatorParam::Level(_) => self.level.as_f32(),
+                OscillatorParam::Phase(_) => self.phase_offset.as_f32(),
+                OscillatorParam::FmMode(_) => self.fm_mode.index() as f32,
+            })
         } else {
             None
         }
     }
-    
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Oscillator(OscillatorParam::Waveform(self.waveform)),
+            Param::Oscillator(OscillatorParam::Frequency(self.frequency)),
+            Param::Oscillator(OscillatorParam::Detune(self.detune)),
+            Param::Oscillator(OscillatorParam::Octave(self.octave)),
+            Param::Oscillator(OscillatorParam::PulseWidth(self.pulse_width)),
+            Param::Oscillator(OscillatorParam::Level(self.level)),
+            Param::Oscillator(OscillatorParam::Phase(self.phase_offset)),
+            Param::Oscillator(OscillatorParam::FmMode(self.fm_mode)),
+        ]
+    }
+
     fn module_type(&self) -> ModuleType {
         ModuleType::Oscillator
     }
@@ -364,13 +315,9 @@ impl VoiceModule for Oscillator {
 
     fn note_on(&mut self, note: u8, _velocity: f32) {
         self.set_note(note);
-        // Optionally reset phase on note on
-        // self.phase = 0.0;
     }
 
-    fn note_off(&mut self) {
-        // Oscillator doesn't need to do anything on note off
-    }
+    fn note_off(&mut self) {}
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = SampleRate::new(sample_rate);
@@ -409,7 +356,6 @@ mod tests {
         osc.frequency = Hertz::new(1000.0);
         osc.sample_rate = SampleRate::DVD_QUALITY;
 
-        // Generate a few samples
         let effective_pulse_width = osc.pulse_width;
         for _ in 0..100 {
             let sample = osc.generate_sample(0.0, 0.0, effective_pulse_width);

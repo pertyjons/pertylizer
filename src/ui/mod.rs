@@ -5,7 +5,7 @@
 //! be implemented by different UI frameworks (egui, iced, vizia, etc.).
 
 use crate::engine::{EngineHandle, ModuleId};
-use crate::engine::typed_params::{TypedParam, TypedValue};
+use crate::engine::typed_params::Param;
 use crate::modules::{ModuleDescriptor, ParameterDescriptor, WidgetHint};
 use crate::types::{Gain, NormalizedValue};
 
@@ -23,10 +23,10 @@ pub enum UiEvent {
     /// All notes off.
     AllNotesOff,
     /// Change a parameter value.
+    /// The Param carries both the parameter type and its value.
     ParameterChange {
         module: ModuleId,
-        param: TypedParam,
-        value: TypedValue,
+        param: Param,
     },
     /// Set master volume.
     SetMasterVolume(Gain),
@@ -157,7 +157,7 @@ impl UiState {
             UiEvent::AllNotesOff => {
                 self.handle.send(crate::engine::EngineCommand::AllNotesOff);
             }
-            UiEvent::ParameterChange { module: _, param: _, value: _ } => {
+            UiEvent::ParameterChange { module: _, param: _ } => {
                 // Legacy parameter change - not supported
                 // Use typed API: SetVoiceParameter or SetEffectParameter
                 eprintln!("Warning: Legacy ParameterChange event not supported");
@@ -196,11 +196,12 @@ impl UiState {
 /// Helper for building parameter widgets from descriptors.
 pub struct ParameterWidget<'a> {
     pub descriptor: &'a ParameterDescriptor,
-    pub current_value: TypedValue,
+    /// Current value as f32 (use Param::as_f32() to get this).
+    pub current_value: f32,
 }
 
 impl<'a> ParameterWidget<'a> {
-    pub fn new(descriptor: &'a ParameterDescriptor, current_value: TypedValue) -> Self {
+    pub fn new(descriptor: &'a ParameterDescriptor, current_value: f32) -> Self {
         Self {
             descriptor,
             current_value,
@@ -209,37 +210,26 @@ impl<'a> ParameterWidget<'a> {
 
     /// Get the current value as a normalized float (0.0 - 1.0).
     pub fn normalized_value(&self) -> f32 {
-        match &self.current_value {
-            TypedValue::Float(v) => {
-                (v - self.descriptor.min) / (self.descriptor.max - self.descriptor.min)
-            }
-            TypedValue::Int(v) => {
-                (*v as f32 - self.descriptor.min) / (self.descriptor.max - self.descriptor.min)
-            }
-            TypedValue::Bool(v) => if *v { 1.0 } else { 0.0 },
-            // For enum values, return 0.0 as they should be handled separately
-            _ => 0.0,
-        }
+        (self.current_value - self.descriptor.min)
+            / (self.descriptor.max - self.descriptor.min)
     }
 
-    /// Convert a normalized value back to the parameter's actual value.
-    pub fn denormalize(&self, normalized: f32) -> TypedValue {
+    /// Convert a normalized value back to the parameter's actual value (as f32).
+    pub fn denormalize(&self, normalized: f32) -> f32 {
         let clamped = normalized.clamp(0.0, 1.0);
 
         if self.descriptor.choices.is_some() {
-            // For choice parameters, return as Int index
+            // For choice parameters, return as index
             let choices = self.descriptor.choices.as_ref().unwrap();
             let index = (clamped * (choices.len() - 1) as f32).round() as usize;
-            let index = index.min(choices.len() - 1);
-            TypedValue::Int(index as i32)
+            index.min(choices.len() - 1) as f32
         } else {
             // For continuous parameters, apply response curve
-            let value = self.descriptor.response_curve.denormalize(
+            self.descriptor.response_curve.denormalize(
                 clamped,
                 self.descriptor.min,
                 self.descriptor.max,
-            );
-            TypedValue::Float(value)
+            )
         }
     }
 
@@ -265,51 +255,40 @@ impl<'a> ParameterWidget<'a> {
 
     /// Format the current value as a display string.
     pub fn format_value(&self) -> String {
-        match &self.current_value {
-            TypedValue::Float(v) => {
-                let unit = match self.descriptor.unit {
-                    crate::modules::ParameterUnit::Hertz => " Hz",
-                    crate::modules::ParameterUnit::Decibels => " dB",
-                    crate::modules::ParameterUnit::Percent => "%",
-                    crate::modules::ParameterUnit::Seconds => " s",
-                    crate::modules::ParameterUnit::Milliseconds => " ms",
-                    crate::modules::ParameterUnit::Semitones => " st",
-                    crate::modules::ParameterUnit::Cents => " cents",
-                    crate::modules::ParameterUnit::Octaves => " oct",
-                    crate::modules::ParameterUnit::Beats => " beats",
-                    crate::modules::ParameterUnit::BeatsPerMinute => " BPM",
-                    crate::modules::ParameterUnit::Samples => " smp",
-                    crate::modules::ParameterUnit::Ratio => ":1",
-                    crate::modules::ParameterUnit::None => "",
-                };
+        // Check if it's a choice parameter
+        if let Some(choices) = &self.descriptor.choices {
+            let idx = self.current_value as usize;
+            if idx < choices.len() {
+                return choices[idx].name.clone();
+            }
+            return format!("{}", idx);
+        }
 
-                // Format based on range
-                if self.descriptor.max - self.descriptor.min > 100.0 {
-                    format!("{:.0}{}", v, unit)
-                } else if self.descriptor.max - self.descriptor.min > 10.0 {
-                    format!("{:.1}{}", v, unit)
-                } else {
-                    format!("{:.2}{}", v, unit)
-                }
-            }
-            TypedValue::Int(v) => {
-                // For choice parameters, look up the name
-                if let Some(choices) = &self.descriptor.choices {
-                    let idx = *v as usize;
-                    if idx < choices.len() {
-                        return choices[idx].name.clone();
-                    }
-                }
-                format!("{}", v)
-            }
-            TypedValue::Bool(v) => if *v { "On".to_string() } else { "Off".to_string() },
-            TypedValue::Waveform(w) => format!("{:?}", w),
-            TypedValue::LfoWaveform(w) => format!("{:?}", w),
-            TypedValue::FilterMode(m) => format!("{:?}", m),
-            TypedValue::DelayMode(m) => format!("{:?}", m),
-            TypedValue::DistortionMode(m) => format!("{:?}", m),
-            TypedValue::LoopMode(m) => format!("{:?}", m),
-            TypedValue::MathAlgo(a) => format!("{:?}", a),
+        // Format float value with appropriate unit
+        let v = self.current_value;
+        let unit = match self.descriptor.unit {
+            crate::modules::ParameterUnit::Hertz => " Hz",
+            crate::modules::ParameterUnit::Decibels => " dB",
+            crate::modules::ParameterUnit::Percent => "%",
+            crate::modules::ParameterUnit::Seconds => " s",
+            crate::modules::ParameterUnit::Milliseconds => " ms",
+            crate::modules::ParameterUnit::Semitones => " st",
+            crate::modules::ParameterUnit::Cents => " cents",
+            crate::modules::ParameterUnit::Octaves => " oct",
+            crate::modules::ParameterUnit::Beats => " beats",
+            crate::modules::ParameterUnit::BeatsPerMinute => " BPM",
+            crate::modules::ParameterUnit::Samples => " smp",
+            crate::modules::ParameterUnit::Ratio => ":1",
+            crate::modules::ParameterUnit::None => "",
+        };
+
+        // Format based on range
+        if self.descriptor.max - self.descriptor.min > 100.0 {
+            format!("{:.0}{}", v, unit)
+        } else if self.descriptor.max - self.descriptor.min > 10.0 {
+            format!("{:.1}{}", v, unit)
+        } else {
+            format!("{:.2}{}", v, unit)
         }
     }
 }

@@ -7,8 +7,8 @@
 //!
 //! ## Parameter Format
 //!
-//! Parameters use typed values that map directly to the engine's TypedValue system:
-//! - Waveforms: `"sine"`, `"triangle"`, `"sawtooth"`, `"square"`, `"pulse"`, `"noise"`
+//! Parameters are stored as typed values that map to the engine's Param system:
+//! - Waveforms: `"sine"`, `"triangle"`, `"sawtooth"`, `"square"`, `"pulse"`
 //! - LFO Waveforms: `"sine"`, `"triangle"`, `"sawtooth"`, `"square"`, `"sample_and_hold"`
 //! - Filter Modes: `"lowpass"`, `"highpass"`, `"bandpass"`, `"notch"`, `"peak"`
 //! - Delay Modes: `"mono"`, `"stereo"`, `"ping_pong"`

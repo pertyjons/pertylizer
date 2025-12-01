@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::engine::ModuleId;
-use crate::engine::typed_params::{ModuleType, TypedParam, TypedValue};
+use crate::engine::typed_params::{ModuleType, Param};
 use crate::modules::core::*;
 
 /// A connection between two ports.
@@ -266,14 +266,14 @@ impl ModuleGraph {
     }
 
     /// Set a parameter on a module.
-    pub fn set_param(&mut self, module: ModuleId, param: TypedParam, value: TypedValue) {
+    pub fn set_param(&mut self, module: ModuleId, param: Param) {
         if let Some(node) = self.nodes.get_mut(&module) {
-            node.module.set_param(param, value);
+            node.module.set_param(param);
         }
     }
 
     /// Get a parameter from a module.
-    pub fn get_param(&self, module: ModuleId, param: TypedParam) -> Option<TypedValue> {
+    pub fn get_param(&self, module: ModuleId, param: &Param) -> Option<f32> {
         self.nodes.get(&module)?.module.get_param(param)
     }
 

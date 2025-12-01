@@ -1,16 +1,15 @@
 //! Type-safe parameter system for the modular synthesizer.
 //!
-//! This module provides strongly-typed parameters that prevent
-//! common errors like sending the wrong parameter to the wrong module.
+//! This module provides strongly-typed parameters where each parameter
+//! variant carries its properly typed value (e.g., `Frequency(Hertz)`).
 //!
 //! # Design Philosophy
 //!
-//! Instead of a flat `ParameterId` enum, we use nested enums that
-//! encode both the module type and the parameter in the type system.
-//!
-//! This means the compiler will catch errors like:
-//! - Sending `OscillatorParam::Waveform` to a Filter module
-//! - Using a string "sine" instead of `Waveform::Sine`
+//! Each parameter is a data-carrying enum variant. This means:
+//! - Type safety: Can't send wrong parameter to wrong module
+//! - Value safety: Values are wrapped in domain types (Hertz, Gain, etc.)
+//! - GUI compatibility: `as_f32()` and `with_f32()` for sliders
+//! - Comparison: `same_kind()` to compare param types ignoring values
 
 mod effects;
 mod envelopes;
@@ -35,9 +34,9 @@ pub use modules::{
     AmplifierParam, GranularParam, LevelMeterParam, LoopMode, MixerParam, OscilloscopeParam,
     SamplePlayerParam,
 };
-pub use noise::NoiseParam;
-pub use oscillators::{MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
-pub use sub_osc::SubOscParam;
+pub use noise::{NoiseParam, NoiseType};
+pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
+pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 
 // ============================================================================
 // MODULE TYPE ENUM
@@ -201,15 +200,19 @@ impl ModuleType {
 }
 
 // ============================================================================
-// UNIFIED PARAMETER TYPE
+// UNIFIED PARAMETER TYPE (with embedded values)
 // ============================================================================
 
-/// A type-safe parameter identifier that encodes both module type and parameter.
+/// A type-safe parameter with its value embedded.
 ///
-/// This is the main type used throughout the system. The nested structure ensures
-/// that you can't accidentally send an oscillator parameter to a filter module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TypedParam {
+/// Each variant carries a module-specific parameter which itself contains
+/// the properly typed value. For example:
+/// - `Param::Oscillator(OscillatorParam::Frequency(Hertz::new(440.0)))`
+/// - `Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0)))`
+///
+/// This design eliminates the need for separate ID and value types.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Param {
     Oscillator(OscillatorParam),
     MathOscillator(MathOscillatorParam),
     SubOsc(SubOscParam),
@@ -233,7 +236,44 @@ pub enum TypedParam {
     LevelMeter(LevelMeterParam),
 }
 
-impl TypedParam {
+impl Param {
+    /// Check if two parameters are the same kind (ignoring values).
+    ///
+    /// This is useful for finding/updating parameters in a list.
+    /// ```ignore
+    /// let params: Vec<Param> = get_params();
+    /// let target = Param::Oscillator(OscillatorParam::frequency_default());
+    /// if let Some(p) = params.iter().find(|p| p.same_kind(&target)) {
+    ///     // Found the frequency parameter
+    /// }
+    /// ```
+    pub fn same_kind(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Oscillator(a), Self::Oscillator(b)) => a.same_kind(b),
+            (Self::MathOscillator(a), Self::MathOscillator(b)) => a.same_kind(b),
+            (Self::SubOsc(a), Self::SubOsc(b)) => a.same_kind(b),
+            (Self::Noise(a), Self::Noise(b)) => a.same_kind(b),
+            (Self::Filter(a), Self::Filter(b)) => a.same_kind(b),
+            (Self::Envelope(a), Self::Envelope(b)) => a.same_kind(b),
+            (Self::Lfo(a), Self::Lfo(b)) => a.same_kind(b),
+            (Self::Amplifier(a), Self::Amplifier(b)) => a.same_kind(b),
+            (Self::Mixer(a), Self::Mixer(b)) => a.same_kind(b),
+            (Self::Delay(a), Self::Delay(b)) => a.same_kind(b),
+            (Self::Reverb(a), Self::Reverb(b)) => a.same_kind(b),
+            (Self::Distortion(a), Self::Distortion(b)) => a.same_kind(b),
+            (Self::Chorus(a), Self::Chorus(b)) => a.same_kind(b),
+            (Self::Phaser(a), Self::Phaser(b)) => a.same_kind(b),
+            (Self::Flanger(a), Self::Flanger(b)) => a.same_kind(b),
+            (Self::Compressor(a), Self::Compressor(b)) => a.same_kind(b),
+            (Self::Eq(a), Self::Eq(b)) => a.same_kind(b),
+            (Self::SamplePlayer(a), Self::SamplePlayer(b)) => a.same_kind(b),
+            (Self::Granular(a), Self::Granular(b)) => a.same_kind(b),
+            (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
+            (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
+            _ => false,
+        }
+    }
+
     /// Get the module type this parameter belongs to.
     pub fn module_type(&self) -> ModuleType {
         match self {
@@ -264,269 +304,82 @@ impl TypedParam {
     /// Get the parameter name for display.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Oscillator(p) => match p {
-                OscillatorParam::Waveform => "Waveform",
-                OscillatorParam::Frequency => "Frequency",
-                OscillatorParam::Detune => "Detune",
-                OscillatorParam::Octave => "Octave",
-                OscillatorParam::PulseWidth => "Pulse Width",
-                OscillatorParam::Level => "Level",
-                OscillatorParam::Phase => "Phase",
-                OscillatorParam::FmMode => "FM Mode",
-            },
-            Self::MathOscillator(p) => match p {
-                MathOscillatorParam::Algorithm => "Algorithm",
-                MathOscillatorParam::Frequency => "Frequency",
-                MathOscillatorParam::ParamA => "Param A",
-                MathOscillatorParam::ParamB => "Param B",
-                MathOscillatorParam::ParamC => "Param C",
-                MathOscillatorParam::Level => "Level",
-            },
-            Self::SubOsc(p) => match p {
-                SubOscParam::Waveform => "Waveform",
-                SubOscParam::Octave => "Octave",
-                SubOscParam::Level => "Level",
-            },
-            Self::Noise(p) => match p {
-                NoiseParam::Type => "Type",
-                NoiseParam::Level => "Level",
-            },
-            Self::Filter(p) => match p {
-                FilterParam::Mode => "Mode",
-                FilterParam::Cutoff => "Cutoff",
-                FilterParam::Resonance => "Resonance",
-                FilterParam::KeyTracking => "Key Tracking",
-                FilterParam::Drive => "Drive",
-                FilterParam::EnvAmount => "Env Amount",
-            },
-            Self::Envelope(p) => match p {
-                EnvelopeParam::Attack => "Attack",
-                EnvelopeParam::Decay => "Decay",
-                EnvelopeParam::Sustain => "Sustain",
-                EnvelopeParam::Release => "Release",
-                EnvelopeParam::AttackCurve => "Attack Curve",
-                EnvelopeParam::DecayCurve => "Decay Curve",
-                EnvelopeParam::ReleaseCurve => "Release Curve",
-                EnvelopeParam::VelocitySensitivity => "Velocity Sens",
-            },
-            Self::Lfo(p) => match p {
-                LfoParam::Waveform => "Waveform",
-                LfoParam::Rate => "Rate",
-                LfoParam::Depth => "Depth",
-                LfoParam::Phase => "Phase",
-                LfoParam::TempoSync => "Tempo Sync",
-                LfoParam::SyncDivision => "Division",
-                LfoParam::Retrigger => "Retrigger",
-            },
-            Self::Amplifier(p) => match p {
-                AmplifierParam::Level => "Level",
-                AmplifierParam::Pan => "Pan",
-            },
-            Self::Mixer(p) => match p {
-                MixerParam::Input1 => "Input 1",
-                MixerParam::Input2 => "Input 2",
-                MixerParam::Input3 => "Input 3",
-                MixerParam::Input4 => "Input 4",
-                MixerParam::Master => "Master",
-                MixerParam::Mute => "Mute",
-                MixerParam::Limit => "Limiter",
-            },
-            Self::Delay(p) => match p {
-                DelayParam::Mode => "Mode",
-                DelayParam::Time => "Time",
-                DelayParam::TimeLeft => "Time L",
-                DelayParam::TimeRight => "Time R",
-                DelayParam::Feedback => "Feedback",
-                DelayParam::Mix => "Mix",
-                DelayParam::Damping => "Damping",
-                DelayParam::TempoSync => "Tempo Sync",
-                DelayParam::SyncDivision => "Division",
-            },
-            Self::Reverb(p) => match p {
-                ReverbParam::RoomSize => "Room Size",
-                ReverbParam::PreDelay => "Pre-Delay",
-                ReverbParam::Damping => "Damping",
-                ReverbParam::Width => "Width",
-                ReverbParam::Mix => "Mix",
-            },
-            Self::Distortion(p) => match p {
-                DistortionParam::Mode => "Mode",
-                DistortionParam::Drive => "Drive",
-                DistortionParam::Tone => "Tone",
-                DistortionParam::Mix => "Mix",
-            },
-            Self::Chorus(p) => match p {
-                ChorusParam::Rate => "Rate",
-                ChorusParam::Depth => "Depth",
-                ChorusParam::Delay => "Delay",
-                ChorusParam::Feedback => "Feedback",
-                ChorusParam::Mix => "Mix",
-                ChorusParam::Voices => "Voices",
-            },
-            Self::Phaser(p) => match p {
-                PhaserParam::Rate => "Rate",
-                PhaserParam::Depth => "Depth",
-                PhaserParam::Feedback => "Feedback",
-                PhaserParam::Stages => "Stages",
-                PhaserParam::CenterFreq => "Center Freq",
-                PhaserParam::Mix => "Mix",
-            },
-            Self::Flanger(p) => match p {
-                FlangerParam::Rate => "Rate",
-                FlangerParam::Depth => "Depth",
-                FlangerParam::Feedback => "Feedback",
-                FlangerParam::Delay => "Delay",
-                FlangerParam::Mix => "Mix",
-            },
-            Self::Compressor(p) => match p {
-                CompressorParam::Threshold => "Threshold",
-                CompressorParam::Ratio => "Ratio",
-                CompressorParam::Attack => "Attack",
-                CompressorParam::Release => "Release",
-                CompressorParam::Makeup => "Makeup",
-                CompressorParam::Mix => "Mix",
-            },
-            Self::Eq(p) => match p {
-                EqParam::LowFreq => "Low Freq",
-                EqParam::LowGain => "Low Gain",
-                EqParam::MidFreq => "Mid Freq",
-                EqParam::MidGain => "Mid Gain",
-                EqParam::MidQ => "Mid Q",
-                EqParam::HighFreq => "High Freq",
-                EqParam::HighGain => "High Gain",
-                EqParam::Mix => "Mix",
-            },
-            Self::SamplePlayer(p) => match p {
-                SamplePlayerParam::Speed => "Speed",
-                SamplePlayerParam::Start => "Start",
-                SamplePlayerParam::End => "End",
-                SamplePlayerParam::LoopMode => "Loop Mode",
-                SamplePlayerParam::LoopStart => "Loop Start",
-                SamplePlayerParam::LoopEnd => "Loop End",
-                SamplePlayerParam::Level => "Level",
-            },
-            Self::Granular(p) => match p {
-                GranularParam::Position => "Position",
-                GranularParam::PositionSpread => "Pos Spread",
-                GranularParam::GrainSize => "Grain Size",
-                GranularParam::Density => "Density",
-                GranularParam::Pitch => "Pitch",
-                GranularParam::PitchSpread => "Pitch Spread",
-                GranularParam::Shape => "Shape",
-                GranularParam::Spread => "Spread",
-                GranularParam::Level => "Level",
-            },
-            Self::Oscilloscope(p) => match p {
-                OscilloscopeParam::Time => "Time",
-                OscilloscopeParam::Gain => "Gain",
-                OscilloscopeParam::Trigger => "Trigger",
-                OscilloscopeParam::Frozen => "Frozen",
-            },
-            Self::LevelMeter(p) => match p {
-                LevelMeterParam::PeakHold => "Peak Hold",
-                LevelMeterParam::DecayRate => "Decay Rate",
-                LevelMeterParam::ShowRms => "Show RMS",
-            },
+            Self::Oscillator(p) => p.name(),
+            Self::MathOscillator(p) => p.name(),
+            Self::SubOsc(p) => p.name(),
+            Self::Noise(p) => p.name(),
+            Self::Filter(p) => p.name(),
+            Self::Envelope(p) => p.name(),
+            Self::Lfo(p) => p.name(),
+            Self::Amplifier(p) => p.name(),
+            Self::Mixer(p) => p.name(),
+            Self::Delay(p) => p.name(),
+            Self::Reverb(p) => p.name(),
+            Self::Distortion(p) => p.name(),
+            Self::Chorus(p) => p.name(),
+            Self::Phaser(p) => p.name(),
+            Self::Flanger(p) => p.name(),
+            Self::Compressor(p) => p.name(),
+            Self::Eq(p) => p.name(),
+            Self::SamplePlayer(p) => p.name(),
+            Self::Granular(p) => p.name(),
+            Self::Oscilloscope(p) => p.name(),
+            Self::LevelMeter(p) => p.name(),
         }
     }
-}
 
-// ============================================================================
-// TYPE-SAFE PARAMETER VALUE
-// ============================================================================
-
-/// A type-safe parameter value that uses proper enums instead of strings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum TypedValue {
-    /// Floating point value
-    Float(f32),
-    /// Integer value
-    Int(i32),
-    /// Boolean value
-    Bool(bool),
-    /// Oscillator waveform
-    Waveform(Waveform),
-    /// LFO waveform
-    LfoWaveform(LfoWaveform),
-    /// Filter mode
-    FilterMode(FilterMode),
-    /// Delay mode
-    DelayMode(DelayMode),
-    /// Distortion mode
-    DistortionMode(DistortionMode),
-    /// Loop mode
-    LoopMode(LoopMode),
-    /// Math oscillator algorithm
-    MathAlgo(MathAlgo),
-}
-
-impl TypedValue {
-    /// Get as float, converting if possible.
-    pub fn as_float(&self) -> Option<f32> {
+    /// Get the value as f32 (for GUI sliders).
+    pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Float(f) => Some(*f),
-            Self::Int(i) => Some(*i as f32),
-            Self::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
-            _ => None,
+            Self::Oscillator(p) => p.as_f32(),
+            Self::MathOscillator(p) => p.as_f32(),
+            Self::SubOsc(p) => p.as_f32(),
+            Self::Noise(p) => p.as_f32(),
+            Self::Filter(p) => p.as_f32(),
+            Self::Envelope(p) => p.as_f32(),
+            Self::Lfo(p) => p.as_f32(),
+            Self::Amplifier(p) => p.as_f32(),
+            Self::Mixer(p) => p.as_f32(),
+            Self::Delay(p) => p.as_f32(),
+            Self::Reverb(p) => p.as_f32(),
+            Self::Distortion(p) => p.as_f32(),
+            Self::Chorus(p) => p.as_f32(),
+            Self::Phaser(p) => p.as_f32(),
+            Self::Flanger(p) => p.as_f32(),
+            Self::Compressor(p) => p.as_f32(),
+            Self::Eq(p) => p.as_f32(),
+            Self::SamplePlayer(p) => p.as_f32(),
+            Self::Granular(p) => p.as_f32(),
+            Self::Oscilloscope(p) => p.as_f32(),
+            Self::LevelMeter(p) => p.as_f32(),
         }
     }
 
-    /// Get as int, converting if possible.
-    pub fn as_int(&self) -> Option<i32> {
+    /// Create the same parameter kind with a new f32 value (for GUI sliders).
+    pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Float(f) => Some(*f as i32),
-            Self::Int(i) => Some(*i),
-            Self::Bool(b) => Some(if *b { 1 } else { 0 }),
-            Self::Waveform(w) => Some(*w as i32),
-            Self::LfoWaveform(w) => Some(*w as i32),
-            Self::FilterMode(m) => Some(*m as i32),
-            Self::DelayMode(m) => Some(*m as i32),
-            Self::DistortionMode(m) => Some(*m as i32),
-            Self::LoopMode(m) => Some(*m as i32),
-            Self::MathAlgo(a) => Some(*a as i32),
+            Self::Oscillator(p) => Self::Oscillator(p.with_f32(value)),
+            Self::MathOscillator(p) => Self::MathOscillator(p.with_f32(value)),
+            Self::SubOsc(p) => Self::SubOsc(p.with_f32(value)),
+            Self::Noise(p) => Self::Noise(p.with_f32(value)),
+            Self::Filter(p) => Self::Filter(p.with_f32(value)),
+            Self::Envelope(p) => Self::Envelope(p.with_f32(value)),
+            Self::Lfo(p) => Self::Lfo(p.with_f32(value)),
+            Self::Amplifier(p) => Self::Amplifier(p.with_f32(value)),
+            Self::Mixer(p) => Self::Mixer(p.with_f32(value)),
+            Self::Delay(p) => Self::Delay(p.with_f32(value)),
+            Self::Reverb(p) => Self::Reverb(p.with_f32(value)),
+            Self::Distortion(p) => Self::Distortion(p.with_f32(value)),
+            Self::Chorus(p) => Self::Chorus(p.with_f32(value)),
+            Self::Phaser(p) => Self::Phaser(p.with_f32(value)),
+            Self::Flanger(p) => Self::Flanger(p.with_f32(value)),
+            Self::Compressor(p) => Self::Compressor(p.with_f32(value)),
+            Self::Eq(p) => Self::Eq(p.with_f32(value)),
+            Self::SamplePlayer(p) => Self::SamplePlayer(p.with_f32(value)),
+            Self::Granular(p) => Self::Granular(p.with_f32(value)),
+            Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
+            Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
         }
-    }
-}
-
-impl From<f32> for TypedValue {
-    fn from(v: f32) -> Self {
-        Self::Float(v)
-    }
-}
-
-impl From<i32> for TypedValue {
-    fn from(v: i32) -> Self {
-        Self::Int(v)
-    }
-}
-
-impl From<bool> for TypedValue {
-    fn from(v: bool) -> Self {
-        Self::Bool(v)
-    }
-}
-
-impl From<Waveform> for TypedValue {
-    fn from(v: Waveform) -> Self {
-        Self::Waveform(v)
-    }
-}
-
-impl From<LfoWaveform> for TypedValue {
-    fn from(v: LfoWaveform) -> Self {
-        Self::LfoWaveform(v)
-    }
-}
-
-impl From<FilterMode> for TypedValue {
-    fn from(v: FilterMode) -> Self {
-        Self::FilterMode(v)
-    }
-}
-
-impl From<MathAlgo> for TypedValue {
-    fn from(v: MathAlgo) -> Self {
-        Self::MathAlgo(v)
     }
 }
 
@@ -634,23 +487,35 @@ impl Port {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Hertz;
 
     #[test]
-    fn test_typed_param_module_type() {
-        let osc_param = TypedParam::Oscillator(OscillatorParam::Waveform);
+    fn test_param_module_type() {
+        let osc_param = Param::Oscillator(OscillatorParam::Waveform(Waveform::default()));
         assert_eq!(osc_param.module_type(), ModuleType::Oscillator);
 
-        let filter_param = TypedParam::Filter(FilterParam::Cutoff);
+        let filter_param = Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0)));
         assert_eq!(filter_param.module_type(), ModuleType::Filter);
     }
 
     #[test]
-    fn test_typed_value_conversion() {
-        let waveform = TypedValue::Waveform(Waveform::Sawtooth);
-        assert_eq!(waveform.as_int(), Some(2)); // Sawtooth is index 2
+    fn test_param_same_kind() {
+        let freq1 = Param::Oscillator(OscillatorParam::Frequency(Hertz::new(440.0)));
+        let freq2 = Param::Oscillator(OscillatorParam::Frequency(Hertz::new(880.0)));
+        let waveform = Param::Oscillator(OscillatorParam::Waveform(Waveform::Sine));
 
-        let float_val = TypedValue::Float(0.5);
-        assert_eq!(float_val.as_float(), Some(0.5));
+        assert!(freq1.same_kind(&freq2));
+        assert!(!freq1.same_kind(&waveform));
+    }
+
+    #[test]
+    fn test_param_as_f32_with_f32() {
+        let freq = Param::Oscillator(OscillatorParam::Frequency(Hertz::new(440.0)));
+        assert_eq!(freq.as_f32(), 440.0);
+
+        let new_freq = freq.with_f32(880.0);
+        assert_eq!(new_freq.as_f32(), 880.0);
+        assert!(freq.same_kind(&new_freq));
     }
 
     #[test]

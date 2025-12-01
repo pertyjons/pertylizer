@@ -1,5 +1,61 @@
 # Version History
 
+## [0.32.7] - 2024
+
+### Refactored - Unified Param Architecture
+
+Major refactoring of the parameter system. Replaced the dual-type system (`TypedParam` for ID + `TypedValue` for value) with a single unified `Param` type where each variant carries its own typed value.
+
+**Before:**
+```rust
+// Two separate types - risk of mismatch
+set_param(TypedParam::Oscillator(OscillatorParam::Frequency), TypedValue::Float(440.0))
+```
+
+**After:**
+```rust
+// Single type carries both identity and value
+set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(440.0))))
+```
+
+### Changed - Core Architecture
+
+- **`Param` enum** - Now data-carrying with typed values:
+  - `OscillatorParam::Frequency(Hertz)` instead of just `Frequency`
+  - `FilterParam::Cutoff(Hertz)`, `Resonance(NormalizedValue)`, `Drive(Gain)`
+  - `EnvelopeParam::Attack(Seconds)`, `Sustain(NormalizedValue)`
+  - All effect params similarly carry their domain types
+
+- **`VoiceModule` trait** (`src/modules/core.rs`):
+  - `set_param(Param)` - single argument, value embedded
+  - `get_param(&Param) -> Option<f32>` - query by param kind
+
+- **`EngineCommand`** (`src/engine/commands.rs`):
+  - `SetVoiceParameter { target, param: Param }` - no separate `value` field
+  - `SetModuleParameter { module_id, param: Param }`
+  - `SetEffectParameter { effect_type, param: Param }`
+
+- **GUI** (`src/gui/`):
+  - `RackViewResult.param_changes: Vec<(ModuleId, Param)>`
+  - `ModulePanelState.param_values: HashMap<String, f32>` (keyed by name)
+  - `param.id.with_f32(value)` creates new Param with updated value
+
+### Removed - Dead Code Cleanup
+
+- **Deleted `traits.rs`** (~640 lines) - Unused `ModuleParam` trait and `Query` enums
+- **Removed type aliases** - `TypedWaveform`, `TypedLfoWaveform` (never used)
+- **Updated comments** - Removed references to old `TypedValue` system
+
+### Technical Details
+
+- Type safety: Impossible to send wrong value type to parameter
+- Domain types: `Hertz`, `Gain`, `Seconds`, `NormalizedValue` enforced at compile time
+- `same_kind()` method for comparing param types ignoring values
+- `as_f32()` / `with_f32()` for GUI slider compatibility
+- All 238 unit tests passing
+
+---
+
 ## [0.32.6] - 2024
 
 ### Fixed - Dropdown Parameter Synchronization

@@ -11,7 +11,6 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use crate::engine::typed_params::{TypedParam, TypedValue};
 use crate::modules::core::*;
 use crate::types::{BipolarValue, Cents, Hertz, NormalizedValue, Seconds, Semitones};
 
@@ -345,9 +344,9 @@ impl Voice {
     }
 
     /// Set a parameter on a module.
-    pub fn set_param(&mut self, module_name: &str, param: TypedParam, value: TypedValue) {
+    pub fn set_param(&mut self, module_name: &str, param: crate::engine::typed_params::Param) {
         if let Some(module) = self.get_module_mut(module_name) {
-            module.set_param(param, value);
+            module.set_param(param);
         }
     }
     
@@ -369,43 +368,31 @@ impl Voice {
     /// Set detune on all oscillators in the voice (type-safe Cents).
     /// Used for unison mode.
     pub fn set_oscillator_detune(&mut self, detune: Cents) {
-        use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam};
+        use crate::engine::typed_params::{Param, OscillatorParam};
 
         // Apply to osc1
         if let Some(osc) = self.get_module_mut("osc1") {
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(detune.as_f32())
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Detune(detune)));
         }
 
         // Apply to osc2 with slight additional detune for richness
         if let Some(osc) = self.get_module_mut("osc2") {
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(detune.as_f32() + 7.0) // Keep the 7 cent offset
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(detune.as_f32() + 7.0))));
         }
     }
-    
+
     /// Set oscillator frequency directly (type-safe Hertz).
     fn set_oscillator_frequency(&mut self, freq: Hertz) {
-        use crate::engine::typed_params::{TypedParam, TypedValue, OscillatorParam};
+        use crate::engine::typed_params::{Param, OscillatorParam};
 
         // Apply to osc1
         if let Some(osc) = self.get_module_mut("osc1") {
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Frequency),
-                TypedValue::Float(freq.as_f32())
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
         }
 
         // Apply to osc2
         if let Some(osc) = self.get_module_mut("osc2") {
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Frequency),
-                TypedValue::Float(freq.as_f32())
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
         }
     }
 

@@ -12,66 +12,9 @@
 
 use std::collections::HashMap;
 
-use crate::engine::typed_params::{TypedParam, TypedValue, NoiseParam, ModuleType};
+use crate::engine::typed_params::{ModuleType, NoiseParam, NoiseType, Param};
 use crate::modules::core::*;
 use crate::types::{Gain, SampleRate};
-
-/// Noise color types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum NoiseType {
-    /// White noise - flat spectrum, equal energy per frequency
-    #[default]
-    White,
-    /// Pink noise - -3dB/octave, equal energy per octave
-    Pink,
-    /// Brown/Red noise - -6dB/octave, darker, rumbling
-    Brown,
-    /// Blue noise - +3dB/octave, brighter, hissing
-    Blue,
-    /// Violet noise - +6dB/octave, very bright, sharp
-    Violet,
-}
-
-impl NoiseType {
-    pub const ALL: [Self; 5] = [Self::White, Self::Pink, Self::Brown, Self::Blue, Self::Violet];
-
-    pub fn id(&self) -> &'static str {
-        match self {
-            Self::White => "white",
-            Self::Pink => "pink",
-            Self::Brown => "brown",
-            Self::Blue => "blue",
-            Self::Violet => "violet",
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::White => "White",
-            Self::Pink => "Pink",
-            Self::Brown => "Brown",
-            Self::Blue => "Blue",
-            Self::Violet => "Violet",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::White => "Flat spectrum - crisp hi-hats, snares",
-            Self::Pink => "-3dB/oct - natural, cymbals, atmosphere",
-            Self::Brown => "-6dB/oct - dark rumble, thunder",
-            Self::Blue => "+3dB/oct - bright, hissing",
-            Self::Violet => "+6dB/oct - very bright, sharp",
-        }
-    }
-
-    pub fn to_choices() -> Vec<ChoiceOption> {
-        Self::ALL
-            .iter()
-            .map(|n| ChoiceOption::new(n.id(), n.name()).with_description(n.description()))
-            .collect()
-    }
-}
 
 /// Advanced noise generator with spectral coloring.
 #[derive(Clone)]
@@ -226,7 +169,7 @@ impl Describable for NoiseGenerator {
             .tag("percussion")
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::Noise(NoiseParam::Type),
+                    Param::Noise(NoiseParam::Type(NoiseType::White)),
                     "Type",
                     NoiseType::to_choices(),
                 )
@@ -234,12 +177,15 @@ impl Describable for NoiseGenerator {
                 .widget(WidgetHint::Dropdown),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Noise(NoiseParam::Level), "Level")
-                    .description("Output level")
-                    .range(0.0, 1.0)
-                    .default(0.8)
-                    .unit(ParameterUnit::Percent)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Noise(NoiseParam::Level(Gain::new(0.8))),
+                    "Level",
+                )
+                .description("Output level")
+                .range(0.0, 1.0)
+                .default(0.8)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Noise output"))
     }
@@ -264,39 +210,31 @@ impl VoiceModule for NoiseGenerator {
         }
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Noise(noise_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Noise(noise_param) = param {
             match noise_param {
-                NoiseParam::Type => {
-                    if let Some(i) = value.as_int() {
-                        self.noise_type = match i {
-                            0 => NoiseType::White,
-                            1 => NoiseType::Pink,
-                            2 => NoiseType::Brown,
-                            3 => NoiseType::Blue,
-                            4 => NoiseType::Violet,
-                            _ => NoiseType::White,
-                        };
-                    }
-                }
-                NoiseParam::Level => {
-                    if let Some(l) = value.as_float() {
-                        self.level = Gain::new(l.clamp(0.0, 1.0));
-                    }
-                }
+                NoiseParam::Type(t) => self.noise_type = t,
+                NoiseParam::Level(l) => self.level = Gain::new(l.as_f32().clamp(0.0, 1.0)),
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Noise(noise_param) = param {
-            match noise_param {
-                NoiseParam::Type => Some(TypedValue::Int(self.noise_type as i32)),
-                NoiseParam::Level => Some(TypedValue::Float(self.level.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Noise(noise_param) = param {
+            Some(match noise_param {
+                NoiseParam::Type(_) => self.noise_type.index() as f32,
+                NoiseParam::Level(_) => self.level.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Noise(NoiseParam::Type(self.noise_type)),
+            Param::Noise(NoiseParam::Level(self.level)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -320,10 +258,6 @@ impl VoiceModule for NoiseGenerator {
 
     fn note_off(&mut self) {
         // Noise doesn't need to do anything on note off
-    }
-
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {

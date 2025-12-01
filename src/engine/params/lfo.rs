@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::{BeatDivision, Hertz, NormalizedValue, Phase};
+
 // ============================================================================
 // LFO WAVEFORM ENUM
 // ============================================================================
@@ -67,24 +69,87 @@ impl LfoWaveform {
 }
 
 // ============================================================================
-// LFO PARAMETER ENUM
+// LFO PARAMETER ENUM (with typed values)
 // ============================================================================
 
-/// LFO parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// LFO parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum LfoParam {
     /// LFO waveform
-    Waveform,
+    Waveform(LfoWaveform),
     /// Rate in Hz
-    Rate,
+    Rate(Hertz),
     /// Modulation depth (0.0 to 1.0)
-    Depth,
+    Depth(NormalizedValue),
     /// Initial phase (0.0 to 1.0)
-    Phase,
+    Phase(Phase),
     /// Sync to tempo
-    TempoSync,
-    /// Sync division in beats (0.25 = 1/16, 0.5 = 1/8, 1.0 = 1/4, etc.)
-    SyncDivision,
+    TempoSync(bool),
+    /// Sync division in beats
+    SyncDivision(BeatDivision),
     /// Retrigger on note
-    Retrigger,
+    Retrigger(bool),
+}
+
+impl LfoParam {
+    /// Check if two parameters are the same kind (ignoring values).
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    /// Get the parameter name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Waveform(_) => "Waveform",
+            Self::Rate(_) => "Rate",
+            Self::Depth(_) => "Depth",
+            Self::Phase(_) => "Phase",
+            Self::TempoSync(_) => "Tempo Sync",
+            Self::SyncDivision(_) => "Division",
+            Self::Retrigger(_) => "Retrigger",
+        }
+    }
+
+    /// Get the value as f32 (for GUI).
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Waveform(w) => w.index() as f32,
+            Self::Rate(hz) => hz.as_f32(),
+            Self::Depth(d) => d.as_f32(),
+            Self::Phase(p) => p.as_f32(),
+            Self::TempoSync(b) => if *b { 1.0 } else { 0.0 },
+            Self::SyncDivision(d) => d.as_f32(),
+            Self::Retrigger(b) => if *b { 1.0 } else { 0.0 },
+        }
+    }
+
+    /// Create the same parameter variant with a new f32 value (for GUI).
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Waveform(_) => Self::Waveform(
+                LfoWaveform::from_index(value as usize).unwrap_or_default()
+            ),
+            Self::Rate(_) => Self::Rate(Hertz::new(value)),
+            Self::Depth(_) => Self::Depth(NormalizedValue::new(value)),
+            Self::Phase(_) => Self::Phase(Phase::new(value)),
+            Self::TempoSync(_) => Self::TempoSync(value > 0.5),
+            Self::SyncDivision(_) => Self::SyncDivision(BeatDivision::new(value)),
+            Self::Retrigger(_) => Self::Retrigger(value > 0.5),
+        }
+    }
+
+    /// Default templates
+    pub fn waveform_default() -> Self { Self::Waveform(LfoWaveform::default()) }
+    pub fn rate_default() -> Self { Self::Rate(Hertz::new(1.0)) }
+    pub fn depth_default() -> Self { Self::Depth(NormalizedValue::new(1.0)) }
+    pub fn phase_default() -> Self { Self::Phase(Phase::ZERO) }
+    pub fn tempo_sync_default() -> Self { Self::TempoSync(false) }
+    pub fn sync_division_default() -> Self { Self::SyncDivision(BeatDivision::QUARTER) }
+    pub fn retrigger_default() -> Self { Self::Retrigger(false) }
+}
+
+impl Default for LfoParam {
+    fn default() -> Self {
+        Self::Waveform(LfoWaveform::default())
+    }
 }

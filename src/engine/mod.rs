@@ -48,15 +48,16 @@ pub use part::{PartId, MidiChannel, SynthPart};
 
 // Re-export typed parameter system
 pub use params::{
-    ModuleType, TypedParam, TypedValue, Port,
+    ModuleType, Param, Port,
     // Module-specific params
     OscillatorParam, MathOscillatorParam, FilterParam, EnvelopeParam, LfoParam,
     AmplifierParam, MixerParam, DelayParam, ReverbParam,
     DistortionParam, ChorusParam, PhaserParam, FlangerParam, CompressorParam, EqParam,
     SamplePlayerParam, GranularParam, OscilloscopeParam, LevelMeterParam,
+    SubOscParam, NoiseParam,
     // Type-safe enums
-    Waveform as TypedWaveform, LfoWaveform as TypedLfoWaveform,
-    FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
+    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
+    FmMode, NoiseType, SubOscWaveform, SubOscOctave,
     // Ports
     AudioPort, ControlPort,
 };

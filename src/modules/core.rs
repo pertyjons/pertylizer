@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
-use crate::engine::typed_params::{TypedParam, TypedValue, ModuleType as TypedModuleType};
+use crate::engine::typed_params::{Param, ModuleType as TypedModuleType};
 
 // ============================================================================
 // Buffer types
@@ -322,8 +322,8 @@ impl ChoiceOption {
 /// Complete description of a parameter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterDescriptor {
-    /// Parameter identifier.
-    pub id: TypedParam,
+    /// Parameter with default value (identifies both type and default).
+    pub id: Param,
     /// Display name.
     pub name: String,
     /// Description for tooltips.
@@ -348,7 +348,8 @@ pub struct ParameterDescriptor {
 
 impl ParameterDescriptor {
     /// Create a new float parameter descriptor.
-    pub fn float(id: TypedParam, name: impl Into<String>) -> Self {
+    /// The id parameter should contain the default value.
+    pub fn float(id: Param, name: impl Into<String>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -365,7 +366,8 @@ impl ParameterDescriptor {
     }
 
     /// Create a choice parameter descriptor.
-    pub fn choice(id: TypedParam, name: impl Into<String>, choices: Vec<ChoiceOption>) -> Self {
+    /// The id parameter should contain the default choice value.
+    pub fn choice(id: Param, name: impl Into<String>, choices: Vec<ChoiceOption>) -> Self {
         let max = (choices.len().saturating_sub(1)) as f32;
         Self {
             id,
@@ -689,10 +691,16 @@ pub trait VoiceModule: Describable + Send {
     );
 
     /// Set a parameter value.
-    fn set_param(&mut self, param: TypedParam, value: TypedValue);
+    /// The Param contains both the parameter type and its value.
+    fn set_param(&mut self, param: Param);
 
     /// Get current parameter value.
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue>;
+    /// Pass a Param with any value to identify which parameter to get.
+    /// Returns the current value as f32, or None if not found.
+    fn get_param(&self, param: &Param) -> Option<f32>;
+
+    /// Get all current parameters with their values.
+    fn get_params(&self) -> Vec<Param>;
 
     /// Get the typed module type for this module.
     fn module_type(&self) -> TypedModuleType;
@@ -725,10 +733,16 @@ pub trait EffectModule: Describable + Send {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext);
 
     /// Set a parameter value.
-    fn set_param(&mut self, param: TypedParam, value: TypedValue);
+    /// The Param contains both the parameter type and its value.
+    fn set_param(&mut self, param: Param);
 
     /// Get current parameter value.
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue>;
+    /// Pass a Param with any value to identify which parameter to get.
+    /// Returns the current value as f32, or None if not found.
+    fn get_param(&self, param: &Param) -> Option<f32>;
+
+    /// Get all current parameters with their values.
+    fn get_params(&self) -> Vec<Param>;
 
     /// Get the typed module type for this effect.
     fn module_type(&self) -> TypedModuleType;
@@ -794,11 +808,4 @@ impl FilterMode {
     }
 }
 
-impl MathAlgo {
-    pub fn to_choices() -> Vec<ChoiceOption> {
-        Self::ALL
-            .iter()
-            .map(|a| ChoiceOption::new(a.id(), a.name()))
-            .collect()
-    }
-}
+// Note: MathAlgo::to_choices is defined in engine/params/oscillators.rs

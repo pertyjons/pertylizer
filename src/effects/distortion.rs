@@ -7,25 +7,13 @@
 //! - Mix control
 
 use crate::engine::typed_params::{
-    TypedParam, TypedValue, DistortionParam, ChorusParam, ModuleType,
-    DistortionMode,
+    DistortionMode, DistortionParam, ModuleType, Param,
 };
 use crate::modules::core::*;
 use crate::types::{Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
 
-// DistortionMode is imported from typed_params
 // Type alias for local use
 pub type DistortionType = DistortionMode;
-
-// Add to_choices helper for UI compatibility
-impl DistortionMode {
-    pub fn to_choices() -> Vec<ChoiceOption> {
-        Self::ALL
-            .iter()
-            .map(|d| ChoiceOption::new(d.id(), d.name()))
-            .collect()
-    }
-}
 
 /// Distortion effect.
 pub struct Distortion {
@@ -140,32 +128,41 @@ impl Describable for Distortion {
             .port(PortDescriptor::control_input("drive_cv", "Drive CV").description("Drive modulation"))
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::Distortion(DistortionParam::Mode),
+                    Param::Distortion(DistortionParam::Mode(DistortionMode::SoftClip)),
                     "Type",
-                    DistortionType::to_choices(),
+                    DistortionMode::to_choices(),
                 )
                 .description("Distortion algorithm"),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Distortion(DistortionParam::Drive), "Drive")
-                    .description("Distortion amount")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Distortion(DistortionParam::Drive(NormalizedValue::CENTER)),
+                    "Drive",
+                )
+                .description("Distortion amount")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Distortion(DistortionParam::Tone), "Tone")
-                    .description("Post-distortion filter")
-                    .range(0.0, 1.0)
-                    .default(0.8)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Distortion(DistortionParam::Tone(NormalizedValue::new(0.8))),
+                    "Tone",
+                )
+                .description("Post-distortion filter")
+                .range(0.0, 1.0)
+                .default(0.8)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Distortion(DistortionParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Distortion(DistortionParam::Mix(NormalizedValue::MAX)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -195,44 +192,45 @@ impl EffectModule for Distortion {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Distortion(dist_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Distortion(dist_param) = param {
             match dist_param {
-                DistortionParam::Mode => {
-                    if let TypedValue::DistortionMode(mode) = value {
-                        self.dist_type = mode;
-                    }
+                DistortionParam::Mode(mode) => {
+                    self.dist_type = mode;
                 }
-                DistortionParam::Drive => {
-                    if let Some(d) = value.as_float() {
-                        self.drive = NormalizedValue::new(d);
-                    }
+                DistortionParam::Drive(d) => {
+                    self.drive = d;
                 }
-                DistortionParam::Tone => {
-                    if let Some(t) = value.as_float() {
-                        self.tone = NormalizedValue::new(t);
-                    }
+                DistortionParam::Tone(t) => {
+                    self.tone = t;
                 }
-                DistortionParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                DistortionParam::Mix(m) => {
+                    self.mix = m;
                 }
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Distortion(dist_param) = param {
-            match dist_param {
-                DistortionParam::Mode => Some(TypedValue::DistortionMode(self.dist_type)),
-                DistortionParam::Drive => Some(TypedValue::Float(self.drive.as_f32())),
-                DistortionParam::Tone => Some(TypedValue::Float(self.tone.as_f32())),
-                DistortionParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Distortion(dist_param) = param {
+            Some(match dist_param {
+                DistortionParam::Mode(_) => self.dist_type.index() as f32,
+                DistortionParam::Drive(_) => self.drive.as_f32(),
+                DistortionParam::Tone(_) => self.tone.as_f32(),
+                DistortionParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Distortion(DistortionParam::Mode(self.dist_type)),
+            Param::Distortion(DistortionParam::Drive(self.drive)),
+            Param::Distortion(DistortionParam::Tone(self.tone)),
+            Param::Distortion(DistortionParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -307,6 +305,7 @@ impl Default for Chorus {
 
 impl Describable for Chorus {
     fn descriptor(&self) -> ModuleDescriptor {
+        use crate::engine::typed_params::ChorusParam;
         ModuleDescriptor::new("chorus", "Chorus")
             .description("Multi-voice chorus effect")
             .category(ModuleCategory::Effect)
@@ -319,26 +318,35 @@ impl Describable for Chorus {
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .port(PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"))
             .parameter(
-                ParameterDescriptor::float(TypedParam::Chorus(ChorusParam::Rate), "Rate")
-                    .description("LFO rate")
-                    .range(0.1, 5.0)
-                    .default(0.5)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Chorus(ChorusParam::Rate(Hertz::new(0.5))),
+                    "Rate",
+                )
+                .description("LFO rate")
+                .range(0.1, 5.0)
+                .default(0.5)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Chorus(ChorusParam::Depth), "Depth")
-                    .description("Modulation depth")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Chorus(ChorusParam::Depth(NormalizedValue::CENTER)),
+                    "Depth",
+                )
+                .description("Modulation depth")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Chorus(ChorusParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Chorus(ChorusParam::Mix(NormalizedValue::CENTER)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -395,46 +403,50 @@ impl EffectModule for Chorus {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Chorus(chorus_param) = param {
+    fn set_param(&mut self, param: Param) {
+        use crate::engine::typed_params::ChorusParam;
+        if let Param::Chorus(chorus_param) = param {
             match chorus_param {
-                ChorusParam::Rate => {
-                    if let Some(r) = value.as_float() {
-                        self.rate = Hertz::new(r.clamp(0.1, 5.0));
-                    }
+                ChorusParam::Rate(r) => {
+                    self.rate = Hertz::new(r.as_f32().clamp(0.1, 5.0));
                 }
-                ChorusParam::Depth => {
-                    if let Some(d) = value.as_float() {
-                        self.depth = NormalizedValue::new(d);
-                    }
+                ChorusParam::Depth(d) => {
+                    self.depth = d;
                 }
-                ChorusParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                ChorusParam::Mix(m) => {
+                    self.mix = m;
                 }
-                ChorusParam::Voices => {
-                    if let Some(v) = value.as_int() {
-                        self.voices = VoiceCount::new(v as u8).clamp_chorus();
-                    }
+                ChorusParam::Voices(v) => {
+                    self.voices = VoiceCount::new(v.as_u8()).clamp_chorus();
                 }
                 _ => {}
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Chorus(chorus_param) = param {
-            match chorus_param {
-                ChorusParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
-                ChorusParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
-                ChorusParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-                ChorusParam::Voices => Some(TypedValue::Int(self.voices.as_u8() as i32)),
-                _ => None,
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        use crate::engine::typed_params::ChorusParam;
+        if let Param::Chorus(chorus_param) = param {
+            Some(match chorus_param {
+                ChorusParam::Rate(_) => self.rate.as_f32(),
+                ChorusParam::Depth(_) => self.depth.as_f32(),
+                ChorusParam::Mix(_) => self.mix.as_f32(),
+                ChorusParam::Voices(_) => self.voices.as_u8() as f32,
+                _ => return None,
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        use crate::engine::typed_params::ChorusParam;
+        vec![
+            Param::Chorus(ChorusParam::Rate(self.rate)),
+            Param::Chorus(ChorusParam::Depth(self.depth)),
+            Param::Chorus(ChorusParam::Mix(self.mix)),
+            Param::Chorus(ChorusParam::Voices(self.voices)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {

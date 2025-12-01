@@ -10,12 +10,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 
 use crate::engine::{EngineHandle, ModuleId};
-use crate::engine::typed_params::{
-    TypedParam, TypedValue,
-    OscillatorParam, LfoParam, FilterParam, DelayParam, DistortionParam,
-    MathOscillatorParam,
-    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, MathAlgo,
-};
+use crate::engine::typed_params::Param;
 use crate::engine::graph::Connection;
 use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
@@ -103,7 +98,7 @@ impl RackView {
         // Initialize parameter values from defaults
         let mut param_values = HashMap::new();
         for param in &descriptor.parameters {
-            param_values.insert(param.id.clone(), param.default);
+            param_values.insert(param.name.clone(), param.default);
         }
 
         let mut state = ModulePanelState::new(id, position);
@@ -120,7 +115,7 @@ impl RackView {
         // Initialize parameter values from defaults
         let mut param_values = HashMap::new();
         for param in &descriptor.parameters {
-            param_values.insert(param.id.clone(), param.default);
+            param_values.insert(param.name.clone(), param.default);
         }
 
         let mut state = ModulePanelState::new(id, position);
@@ -145,7 +140,7 @@ impl RackView {
     }
 
     /// Get module data for saving.
-    pub fn get_module_data(&self, id: ModuleId) -> Option<(ModuleDescriptor, Pos2, HashMap<TypedParam, f32>)> {
+    pub fn get_module_data(&self, id: ModuleId) -> Option<(ModuleDescriptor, Pos2, HashMap<String, f32>)> {
         let descriptor = self.descriptors.get(&id)?;
         let panel = self.panels.get(&id)?;
         Some((descriptor.clone(), panel.position, panel.param_values.clone()))
@@ -187,16 +182,17 @@ impl RackView {
     }
 
     /// Set a parameter value for a module in the rack view.
-    pub fn set_parameter(&mut self, module_id: ModuleId, param_id: TypedParam, value: f32) {
+    /// The Param carries both the parameter type and value.
+    pub fn set_parameter(&mut self, module_id: ModuleId, param: &Param, value: f32) {
         if let Some(panel) = self.panels.get_mut(&module_id) {
-            panel.param_values.insert(param_id, value);
+            panel.param_values.insert(param.name().to_string(), value);
         }
     }
 
-    /// Set a choice/enum parameter value (waveform, filter_type, etc).
-    pub fn set_choice_parameter(&mut self, module_id: ModuleId, param_id: TypedParam, value: String) {
+    /// Set a parameter value by name (for patch loading compatibility).
+    pub fn set_parameter_by_name(&mut self, module_id: ModuleId, param_name: &str, value: f32) {
         if let Some(panel) = self.panels.get_mut(&module_id) {
-            panel.choice_values.insert(param_id, value);
+            panel.param_values.insert(param_name.to_string(), value);
         }
     }
 
@@ -468,10 +464,10 @@ impl RackView {
                     // Get visualization buffer for this module if it exists
                     let vis_buffer = handle.get_visualization_buffer(module_id);
                     let panel_result = draw_module_panel_params(ui, panel_state, &descriptor, accent_color, vis_buffer);
-                    
+
                     // Collect parameter changes
-                    for (param_id, value) in panel_result.param_changes {
-                        result.param_changes.push((module_id, param_id, value));
+                    for param in panel_result.param_changes {
+                        result.param_changes.push((module_id, param));
                     }
                 }
             });
@@ -901,7 +897,8 @@ impl Default for RackView {
 #[derive(Default)]
 pub struct RackViewResult {
     /// Parameter changes to send to engine.
-    pub param_changes: Vec<(ModuleId, TypedParam, TypedValue)>,
+    /// Each entry is (module_id, Param with value).
+    pub param_changes: Vec<(ModuleId, Param)>,
     /// Modules to remove.
     pub modules_to_remove: Vec<ModuleId>,
     /// Connections to add.
@@ -913,7 +910,8 @@ pub struct RackViewResult {
 
 /// Simplified panel result for parameters only.
 pub struct PanelParamsResult {
-    pub param_changes: Vec<(TypedParam, TypedValue)>,
+    /// Parameter changes - each Param carries its own value.
+    pub param_changes: Vec<Param>,
 }
 
 /// Draw visualizer display (oscilloscope or level meter).
@@ -923,13 +921,12 @@ fn draw_visualizer_display(
     state: &mut ModulePanelState,
     descriptor: &ModuleDescriptor,
     vis_buffer: Option<&crate::visualizers::VisualizationBuffer>,
-    _param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    _param_changes: &mut Vec<Param>,
 ) {
     // Check which type of visualizer based on module type id
     if descriptor.type_id.0 == "oscilloscope" {
-        use crate::engine::typed_params::OscilloscopeParam;
-        // Get gain from params
-        let gain = state.param_values.get(&TypedParam::Oscilloscope(OscilloscopeParam::Gain))
+        // Get gain from params by name
+        let gain = state.param_values.get("Gain")
             .copied().unwrap_or(1.0);
 
         // Get samples from visualization buffer if available
@@ -1045,33 +1042,20 @@ fn draw_module_panel_params(
     // Draw waveform selectors first (most prominent)
     for param in &waveform_params {
         if let Some(ref choices) = param.choices {
-            let current = state.param_values.get(&param.id).copied().unwrap_or(param.default);
+            let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
             let mut selected = current.round() as usize;
 
             ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
-            
+
             if WaveformSelector::new(&mut selected)
                 .accent_color(accent_color)
                 .show(ui)
             {
-                state.param_values.insert(param.id, selected as f32);
-                // Convert index to proper TypedValue based on parameter type
-                let typed_value = match param.id {
-                    TypedParam::Oscillator(OscillatorParam::Waveform) => {
-                        Waveform::from_index(selected)
-                            .map(TypedValue::Waveform)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    TypedParam::Lfo(LfoParam::Waveform) => {
-                        LfoWaveform::from_index(selected)
-                            .map(TypedValue::LfoWaveform)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    _ => TypedValue::Int(selected as i32),
-                };
-                param_changes.push((param.id, typed_value));
+                state.param_values.insert(param.name.clone(), selected as f32);
+                // Create new param with the selected value
+                param_changes.push(param.id.with_f32(selected as f32));
             }
-            
+
             // Show selected name
             if let Some(choice) = choices.get(selected) {
                 ui.label(egui::RichText::new(&choice.name).size(theme().fonts.size_small).color(colors::TEXT_DIM));
@@ -1081,16 +1065,16 @@ fn draw_module_panel_params(
 
     // Draw sliders (for ADSR etc)
     for param in &slider_params {
-        let current = state.param_values.get(&param.id).copied().unwrap_or(param.default);
+        let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
         let mut value = current;
-        
+
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
             ui.add_space(4.0);
-            
+
             // Use logarithmic slider for time parameters
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
-            
+
             let slider = if is_time && param.min > 0.0 {
                 egui::Slider::new(&mut value, param.min..=param.max)
                     .logarithmic(true)
@@ -1102,23 +1086,21 @@ fn draw_module_panel_params(
                     .min_decimals(2)
                     .max_decimals(2)
             };
-            
+
             if ui.add(slider).changed() {
-                state.param_values.insert(param.id, value);
-                param_changes.push((param.id, TypedValue::Float(value)));
+                state.param_values.insert(param.name.clone(), value);
+                param_changes.push(param.id.with_f32(value));
             }
         });
     }
 
     // Draw ADSR visualization if this is an Envelope module
     if descriptor.category == ModuleCategory::Envelope {
-        use crate::engine::typed_params::EnvelopeParam;
+        let attack = state.param_values.get("Attack").copied().unwrap_or(0.01);
+        let decay = state.param_values.get("Decay").copied().unwrap_or(0.1);
+        let sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
+        let release = state.param_values.get("Release").copied().unwrap_or(0.3);
 
-        let attack = state.param_values.get(&TypedParam::Envelope(EnvelopeParam::Attack)).copied().unwrap_or(0.01);
-        let decay = state.param_values.get(&TypedParam::Envelope(EnvelopeParam::Decay)).copied().unwrap_or(0.1);
-        let sustain = state.param_values.get(&TypedParam::Envelope(EnvelopeParam::Sustain)).copied().unwrap_or(0.7);
-        let release = state.param_values.get(&TypedParam::Envelope(EnvelopeParam::Release)).copied().unwrap_or(0.3);
-        
         ui.add_space(4.0);
         // Use available width for ADSR curve
         let width = ui.available_width().clamp(100.0, 200.0);
@@ -1129,13 +1111,13 @@ fn draw_module_panel_params(
     // Draw dropdowns (for non-waveform choices)
     for param in &dropdown_params {
         if let Some(ref choices) = param.choices {
-            let current = state.param_values.get(&param.id).copied().unwrap_or(param.default);
+            let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
             let mut selected = current.round() as usize;
 
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
                 let text = choices.get(selected).map(|c| c.name.clone()).unwrap_or_else(|| "?".into());
-                egui::ComboBox::from_id_salt(format!("{:?}", param.id))
+                egui::ComboBox::from_id_salt(format!("{}-{}", descriptor.type_id.0, param.name))
                     .selected_text(text)
                     .show_ui(ui, |ui| {
                         for (i, choice) in choices.iter().enumerate() {
@@ -1147,32 +1129,9 @@ fn draw_module_panel_params(
             });
 
             if selected as f32 != current.round() {
-                state.param_values.insert(param.id, selected as f32);
-                // Convert index to proper TypedValue based on parameter type
-                let typed_value = match param.id {
-                    TypedParam::MathOscillator(MathOscillatorParam::Algorithm) => {
-                        MathAlgo::from_index(selected)
-                            .map(TypedValue::MathAlgo)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    TypedParam::Filter(FilterParam::Mode) => {
-                        FilterMode::from_index(selected)
-                            .map(TypedValue::FilterMode)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    TypedParam::Delay(DelayParam::Mode) => {
-                        DelayMode::from_index(selected)
-                            .map(TypedValue::DelayMode)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    TypedParam::Distortion(DistortionParam::Mode) => {
-                        DistortionMode::from_index(selected)
-                            .map(TypedValue::DistortionMode)
-                            .unwrap_or(TypedValue::Int(selected as i32))
-                    }
-                    _ => TypedValue::Int(selected as i32),
-                };
-                param_changes.push((param.id, typed_value));
+                state.param_values.insert(param.name.clone(), selected as f32);
+                // Create new param with the selected value
+                param_changes.push(param.id.with_f32(selected as f32));
             }
         }
     }
@@ -1181,12 +1140,12 @@ fn draw_module_panel_params(
     if !toggle_params.is_empty() {
         ui.horizontal(|ui| {
             for param in &toggle_params {
-                let current = state.param_values.get(&param.id).copied().unwrap_or(param.default);
+                let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
                 let mut checked = current > 0.5;
                 if ui.checkbox(&mut checked, &param.name).changed() {
                     let new_val = if checked { 1.0 } else { 0.0 };
-                    state.param_values.insert(param.id, new_val);
-                    param_changes.push((param.id, TypedValue::Bool(checked)));
+                    state.param_values.insert(param.name.clone(), new_val);
+                    param_changes.push(param.id.with_f32(new_val));
                 }
             }
         });
@@ -1199,7 +1158,7 @@ fn draw_module_panel_params(
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for param in &knob_params {
                 ui.vertical(|ui| {
-                    let current = state.param_values.get(&param.id).copied().unwrap_or(param.default);
+                    let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
                     let mut value = current;
 
                     Knob::new(&mut value, param.min, param.max)
@@ -1211,8 +1170,8 @@ fn draw_module_panel_params(
                         .show(ui);
 
                     if (value - current).abs() > f32::EPSILON {
-                        state.param_values.insert(param.id, value);
-                        param_changes.push((param.id, TypedValue::Float(value)));
+                        state.param_values.insert(param.name.clone(), value);
+                        param_changes.push(param.id.with_f32(value));
                     }
 
                     ui.label(egui::RichText::new(param.format(value)).size(theme().fonts.size_small).color(colors::TEXT_DIM));

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use eframe::egui::{self, Color32, Pos2, Response, Ui, Vec2};
 
 use crate::engine::ModuleId;
-use crate::engine::typed_params::{TypedParam, TypedValue};
+use crate::engine::typed_params::Param;
 use crate::modules::core::{
     ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDirection as CorePortDirection, PortType as CorePortType, WidgetHint,
@@ -22,10 +22,9 @@ pub struct ModulePanelState {
     pub id: ModuleId,
     /// Position in the rack.
     pub position: Pos2,
-    /// Cached parameter values.
-    pub param_values: HashMap<TypedParam, f32>,
-    /// Cached choice parameter values (waveform, filter_type, etc).
-    pub choice_values: HashMap<TypedParam, String>,
+    /// Cached parameter values (indexed by parameter name for lookup).
+    /// Key is the parameter name from the descriptor.
+    pub param_values: HashMap<String, f32>,
     /// Is this panel selected?
     #[allow(dead_code)]
     pub selected: bool,
@@ -40,7 +39,6 @@ impl ModulePanelState {
             id,
             position,
             param_values: HashMap::new(),
-            choice_values: HashMap::new(),
             selected: false,
             dragging: false,
         }
@@ -64,7 +62,8 @@ pub struct ModulePanelResult {
     /// Port positions for cable routing.
     pub port_positions: Vec<PortPosition>,
     /// Parameter changes that were made.
-    pub param_changes: Vec<(TypedParam, TypedValue)>,
+    /// Each Param carries its own value.
+    pub param_changes: Vec<Param>,
 }
 
 /// Draw a module panel.
@@ -210,7 +209,7 @@ fn draw_parameters(
     state: &mut ModulePanelState,
     descriptor: &ModuleDescriptor,
     accent_color: Color32,
-    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    param_changes: &mut Vec<Param>,
 ) {
     // Group parameters by widget hint for layout
     let knob_params: Vec<_> = descriptor
@@ -272,12 +271,12 @@ fn draw_knob_param(
     state: &mut ModulePanelState,
     param: &ParameterDescriptor,
     accent_color: Color32,
-    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    param_changes: &mut Vec<Param>,
 ) {
     ui.vertical(|ui| {
         let current_value = state
             .param_values
-            .get(&param.id)
+            .get(&param.name)
             .copied()
             .unwrap_or(param.default);
 
@@ -293,8 +292,9 @@ fn draw_knob_param(
             .show(ui);
 
         if (value - current_value).abs() > f32::EPSILON {
-            state.param_values.insert(param.id, value);
-            param_changes.push((param.id, TypedValue::Float(value)));
+            state.param_values.insert(param.name.clone(), value);
+            // Create new param with updated value
+            param_changes.push(param.id.with_f32(value));
         }
 
         // Value display
@@ -311,11 +311,11 @@ fn draw_slider_param(
     state: &mut ModulePanelState,
     param: &ParameterDescriptor,
     _accent_color: Color32,
-    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    param_changes: &mut Vec<Param>,
 ) {
     let current_value = state
         .param_values
-        .get(&param.id)
+        .get(&param.name)
         .copied()
         .unwrap_or(param.default);
 
@@ -332,8 +332,8 @@ fn draw_slider_param(
     });
 
     if (value - current_value).abs() > f32::EPSILON {
-        state.param_values.insert(param.id, value);
-        param_changes.push((param.id, TypedValue::Float(value)));
+        state.param_values.insert(param.name.clone(), value);
+        param_changes.push(param.id.with_f32(value));
     }
 }
 
@@ -341,12 +341,12 @@ fn draw_dropdown_param(
     ui: &mut Ui,
     state: &mut ModulePanelState,
     param: &ParameterDescriptor,
-    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    param_changes: &mut Vec<Param>,
 ) {
     if let Some(ref choices) = param.choices {
         let current_value = state
             .param_values
-            .get(&param.id)
+            .get(&param.name)
             .copied()
             .unwrap_or(param.default);
 
@@ -372,8 +372,8 @@ fn draw_dropdown_param(
 
         if selected as f32 != current_value.round() {
             let new_value = selected as f32;
-            state.param_values.insert(param.id, new_value);
-            param_changes.push((param.id, TypedValue::Int(selected as i32)));
+            state.param_values.insert(param.name.clone(), new_value);
+            param_changes.push(param.id.with_f32(new_value));
         }
     }
 }
@@ -382,11 +382,11 @@ fn draw_toggle_param(
     ui: &mut Ui,
     state: &mut ModulePanelState,
     param: &ParameterDescriptor,
-    param_changes: &mut Vec<(TypedParam, TypedValue)>,
+    param_changes: &mut Vec<Param>,
 ) {
     let current_value = state
         .param_values
-        .get(&param.id)
+        .get(&param.name)
         .copied()
         .unwrap_or(param.default);
 
@@ -394,8 +394,8 @@ fn draw_toggle_param(
 
     if ui.checkbox(&mut checked, &param.name).changed() {
         let new_value = if checked { 1.0 } else { 0.0 };
-        state.param_values.insert(param.id, new_value);
-        param_changes.push((param.id, TypedValue::Bool(checked)));
+        state.param_values.insert(param.name.clone(), new_value);
+        param_changes.push(param.id.with_f32(new_value));
     }
 }
 

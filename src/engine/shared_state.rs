@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
-use super::typed_params::{ModuleType, TypedParam, TypedValue};
+use super::typed_params::{ModuleType, Param};
 
 /// Atomic f32 wrapper for lock-free meter access.
 #[derive(Debug)]
@@ -179,8 +179,8 @@ pub struct ModuleStateSnapshot {
     pub solo: bool,
     /// Connectivity status.
     pub connectivity: ModuleConnectivityStatus,
-    /// Current parameter values.
-    pub parameters: HashMap<TypedParam, TypedValue>,
+    /// Current parameter values (each Param contains both type and value).
+    pub parameters: Vec<Param>,
     /// Number of connections to each input port.
     pub input_connection_counts: HashMap<String, usize>,
     /// Number of connections from each output port.
@@ -202,7 +202,7 @@ impl ModuleStateSnapshot {
             muted: false,
             solo: false,
             connectivity: ModuleConnectivityStatus::Disconnected,
-            parameters: HashMap::new(),
+            parameters: Vec::new(),
             input_connection_counts: HashMap::new(),
             output_connection_counts: HashMap::new(),
             cpu_usage: 0.0,

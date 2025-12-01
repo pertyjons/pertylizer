@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::{Cents, Gain, Hertz, NormalizedValue, Phase, Semitones};
+
 // ============================================================================
 // WAVEFORM ENUMS
 // ============================================================================
@@ -196,46 +198,239 @@ impl MathAlgo {
     pub fn index(&self) -> usize {
         Self::ALL.iter().position(|a| a == self).unwrap_or(0)
     }
+
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|a| crate::modules::core::ChoiceOption::new(a.id(), a.name()))
+            .collect()
+    }
 }
 
 // ============================================================================
-// OSCILLATOR PARAMETER ENUMS
+// FM MODE ENUM
 // ============================================================================
 
-/// Oscillator parameters - only valid for oscillator modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// FM mode for oscillator frequency modulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum FmMode {
+    /// Exponential FM (pitch-tracking, musical intervals)
+    #[default]
+    Exponential,
+    /// Linear FM (true frequency modulation, can go through zero)
+    Linear,
+}
+
+impl FmMode {
+    pub const ALL: [Self; 2] = [Self::Exponential, Self::Linear];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Exponential => "Exponential",
+            Self::Linear => "Linear",
+        }
+    }
+
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Exponential => "exponential",
+            Self::Linear => "linear",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    pub fn index(&self) -> usize {
+        Self::ALL.iter().position(|m| m == self).unwrap_or(0)
+    }
+
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+}
+
+// ============================================================================
+// OSCILLATOR PARAMETER ENUM (with typed values)
+// ============================================================================
+
+/// Oscillator parameter with typed value.
+///
+/// Each variant contains its properly typed value, providing compile-time
+/// type safety and eliminating the need for runtime type checking.
+///
+/// # Example
+/// ```ignore
+/// use modular_synth::engine::params::OscillatorParam;
+/// use modular_synth::types::Hertz;
+///
+/// // Type-safe parameter setting
+/// let param = OscillatorParam::Frequency(Hertz::new(440.0));
+///
+/// // Compile error if wrong type:
+/// // let wrong = OscillatorParam::Frequency(Cents::new(50.0));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OscillatorParam {
-    /// Waveform selection (Sine, Triangle, Saw, etc.)
-    Waveform,
-    /// Base frequency in Hz (typically controlled by note)
-    Frequency,
+    /// Waveform selection
+    Waveform(Waveform),
+    /// Base frequency in Hz
+    Frequency(Hertz),
     /// Fine tuning in cents (-100 to +100)
-    Detune,
+    Detune(Cents),
     /// Coarse tuning in semitones
-    Octave,
-    /// Pulse width for pulse wave (0.0 to 1.0)
-    PulseWidth,
+    Octave(Semitones),
+    /// Pulse width for pulse wave (0.01 to 0.99)
+    PulseWidth(NormalizedValue),
     /// Output level (0.0 to 1.0)
-    Level,
+    Level(Gain),
     /// Initial phase (0.0 to 1.0)
-    Phase,
+    Phase(Phase),
     /// FM mode (Exponential or Linear)
-    FmMode,
+    FmMode(FmMode),
 }
 
-/// Math oscillator parameters - only valid for math oscillator modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+impl OscillatorParam {
+    /// Check if two parameters are the same kind (ignoring values).
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    /// Get the parameter name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Waveform(_) => "Waveform",
+            Self::Frequency(_) => "Frequency",
+            Self::Detune(_) => "Detune",
+            Self::Octave(_) => "Octave",
+            Self::PulseWidth(_) => "Pulse Width",
+            Self::Level(_) => "Level",
+            Self::Phase(_) => "Phase",
+            Self::FmMode(_) => "FM Mode",
+        }
+    }
+
+    /// Get the value as f32 (for GUI).
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Waveform(w) => w.index() as f32,
+            Self::Frequency(hz) => hz.as_f32(),
+            Self::Detune(c) => c.as_f32(),
+            Self::Octave(s) => s.as_f32(),
+            Self::PulseWidth(pw) => pw.as_f32(),
+            Self::Level(g) => g.as_f32(),
+            Self::Phase(p) => p.as_f32(),
+            Self::FmMode(m) => m.index() as f32,
+        }
+    }
+
+    /// Create the same parameter variant with a new f32 value (for GUI).
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Waveform(_) => Self::Waveform(
+                Waveform::from_index(value as usize).unwrap_or_default()
+            ),
+            Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
+            Self::Detune(_) => Self::Detune(Cents::new(value)),
+            Self::Octave(_) => Self::Octave(Semitones::new(value)),
+            Self::PulseWidth(_) => Self::PulseWidth(NormalizedValue::new(value)),
+            Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::Phase(_) => Self::Phase(Phase::new(value)),
+            Self::FmMode(_) => Self::FmMode(
+                FmMode::from_index(value as usize).unwrap_or_default()
+            ),
+        }
+    }
+
+    /// Create default parameter templates (for ParameterDescriptor).
+    pub fn frequency_default() -> Self { Self::Frequency(Hertz::A4) }
+    pub fn waveform_default() -> Self { Self::Waveform(Waveform::default()) }
+    pub fn detune_default() -> Self { Self::Detune(Cents::ZERO) }
+    pub fn octave_default() -> Self { Self::Octave(Semitones::ZERO) }
+    pub fn pulse_width_default() -> Self { Self::PulseWidth(NormalizedValue::CENTER) }
+    pub fn level_default() -> Self { Self::Level(Gain::UNITY) }
+    pub fn phase_default() -> Self { Self::Phase(Phase::ZERO) }
+    pub fn fm_mode_default() -> Self { Self::FmMode(FmMode::default()) }
+}
+
+impl Default for OscillatorParam {
+    fn default() -> Self {
+        Self::Waveform(Waveform::default())
+    }
+}
+
+// ============================================================================
+// MATH OSCILLATOR PARAMETER ENUM (with typed values)
+// ============================================================================
+
+/// Math oscillator parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MathOscillatorParam {
     /// Algorithm selection
-    Algorithm,
+    Algorithm(MathAlgo),
     /// Base frequency in Hz
-    Frequency,
+    Frequency(Hertz),
     /// Parameter A (0.0 to 1.0)
-    ParamA,
+    ParamA(NormalizedValue),
     /// Parameter B (0.0 to 1.0)
-    ParamB,
+    ParamB(NormalizedValue),
     /// Parameter C (0.0 to 1.0)
-    ParamC,
+    ParamC(NormalizedValue),
     /// Output level (0.0 to 1.0)
-    Level,
+    Level(Gain),
+}
+
+impl MathOscillatorParam {
+    /// Check if two parameters are the same kind (ignoring values).
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    /// Get the parameter name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Algorithm(_) => "Algorithm",
+            Self::Frequency(_) => "Frequency",
+            Self::ParamA(_) => "Param A",
+            Self::ParamB(_) => "Param B",
+            Self::ParamC(_) => "Param C",
+            Self::Level(_) => "Level",
+        }
+    }
+
+    /// Get the value as f32 (for GUI).
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Algorithm(a) => a.index() as f32,
+            Self::Frequency(hz) => hz.as_f32(),
+            Self::ParamA(v) => v.as_f32(),
+            Self::ParamB(v) => v.as_f32(),
+            Self::ParamC(v) => v.as_f32(),
+            Self::Level(g) => g.as_f32(),
+        }
+    }
+
+    /// Create the same parameter variant with a new f32 value (for GUI).
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Algorithm(_) => Self::Algorithm(
+                MathAlgo::from_index(value as usize).unwrap_or_default()
+            ),
+            Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
+            Self::ParamA(_) => Self::ParamA(NormalizedValue::new(value)),
+            Self::ParamB(_) => Self::ParamB(NormalizedValue::new(value)),
+            Self::ParamC(_) => Self::ParamC(NormalizedValue::new(value)),
+            Self::Level(_) => Self::Level(Gain::new(value)),
+        }
+    }
+}
+
+impl Default for MathOscillatorParam {
+    fn default() -> Self {
+        Self::Algorithm(MathAlgo::default())
+    }
 }

@@ -13,12 +13,7 @@ use eframe::egui::Pos2;
 use crate::engine::{EngineCommand, EngineHandle, ModuleId};
 use crate::engine::commands::{VoiceModule, PortId};
 use crate::engine::part::PartId;
-use crate::engine::{
-    ModuleType as TypedModuleType,
-    TypedParam, TypedValue, OscillatorParam, FilterParam, LfoParam,
-    TypedWaveform, TypedLfoWaveform, FilterMode, DelayParam, DelayMode,
-    DistortionParam, DistortionMode,
-};
+use crate::engine::typed_params::{ModuleType, Param};
 use crate::engine::graph::Connection;
 use crate::gui::rack_view::{RackView, EffectType};
 use crate::gui::keyboard::PianoKeyboard;
@@ -41,7 +36,7 @@ use crate::patch::{Patch, ModuleType as PatchModuleType, ModuleState, Connection
 pub fn load_patch(
     patch: &Patch,
     rack_view: &mut RackView,
-    instance_counters: &mut HashMap<TypedModuleType, u16>,
+    instance_counters: &mut HashMap<ModuleType, u16>,
     handle: &mut EngineHandle,
     keyboard: &mut PianoKeyboard,
     glide_time: &mut f32,
@@ -104,7 +99,7 @@ pub fn load_patch(
 fn load_module(
     module_state: &ModuleState,
     rack_view: &mut RackView,
-    instance_counters: &mut HashMap<TypedModuleType, u16>,
+    instance_counters: &mut HashMap<ModuleType, u16>,
     handle: &mut EngineHandle,
 ) {
     // Parse module ID from patch file (e.g., "osc-1" -> ModuleId)
@@ -308,42 +303,43 @@ pub fn apply_module_parameters(
     handle: &mut EngineHandle,
 ) {
     for (param_name, value) in parameters {
-        if let Some(typed_param) = find_param_by_name(descriptor, param_name) {
-            // Update rack_view
-            match value {
-                ParamValue::Float(f) => {
-                    rack_view.set_parameter(module_id, typed_param, *f);
-                }
-                ParamValue::Int(i) => {
-                    rack_view.set_parameter(module_id, typed_param, *i as f32);
-                }
-                ParamValue::Bool(b) => {
-                    rack_view.set_parameter(module_id, typed_param, if *b { 1.0 } else { 0.0 });
-                }
+        // Find the parameter descriptor by name
+        let param_desc = descriptor.parameters.iter()
+            .find(|p| p.name.to_lowercase() == param_name.to_lowercase());
+
+        if let Some(param_desc) = param_desc {
+            // Convert the ParamValue to f32 for rack_view
+            let f32_value = match value {
+                ParamValue::Float(f) => *f,
+                ParamValue::Int(i) => *i as f32,
+                ParamValue::Bool(b) => if *b { 1.0 } else { 0.0 },
                 ParamValue::Choice(s) => {
-                    if let Some(param_spec) = descriptor.parameters.iter().find(|p| p.id == typed_param) {
-                        if let Some(ref choices) = param_spec.choices {
-                            if let Some(idx) = choices.iter().position(|c| c.id == *s) {
-                                rack_view.set_parameter(module_id, typed_param, idx as f32);
-                            }
-                        }
+                    // Look up choice index
+                    if let Some(ref choices) = param_desc.choices {
+                        choices.iter().position(|c| c.id == *s)
+                            .map(|i| i as f32)
+                            .unwrap_or(0.0)
+                    } else {
+                        0.0
                     }
                 }
-            }
+            };
 
-            // Send to engine
-            let typed_value = convert_param_value_to_typed(typed_param, value);
+            // Update rack_view
+            rack_view.set_parameter_by_name(module_id, param_name, f32_value);
+
+            // Create the Param with value and send to engine
+            let param = param_desc.id.with_f32(f32_value);
+
             if let Some(et) = effect_type {
                 handle.send(EngineCommand::SetEffectParameter {
                     effect_type: et,
-                    param: typed_param,
-                    value: typed_value,
+                    param,
                 });
-            } else if let Some(voice_module) = get_voice_module_for_typed_param(module_id, typed_param) {
+            } else if let Some(voice_module) = get_voice_module_for_param(module_id, &param) {
                 handle.send(EngineCommand::SetVoiceParameter {
                     target: voice_module,
-                    param: typed_param,
-                    value: typed_value,
+                    param,
                 });
             }
         }
@@ -375,11 +371,10 @@ pub fn create_patch_from_rack(
                 _ => continue,
             };
 
+            // params is now HashMap<String, f32>
             let mut param_map = HashMap::new();
-            for (typed_param, value) in params {
-                if let Some(name) = typed_param_to_name(typed_param) {
-                    param_map.insert(name, ParamValue::Float(value));
-                }
+            for (name, value) in params {
+                param_map.insert(name, ParamValue::Float(value));
             }
 
             patch.modules.push(ModuleState {
@@ -406,94 +401,8 @@ pub fn create_patch_from_rack(
     Some(patch)
 }
 
-/// Find TypedParam by name from a module descriptor.
-pub fn find_param_by_name(descriptor: &ModuleDescriptor, name: &str) -> Option<TypedParam> {
-    // Normalize name for comparison
-    let normalized = name.to_lowercase();
-    descriptor.parameters.iter()
-        .find(|p| p.name.to_lowercase() == normalized || p.id.name().to_lowercase() == normalized)
-        .map(|p| p.id)
-}
-
-/// Convert TypedParam to name for serialization.
-pub fn typed_param_to_name(param: TypedParam) -> Option<String> {
-    Some(param.name().to_lowercase())
-}
-
-/// Convert ParamValue to TypedValue based on the TypedParam type.
-pub fn convert_param_value_to_typed(param: TypedParam, value: &ParamValue) -> TypedValue {
-    match value {
-        ParamValue::Float(f) => TypedValue::Float(*f),
-        ParamValue::Int(i) => TypedValue::Int(*i),
-        ParamValue::Bool(b) => TypedValue::Bool(*b),
-        ParamValue::Choice(s) => {
-            // Convert choice strings to appropriate TypedValue based on param type
-            match param {
-                TypedParam::Oscillator(OscillatorParam::Waveform) => {
-                    let wf = match s.as_str() {
-                        "sine" => TypedWaveform::Sine,
-                        "triangle" => TypedWaveform::Triangle,
-                        "sawtooth" => TypedWaveform::Sawtooth,
-                        "square" => TypedWaveform::Square,
-                        "pulse" => TypedWaveform::Pulse,
-                        // Legacy support: map noise to sine (use NoiseGenerator module instead)
-                        "noise" | "pink_noise" => TypedWaveform::Sine,
-                        _ => TypedWaveform::Sawtooth,
-                    };
-                    TypedValue::Waveform(wf)
-                }
-                TypedParam::Lfo(LfoParam::Waveform) => {
-                    let wf = match s.as_str() {
-                        "sine" => TypedLfoWaveform::Sine,
-                        "triangle" => TypedLfoWaveform::Triangle,
-                        "sawtooth" => TypedLfoWaveform::Sawtooth,
-                        "square" => TypedLfoWaveform::Square,
-                        "sample_and_hold" | "s&h" => TypedLfoWaveform::SampleAndHold,
-                        _ => TypedLfoWaveform::Sine,
-                    };
-                    TypedValue::LfoWaveform(wf)
-                }
-                TypedParam::Filter(FilterParam::Mode) => {
-                    let mode = match s.as_str() {
-                        "lowpass" | "lp" => FilterMode::Lowpass,
-                        "highpass" | "hp" => FilterMode::Highpass,
-                        "bandpass" | "bp" => FilterMode::Bandpass,
-                        "notch" => FilterMode::Notch,
-                        "peak" => FilterMode::Peak,
-                        "low_shelf" => FilterMode::LowShelf,
-                        "high_shelf" => FilterMode::HighShelf,
-                        _ => FilterMode::Lowpass,
-                    };
-                    TypedValue::FilterMode(mode)
-                }
-                TypedParam::Delay(DelayParam::Mode) => {
-                    let mode = match s.as_str() {
-                        "mono" => DelayMode::Mono,
-                        "stereo" => DelayMode::Stereo,
-                        "ping_pong" => DelayMode::PingPong,
-                        _ => DelayMode::Mono,
-                    };
-                    TypedValue::DelayMode(mode)
-                }
-                TypedParam::Distortion(DistortionParam::Mode) => {
-                    let mode = match s.as_str() {
-                        "soft_clip" => DistortionMode::SoftClip,
-                        "hard_clip" => DistortionMode::HardClip,
-                        "tube" => DistortionMode::Tube,
-                        "foldback" => DistortionMode::Foldback,
-                        "bitcrush" => DistortionMode::Bitcrush,
-                        _ => DistortionMode::SoftClip,
-                    };
-                    TypedValue::DistortionMode(mode)
-                }
-                _ => TypedValue::Float(0.0),
-            }
-        }
-    }
-}
-
-/// Get the VoiceModule target for a given TypedParam.
-pub fn get_voice_module_for_typed_param(module_id: ModuleId, param: TypedParam) -> Option<VoiceModule> {
+/// Get the VoiceModule target for a given Param.
+pub fn get_voice_module_for_param(module_id: ModuleId, param: &Param) -> Option<VoiceModule> {
     // First try to get from module ID mapping
     if let Some(vm) = VoiceModule::from_module_id(module_id) {
         return Some(vm);
@@ -501,15 +410,19 @@ pub fn get_voice_module_for_typed_param(module_id: ModuleId, param: TypedParam) 
 
     // Fall back to parameter type inference
     match param {
-        TypedParam::Oscillator(_) => Some(VoiceModule::Oscillator1),
-        TypedParam::Filter(_) => Some(VoiceModule::Filter),
-        TypedParam::Envelope(_) => Some(VoiceModule::AmpEnvelope),
-        TypedParam::Lfo(_) => Some(VoiceModule::Lfo),
-        TypedParam::Amplifier(_) => Some(VoiceModule::Amplifier),
-        TypedParam::Mixer(_) => Some(VoiceModule::Mixer),
+        Param::Oscillator(_) => Some(VoiceModule::Oscillator1),
+        Param::MathOscillator(_) => Some(VoiceModule::Oscillator1),
+        Param::Filter(_) => Some(VoiceModule::Filter),
+        Param::Envelope(_) => Some(VoiceModule::AmpEnvelope),
+        Param::Lfo(_) => Some(VoiceModule::Lfo),
+        Param::Amplifier(_) => Some(VoiceModule::Amplifier),
+        Param::Mixer(_) => Some(VoiceModule::Mixer),
         // Effects are handled separately
-        TypedParam::Delay(_) | TypedParam::Reverb(_) |
-        TypedParam::Distortion(_) | TypedParam::Chorus(_) => None,
+        Param::Delay(_) | Param::Reverb(_) |
+        Param::Distortion(_) | Param::Chorus(_) |
+        Param::Phaser(_) | Param::Flanger(_) |
+        Param::Compressor(_) | Param::Eq(_) => None,
+        // Visualizers and other types
         _ => None,
     }
 }

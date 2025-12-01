@@ -6,7 +6,7 @@
 //! - Pre-delay
 //! - Stereo spread
 
-use crate::engine::typed_params::{TypedParam, TypedValue, ReverbParam, ModuleType};
+use crate::engine::typed_params::{ModuleType, Param, ReverbParam};
 use crate::modules::core::*;
 use crate::types::{NormalizedValue, SampleRate, Seconds};
 
@@ -48,14 +48,14 @@ impl CombFilter {
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
         let output = self.buffer[self.index];
-        
+
         // Lowpass filter in feedback path for damping
         self.filter_state = output * (1.0 - self.damp) + self.filter_state * self.damp;
-        
+
         self.buffer[self.index] = input + self.filter_state * self.feedback;
-        
+
         self.index = (self.index + 1) % self.buffer.len();
-        
+
         output
     }
 
@@ -92,11 +92,11 @@ impl AllpassFilter {
     fn process(&mut self, input: f32) -> f32 {
         let buffered = self.buffer[self.index];
         let output = -input + buffered;
-        
+
         self.buffer[self.index] = input + buffered * self.feedback;
-        
+
         self.index = (self.index + 1) % self.buffer.len();
-        
+
         output
     }
 
@@ -180,7 +180,6 @@ impl Reverb {
 
     /// Update filter parameters based on room size and damping.
     fn update_filters(&mut self) {
-        // Convert room size to feedback coefficient
         let feedback = 0.4 + self.room_size.as_f32() * 0.55;
 
         for comb in &mut self.combs_l {
@@ -201,14 +200,16 @@ impl Reverb {
             comb.resize((Self::COMB_TUNING[i] as f32 * scale) as usize);
         }
         for (i, comb) in self.combs_r.iter_mut().enumerate() {
-            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
+            let spread =
+                (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
             comb.resize((Self::COMB_TUNING[i] as f32 * scale) as usize + spread);
         }
         for (i, ap) in self.allpasses_l.iter_mut().enumerate() {
             ap.resize((Self::ALLPASS_TUNING[i] as f32 * scale) as usize);
         }
         for (i, ap) in self.allpasses_r.iter_mut().enumerate() {
-            let spread = (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
+            let spread =
+                (Self::STEREO_SPREAD as f32 * self.stereo_spread.as_f32() * scale) as usize;
             ap.resize((Self::ALLPASS_TUNING[i] as f32 * scale) as usize + spread);
         }
 
@@ -240,33 +241,45 @@ impl Describable for Reverb {
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .parameter(
-                ParameterDescriptor::float(TypedParam::Reverb(ReverbParam::RoomSize), "Room Size")
-                    .description("Size of the virtual room")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Reverb(ReverbParam::RoomSize(NormalizedValue::CENTER)),
+                    "Room Size",
+                )
+                .description("Size of the virtual room")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Reverb(ReverbParam::Damping), "Damping")
-                    .description("High frequency absorption")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Reverb(ReverbParam::Damping(NormalizedValue::CENTER)),
+                    "Damping",
+                )
+                .description("High frequency absorption")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Reverb(ReverbParam::PreDelay), "Pre-Delay")
-                    .description("Initial delay before reverb")
-                    .range(0.0, 0.5)
-                    .default(0.0)
-                    .unit(ParameterUnit::Seconds)
-                    .widget(WidgetHint::TimeSlider),
+                ParameterDescriptor::float(
+                    Param::Reverb(ReverbParam::PreDelay(Seconds::ZERO)),
+                    "Pre-Delay",
+                )
+                .description("Initial delay before reverb")
+                .range(0.0, 0.5)
+                .default(0.0)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::TimeSlider),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Reverb(ReverbParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(0.3)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Reverb(ReverbParam::Mix(NormalizedValue::new(0.3))),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(0.3)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -289,13 +302,22 @@ impl EffectModule for Reverb {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
-            let in_r = if idx_r < input.len() { input[idx_r] } else { in_l };
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
+            let in_r = if idx_r < input.len() {
+                input[idx_r]
+            } else {
+                in_l
+            };
 
             // Pre-delay
             let pre_delayed = if pre_delay_samples > 0 {
                 let mono_in = (in_l + in_r) * 0.5;
-                let read_idx = (self.pre_delay_index + self.pre_delay_buffer.len() - pre_delay_samples)
+                let read_idx = (self.pre_delay_index + self.pre_delay_buffer.len()
+                    - pre_delay_samples)
                     % self.pre_delay_buffer.len();
                 let delayed = self.pre_delay_buffer[read_idx];
                 self.pre_delay_buffer[self.pre_delay_index] = mono_in;
@@ -365,55 +387,44 @@ impl EffectModule for Reverb {
     }
 
     fn tail_samples(&self) -> usize {
-        // Estimate based on room size
         let decay_time = 1.0 + self.room_size.as_f32() * 4.0;
         (decay_time * self.sample_rate.as_f32()) as usize
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Reverb(reverb_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Reverb(reverb_param) = param {
             match reverb_param {
-                ReverbParam::RoomSize => {
-                    if let Some(s) = value.as_float() {
-                        self.room_size = NormalizedValue::new(s);
-                    }
-                }
-                ReverbParam::Damping => {
-                    if let Some(d) = value.as_float() {
-                        self.damping = NormalizedValue::new(d);
-                    }
-                }
-                ReverbParam::PreDelay => {
-                    if let Some(p) = value.as_float() {
-                        self.pre_delay = Seconds::new(p.clamp(0.0, 0.5));
-                    }
-                }
-                ReverbParam::Width => {
-                    if let Some(w) = value.as_float() {
-                        self.stereo_spread = NormalizedValue::new(w);
-                    }
-                }
-                ReverbParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
-                }
+                ReverbParam::RoomSize(s) => self.room_size = s,
+                ReverbParam::Damping(d) => self.damping = d,
+                ReverbParam::PreDelay(p) => self.pre_delay = Seconds::new(p.as_f32().clamp(0.0, 0.5)),
+                ReverbParam::Width(w) => self.stereo_spread = w,
+                ReverbParam::Mix(m) => self.mix = m,
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Reverb(reverb_param) = param {
-            match reverb_param {
-                ReverbParam::RoomSize => Some(TypedValue::Float(self.room_size.as_f32())),
-                ReverbParam::Damping => Some(TypedValue::Float(self.damping.as_f32())),
-                ReverbParam::PreDelay => Some(TypedValue::Float(self.pre_delay.as_f32())),
-                ReverbParam::Width => Some(TypedValue::Float(self.stereo_spread.as_f32())),
-                ReverbParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Reverb(reverb_param) = param {
+            Some(match reverb_param {
+                ReverbParam::RoomSize(_) => self.room_size.as_f32(),
+                ReverbParam::Damping(_) => self.damping.as_f32(),
+                ReverbParam::PreDelay(_) => self.pre_delay.as_f32(),
+                ReverbParam::Width(_) => self.stereo_spread.as_f32(),
+                ReverbParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Reverb(ReverbParam::RoomSize(self.room_size)),
+            Param::Reverb(ReverbParam::PreDelay(self.pre_delay)),
+            Param::Reverb(ReverbParam::Damping(self.damping)),
+            Param::Reverb(ReverbParam::Width(self.stereo_spread)),
+            Param::Reverb(ReverbParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -447,12 +458,10 @@ mod tests {
         let input = vec![1.0; 512];
         let mut output = vec![0.0; 512];
 
-        // Process many times
         for _ in 0..100 {
             reverb.process(&input, &mut output, &context);
         }
 
-        // Check output is bounded
         for sample in &output {
             assert!(sample.is_finite(), "Reverb output is not finite");
             assert!(sample.abs() < 10.0, "Reverb output exploded");

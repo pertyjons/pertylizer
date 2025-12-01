@@ -18,7 +18,7 @@ use crate::engine::graph::ModuleGraph;
 use crate::engine::metering::MeteringSystem;
 use crate::engine::params::{
     AmplifierParam, EnvelopeParam, FilterParam, LfoParam, LfoWaveform, ModuleType, OscillatorParam,
-    TypedParam, TypedValue, Waveform,
+    Param, Waveform,
 };
 use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
@@ -57,8 +57,9 @@ pub enum DroppedItem {
 // SAFETY: VoiceModule trait requires Send, and SynthPart is Send
 unsafe impl Send for DroppedItem {}
 
-/// Wrapper for modules returned from audio thread (legacy alias).
-/// This allows dropping to happen on the main thread.
+/// Wrapper for modules returned from audio thread for deferred cleanup.
+/// This allows dropping to happen on the main thread to avoid
+/// deallocations on the real-time audio thread.
 pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
 
 // SAFETY: VoiceModule trait requires Send
@@ -160,27 +161,23 @@ impl EngineHandle {
     pub fn set_voice_parameter(
         &mut self,
         target: crate::engine::commands::VoiceModule,
-        param: crate::engine::typed_params::TypedParam,
-        value: crate::engine::typed_params::TypedValue,
+        param: crate::engine::typed_params::Param,
     ) -> bool {
         self.send(EngineCommand::SetVoiceParameter {
             target,
             param,
-            value,
         })
     }
-    
+
     /// Set an effect parameter using typed API.
     pub fn set_effect_parameter(
         &mut self,
         effect_type: crate::engine::commands::EffectType,
-        param: crate::engine::typed_params::TypedParam,
-        value: crate::engine::typed_params::TypedValue,
+        param: crate::engine::typed_params::Param,
     ) -> bool {
         self.send(EngineCommand::SetEffectParameter {
             effect_type,
             param,
-            value,
         })
     }
 
@@ -375,34 +372,33 @@ impl SynthEngine {
 
     /// Create the default voice template graph.
     fn create_default_voice_template() -> ModuleGraph {
+        use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
+
         let mut graph = ModuleGraph::new();
 
         // Add modules
         let osc1_id = graph.add_module(Box::new(Oscillator::new()));
         let _osc2_id = graph.add_module(Box::new({
             let mut osc = Oscillator::new();
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(7.0)
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(7.0))));
             osc
         }));
-        
+
         let filter_id = graph.add_module(Box::new(Filter::new()));
         let env_id = graph.add_module(Box::new(Envelope::new()));
         let filter_env_id = graph.add_module(Box::new({
             let mut env = Envelope::new();
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Attack), TypedValue::Float(0.001));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Decay), TypedValue::Float(0.3));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Sustain), TypedValue::Float(0.3));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Release), TypedValue::Float(0.5));
+            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.001))));
+            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.3))));
+            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.3))));
+            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.5))));
             env
         }));
         let amp_id = graph.add_module(Box::new(Amplifier::new()));
         let _lfo_id = graph.add_module(Box::new({
             let mut lfo = Lfo::new();
-            lfo.set_param(TypedParam::Lfo(LfoParam::Rate), TypedValue::Float(0.5));
-            lfo.set_param(TypedParam::Lfo(LfoParam::Depth), TypedValue::Float(0.3));
+            lfo.set_param(Param::Lfo(LfoParam::Rate(Hertz::new(0.5))));
+            lfo.set_param(Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.3))));
             lfo
         }));
 
@@ -424,96 +420,71 @@ impl SynthEngine {
     /// Create a template voice from the graph.
     /// Default settings: Spacey bass sound
     fn create_template_voice(_graph: &ModuleGraph) -> Voice {
+        use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
+
         let mut voice = Voice::new(0);
-        
+
         // Oscillator 1 - Sawtooth, main bass sound
         voice.add_module("osc1", Box::new({
             let mut osc = Oscillator::new();
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Waveform),
-                TypedValue::Waveform(Waveform::Sawtooth)
-            );
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Level),
-                TypedValue::Float(0.6)
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
+            osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.6))));
             osc
         }));
-        
+
         // Oscillator 2 - Slightly detuned for thickness
         voice.add_module("osc2", Box::new({
             let mut osc = Oscillator::new();
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Waveform),
-                TypedValue::Waveform(Waveform::Sawtooth)
-            );
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Level),
-                TypedValue::Float(0.5)
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
+            osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.5))));
             // Detune +7 cents for classic detuned sound
-            osc.set_param(
-                TypedParam::Oscillator(OscillatorParam::Detune),
-                TypedValue::Float(7.0)
-            );
+            osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(7.0))));
             osc
         }));
-        
+
         // Filter - Low pass with moderate resonance
         voice.add_module("filter", Box::new({
             let mut filter = Filter::new();
             // Cutoff around 400 Hz for bass
-            filter.set_param(
-                TypedParam::Filter(FilterParam::Cutoff),
-                TypedValue::Float(400.0)
-            );
+            filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(400.0))));
             // Some resonance for character
-            filter.set_param(
-                TypedParam::Filter(FilterParam::Resonance),
-                TypedValue::Float(0.4)
-            );
+            filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(0.4))));
             filter
         }));
-        
+
         // Amp Envelope - Punchy but smooth
         voice.add_module("amp_env", Box::new({
             let mut env = Envelope::new();
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Attack), TypedValue::Float(0.005));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Decay), TypedValue::Float(0.2));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Sustain), TypedValue::Float(0.6));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Release), TypedValue::Float(0.3));
+            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.005))));
+            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.2))));
+            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.6))));
+            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.3))));
             env
         }));
-        
+
         // Filter Envelope - Opens up on attack
         voice.add_module("filter_env", Box::new({
             let mut env = Envelope::new();
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Attack), TypedValue::Float(0.001));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Decay), TypedValue::Float(0.3));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Sustain), TypedValue::Float(0.2));
-            env.set_param(TypedParam::Envelope(EnvelopeParam::Release), TypedValue::Float(0.4));
+            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.001))));
+            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.3))));
+            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.2))));
+            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.4))));
             env
         }));
-        
+
         // LFO - Slow modulation for movement
         voice.add_module("lfo", Box::new({
             let mut lfo = Lfo::new();
-            lfo.set_param(TypedParam::Lfo(LfoParam::Rate), TypedValue::Float(0.3));
-            lfo.set_param(TypedParam::Lfo(LfoParam::Depth), TypedValue::Float(0.25));
-            lfo.set_param(
-                TypedParam::Lfo(LfoParam::Waveform),
-                TypedValue::LfoWaveform(LfoWaveform::Sine)
-            );
+            lfo.set_param(Param::Lfo(LfoParam::Rate(Hertz::new(0.3))));
+            lfo.set_param(Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.25))));
+            lfo.set_param(Param::Lfo(LfoParam::Waveform(LfoWaveform::Sine)));
             lfo
         }));
-        
+
         // Amplifier
         voice.add_module("amp", Box::new({
             let mut amp = Amplifier::new();
-            amp.set_param(
-                TypedParam::Amplifier(AmplifierParam::Level),
-                TypedValue::Float(0.7)
-            );
+            amp.set_param(Param::Amplifier(AmplifierParam::Level(Gain::new(0.7))));
             amp
         }));
 
@@ -685,7 +656,7 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::SetVoiceParameter { target, param, value } => {
+            EngineCommand::SetVoiceParameter { target, param } => {
                 // Use VoiceModule enum to get the module name - no magic numbers!
                 let module_name = target.internal_name();
 
@@ -693,17 +664,15 @@ impl SynthEngine {
                 for part in &mut self.parts {
                     for voice in part.allocator_mut().voices_mut() {
                         if let Some(module) = voice.get_module_mut(module_name) {
-                            module.set_param(param.clone(), value.clone());
+                            module.set_param(param.clone());
                         }
                     }
                 }
             }
 
-            EngineCommand::SetModuleParameter { module_id, param, value } => {
+            EngineCommand::SetModuleParameter { module_id, param } => {
                 // Set parameter on module in the global graph
-                if let Some(module) = self.module_graph.get_module_mut(module_id) {
-                    module.set_param(param, value);
-                }
+                self.module_graph.set_param(module_id, param);
             }
 
             EngineCommand::Reset => {
@@ -733,12 +702,12 @@ impl SynthEngine {
                 }
             }
             
-            EngineCommand::SetEffectParameter { effect_type, param, value } => {
+            EngineCommand::SetEffectParameter { effect_type, param } => {
                 // Convert EffectType to ModuleType and find the effect
                 let mt = effect_type.to_module_type();
                 if let Some(slot) = self.find_effect_by_type(mt) {
                     // Use typed API
-                    slot.effect.set_param(param, value);
+                    slot.effect.set_param(param);
                     slot.enabled = true;
                 }
             }

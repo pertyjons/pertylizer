@@ -1,11 +1,14 @@
 //! Time duration types for type-safe audio processing.
 
+use serde::{Deserialize, Serialize};
+
 use super::{Clampable, Interpolate, SampleRate};
 
 /// Duration in seconds.
 ///
 /// Used for envelope times, delay times, etc.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Seconds(pub f32);
 
@@ -128,7 +131,8 @@ impl std::fmt::Display for Seconds {
 /// Duration in milliseconds.
 ///
 /// Convenience type for UI display and input.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Milliseconds(pub f32);
 
@@ -185,7 +189,8 @@ impl std::fmt::Display for Milliseconds {
 /// Tempo in beats per minute (BPM).
 ///
 /// Standard range is 20-300 BPM for most music.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Bpm(pub f32);
 
@@ -277,7 +282,8 @@ impl std::fmt::Display for Bpm {
 /// - 0.5 = eighth note
 /// - 0.25 = sixteenth note
 /// - 0.125 = thirty-second note
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct BeatDivision(pub f32);
 

@@ -1,6 +1,6 @@
 //! 3-band parametric equalizer with low shelf, mid peak, and high shelf.
 
-use crate::engine::typed_params::{EqParam, ModuleType, TypedParam, TypedValue};
+use crate::engine::typed_params::{EqParam, ModuleType, Param};
 use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
@@ -214,66 +214,90 @@ impl Describable for Eq {
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::LowFreq), "Low Freq")
-                    .description("Low shelf frequency")
-                    .range(20.0, 500.0)
-                    .default(200.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::LowFreq(Hertz::new(200.0))),
+                    "Low Freq",
+                )
+                .description("Low shelf frequency")
+                .range(20.0, 500.0)
+                .default(200.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::LowGain), "Low Gain")
-                    .description("Low shelf gain")
-                    .range(-12.0, 12.0)
-                    .default(0.0)
-                    .unit(ParameterUnit::Decibels)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::LowGain(Decibels::new(0.0))),
+                    "Low Gain",
+                )
+                .description("Low shelf gain")
+                .range(-12.0, 12.0)
+                .default(0.0)
+                .unit(ParameterUnit::Decibels)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::MidFreq), "Mid Freq")
-                    .description("Mid band frequency")
-                    .range(200.0, 5000.0)
-                    .default(1000.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::MidFreq(Hertz::new(1000.0))),
+                    "Mid Freq",
+                )
+                .description("Mid band frequency")
+                .range(200.0, 5000.0)
+                .default(1000.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::MidGain), "Mid Gain")
-                    .description("Mid band gain")
-                    .range(-12.0, 12.0)
-                    .default(0.0)
-                    .unit(ParameterUnit::Decibels)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::MidGain(Decibels::new(0.0))),
+                    "Mid Gain",
+                )
+                .description("Mid band gain")
+                .range(-12.0, 12.0)
+                .default(0.0)
+                .unit(ParameterUnit::Decibels)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::MidQ), "Mid Q")
-                    .description("Mid band Q factor")
-                    .range(0.1, 10.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::MidQ(NormalizedValue::new(1.0))),
+                    "Mid Q",
+                )
+                .description("Mid band Q factor")
+                .range(0.1, 10.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::HighFreq), "High Freq")
-                    .description("High shelf frequency")
-                    .range(1000.0, 16000.0)
-                    .default(4000.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::HighFreq(Hertz::new(4000.0))),
+                    "High Freq",
+                )
+                .description("High shelf frequency")
+                .range(1000.0, 16000.0)
+                .default(4000.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::HighGain), "High Gain")
-                    .description("High shelf gain")
-                    .range(-12.0, 12.0)
-                    .default(0.0)
-                    .unit(ParameterUnit::Decibels)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::HighGain(Decibels::new(0.0))),
+                    "High Gain",
+                )
+                .description("High shelf gain")
+                .range(-12.0, 12.0)
+                .default(0.0)
+                .unit(ParameterUnit::Decibels)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Eq(EqParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Eq(EqParam::Mix(NormalizedValue::MAX)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -330,75 +354,72 @@ impl EffectModule for Eq {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Eq(eq_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Eq(eq_param) = param {
             match eq_param {
-                EqParam::LowFreq => {
-                    if let Some(f) = value.as_float() {
-                        self.low_freq = Hertz::new(f.clamp(20.0, 500.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::LowFreq(f) => {
+                    self.low_freq = Hertz::new(f.as_f32().clamp(20.0, 500.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::LowGain => {
-                    if let Some(g) = value.as_float() {
-                        self.low_gain = Decibels::new(g.clamp(-12.0, 12.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::LowGain(g) => {
+                    self.low_gain = Decibels::new(g.as_f32().clamp(-12.0, 12.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::MidFreq => {
-                    if let Some(f) = value.as_float() {
-                        self.mid_freq = Hertz::new(f.clamp(200.0, 5000.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::MidFreq(f) => {
+                    self.mid_freq = Hertz::new(f.as_f32().clamp(200.0, 5000.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::MidGain => {
-                    if let Some(g) = value.as_float() {
-                        self.mid_gain = Decibels::new(g.clamp(-12.0, 12.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::MidGain(g) => {
+                    self.mid_gain = Decibels::new(g.as_f32().clamp(-12.0, 12.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::MidQ => {
-                    if let Some(q) = value.as_float() {
-                        self.mid_q = q.clamp(0.1, 10.0);
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::MidQ(q) => {
+                    self.mid_q = q.as_f32().clamp(0.1, 10.0);
+                    self.coeffs_dirty = true;
                 }
-                EqParam::HighFreq => {
-                    if let Some(f) = value.as_float() {
-                        self.high_freq = Hertz::new(f.clamp(1000.0, 16000.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::HighFreq(f) => {
+                    self.high_freq = Hertz::new(f.as_f32().clamp(1000.0, 16000.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::HighGain => {
-                    if let Some(g) = value.as_float() {
-                        self.high_gain = Decibels::new(g.clamp(-12.0, 12.0));
-                        self.coeffs_dirty = true;
-                    }
+                EqParam::HighGain(g) => {
+                    self.high_gain = Decibels::new(g.as_f32().clamp(-12.0, 12.0));
+                    self.coeffs_dirty = true;
                 }
-                EqParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                EqParam::Mix(m) => {
+                    self.mix = m;
                 }
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Eq(eq_param) = param {
-            match eq_param {
-                EqParam::LowFreq => Some(TypedValue::Float(self.low_freq.as_f32())),
-                EqParam::LowGain => Some(TypedValue::Float(self.low_gain.as_f32())),
-                EqParam::MidFreq => Some(TypedValue::Float(self.mid_freq.as_f32())),
-                EqParam::MidGain => Some(TypedValue::Float(self.mid_gain.as_f32())),
-                EqParam::MidQ => Some(TypedValue::Float(self.mid_q)),
-                EqParam::HighFreq => Some(TypedValue::Float(self.high_freq.as_f32())),
-                EqParam::HighGain => Some(TypedValue::Float(self.high_gain.as_f32())),
-                EqParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Eq(eq_param) = param {
+            Some(match eq_param {
+                EqParam::LowFreq(_) => self.low_freq.as_f32(),
+                EqParam::LowGain(_) => self.low_gain.as_f32(),
+                EqParam::MidFreq(_) => self.mid_freq.as_f32(),
+                EqParam::MidGain(_) => self.mid_gain.as_f32(),
+                EqParam::MidQ(_) => self.mid_q,
+                EqParam::HighFreq(_) => self.high_freq.as_f32(),
+                EqParam::HighGain(_) => self.high_gain.as_f32(),
+                EqParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Eq(EqParam::LowFreq(self.low_freq)),
+            Param::Eq(EqParam::LowGain(self.low_gain)),
+            Param::Eq(EqParam::MidFreq(self.mid_freq)),
+            Param::Eq(EqParam::MidGain(self.mid_gain)),
+            Param::Eq(EqParam::MidQ(NormalizedValue::new(self.mid_q))),
+            Param::Eq(EqParam::HighFreq(self.high_freq)),
+            Param::Eq(EqParam::HighGain(self.high_gain)),
+            Param::Eq(EqParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {

@@ -1,11 +1,11 @@
 //! Flanger effect with LFO-modulated delay.
 
-use crate::engine::typed_params::{FlangerParam, ModuleType, TypedParam, TypedValue};
+use crate::engine::typed_params::{FlangerParam, ModuleType, Param};
 use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate, Seconds};
+use crate::types::{BipolarValue, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay time in milliseconds.
 const MAX_DELAY_MS: f32 = 20.0;
@@ -16,7 +16,7 @@ pub struct Flanger {
     rate: Hertz,
     depth: NormalizedValue,
     feedback: BipolarValue,
-    delay_base: Seconds,  // Base delay time (type-safe)
+    delay_base: Milliseconds,  // Base delay time (type-safe)
     mix: NormalizedValue,
 
     // Delay buffers (stereo)
@@ -41,7 +41,7 @@ impl Flanger {
             rate: Hertz::new(0.3),
             depth: NormalizedValue::new(0.7),
             feedback: BipolarValue::new(0.7),
-            delay_base: Seconds::from_millis(2.0),
+            delay_base: Milliseconds::new(2.0),
             mix: NormalizedValue::CENTER,
             buffer_l: vec![0.0; 4800], // Will be resized
             buffer_r: vec![0.0; 4800],
@@ -96,41 +96,56 @@ impl Describable for Flanger {
                 PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Flanger(FlangerParam::Rate), "Rate")
-                    .description("LFO rate")
-                    .range(0.05, 5.0)
-                    .default(0.3)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Flanger(FlangerParam::Rate(Hertz::new(0.3))),
+                    "Rate",
+                )
+                .description("LFO rate")
+                .range(0.05, 5.0)
+                .default(0.3)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Flanger(FlangerParam::Depth), "Depth")
-                    .description("Modulation depth")
-                    .range(0.0, 1.0)
-                    .default(0.7)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Flanger(FlangerParam::Depth(NormalizedValue::new(0.7))),
+                    "Depth",
+                )
+                .description("Modulation depth")
+                .range(0.0, 1.0)
+                .default(0.7)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Flanger(FlangerParam::Feedback), "Feedback")
-                    .description("Feedback amount")
-                    .range(-0.95, 0.95)
-                    .default(0.7)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Flanger(FlangerParam::Feedback(BipolarValue::new(0.7))),
+                    "Feedback",
+                )
+                .description("Feedback amount")
+                .range(-0.95, 0.95)
+                .default(0.7)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Flanger(FlangerParam::Delay), "Delay")
-                    .description("Base delay time")
-                    .range(0.1, 10.0)
-                    .default(2.0)
-                    .unit(ParameterUnit::Milliseconds)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Flanger(FlangerParam::Delay(Milliseconds::new(2.0))),
+                    "Delay",
+                )
+                .description("Base delay time")
+                .range(0.1, 10.0)
+                .default(2.0)
+                .unit(ParameterUnit::Milliseconds)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Flanger(FlangerParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Flanger(FlangerParam::Mix(NormalizedValue::CENTER)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -141,7 +156,7 @@ impl EffectModule for Flanger {
         self.resize_buffers();
 
         let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
-        let delay_ms = self.delay_base.as_millis();
+        let delay_ms = self.delay_base.as_f32();
         let max_mod_ms = delay_ms.min(MAX_DELAY_MS - delay_ms);
 
         // Process stereo interleaved
@@ -215,50 +230,50 @@ impl EffectModule for Flanger {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Flanger(flanger_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Flanger(flanger_param) = param {
             match flanger_param {
-                FlangerParam::Rate => {
-                    if let Some(r) = value.as_float() {
-                        self.rate = Hertz::new(r.clamp(0.05, 5.0));
-                    }
+                FlangerParam::Rate(r) => {
+                    self.rate = Hertz::new(r.as_f32().clamp(0.05, 5.0));
                 }
-                FlangerParam::Depth => {
-                    if let Some(d) = value.as_float() {
-                        self.depth = NormalizedValue::new(d);
-                    }
+                FlangerParam::Depth(d) => {
+                    self.depth = d;
                 }
-                FlangerParam::Feedback => {
-                    if let Some(f) = value.as_float() {
-                        self.feedback = BipolarValue::new(f.clamp(-0.95, 0.95));
-                    }
+                FlangerParam::Feedback(f) => {
+                    self.feedback = BipolarValue::new(f.as_f32().clamp(-0.95, 0.95));
                 }
-                FlangerParam::Delay => {
-                    if let Some(d) = value.as_float() {
-                        self.delay_base = Seconds::from_millis(d.clamp(0.1, 10.0));
-                    }
+                FlangerParam::Delay(d) => {
+                    self.delay_base = Milliseconds::new(d.as_f32().clamp(0.1, 10.0));
                 }
-                FlangerParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                FlangerParam::Mix(m) => {
+                    self.mix = m;
                 }
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Flanger(flanger_param) = param {
-            match flanger_param {
-                FlangerParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
-                FlangerParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
-                FlangerParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
-                FlangerParam::Delay => Some(TypedValue::Float(self.delay_base.as_millis())),
-                FlangerParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Flanger(flanger_param) = param {
+            Some(match flanger_param {
+                FlangerParam::Rate(_) => self.rate.as_f32(),
+                FlangerParam::Depth(_) => self.depth.as_f32(),
+                FlangerParam::Feedback(_) => self.feedback.as_f32(),
+                FlangerParam::Delay(_) => self.delay_base.as_f32(),
+                FlangerParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Flanger(FlangerParam::Rate(self.rate)),
+            Param::Flanger(FlangerParam::Depth(self.depth)),
+            Param::Flanger(FlangerParam::Feedback(self.feedback)),
+            Param::Flanger(FlangerParam::Delay(self.delay_base)),
+            Param::Flanger(FlangerParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {

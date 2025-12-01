@@ -399,8 +399,8 @@ impl eframe::App for SynthApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let result = self.rack_view.show(ui, &self.handle);
             
-            // Handle parameter changes - send typed params directly
-            for (module_id, typed_param, typed_value) in result.param_changes {
+            // Handle parameter changes - send Param directly (carries its own value)
+            for (module_id, param) in result.param_changes {
                 // Check module category
                 let category = self.rack_view.module_descriptor(module_id)
                     .map(|d| d.category);
@@ -411,8 +411,7 @@ impl eframe::App for SynthApp {
                         if let Some(effect_type) = patch_bridge::get_effect_type_from_module(&self.rack_view, module_id) {
                             self.handle.send(EngineCommand::SetEffectParameter {
                                 effect_type,
-                                param: typed_param,
-                                value: typed_value,
+                                param,
                             });
                         }
                     }
@@ -426,16 +425,14 @@ impl eframe::App for SynthApp {
                         // 1. Send to global module graph
                         self.handle.send(EngineCommand::SetModuleParameter {
                             module_id,
-                            param: typed_param,
-                            value: typed_value.clone(),
+                            param,
                         });
 
                         // 2. Also send to voice modules for backwards compatibility
-                        if let Some(voice_module) = patch_bridge::get_voice_module_for_typed_param(module_id, typed_param) {
+                        if let Some(voice_module) = patch_bridge::get_voice_module_for_param(module_id, &param) {
                             self.handle.send(EngineCommand::SetVoiceParameter {
                                 target: voice_module,
-                                param: typed_param,
-                                value: typed_value,
+                                param,
                             });
                         }
                     }

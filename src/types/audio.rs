@@ -2,6 +2,8 @@
 
 use std::ops::{Add, Sub};
 
+use serde::{Serialize, Deserialize};
+
 use super::Decibels;
 
 /// Tempo in beats per minute (BPM).
@@ -330,7 +332,7 @@ impl From<Amplitude> for f32 {
 ///
 /// Represents the number of simultaneous voices in a module.
 /// Typical range is 1-16 for polyphonic synths, 1-4 for chorus effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct VoiceCount(pub u8);
 

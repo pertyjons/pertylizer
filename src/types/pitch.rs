@@ -2,13 +2,16 @@
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use serde::{Deserialize, Serialize};
+
 use super::Hertz;
 
 /// Pitch offset in cents (1/100th of a semitone).
 ///
 /// 100 cents = 1 semitone
 /// 1200 cents = 1 octave
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Cents(pub f32);
 
@@ -126,7 +129,8 @@ impl std::fmt::Display for Cents {
 ///
 /// 1 semitone = 100 cents
 /// 12 semitones = 1 octave
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Semitones(pub f32);
 
@@ -263,7 +267,8 @@ impl std::fmt::Display for Semitones {
 /// Octave offset.
 ///
 /// 1 octave = 12 semitones = 1200 cents
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Octaves(pub i32);
 
@@ -354,7 +359,8 @@ impl std::fmt::Display for Octaves {
 }
 
 /// MIDI note number (0-127).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct MidiNote(pub u8);
 

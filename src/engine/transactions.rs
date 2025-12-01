@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::commands::{EngineCommand, ModuleId, PortId};
-use super::typed_params::{ModuleType, TypedParam, TypedValue};
+use super::typed_params::{ModuleType, Param};
 
 /// Global transaction ID counter.
 static NEXT_TRANSACTION_ID: AtomicU64 = AtomicU64::new(1);
@@ -143,17 +143,16 @@ impl CommandBatch {
     }
 
     /// Add a parameter set to the batch.
+    /// The Param contains both the parameter type and its value.
     pub fn set_parameter(
         &mut self,
         module_id: ModuleId,
-        param: TypedParam,
-        value: TypedValue,
+        param: Param,
     ) -> &mut Self {
         self.add_with_priority(
             EngineCommand::SetModuleParameter {
                 module_id,
                 param,
-                value,
             },
             90, // Parameters after connections
         )
@@ -274,8 +273,9 @@ impl BatchBuilder {
     }
 
     /// Set a parameter.
-    pub fn param(mut self, module_id: ModuleId, param: TypedParam, value: TypedValue) -> Self {
-        self.batch.set_parameter(module_id, param, value);
+    /// The Param contains both the parameter type and its value.
+    pub fn param(mut self, module_id: ModuleId, param: Param) -> Self {
+        self.batch.set_parameter(module_id, param);
         self
     }
 
@@ -374,18 +374,16 @@ impl Clone for EngineCommand {
                     channel: *channel,
                 }
             }
-            EngineCommand::SetVoiceParameter { target, param, value } => {
+            EngineCommand::SetVoiceParameter { target, param } => {
                 EngineCommand::SetVoiceParameter {
                     target: *target,
-                    param: param.clone(),
-                    value: value.clone(),
+                    param: *param,
                 }
             }
-            EngineCommand::SetModuleParameter { module_id, param, value } => {
+            EngineCommand::SetModuleParameter { module_id, param } => {
                 EngineCommand::SetModuleParameter {
                     module_id: *module_id,
-                    param: param.clone(),
-                    value: value.clone(),
+                    param: *param,
                 }
             }
             EngineCommand::RemoveModule { id } => {
@@ -427,11 +425,10 @@ impl Clone for EngineCommand {
             EngineCommand::RemoveEffect { id } => {
                 EngineCommand::RemoveEffect { id: *id }
             }
-            EngineCommand::SetEffectParameter { effect_type, param, value } => {
+            EngineCommand::SetEffectParameter { effect_type, param } => {
                 EngineCommand::SetEffectParameter {
                     effect_type: *effect_type,
-                    param: param.clone(),
-                    value: value.clone(),
+                    param: *param,
                 }
             }
             EngineCommand::SetEffectEnabled { effect_type, enabled } => {

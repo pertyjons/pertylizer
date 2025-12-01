@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::commands::ModuleId;
-use super::typed_params::TypedParam;
+use super::typed_params::Param;
 
 /// Module connectivity status for UI visualization.
 ///
@@ -100,7 +100,7 @@ impl VoiceStealReason {
 pub enum ModuleErrorKind {
     /// Parameter value was out of range.
     ParameterOutOfRange {
-        param: TypedParam,
+        param: Param,
         value: f32,
         min: f32,
         max: f32,

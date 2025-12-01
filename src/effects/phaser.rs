@@ -1,6 +1,6 @@
 //! Phaser effect using cascaded all-pass filters.
 
-use crate::engine::typed_params::{ModuleType, PhaserParam, TypedParam, TypedValue};
+use crate::engine::typed_params::{ModuleType, PhaserParam, Param};
 use crate::modules::{
     Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
@@ -103,30 +103,39 @@ impl Describable for Phaser {
                 PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Phaser(PhaserParam::Rate), "Rate")
-                    .description("LFO rate")
-                    .range(0.05, 5.0)
-                    .default(0.5)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::Knob),
-            )
-            .parameter(
-                ParameterDescriptor::float(TypedParam::Phaser(PhaserParam::Depth), "Depth")
-                    .description("Modulation depth")
-                    .range(0.0, 1.0)
-                    .default(0.7)
-                    .widget(WidgetHint::Knob),
-            )
-            .parameter(
-                ParameterDescriptor::float(TypedParam::Phaser(PhaserParam::Feedback), "Feedback")
-                    .description("Feedback amount")
-                    .range(-0.95, 0.95)
-                    .default(0.7)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Phaser(PhaserParam::Rate(Hertz::new(0.5))),
+                    "Rate",
+                )
+                .description("LFO rate")
+                .range(0.05, 5.0)
+                .default(0.5)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::float(
-                    TypedParam::Phaser(PhaserParam::CenterFreq),
+                    Param::Phaser(PhaserParam::Depth(NormalizedValue::new(0.7))),
+                    "Depth",
+                )
+                .description("Modulation depth")
+                .range(0.0, 1.0)
+                .default(0.7)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Phaser(PhaserParam::Feedback(BipolarValue::new(0.7))),
+                    "Feedback",
+                )
+                .description("Feedback amount")
+                .range(-0.95, 0.95)
+                .default(0.7)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Phaser(PhaserParam::CenterFreq(Hertz::new(1000.0))),
                     "Center Freq",
                 )
                 .description("Center frequency")
@@ -136,11 +145,14 @@ impl Describable for Phaser {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::Phaser(PhaserParam::Mix), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Phaser(PhaserParam::Mix(NormalizedValue::CENTER)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
             )
     }
 }
@@ -221,54 +233,55 @@ impl EffectModule for Phaser {
         self.mix.as_f32()
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::Phaser(phaser_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::Phaser(phaser_param) = param {
             match phaser_param {
-                PhaserParam::Rate => {
-                    if let Some(r) = value.as_float() {
-                        self.rate = Hertz::new(r.clamp(0.05, 5.0));
-                    }
+                PhaserParam::Rate(r) => {
+                    self.rate = Hertz::new(r.as_f32().clamp(0.05, 5.0));
                 }
-                PhaserParam::Depth => {
-                    if let Some(d) = value.as_float() {
-                        self.depth = NormalizedValue::new(d);
-                    }
+                PhaserParam::Depth(d) => {
+                    self.depth = d;
                 }
-                PhaserParam::Feedback => {
-                    if let Some(f) = value.as_float() {
-                        self.feedback = BipolarValue::new(f.clamp(-0.95, 0.95));
-                    }
+                PhaserParam::Feedback(f) => {
+                    self.feedback = BipolarValue::new(f.as_f32().clamp(-0.95, 0.95));
                 }
-                PhaserParam::Stages => {
+                PhaserParam::Stages(_) => {
                     // Fixed at 6 stages, ignore
                 }
-                PhaserParam::CenterFreq => {
-                    if let Some(f) = value.as_float() {
-                        self.center_freq = Hertz::new(f.clamp(100.0, 4000.0));
-                    }
+                PhaserParam::CenterFreq(f) => {
+                    self.center_freq = Hertz::new(f.as_f32().clamp(100.0, 4000.0));
                 }
-                PhaserParam::Mix => {
-                    if let Some(m) = value.as_float() {
-                        self.mix = NormalizedValue::new(m);
-                    }
+                PhaserParam::Mix(m) => {
+                    self.mix = m;
                 }
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::Phaser(phaser_param) = param {
-            match phaser_param {
-                PhaserParam::Rate => Some(TypedValue::Float(self.rate.as_f32())),
-                PhaserParam::Depth => Some(TypedValue::Float(self.depth.as_f32())),
-                PhaserParam::Feedback => Some(TypedValue::Float(self.feedback.as_f32())),
-                PhaserParam::Stages => Some(TypedValue::Int(NUM_STAGES as i32)),
-                PhaserParam::CenterFreq => Some(TypedValue::Float(self.center_freq.as_f32())),
-                PhaserParam::Mix => Some(TypedValue::Float(self.mix.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Phaser(phaser_param) = param {
+            Some(match phaser_param {
+                PhaserParam::Rate(_) => self.rate.as_f32(),
+                PhaserParam::Depth(_) => self.depth.as_f32(),
+                PhaserParam::Feedback(_) => self.feedback.as_f32(),
+                PhaserParam::Stages(_) => NUM_STAGES as f32,
+                PhaserParam::CenterFreq(_) => self.center_freq.as_f32(),
+                PhaserParam::Mix(_) => self.mix.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Phaser(PhaserParam::Rate(self.rate)),
+            Param::Phaser(PhaserParam::Depth(self.depth)),
+            Param::Phaser(PhaserParam::Feedback(self.feedback)),
+            Param::Phaser(PhaserParam::Stages(NUM_STAGES as u8)),
+            Param::Phaser(PhaserParam::CenterFreq(self.center_freq)),
+            Param::Phaser(PhaserParam::Mix(self.mix)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {

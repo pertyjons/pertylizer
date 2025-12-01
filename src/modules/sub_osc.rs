@@ -12,70 +12,9 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use crate::engine::typed_params::{TypedParam, TypedValue, SubOscParam, ModuleType};
+use crate::engine::typed_params::{ModuleType, Param, SubOscParam, SubOscOctave, SubOscWaveform};
 use crate::modules::core::*;
-use crate::types::{Hertz, Phase, Gain, SampleRate};
-
-/// Sub-oscillator waveform types.
-/// Limited set optimized for bass reinforcement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SubOscWaveform {
-    /// Pure sine - smooth, fundamental bass
-    #[default]
-    Sine,
-    /// Square wave - punchy, full harmonics
-    Square,
-    /// 25% pulse - hollow, distinctive character
-    Pulse25,
-}
-
-impl SubOscWaveform {
-    pub const ALL: [Self; 3] = [Self::Sine, Self::Square, Self::Pulse25];
-
-    pub fn id(&self) -> &'static str {
-        match self {
-            Self::Sine => "sine",
-            Self::Square => "square",
-            Self::Pulse25 => "pulse25",
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Sine => "Sine",
-            Self::Square => "Square",
-            Self::Pulse25 => "Pulse 25%",
-        }
-    }
-
-    pub fn to_choices() -> Vec<ChoiceOption> {
-        Self::ALL
-            .iter()
-            .map(|w| ChoiceOption::new(w.id(), w.name()))
-            .collect()
-    }
-}
-
-/// Sub-oscillator octave selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SubOscOctave {
-    /// One octave down (-1)
-    #[default]
-    MinusOne,
-    /// Two octaves down (-2)
-    MinusTwo,
-}
-
-impl SubOscOctave {
-    /// Get the frequency divisor for this octave.
-    #[inline]
-    pub fn divisor(self) -> f32 {
-        match self {
-            Self::MinusOne => 2.0,
-            Self::MinusTwo => 4.0,
-        }
-    }
-}
+use crate::types::{Gain, Hertz, Phase, SampleRate};
 
 /// Sub-oscillator for bass reinforcement.
 #[derive(Clone)]
@@ -114,14 +53,20 @@ impl SubOscillator {
         let phase = self.phase.as_f32();
 
         let sample = match self.waveform {
-            SubOscWaveform::Sine => {
-                (phase * TAU).sin()
-            }
+            SubOscWaveform::Sine => (phase * TAU).sin(),
             SubOscWaveform::Square => {
-                if phase < 0.5 { 1.0 } else { -1.0 }
+                if phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
             SubOscWaveform::Pulse25 => {
-                if phase < 0.25 { 1.0 } else { -1.0 }
+                if phase < 0.25 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
         };
 
@@ -149,7 +94,7 @@ impl Describable for SubOscillator {
             .tag("bass")
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::SubOsc(SubOscParam::Waveform),
+                    Param::SubOsc(SubOscParam::Waveform(SubOscWaveform::Square)),
                     "Waveform",
                     SubOscWaveform::to_choices(),
                 )
@@ -158,25 +103,23 @@ impl Describable for SubOscillator {
             )
             .parameter(
                 ParameterDescriptor::choice(
-                    TypedParam::SubOsc(SubOscParam::Octave),
+                    Param::SubOsc(SubOscParam::Octave(SubOscOctave::MinusOne)),
                     "Octave",
-                    vec![
-                        ChoiceOption::new("minus1", "-1 Oct")
-                            .with_description("One octave below"),
-                        ChoiceOption::new("minus2", "-2 Oct")
-                            .with_description("Two octaves below"),
-                    ],
+                    SubOscOctave::to_choices(),
                 )
                 .description("Octave transposition")
                 .widget(WidgetHint::Dropdown),
             )
             .parameter(
-                ParameterDescriptor::float(TypedParam::SubOsc(SubOscParam::Level), "Level")
-                    .description("Sub-oscillator output level")
-                    .range(0.0, 1.0)
-                    .default(0.5)
-                    .unit(ParameterUnit::Percent)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::SubOsc(SubOscParam::Level(Gain::new(0.5))),
+                    "Level",
+                )
+                .description("Sub-oscillator output level")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
     }
@@ -201,47 +144,34 @@ impl VoiceModule for SubOscillator {
         }
     }
 
-    fn set_param(&mut self, param: TypedParam, value: TypedValue) {
-        if let TypedParam::SubOsc(sub_param) = param {
+    fn set_param(&mut self, param: Param) {
+        if let Param::SubOsc(sub_param) = param {
             match sub_param {
-                SubOscParam::Waveform => {
-                    if let Some(i) = value.as_int() {
-                        self.waveform = match i {
-                            0 => SubOscWaveform::Sine,
-                            1 => SubOscWaveform::Square,
-                            2 => SubOscWaveform::Pulse25,
-                            _ => SubOscWaveform::Square,
-                        };
-                    }
-                }
-                SubOscParam::Octave => {
-                    if let Some(i) = value.as_int() {
-                        self.octave = match i {
-                            0 => SubOscOctave::MinusOne,
-                            1 => SubOscOctave::MinusTwo,
-                            _ => SubOscOctave::MinusOne,
-                        };
-                    }
-                }
-                SubOscParam::Level => {
-                    if let Some(l) = value.as_float() {
-                        self.level = Gain::new(l.clamp(0.0, 1.0));
-                    }
-                }
+                SubOscParam::Waveform(w) => self.waveform = w,
+                SubOscParam::Octave(o) => self.octave = o,
+                SubOscParam::Level(l) => self.level = Gain::new(l.as_f32().clamp(0.0, 1.0)),
             }
         }
     }
 
-    fn get_param(&self, param: TypedParam) -> Option<TypedValue> {
-        if let TypedParam::SubOsc(sub_param) = param {
-            match sub_param {
-                SubOscParam::Waveform => Some(TypedValue::Int(self.waveform as i32)),
-                SubOscParam::Octave => Some(TypedValue::Int(self.octave as i32)),
-                SubOscParam::Level => Some(TypedValue::Float(self.level.as_f32())),
-            }
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::SubOsc(sub_param) = param {
+            Some(match sub_param {
+                SubOscParam::Waveform(_) => self.waveform.index() as f32,
+                SubOscParam::Octave(_) => self.octave.index() as f32,
+                SubOscParam::Level(_) => self.level.as_f32(),
+            })
         } else {
             None
         }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::SubOsc(SubOscParam::Waveform(self.waveform)),
+            Param::SubOsc(SubOscParam::Octave(self.octave)),
+            Param::SubOsc(SubOscParam::Level(self.level)),
+        ]
     }
 
     fn module_type(&self) -> ModuleType {
@@ -260,10 +190,6 @@ impl VoiceModule for SubOscillator {
 
     fn note_off(&mut self) {
         // Sub-oscillator doesn't need to do anything on note off
-    }
-
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
     }
 
     fn box_clone(&self) -> Box<dyn VoiceModule> {

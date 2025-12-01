@@ -2,6 +2,8 @@
 
 use std::f32::consts::TAU;
 
+use serde::{Deserialize, Serialize};
+
 use super::{Clampable, Interpolate, Seconds};
 
 /// Frequency in Hertz.
@@ -11,7 +13,8 @@ use super::{Clampable, Interpolate, Seconds};
 /// # Valid Range
 /// Typically 0.0 to Nyquist (sample_rate / 2), but audio frequencies
 /// are usually 20 Hz to 20,000 Hz.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Hertz(pub f32);
 
@@ -155,7 +158,8 @@ impl std::fmt::Display for Hertz {
 /// Sample rate in samples per second.
 ///
 /// This is essentially a frequency (Hz) but semantically different.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct SampleRate(pub f32);
 
