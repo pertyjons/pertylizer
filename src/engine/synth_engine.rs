@@ -379,6 +379,8 @@ impl SynthEngine {
                 | ModuleType::Envelope
                 | ModuleType::Lfo
                 | ModuleType::Amplifier
+                | ModuleType::Mixer
+                | ModuleType::StereoOutput
         )
     }
 
@@ -684,6 +686,8 @@ impl SynthEngine {
                 }
                 self.effect_chain.clear();
                 self.module_graph.clear();
+                self.voice_template.clear();
+                self.rebuild_all_voices();
                 self.use_modular_routing = false;
             }
 
@@ -1100,7 +1104,7 @@ mod tests {
     mod dynamic_routing {
         use super::*;
         use crate::engine::commands::{EngineCommand, ModuleId, PortId};
-        use crate::modules::{Oscillator, Filter, Mixer};
+        use crate::modules::{Oscillator, Filter};
 
         /// Test A: Polyphonic Allocation
         /// An Oscillator should be added to voice_template, NOT to module_graph.
@@ -1143,49 +1147,11 @@ mod tests {
             assert_eq!(final_osc_count, initial_osc_count + 1);
         }
 
-        /// Test B: Global Allocation
-        /// A Reverb should be added to module_graph, NOT to voice_template.
-        #[test]
-        fn test_reverb_routed_to_global_graph() {
-            let (mut engine, mut handle) = SynthEngine::new();
+        // Note: Effects (Reverb, Delay, etc.) don't implement VoiceModule,
+        // so they can't be added via AddModuleInstance. They use the separate
+        // effect chain mechanism instead.
 
-            // Create a new reverb
-            let rev_id = ModuleId::new(ModuleType::Reverb, 1);
-            let rev = Box::new(Reverb::new());
-
-            // Verify: module_graph should be empty initially (or no reverb)
-            assert!(
-                engine.module_graph.get_module(rev_id).is_none(),
-                "Reverb should not exist in module_graph initially"
-            );
-
-            // Send command to add module
-            handle.send(EngineCommand::AddModuleInstance {
-                id: rev_id,
-                module: rev,
-            });
-            engine.process_commands();
-
-            // Verify: Reverb should be in module_graph
-            assert!(
-                engine.module_graph.get_module(rev_id).is_some(),
-                "Reverb should be in module_graph"
-            );
-
-            // Verify: Reverb should NOT be in voice_template
-            assert!(
-                engine.voice_template.get_module(rev_id).is_none(),
-                "Reverb should NOT be in voice_template"
-            );
-
-            // Verify: use_modular_routing should be enabled
-            assert!(
-                engine.use_modular_routing,
-                "use_modular_routing should be true after adding global effect"
-            );
-        }
-
-        /// Test C: Voice Propagation
+        /// Test B: Voice Propagation
         /// Adding a module to voice_template should propagate to all voices in all parts.
         #[test]
         fn test_voice_module_propagates_to_voices() {
@@ -1284,6 +1250,8 @@ mod tests {
             assert!(SynthEngine::is_voice_module(ModuleType::Envelope));
             assert!(SynthEngine::is_voice_module(ModuleType::Lfo));
             assert!(SynthEngine::is_voice_module(ModuleType::Amplifier));
+            assert!(SynthEngine::is_voice_module(ModuleType::Mixer));
+            assert!(SynthEngine::is_voice_module(ModuleType::StereoOutput));
 
             // Global modules (should be false)
             assert!(!SynthEngine::is_voice_module(ModuleType::Delay));
@@ -1294,8 +1262,6 @@ mod tests {
             assert!(!SynthEngine::is_voice_module(ModuleType::Flanger));
             assert!(!SynthEngine::is_voice_module(ModuleType::Compressor));
             assert!(!SynthEngine::is_voice_module(ModuleType::Eq));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Mixer));
-            assert!(!SynthEngine::is_voice_module(ModuleType::StereoOutput));
             assert!(!SynthEngine::is_voice_module(ModuleType::Oscilloscope));
             assert!(!SynthEngine::is_voice_module(ModuleType::LevelMeter));
         }

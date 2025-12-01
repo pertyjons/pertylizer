@@ -116,14 +116,12 @@ ambient music, ballads, or as a bed under other instruments.
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
     patch.add_connection("lfo-1", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "out", "chr-1", "in_l");
-    patch.add_connection("chr-1", "out_l", "rev-1", "in_l");
-    patch.add_connection("chr-1", "out_r", "rev-1", "in_r");
-    // Route to oscilloscope and output
-    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
-    patch.add_connection("rev-1", "out_r", "scp-1", "in_r");
-    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
-    patch.add_connection("scp-1", "out_r", "out-1", "in_r");
+    // Voice output: amp -> stereo output (effects handled via effect chain)
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    // Oscilloscope taps from amplifier for visualization
+    patch.add_connection("amp-1", "left", "scp-1", "in_l");
+    patch.add_connection("amp-1", "right", "scp-1", "in_r");
 
     patch
 }

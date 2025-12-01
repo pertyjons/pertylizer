@@ -84,9 +84,11 @@ for open hi-hats. The filter cutoff affects brightness.
     patch.add_connection("nse-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
-    // Route to oscilloscope and output
-    patch.add_connection("amp-1", "out", "scp-1", "in_l");
-    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    // Voice output: amp -> stereo output
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    // Oscilloscope taps from amplifier for visualization
+    patch.add_connection("amp-1", "left", "scp-1", "in_l");
 
     patch
 }

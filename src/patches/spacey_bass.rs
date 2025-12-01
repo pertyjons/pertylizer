@@ -105,8 +105,9 @@ and resonance for different tonal characters.
     patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
     // LFO -> Osc1 FM (vibrato)
     patch.add_connection("lfo-1", "out", "osc-1", "fm");
-    // Amp -> Output
-    patch.add_connection("amp-1", "out", "out-1", "in_l");
+    // Voice output: amp -> stereo output
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
 
     patch
 }

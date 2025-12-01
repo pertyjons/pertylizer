@@ -112,10 +112,11 @@ style bass lines. Try different octaves for different characters.
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
-    patch.add_connection("amp-1", "out", "dst-1", "in");
-    // Route to oscilloscope and output
-    patch.add_connection("dst-1", "out", "scp-1", "in_l");
-    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    // Voice output: amp -> stereo output (effects handled via effect chain)
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    // Oscilloscope taps from amplifier for visualization
+    patch.add_connection("amp-1", "left", "scp-1", "in_l");
 
     patch.settings.octave_offset = -2;
     patch

@@ -211,8 +211,9 @@ pub struct Voice {
     /// Configured glide time.
     glide_time: Seconds,
 
-    /// Cached amplifier module ID for stereo output extraction.
-    amp_module_id: Option<crate::engine::ModuleId>,
+    /// Cached output module ID for stereo output extraction.
+    /// Priority: StereoOutput > Amplifier > Mixer
+    output_module_id: Option<crate::engine::ModuleId>,
 
     /// Pre-allocated stereo output buffers.
     left_buffer: AudioBuffer,
@@ -241,7 +242,7 @@ impl Voice {
             steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
-            amp_module_id: None,
+            output_module_id: None,
             left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
@@ -250,7 +251,11 @@ impl Voice {
 
     /// Create a new voice from a ModuleGraph template.
     pub fn from_graph(id: u32, graph: ModuleGraph) -> Self {
-        let amp_id = graph.find_module_by_type(ModuleType::Amplifier);
+        // Find output module with priority: StereoOutput > Amplifier > Mixer
+        let output_id = graph
+            .find_module_by_type(ModuleType::StereoOutput)
+            .or_else(|| graph.find_module_by_type(ModuleType::Amplifier))
+            .or_else(|| graph.find_module_by_type(ModuleType::Mixer));
 
         Self {
             id,
@@ -268,7 +273,7 @@ impl Voice {
             steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
-            amp_module_id: amp_id,
+            output_module_id: output_id,
             left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
@@ -428,23 +433,37 @@ impl Voice {
         // Process the entire graph
         self.graph.process(&mut self.mono_buffer, context);
 
-        // Extract stereo output from amplifier if available
-        if let Some(amp_id) = self.amp_module_id {
-            if let Some(left) = self.graph.get_module_output(amp_id, "left") {
-                left_out.copy_from(left);
+        // Extract stereo output from the output module if available
+        if let Some(out_id) = self.output_module_id {
+            // Try different port naming conventions:
+            // 1. "left"/"right" (StereoOutput, Amplifier)
+            // 2. "out_l"/"out_r" (some effects)
+            // 3. "out" (Mixer, mono modules) - duplicate to stereo
+            let left = self
+                .graph
+                .get_module_output(out_id, "left")
+                .or_else(|| self.graph.get_module_output(out_id, "out_l"))
+                .or_else(|| self.graph.get_module_output(out_id, "out"));
+
+            let right = self
+                .graph
+                .get_module_output(out_id, "right")
+                .or_else(|| self.graph.get_module_output(out_id, "out_r"))
+                .or_else(|| self.graph.get_module_output(out_id, "out"));
+
+            if let Some(l) = left {
+                left_out.copy_from(l);
             } else {
-                // Fallback: copy mono to left
                 left_out.copy_from(&self.mono_buffer);
             }
 
-            if let Some(right) = self.graph.get_module_output(amp_id, "right") {
-                right_out.copy_from(right);
+            if let Some(r) = right {
+                right_out.copy_from(r);
             } else {
-                // Fallback: copy mono to right
                 right_out.copy_from(&self.mono_buffer);
             }
         } else {
-            // No amplifier found - use mono output for both channels
+            // No output module found - use graph's mono buffer for both channels
             left_out.copy_from(&self.mono_buffer);
             right_out.copy_from(&self.mono_buffer);
         }
@@ -462,7 +481,12 @@ impl Voice {
     /// Clone the voice structure (for voice allocation).
     pub fn clone_structure(&self) -> Self {
         let cloned_graph = self.graph.clone_structure();
-        let amp_id = cloned_graph.find_module_by_type(ModuleType::Amplifier);
+
+        // Find output module with priority: StereoOutput > Amplifier > Mixer
+        let output_id = cloned_graph
+            .find_module_by_type(ModuleType::StereoOutput)
+            .or_else(|| cloned_graph.find_module_by_type(ModuleType::Amplifier))
+            .or_else(|| cloned_graph.find_module_by_type(ModuleType::Mixer));
 
         Self {
             id: self.id,
@@ -480,17 +504,21 @@ impl Voice {
             steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: self.glide_time,
-            amp_module_id: amp_id,
+            output_module_id: output_id,
             left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
 
-    /// Update the cached amplifier module ID.
+    /// Update the cached output module ID.
     /// Call this after modifying the graph structure.
-    pub fn update_amp_cache(&mut self) {
-        self.amp_module_id = self.graph.find_module_by_type(ModuleType::Amplifier);
+    pub fn update_output_cache(&mut self) {
+        self.output_module_id = self
+            .graph
+            .find_module_by_type(ModuleType::StereoOutput)
+            .or_else(|| self.graph.find_module_by_type(ModuleType::Amplifier))
+            .or_else(|| self.graph.find_module_by_type(ModuleType::Mixer));
     }
 }
 

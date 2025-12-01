@@ -1,5 +1,61 @@
 # Version History
 
+## [0.32.10] - 2024
+
+### Fixed - Critical Audio Routing Bugs
+
+This release fixes two critical bugs that caused no audio output and "ghost sounds" when switching patches.
+
+#### Bug 1: StereoOutput Not Producing Audio
+
+**Problem:** StereoOutput was classified as a global module, but patches expected it in the voice signal chain. Additionally, StereoOutput had no output ports for Voice to read from, and partial input connections (only `in_l` connected) resulted in silence.
+
+**Solution:**
+- `StereoOutput` and `Mixer` are now classified as voice modules in `is_voice_module()`
+- Added output ports `"left"`, `"right"`, `"out"` to StereoOutput for Voice to read
+- Fixed input handling to support partial connections:
+  ```rust
+  match (left_in, right_in, mono_in) {
+      (Some(l), Some(r), _) => (l[i], r[i]),      // Full stereo
+      (Some(l), None, _) => (l[i], l[i]),          // Only left - duplicate
+      (None, Some(r), _) => (r[i], r[i]),          // Only right - duplicate
+      (None, None, Some(m)) => (m[i], m[i]),       // Mono - duplicate
+      (None, None, None) => (0.0, 0.0),            // Silence
+  }
+  ```
+
+#### Bug 2: Ghost Sounds When Switching Patches
+
+**Problem:** `ClearAllModules` didn't clear `voice_template`, so modules from previous patches remained and played in parallel.
+
+**Solution:** Added `voice_template.clear()` and `rebuild_all_voices()` to `ClearAllModules` handler.
+
+### Changed - Voice Output Detection
+
+- Renamed `Voice::amp_module_id` → `output_module_id`
+- Output module detection priority: `StereoOutput` > `Amplifier` > `Mixer`
+- Updated `process_audio()` to try port names: `"left"`/`"right"` → `"out_l"`/`"out_r"` → `"out"`
+
+### Fixed - All 20 Patches Updated
+
+All patches were incorrectly routing through effects (Reverb, Delay, Distortion) and oscilloscope in the signal path. Since effects are global modules, these cross-graph connections failed silently.
+
+**Changes to all patches:**
+- Removed effects from voice signal chain (effects should use effect chain)
+- Connected `amp-1:left/right` directly to `out-1:in_l/in_r`
+- Oscilloscope now taps from amplifier for visualization only
+
+### Technical Summary
+
+| File | Changes |
+|------|---------|
+| `synth_engine.rs` | `is_voice_module()` includes StereoOutput/Mixer, `ClearAllModules` clears template |
+| `voice.rs` | `output_module_id` with priority detection, flexible port reading |
+| `output.rs` | Added output ports, fixed partial input handling |
+| `patches/*.rs` | All 20 patches use direct amp→output stereo routing |
+
+---
+
 ## [0.32.9] - 2024
 
 ### Added - Dynamic Module Routing

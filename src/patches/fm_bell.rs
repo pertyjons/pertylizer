@@ -101,10 +101,11 @@ more "chime-like", lower notes more "gong-like".
     patch.add_connection("env-1", "out", "osc-2", "cv");  // Envelope controls modulator level
     patch.add_connection("osc-1", "out", "amp-1", "in");
     patch.add_connection("env-2", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "out", "rev-1", "in_l");
-    // Route to oscilloscope and output
-    patch.add_connection("rev-1", "out_l", "scp-1", "in_l");
-    patch.add_connection("scp-1", "out_l", "out-1", "in_l");
+    // Voice output: amp -> stereo output (effects handled via effect chain)
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    // Oscilloscope taps from amplifier for visualization
+    patch.add_connection("amp-1", "left", "scp-1", "in_l");
 
     patch
 }

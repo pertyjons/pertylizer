@@ -1,12 +1,11 @@
 //! Stereo Output Module - Final output destination for the module graph.
 //!
-//! The StereoOutput module serves as the final "sink" in the module graph.
+//! The StereoOutput module serves as the final stage in the voice signal chain.
 //! It collects audio from connected modules and provides the final stereo
 //! output with master volume, pan, and optional limiting.
 //!
-//! Unlike other modules, StereoOutput has no audio outputs - it's the end
-//! of the signal chain. The processed audio is stored internally and can
-//! be retrieved via the `get_output()` method.
+//! The processed audio is available via the "left" and "right" output ports
+//! for the Voice to read, as well as via the `get_output()` method.
 
 use std::collections::HashMap;
 
@@ -135,7 +134,19 @@ impl Describable for StereoOutput {
             .port(
                 PortDescriptor::audio_input("in_r", "In R").description("Right channel input"),
             )
-            // No audio outputs - this is the final sink
+            // Output ports for Voice to read processed audio
+            .port(
+                PortDescriptor::audio_output("left", "Left Out")
+                    .description("Processed left channel output"),
+            )
+            .port(
+                PortDescriptor::audio_output("right", "Right Out")
+                    .description("Processed right channel output"),
+            )
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Mono mix output (for graph compatibility)"),
+            )
             // Parameters
             .parameter(
                 ParameterDescriptor::float(
@@ -213,16 +224,18 @@ impl VoiceModule for StereoOutput {
 
         // Process each sample
         for i in 0..context.samples {
-            // Get input samples
-            let (mut left, mut right) = if let (Some(l), Some(r)) = (left_in, right_in) {
-                // Stereo input
-                (l[i], r[i])
-            } else if let Some(mono) = mono_in {
+            // Get input samples - handle partial connections
+            let (mut left, mut right) = match (left_in, right_in, mono_in) {
+                // Full stereo input
+                (Some(l), Some(r), _) => (l[i], r[i]),
+                // Only left input - duplicate to both channels
+                (Some(l), None, _) => (l[i], l[i]),
+                // Only right input - duplicate to both channels
+                (None, Some(r), _) => (r[i], r[i]),
                 // Mono input - duplicate to both channels
-                (mono[i], mono[i])
-            } else {
+                (None, None, Some(m)) => (m[i], m[i]),
                 // No input - silence
-                (0.0, 0.0)
+                (None, None, None) => (0.0, 0.0),
             };
 
             // Apply mute
@@ -255,8 +268,20 @@ impl VoiceModule for StereoOutput {
         self.peak_r.decay(DECAY);
         self.peak_r = Amplitude::new(self.peak_r.as_f32().max(peak_r.as_f32()));
 
-        // Also write to "out" port if present (for compatibility)
-        // This allows the graph to read from this module's output
+        // Write to stereo output ports for Voice to read
+        if let Some(left_out) = outputs.get_mut("left") {
+            for i in 0..context.samples.min(left_out.len()) {
+                left_out[i] = self.output_buffer[i * 2];
+            }
+        }
+
+        if let Some(right_out) = outputs.get_mut("right") {
+            for i in 0..context.samples.min(right_out.len()) {
+                right_out[i] = self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0);
+            }
+        }
+
+        // Also write to "out" port if present (mono compatibility)
         if let Some(out_buf) = outputs.get_mut("out") {
             // Convert stereo to mono for graph routing (sum and normalize)
             for i in 0..context.samples.min(out_buf.len()) {
