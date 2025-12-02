@@ -1,5 +1,34 @@
 # Version History
 
+## [0.32.12] - 2024
+
+### Removed - Performance Panel
+
+Removed the performance panel GUI component to simplify the interface.
+
+**Deleted:**
+- `src/gui/performance_panel.rs` (263 lines)
+- Toolbar "🎹 Perf" toggle button
+- Left side panel with Pitch Bend, Mod Wheel, and Velocity Mapping controls
+
+**Preserved (for future MIDI support):**
+- `EngineCommand::PitchBend` and handler
+- `EngineCommand::ModWheel` and handler
+- `PartParam::VelocityAmpSensitivity` and handler
+- `PartParam::VelocityFilterSensitivity` and handler
+
+The engine-side command handlers remain intact so that future MIDI controller input can use them without modification.
+
+### Technical Summary
+
+| File | Change |
+|------|--------|
+| `src/gui/performance_panel.rs` | Deleted |
+| `src/gui/mod.rs` | Removed module declaration |
+| `src/gui/egui_backend.rs` | Removed imports, fields, UI code |
+
+---
+
 ## [0.32.11] - 2024
 
 ### Fixed - Real-time Parameter Updates for Voice Modules
