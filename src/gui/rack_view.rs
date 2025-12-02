@@ -1280,6 +1280,23 @@ impl ModulePalette {
                         selected = Some(PaletteSelection::Effect(EffectType::Chorus));
                         ui.close();
                     }
+                    ui.separator();
+                    if ui.button("🌀 Flanger").clicked() {
+                        selected = Some(PaletteSelection::Effect(EffectType::Flanger));
+                        ui.close();
+                    }
+                    if ui.button("🔄 Phaser").clicked() {
+                        selected = Some(PaletteSelection::Effect(EffectType::Phaser));
+                        ui.close();
+                    }
+                    if ui.button("📊 Compressor").clicked() {
+                        selected = Some(PaletteSelection::Effect(EffectType::Compressor));
+                        ui.close();
+                    }
+                    if ui.button("🎛 EQ").clicked() {
+                        selected = Some(PaletteSelection::Effect(EffectType::Eq));
+                        ui.close();
+                    }
                 },
             );
             

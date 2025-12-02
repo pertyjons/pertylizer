@@ -665,8 +665,21 @@ impl SynthEngine {
             }
 
             EngineCommand::SetModuleParameter { module_id, param } => {
-                // Set parameter on module in the global graph
-                self.module_graph.set_param(module_id, param);
+                // Check if this is a voice module or a global module
+                if Self::is_voice_module(module_id.module_type) {
+                    // Voice module: update template and all active voices
+                    self.voice_template.set_param(module_id, param.clone());
+
+                    // Apply to all existing voices in all parts (real-time update!)
+                    for part in &mut self.parts {
+                        for voice in part.allocator_mut().voices_mut() {
+                            voice.graph.set_param(module_id, param.clone());
+                        }
+                    }
+                } else {
+                    // Global module: update the global graph
+                    self.module_graph.set_param(module_id, param);
+                }
             }
 
             EngineCommand::Reset => {

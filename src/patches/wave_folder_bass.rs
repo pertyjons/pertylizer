@@ -102,10 +102,6 @@ Low values = warm, high values = aggressive and metallic.
     // Voice output: amp -> stereo output (effects handled via effect chain)
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
-    // Oscilloscope taps from amplifier for visualization
-    patch.add_connection("amp-1", "left", "scp-1", "in_l");
-    patch.add_connection("amp-1", "right", "scp-1", "in_r");
-
     patch.settings.octave_offset = -2;
     patch
 }

@@ -114,9 +114,6 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Voice output: amp -> stereo output
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
-    // Oscilloscope taps from amplifier for visualization
-    patch.add_connection("amp-1", "left", "scp-1", "in_l");
-
     patch.settings.octave_offset = -1;
     patch
 }

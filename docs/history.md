@@ -1,5 +1,70 @@
 # Version History
 
+## [0.32.11] - 2024
+
+### Fixed - Real-time Parameter Updates for Voice Modules
+
+Critical fix for voice module parameters not updating during playback.
+
+**Problem:** `SetModuleParameter` only updated the `module_graph` (global modules). Changes to voice modules (oscillators, filters, envelopes, etc.) didn't affect notes already playing.
+
+**Solution:** Modified `SetModuleParameter` handler to:
+1. Check if the module is a voice module using `is_voice_module()`
+2. Update `voice_template` for new voices
+3. Iterate through all parts and update all active voices in real-time
+
+```rust
+if Self::is_voice_module(module_id.module_type) {
+    self.voice_template.set_param(module_id, param.clone());
+    for part in &mut self.parts {
+        for voice in part.allocator_mut().voices_mut() {
+            voice.graph.set_param(module_id, param.clone());
+        }
+    }
+}
+```
+
+### Fixed - Invalid Patch Connections (Oscilloscope)
+
+All 18 patch files had invalid cross-graph connections attempting to connect voice modules (Amplifier) to global modules (Oscilloscope).
+
+**Problem:** Patches contained lines like:
+```rust
+patch.add_connection("amp-1", "left", "scp-1", "in_l");
+```
+
+This caused "Module not found" errors at startup since voice and global modules exist in separate graphs.
+
+**Solution:** Removed all 29 invalid oscilloscope connections from patch files. The oscilloscope already receives the final mix via `effect_chain.process_visualizers()` - no patch connections needed.
+
+### Added - Complete Effects Menu
+
+Added all remaining effect types to the GUI Effect submenu:
+- **Flanger** - Modulated delay with feedback
+- **Phaser** - Cascaded all-pass filters
+- **Compressor** - Dynamics processor
+- **EQ** - 3-band parametric equalizer
+
+These effects were already implemented in the backend but weren't accessible in the UI.
+
+### Technical Summary
+
+| Area | Changes |
+|------|---------|
+| `synth_engine.rs` | `SetModuleParameter` now updates voice_template + all active voices for voice modules |
+| `patches/*.rs` | Removed 29 invalid oscilloscope connections from 18 patch files |
+| `rack_view.rs` | Added Flanger, Phaser, Compressor, EQ to Effect submenu |
+
+### Definition of Done Verification
+- Real-time parameter changes now affect playing notes immediately
+- No "Module not found" or "Port not found" errors at startup
+- Oscilloscope shows waveforms (fed via effect chain, not patch cables)
+- All effects accessible via Add Module → Effect menu
+- All 244 unit tests passing
+- Clean compile with no warnings
+
+---
+
 ## [0.32.10] - 2024
 
 ### Fixed - Critical Audio Routing Bugs
