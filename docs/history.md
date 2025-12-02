@@ -1,5 +1,21 @@
 # Version History
 
+## [0.32.13] - 2024
+
+### Fixed - Stereo Output Parameter Changes
+
+Fixed parameter changes on "Stereo Output" module being ignored.
+
+**Problem:** `ModuleCategory::Output` was missing from the match arms in `egui_backend.rs`, causing all parameter changes (e.g., Master Volume) to be silently dropped.
+
+**Solution:** Added `ModuleCategory::Output` to:
+1. Parameter change handling - now sends `SetModuleParameter`
+2. Module removal handling - now sends `RemoveModule`
+
+Since `SynthEngine` classifies `StereoOutput` as a voice module, the parameter changes automatically propagate to voice templates and active voices.
+
+---
+
 ## [0.32.12] - 2024
 
 ### Removed - Performance Panel

@@ -395,7 +395,8 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Envelope) |
                     Some(ModuleCategory::LFO) |
                     Some(ModuleCategory::Amplifier) |
-                    Some(ModuleCategory::Mixer) => {
+                    Some(ModuleCategory::Mixer) |
+                    Some(ModuleCategory::Output) => {
                         // Voice/modular module - send to both targets
                         // 1. Send to global module graph
                         self.handle.send(EngineCommand::SetModuleParameter {
@@ -437,7 +438,8 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Envelope) |
                     Some(ModuleCategory::LFO) |
                     Some(ModuleCategory::Amplifier) |
-                    Some(ModuleCategory::Mixer) => {
+                    Some(ModuleCategory::Mixer) |
+                    Some(ModuleCategory::Output) => {
                         // Remove from modular graph
                         self.handle.send(EngineCommand::RemoveModule { id: module_id });
                     }
