@@ -194,12 +194,16 @@ impl EngineHandle {
     }
 
     /// Set a voice module parameter using the type-safe API.
+    ///
+    /// This targets a specific instrument's voice graph.
     pub fn set_voice_parameter(
         &mut self,
+        instrument_id: crate::engine::instrument::InstrumentId,
         target: crate::engine::commands::PolyModule,
         param: crate::engine::typed_params::Param,
     ) -> bool {
         self.send(EngineCommand::SetVoiceParameter {
+            instrument_id,
             target,
             param,
         })
@@ -282,12 +286,10 @@ pub struct SynthEngine {
     state: Arc<EngineState>,
 
     // === Instrument management (multitimbral) ===
-    /// All synthesizer instruments (each with its own voice allocator).
+    /// All synthesizer instruments (each with its own voice graph and allocator).
     instruments: Vec<Box<Instrument>>,
     /// Counter for generating unique instrument IDs.
     next_instrument_id: u64,
-    /// Template module graph for voices.
-    voice_graph: ModuleGraph,
 
     // === Global module graph ===
     /// The global module graph for modular routing.
@@ -348,17 +350,17 @@ impl SynthEngine {
         let instrument_return_rb = HeapRb::<Box<Instrument>>::new(RETURN_BUFFER_SIZE);
         let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
-        // Create voice template with default signal chain
-        let voice_graph = Self::create_default_voice_graph();
-
         // Create default instrument with OMNI channel (responds to all MIDI channels)
         let mut default_instrument = Instrument::with_config(InstrumentId::FIRST, "Default", config);
         default_instrument.set_midi_channel(MidiChannel::OMNI);
 
-        // Initialize allocator with template graph (not a hardcoded Voice)
+        // Populate the instrument's voice graph with default signal chain
+        Self::populate_default_voice_graph(default_instrument.voice_graph_mut());
+
+        // Initialize allocator with the instrument's voice graph
         *default_instrument.allocator_mut() = VoiceAllocator::with_graph_template(
             default_instrument.allocator().config().clone(),
-            &voice_graph,
+            default_instrument.voice_graph(),
         );
 
         let engine = Self {
@@ -369,7 +371,6 @@ impl SynthEngine {
             state: Arc::clone(&state),
             instruments: vec![Box::new(default_instrument)],
             next_instrument_id: 1, // 0 is used by default instrument
-            voice_graph,
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             master_bus: MasterBus::new(),
@@ -421,13 +422,13 @@ impl SynthEngine {
         )
     }
 
-    /// Rebuild all voices from the current voice template.
+    /// Rebuild all voices for all instruments.
     ///
-    /// Call this after modifying the voice_graph to propagate changes
-    /// to all existing voices in all instruments.
-    fn rebuild_all_voices(&mut self) {
+    /// Each instrument uses its own voice_graph as the template.
+    /// Call this after bulk operations that affect all instruments.
+    fn rebuild_all_instrument_voices(&mut self) {
         for instrument in &mut self.instruments {
-            instrument.allocator_mut().rebuild_from_graph(&self.voice_graph);
+            instrument.rebuild_voices();
         }
     }
 
@@ -436,16 +437,13 @@ impl SynthEngine {
         self.master_bus.find_effect_by_id(module_id)
     }
 
-    /// Create the default voice template graph.
+    /// Populate a voice graph with the default signal chain.
     ///
-    /// This graph is cloned for each voice in the synthesizer.
-    /// It defines a basic subtractive synthesis signal chain:
+    /// This creates a basic subtractive synthesis signal chain:
     /// OSC1 + OSC2 -> Filter -> Amplifier
     /// with envelope modulation.
-    fn create_default_voice_graph() -> ModuleGraph {
+    fn populate_default_voice_graph(graph: &mut ModuleGraph) {
         use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
-
-        let mut graph = ModuleGraph::new();
 
         // Add oscillators with Spacey Bass preset defaults
         let osc1_id = graph.add_module(Box::new({
@@ -517,8 +515,6 @@ impl SynthEngine {
         let _ = graph.connect(amp_env_id, "out", amp_id, "cv");
         // Connect: Filter Envelope -> Filter Cutoff CV
         let _ = graph.connect(filter_env_id, "out", filter_id, "cutoff_cv");
-
-        graph
     }
 
     /// Process pending commands.
@@ -709,36 +705,39 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::SetVoiceParameter { target, param } => {
+            EngineCommand::SetVoiceParameter { instrument_id, target, param } => {
                 // Get the ModuleId from the PolyModule enum
                 let module_id = target.module_id();
 
-                // Update the voice template (so new voices get the new value)
-                self.voice_graph.set_param(module_id, param.clone());
+                // Find the target instrument and update its voice graph and voices
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == instrument_id) {
+                    // Update the instrument's voice graph (so new voices get the new value)
+                    instrument.voice_graph_mut().set_param(module_id, param.clone());
 
-                // Apply to all existing voices in all instruments
-                for instrument in &mut self.instruments {
+                    // Apply to all existing voices in this instrument
                     for voice in instrument.allocator_mut().voices_mut() {
                         voice.graph.set_param(module_id, param.clone());
                     }
                 }
             }
 
-            EngineCommand::SetModuleParameter { module_id, param } => {
-                // Check if this is a voice module or a global module
-                if Self::is_voice_module(module_id.module_type) {
-                    // Voice module: update template and all active voices
-                    self.voice_graph.set_param(module_id, param.clone());
+            EngineCommand::SetModuleParameter { instrument_id, module_id, param } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Target a specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.voice_graph_mut().set_param(module_id, param.clone());
 
-                    // Apply to all existing voices in all instruments (real-time update!)
-                    for instrument in &mut self.instruments {
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice.graph.set_param(module_id, param.clone());
+                            // Apply to all existing voices in this instrument
+                            for voice in instrument.allocator_mut().voices_mut() {
+                                voice.graph.set_param(module_id, param.clone());
+                            }
                         }
                     }
-                } else {
-                    // Global module: update the global graph
-                    self.module_graph.set_param(module_id, param);
+                    None => {
+                        // Global module: update the global graph (master bus)
+                        self.module_graph.set_param(module_id, param);
+                    }
                 }
             }
 
@@ -756,11 +755,13 @@ impl SynthEngine {
                 for instrument in &mut self.instruments {
                     instrument.panic();
                     instrument.set_enabled(false);
+                    // Clear each instrument's voice graph
+                    instrument.voice_graph_mut().clear();
+                    // Rebuild voices with the cleared graph
+                    instrument.rebuild_voices();
                 }
                 self.master_bus.clear();
                 self.module_graph.clear();
-                self.voice_graph.clear();
-                self.rebuild_all_voices();
                 self.use_modular_routing = false;
             }
 
@@ -814,104 +815,123 @@ impl SynthEngine {
 
             // === Modular routing commands ===
 
-            EngineCommand::AddModuleInstance { id, module } => {
-                // Route module to the appropriate graph based on type
-                if Self::is_voice_module(id.module_type) {
-                    // Voice module: add to template and rebuild all voices
-                    self.voice_graph.add_module_with_id(id, module);
-                    self.rebuild_all_voices();
-                } else {
-                    // Global module (effects, visualizers): add to global graph
-                    self.module_graph.add_module_with_id(id, module);
-                    self.use_modular_routing = true;
+            EngineCommand::AddModuleInstance { instrument_id, id, module } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Add to specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.voice_graph_mut().add_module_with_id(id, module);
+                            // Rebuild this instrument's voices with the updated graph
+                            instrument.rebuild_voices();
+                        }
+                    }
+                    None => {
+                        // Global module: add to global graph (master bus)
+                        self.module_graph.add_module_with_id(id, module);
+                        self.use_modular_routing = true;
+                    }
                 }
             }
 
-            EngineCommand::RemoveModule { id } => {
-                // Try to remove from voice template first
-                if self.voice_graph.get_module(id).is_some() {
-                    // Remove from voice template and rebuild all voices
-                    // Note: voice_graph module is dropped immediately (not sent to main thread)
-                    // because it's a template, not actively processing audio
-                    self.voice_graph.remove_module(id);
-                    self.rebuild_all_voices();
-                } else if let Some(module) = self.module_graph.remove_module_and_return(id) {
-                    // Remove from global graph and send back to main thread for dropping
-                    // This avoids deallocation on the audio thread
-                    let _ = self.return_producer.try_push(DroppedModule(module));
+            EngineCommand::RemoveModule { instrument_id, id } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Remove from specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.voice_graph_mut().remove_module(id);
+                            // Rebuild this instrument's voices with the updated graph
+                            instrument.rebuild_voices();
+                        }
+                    }
+                    None => {
+                        // Remove from global graph and send back to main thread for dropping
+                        if let Some(module) = self.module_graph.remove_module_and_return(id) {
+                            let _ = self.return_producer.try_push(DroppedModule(module));
+                        }
+                    }
                 }
             }
 
-            EngineCommand::Connect { from, to } => {
-                // Check if both modules exist in the voice template
-                let from_in_voice = self.voice_graph.get_module(from.module).is_some();
-                let to_in_voice = self.voice_graph.get_module(to.module).is_some();
+            EngineCommand::Connect { instrument_id, from, to } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Connect in specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            if let Err(e) = instrument.voice_graph_mut().connect(
+                                from.module,
+                                &from.port,
+                                to.module,
+                                &to.port,
+                            ) {
+                                eprintln!(
+                                    "Voice graph connection failed: {:?}:{} -> {:?}:{} - {}",
+                                    from.module, from.port, to.module, to.port, e
+                                );
+                            } else {
+                                // Success: rebuild this instrument's voices
+                                instrument.rebuild_voices();
+                            }
+                        }
+                    }
+                    None => {
+                        // Connect in global graph
+                        if let Err(e) = self.module_graph.connect(
+                            from.module,
+                            &from.port,
+                            to.module,
+                            &to.port,
+                        ) {
+                            eprintln!(
+                                "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
+                                from.module, from.port, to.module, to.port, e
+                            );
+                        }
+                    }
+                }
+            }
 
-                if from_in_voice && to_in_voice {
-                    // Both modules are in voice template: connect there and rebuild voices
-                    if let Err(e) = self.voice_graph.connect(
-                        from.module,
-                        &from.port,
-                        to.module,
-                        &to.port,
-                    ) {
-                        eprintln!(
-                            "Voice template connection failed: {:?}:{} -> {:?}:{} - {}",
-                            from.module, from.port, to.module, to.port, e
+            EngineCommand::Disconnect { instrument_id, from, to } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Disconnect in specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            if instrument.voice_graph_mut().disconnect(
+                                from.module,
+                                &from.port,
+                                to.module,
+                                &to.port,
+                            ) {
+                                // Rebuild this instrument's voices
+                                instrument.rebuild_voices();
+                            }
+                        }
+                    }
+                    None => {
+                        // Disconnect in global graph
+                        self.module_graph.disconnect(
+                            from.module,
+                            &from.port,
+                            to.module,
+                            &to.port,
                         );
-                    } else {
-                        // Success: propagate to all voices
-                        self.rebuild_all_voices();
-                    }
-                } else {
-                    // At least one module is in global graph: connect there
-                    if let Err(e) = self.module_graph.connect(
-                        from.module,
-                        &from.port,
-                        to.module,
-                        &to.port,
-                    ) {
-                        eprintln!(
-                            "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
-                            from.module, from.port, to.module, to.port, e
-                        );
                     }
                 }
             }
 
-            EngineCommand::Disconnect { from, to } => {
-                // Check if both modules exist in the voice template
-                let from_in_voice = self.voice_graph.get_module(from.module).is_some();
-                let to_in_voice = self.voice_graph.get_module(to.module).is_some();
-
-                if from_in_voice && to_in_voice {
-                    // Disconnect in voice template and rebuild voices
-                    if self.voice_graph.disconnect(
-                        from.module,
-                        &from.port,
-                        to.module,
-                        &to.port,
-                    ) {
-                        self.rebuild_all_voices();
+            EngineCommand::DisconnectAll { instrument_id, module } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        // Disconnect all in specific instrument's voice graph
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.voice_graph_mut().disconnect_all(module);
+                            // Rebuild this instrument's voices
+                            instrument.rebuild_voices();
+                        }
                     }
-                } else {
-                    // Disconnect in global graph
-                    self.module_graph.disconnect(
-                        from.module,
-                        &from.port,
-                        to.module,
-                        &to.port,
-                    );
-                }
-            }
-
-            EngineCommand::DisconnectAll { module } => {
-                // Try voice template first
-                if self.voice_graph.get_module(module).is_some() {
-                    self.voice_graph.disconnect_all(module);
-                    self.rebuild_all_voices();
-                } else {
-                    self.module_graph.disconnect_all(module);
+                    None => {
+                        // Disconnect all in global graph
+                        self.module_graph.disconnect_all(module);
+                    }
                 }
             }
 
@@ -1172,21 +1192,22 @@ mod tests {
     /// Regression tests for dynamic routing.
     ///
     /// These tests verify that modules are correctly routed to either:
-    /// - voice_graph (for polyphonic voice modules like Oscillator, Filter, etc.)
+    /// - instrument.voice_graph (for polyphonic voice modules like Oscillator, Filter, etc.)
     /// - module_graph (for global effects like Reverb, Delay, etc.)
     mod dynamic_routing {
         use super::*;
         use crate::engine::commands::{EngineCommand, ModuleId, PortId};
+        use crate::engine::instrument::InstrumentId;
         use crate::modules::{Oscillator, Filter};
 
         /// Test A: Polyphonic Allocation
-        /// An Oscillator should be added to voice_graph, NOT to module_graph.
+        /// An Oscillator should be added to instrument's voice_graph, NOT to module_graph.
         #[test]
         fn test_oscillator_routed_to_voice_graph() {
             let (mut engine, mut handle) = SynthEngine::new();
 
-            // Count existing oscillators in voice template (there are 2 by default)
-            let initial_osc_count = engine.voice_graph.module_ids()
+            // Count existing oscillators in default instrument's voice graph (there are 2 by default)
+            let initial_osc_count = engine.instruments[0].voice_graph().module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
 
@@ -1194,17 +1215,18 @@ mod tests {
             let osc_id = ModuleId::new(ModuleType::Oscillator, 10);
             let osc = Box::new(Oscillator::new());
 
-            // Send command to add module
+            // Send command to add module to the default instrument
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: osc_id,
                 module: osc,
             });
             engine.process_commands();
 
-            // Verify: Oscillator should be in voice_graph
+            // Verify: Oscillator should be in instrument's voice_graph
             assert!(
-                engine.voice_graph.get_module(osc_id).is_some(),
-                "Oscillator should be in voice_graph"
+                engine.instruments[0].voice_graph().get_module(osc_id).is_some(),
+                "Oscillator should be in instrument's voice_graph"
             );
 
             // Verify: Oscillator should NOT be in module_graph
@@ -1214,7 +1236,7 @@ mod tests {
             );
 
             // Verify: voice_graph oscillator count increased
-            let final_osc_count = engine.voice_graph.module_ids()
+            let final_osc_count = engine.instruments[0].voice_graph().module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
             assert_eq!(final_osc_count, initial_osc_count + 1);
@@ -1225,7 +1247,7 @@ mod tests {
         // effect chain mechanism instead.
 
         /// Test B: Voice Propagation
-        /// Adding a module to voice_graph should propagate to all voices in all instruments.
+        /// Adding a module to instrument's voice_graph should propagate to all its voices.
         #[test]
         fn test_voice_module_propagates_to_voices() {
             let config = AllocatorConfig {
@@ -1247,8 +1269,9 @@ mod tests {
                 );
             }
 
-            // Send command to add module
+            // Send command to add module to default instrument
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: filter_id,
                 module: filter,
             });
@@ -1273,33 +1296,36 @@ mod tests {
             };
             let (mut engine, mut handle) = SynthEngine::with_config(config);
 
-            // Add a new oscillator and amplifier to voice template
+            // Add a new oscillator and amplifier to default instrument's voice graph
             let new_osc_id = ModuleId::new(ModuleType::Oscillator, 10);
             let new_amp_id = ModuleId::new(ModuleType::Amplifier, 10);
 
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: new_osc_id,
                 module: Box::new(Oscillator::new()),
             });
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: new_amp_id,
                 module: Box::new(crate::modules::Amplifier::new()),
             });
             engine.process_commands();
 
-            // Connect new osc -> new amp in voice template
+            // Connect new osc -> new amp in instrument's voice graph
             handle.send(EngineCommand::Connect {
+                instrument_id: Some(InstrumentId::FIRST),
                 from: PortId::new(new_osc_id, "out"),
                 to: PortId::new(new_amp_id, "in"),
             });
             engine.process_commands();
 
-            // Verify: voice_graph has the connection
-            let template_connections: Vec<_> = engine.voice_graph.connections().collect();
+            // Verify: instrument's voice_graph has the connection
+            let template_connections: Vec<_> = engine.instruments[0].voice_graph().connections().collect();
             let has_connection = template_connections.iter().any(|c| {
                 c.from_module == new_osc_id && c.to_module == new_amp_id
             });
-            assert!(has_connection, "voice_graph should have the connection");
+            assert!(has_connection, "instrument's voice_graph should have the connection");
 
             // Verify: All voices have the connection
             for (i, voice) in engine.instruments[0].allocator().voices().iter().enumerate() {
@@ -1348,26 +1374,30 @@ mod tests {
             };
             let (mut engine, mut handle) = SynthEngine::with_config(config);
 
-            // Add a filter
+            // Add a filter to default instrument
             let filter_id = ModuleId::new(ModuleType::Filter, 10);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: filter_id,
                 module: Box::new(Filter::new()),
             });
             engine.process_commands();
 
             // Verify it exists
-            assert!(engine.voice_graph.get_module(filter_id).is_some());
+            assert!(engine.instruments[0].voice_graph().get_module(filter_id).is_some());
             for voice in engine.instruments[0].allocator().voices() {
                 assert!(voice.graph.get_module(filter_id).is_some());
             }
 
             // Remove it
-            handle.send(EngineCommand::RemoveModule { id: filter_id });
+            handle.send(EngineCommand::RemoveModule {
+                instrument_id: Some(InstrumentId::FIRST),
+                id: filter_id,
+            });
             engine.process_commands();
 
-            // Verify it's gone from template
-            assert!(engine.voice_graph.get_module(filter_id).is_none());
+            // Verify it's gone from instrument's voice_graph
+            assert!(engine.instruments[0].voice_graph().get_module(filter_id).is_none());
 
             // Verify it's gone from all voices
             for voice in engine.instruments[0].allocator().voices() {

@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::engine::graph::ModuleGraph;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
@@ -153,6 +154,7 @@ const MAX_BUFFER_SIZE: usize = 4096;
 ///
 /// Instruments enable multitimbral operation where different MIDI channels can
 /// play different sounds simultaneously. Each instrument has:
+/// - Its own voice graph (module structure for this instrument's sound)
 /// - Its own voice allocator (polyphony, mono, legato modes)
 /// - Volume and pan controls
 /// - MIDI channel assignment
@@ -164,6 +166,9 @@ pub struct Instrument {
     name: String,
     /// MIDI channel this instrument responds to.
     midi_channel: MidiChannel,
+    /// The module graph defining this instrument's voice architecture.
+    /// Each instrument can have a completely different sound design.
+    voice_graph: ModuleGraph,
     /// Voice allocator for this instrument.
     allocator: VoiceAllocator,
     /// Output volume.
@@ -184,11 +189,14 @@ pub struct Instrument {
 
 impl Instrument {
     /// Create a new instrument with the given ID and name.
+    ///
+    /// The voice_graph starts empty - populate it via engine commands or patch loading.
     pub fn new(id: InstrumentId, name: impl Into<String>) -> Self {
         Self {
             id,
             name: name.into(),
             midi_channel: MidiChannel::default(),
+            voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(AllocatorConfig::default()),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
@@ -201,11 +209,14 @@ impl Instrument {
     }
 
     /// Create a new instrument with a custom allocator configuration.
+    ///
+    /// The voice_graph starts empty - populate it via engine commands or patch loading.
     pub fn with_config(id: InstrumentId, name: impl Into<String>, config: AllocatorConfig) -> Self {
         Self {
             id,
             name: name.into(),
             midi_channel: MidiChannel::default(),
+            voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(config),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
@@ -257,6 +268,34 @@ impl Instrument {
     #[inline]
     pub fn allocator_mut(&mut self) -> &mut VoiceAllocator {
         &mut self.allocator
+    }
+
+    /// Get the voice graph (module architecture for this instrument).
+    #[inline]
+    pub fn voice_graph(&self) -> &ModuleGraph {
+        &self.voice_graph
+    }
+
+    /// Get mutable access to the voice graph.
+    #[inline]
+    pub fn voice_graph_mut(&mut self) -> &mut ModuleGraph {
+        &mut self.voice_graph
+    }
+
+    /// Rebuild all voices from this instrument's voice graph.
+    ///
+    /// Uses the voice_graph as a template to rebuild all voice allocator
+    /// voices. Call this after modifying the voice_graph.
+    pub fn rebuild_voices(&mut self) {
+        // Safety: We need to borrow voice_graph immutably and allocator mutably.
+        // This is safe because they are independent fields.
+        // We use a raw pointer to work around the borrow checker.
+        let graph_ptr = &self.voice_graph as *const ModuleGraph;
+        // SAFETY: The pointer is valid for the duration of rebuild_from_graph,
+        // and voice_graph is not mutated during the call.
+        unsafe {
+            self.allocator.rebuild_from_graph(&*graph_ptr);
+        }
     }
 
     /// Get the volume.

@@ -529,16 +529,17 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Amplifier) |
                     Some(ModuleCategory::Mixer) |
                     Some(ModuleCategory::Output) => {
-                        // Voice/modular module - send to both targets
-                        // 1. Send to global module graph
+                        // Voice/modular module - send to default instrument's voice graph
                         self.handle.send(EngineCommand::SetModuleParameter {
+                            instrument_id: Some(InstrumentId::FIRST),
                             module_id,
-                            param,
+                            param: param.clone(),
                         });
 
-                        // 2. Also send to voice modules for backwards compatibility
+                        // Also send to voice modules for real-time voice param updates
                         if let Some(voice_module) = patch_bridge::get_voice_module_for_param(module_id, &param) {
                             self.handle.send(EngineCommand::SetVoiceParameter {
+                                instrument_id: InstrumentId::FIRST,
                                 target: voice_module,
                                 param,
                             });
@@ -572,8 +573,11 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Amplifier) |
                     Some(ModuleCategory::Mixer) |
                     Some(ModuleCategory::Output) => {
-                        // Remove from modular graph
-                        self.handle.send(EngineCommand::RemoveModule { id: module_id });
+                        // Remove from default instrument's voice graph
+                        self.handle.send(EngineCommand::RemoveModule {
+                            instrument_id: Some(InstrumentId::FIRST),
+                            id: module_id,
+                        });
                     }
                     _ => {}
                 }
@@ -582,9 +586,10 @@ impl eframe::App for SynthApp {
             // Handle new connections - now synced with engine
             for connection in result.connections_to_add {
                 self.patch_editor.add_connection(connection.clone());
-                
-                // Send Connect command to engine
+
+                // Send Connect command to engine (default instrument's voice graph)
                 self.handle.send(EngineCommand::Connect {
+                    instrument_id: Some(InstrumentId::FIRST),
                     from: PortId::new(connection.from_module, connection.from_port.clone()),
                     to: PortId::new(connection.to_module, connection.to_port.clone()),
                 });
@@ -647,8 +652,9 @@ impl SynthApp {
         let next_id = self.next_module_id(module_type);
         self.patch_editor.add_module(next_id, descriptor);
 
-        // Send pre-created module to engine (real-time safe - just moves a pointer)
+        // Send pre-created module to engine (default instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(InstrumentId::FIRST),
             id: next_id,
             module,
         });
@@ -663,6 +669,7 @@ impl SynthApp {
         self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(InstrumentId::FIRST),
             id: next_id,
             module,
         });
@@ -677,6 +684,7 @@ impl SynthApp {
         self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(InstrumentId::FIRST),
             id: next_id,
             module,
         });
@@ -691,6 +699,7 @@ impl SynthApp {
         self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(InstrumentId::FIRST),
             id: next_id,
             module,
         });
@@ -786,8 +795,9 @@ impl SynthApp {
         let next_id = self.next_module_id(TypedModuleType::StereoOutput);
         self.patch_editor.add_module(next_id, descriptor);
 
-        // Send pre-created module to engine (real-time safe - just moves a pointer)
+        // Send pre-created module to engine (default instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(InstrumentId::FIRST),
             id: next_id,
             module: Box::new(output),
         });

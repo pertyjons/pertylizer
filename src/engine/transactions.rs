@@ -7,6 +7,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::commands::{EngineCommand, ModuleId, PortId};
+use super::instrument::InstrumentId;
 use super::typed_params::{ModuleType, Param};
 
 /// Global transaction ID counter.
@@ -122,18 +123,39 @@ impl CommandBatch {
         self
     }
 
-    /// Add a module to the batch.
+    /// Add a module to the batch (to global graph by default).
     pub fn add_module(&mut self, id: ModuleId, module: Box<dyn crate::modules::PolyModule>) -> &mut Self {
+        self.add_module_to(None, id, module)
+    }
+
+    /// Add a module to a specific instrument's voice graph or global graph.
+    pub fn add_module_to(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        id: ModuleId,
+        module: Box<dyn crate::modules::PolyModule>,
+    ) -> &mut Self {
         self.add_with_priority(
-            EngineCommand::AddModuleInstance { id, module },
+            EngineCommand::AddModuleInstance { instrument_id, id, module },
             10, // Modules added first
         )
     }
 
-    /// Add a connection to the batch.
+    /// Add a connection to the batch (to global graph by default).
     pub fn add_connection(&mut self, from: PortId, to: PortId) -> &mut Self {
+        self.add_connection_to(None, from, to)
+    }
+
+    /// Add a connection to a specific instrument's voice graph or global graph.
+    pub fn add_connection_to(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        from: PortId,
+        to: PortId,
+    ) -> &mut Self {
         self.add_with_priority(
             EngineCommand::Connect {
+                instrument_id,
                 from: from.clone(),
                 to: to.clone(),
             },
@@ -142,15 +164,26 @@ impl CommandBatch {
         self
     }
 
-    /// Add a parameter set to the batch.
+    /// Add a parameter set to the batch (to global graph by default).
     /// The Param contains both the parameter type and its value.
     pub fn set_parameter(
         &mut self,
         module_id: ModuleId,
         param: Param,
     ) -> &mut Self {
+        self.set_parameter_on(None, module_id, param)
+    }
+
+    /// Set a parameter on a specific instrument's voice graph or global graph.
+    pub fn set_parameter_on(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        param: Param,
+    ) -> &mut Self {
         self.add_with_priority(
             EngineCommand::SetModuleParameter {
+                instrument_id,
                 module_id,
                 param,
             },
@@ -374,35 +407,39 @@ impl Clone for EngineCommand {
                     channel: *channel,
                 }
             }
-            EngineCommand::SetVoiceParameter { target, param } => {
+            EngineCommand::SetVoiceParameter { instrument_id, target, param } => {
                 EngineCommand::SetVoiceParameter {
+                    instrument_id: *instrument_id,
                     target: *target,
                     param: *param,
                 }
             }
-            EngineCommand::SetModuleParameter { module_id, param } => {
+            EngineCommand::SetModuleParameter { instrument_id, module_id, param } => {
                 EngineCommand::SetModuleParameter {
+                    instrument_id: *instrument_id,
                     module_id: *module_id,
                     param: *param,
                 }
             }
-            EngineCommand::RemoveModule { id } => {
-                EngineCommand::RemoveModule { id: *id }
+            EngineCommand::RemoveModule { instrument_id, id } => {
+                EngineCommand::RemoveModule { instrument_id: *instrument_id, id: *id }
             }
-            EngineCommand::Connect { from, to } => {
+            EngineCommand::Connect { instrument_id, from, to } => {
                 EngineCommand::Connect {
+                    instrument_id: *instrument_id,
                     from: from.clone(),
                     to: to.clone(),
                 }
             }
-            EngineCommand::Disconnect { from, to } => {
+            EngineCommand::Disconnect { instrument_id, from, to } => {
                 EngineCommand::Disconnect {
+                    instrument_id: *instrument_id,
                     from: from.clone(),
                     to: to.clone(),
                 }
             }
-            EngineCommand::DisconnectAll { module } => {
-                EngineCommand::DisconnectAll { module: *module }
+            EngineCommand::DisconnectAll { instrument_id, module } => {
+                EngineCommand::DisconnectAll { instrument_id: *instrument_id, module: *module }
             }
             EngineCommand::SetTempo(t) => EngineCommand::SetTempo(*t),
             EngineCommand::Play => EngineCommand::Play,

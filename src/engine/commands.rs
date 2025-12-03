@@ -319,45 +319,63 @@ pub enum EngineCommand {
     /// Set a voice module parameter using the type-safe API.
     /// Use PolyModule to identify which module within the voice to update.
     /// The Param contains both the parameter type and its value.
+    /// Requires instrument_id to target the correct instrument's voice graph.
     SetVoiceParameter {
+        instrument_id: InstrumentId,
         target: PolyModule,
         param: Param,
     },
 
-    /// Set a parameter on a module in the global graph.
-    /// The Param contains both the parameter type and its value.
+    /// Set a parameter on a module.
+    /// - `instrument_id: Some(id)` - Target an instrument's voice graph
+    /// - `instrument_id: None` - Target the global module graph (master bus)
     SetModuleParameter {
+        instrument_id: Option<InstrumentId>,
         module_id: ModuleId,
         param: Param,
     },
 
     // === Module control ===
-    /// Add a pre-created module instance to the graph (real-time safe).
-    /// The module is created in the GUI thread and sent via this command.
+    /// Add a pre-created module instance to a graph (real-time safe).
+    /// - `instrument_id: Some(id)` - Add to an instrument's voice graph
+    /// - `instrument_id: None` - Add to the global module graph (master bus)
     AddModuleInstance {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
         module: Box<dyn crate::modules::PolyModule>,
     },
 
-    /// Remove a module from the graph.
+    /// Remove a module from a graph.
+    /// - `instrument_id: Some(id)` - Remove from an instrument's voice graph
+    /// - `instrument_id: None` - Remove from the global module graph
     RemoveModule {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
     },
 
     /// Connect two ports.
+    /// - `instrument_id: Some(id)` - Connect within an instrument's voice graph
+    /// - `instrument_id: None` - Connect within the global module graph
     Connect {
+        instrument_id: Option<InstrumentId>,
         from: PortId,
         to: PortId,
     },
 
     /// Disconnect two ports.
+    /// - `instrument_id: Some(id)` - Disconnect within an instrument's voice graph
+    /// - `instrument_id: None` - Disconnect within the global module graph
     Disconnect {
+        instrument_id: Option<InstrumentId>,
         from: PortId,
         to: PortId,
     },
 
     /// Disconnect all connections from/to a module.
+    /// - `instrument_id: Some(id)` - Disconnect within an instrument's voice graph
+    /// - `instrument_id: None` - Disconnect within the global module graph
     DisconnectAll {
+        instrument_id: Option<InstrumentId>,
         module: ModuleId,
     },
 
@@ -674,42 +692,53 @@ impl std::fmt::Debug for EngineCommand {
                     .field("channel", channel)
                     .finish()
             }
-            Self::SetVoiceParameter { target, param } => {
+            Self::SetVoiceParameter { instrument_id, target, param } => {
                 f.debug_struct("SetVoiceParameter")
+                    .field("instrument_id", instrument_id)
                     .field("target", target)
                     .field("param", param)
                     .finish()
             }
-            Self::SetModuleParameter { module_id, param } => {
+            Self::SetModuleParameter { instrument_id, module_id, param } => {
                 f.debug_struct("SetModuleParameter")
+                    .field("instrument_id", instrument_id)
                     .field("module_id", module_id)
                     .field("param", param)
                     .finish()
             }
-            Self::AddModuleInstance { id, .. } => {
+            Self::AddModuleInstance { instrument_id, id, .. } => {
                 // Can't debug the module itself, just show the ID
                 f.debug_struct("AddModuleInstance")
+                    .field("instrument_id", instrument_id)
                     .field("id", id)
                     .field("module", &"<dyn PolyModule>")
                     .finish()
             }
-            Self::RemoveModule { id } => {
-                f.debug_struct("RemoveModule").field("id", id).finish()
+            Self::RemoveModule { instrument_id, id } => {
+                f.debug_struct("RemoveModule")
+                    .field("instrument_id", instrument_id)
+                    .field("id", id)
+                    .finish()
             }
-            Self::Connect { from, to } => {
+            Self::Connect { instrument_id, from, to } => {
                 f.debug_struct("Connect")
+                    .field("instrument_id", instrument_id)
                     .field("from", from)
                     .field("to", to)
                     .finish()
             }
-            Self::Disconnect { from, to } => {
+            Self::Disconnect { instrument_id, from, to } => {
                 f.debug_struct("Disconnect")
+                    .field("instrument_id", instrument_id)
                     .field("from", from)
                     .field("to", to)
                     .finish()
             }
-            Self::DisconnectAll { module } => {
-                f.debug_struct("DisconnectAll").field("module", module).finish()
+            Self::DisconnectAll { instrument_id, module } => {
+                f.debug_struct("DisconnectAll")
+                    .field("instrument_id", instrument_id)
+                    .field("module", module)
+                    .finish()
             }
             Self::SetTempo(t) => write!(f, "SetTempo({t})"),
             Self::Play => write!(f, "Play"),

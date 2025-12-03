@@ -22,6 +22,7 @@ mod formant_voice;
 mod sub_bass;
 mod brown_drone;
 mod punchy_stab;
+mod string_ensemble;
 
 pub use deep_space_pad::patch_deep_space_pad;
 pub use spacey_bass::patch_spacey_bass;
@@ -42,6 +43,7 @@ pub use wave_folder_bass::patch_wave_folder_bass;
 pub use formant_voice::patch_formant_voice;
 pub use sub_bass::patch_sub_bass;
 pub use brown_drone::patch_brown_drone;
+pub use string_ensemble::patch_string_ensemble;
 pub use punchy_stab::patch_punchy_stab;
 
 use crate::patch::Patch;
@@ -49,7 +51,8 @@ use crate::patch::Patch;
 /// Get all example patches.
 pub fn example_patches() -> Vec<Patch> {
     vec![
-        patch_spacey_bass(),  // Default startup patch
+        patch_string_ensemble(), // Default startup patch
+        patch_spacey_bass(),
         patch_deep_space_pad(),
         patch_aggressive_bass(),
         patch_vintage_lead(),

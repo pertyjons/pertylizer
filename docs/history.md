@@ -1,5 +1,41 @@
 # Version History
 
+## [0.32.18] - 2024
+
+### Refactored - Per-Instrument Voice Architecture (Phase 3)
+
+Moved `voice_graph` ownership from `SynthEngine` to each `Instrument`, enabling different instruments to have completely different module structures.
+
+**Instrument Changes:**
+- Added `voice_graph: ModuleGraph` field to `Instrument` struct
+- Each instrument now owns its own voice signal chain definition
+- Added `voice_graph()`, `voice_graph_mut()`, and `rebuild_voices()` methods
+
+**Updated EngineCommand Variants:**
+| Command | New Field | Description |
+|---------|-----------|-------------|
+| `SetVoiceParameter` | `instrument_id: InstrumentId` | Required - targets specific instrument |
+| `SetModuleParameter` | `instrument_id: Option<InstrumentId>` | Some = instrument, None = global |
+| `AddModuleInstance` | `instrument_id: Option<InstrumentId>` | Route to instrument or global graph |
+| `RemoveModule` | `instrument_id: Option<InstrumentId>` | Route to instrument or global graph |
+| `Connect` | `instrument_id: Option<InstrumentId>` | Route to instrument or global graph |
+| `Disconnect` | `instrument_id: Option<InstrumentId>` | Route to instrument or global graph |
+| `DisconnectAll` | `instrument_id: Option<InstrumentId>` | Route to instrument or global graph |
+
+**SynthEngine Changes:**
+- Removed global `voice_graph` field from `SynthEngine`
+- Command routing now based on `instrument_id`:
+  - `Some(id)` → target instrument's `voice_graph`
+  - `None` → global `module_graph` (master bus)
+- Renamed `populate_default_voice_graph()` to work with mutable graph reference
+
+**Transaction Helper Functions:**
+- `add_module_to(instrument_id, ...)` - Add module to specific graph
+- `add_connection_to(instrument_id, ...)` - Add connection to specific graph
+- `set_parameter_on(instrument_id, ...)` - Set parameter on specific graph
+
+---
+
 ## [0.32.17] - 2024
 
 ### Refactored - Architectural Terminology (Phase 2)

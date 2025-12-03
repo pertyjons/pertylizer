@@ -66,6 +66,7 @@ pub fn load_patch(
 
             // Send connection to engine - blocking to ensure all connections are established
             handle.send_blocking(EngineCommand::Connect {
+                instrument_id: Some(InstrumentId::FIRST),
                 from: PortId {
                     module: from_id,
                     port: conn.from.1.clone(),
@@ -123,6 +124,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -133,6 +135,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -143,6 +146,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -153,6 +157,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -163,6 +168,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -173,6 +179,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -183,6 +190,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -193,6 +201,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -203,6 +212,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -213,6 +223,7 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(InstrumentId::FIRST),
                 id: module_id,
                 module: Box::new(m),
             });
@@ -338,6 +349,7 @@ pub fn apply_module_parameters(
                 });
             } else if let Some(voice_module) = get_voice_module_for_param(module_id, &param) {
                 handle.send(EngineCommand::SetVoiceParameter {
+                    instrument_id: InstrumentId::FIRST,
                     target: voice_module,
                     param,
                 });

@@ -586,12 +586,14 @@ mod engine_integration {
     #[test]
     fn test_engine_parameter_changes() {
         use crate::engine::commands::PolyModule;
+        use crate::engine::instrument::InstrumentId;
         use crate::engine::typed_params::{Param, OscillatorParam, Waveform};
 
         let (_engine, mut handle) = SynthEngine::new();
 
-        // Change oscillator waveform
+        // Change oscillator waveform on default instrument
         handle.set_voice_parameter(
+            InstrumentId::FIRST,
             PolyModule::Oscillator1,
             Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)),
         );
