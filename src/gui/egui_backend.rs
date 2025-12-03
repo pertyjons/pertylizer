@@ -24,6 +24,8 @@ use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::gui::patch_bridge;
+use crate::gui::part_list::{PartUiState, show_part_manager};
+use crate::engine::part::{PartId, MidiChannel};
 use crate::types::NormalizedValue;
 use crate::modules::{
     Describable, ModuleCategory,
@@ -185,6 +187,11 @@ struct SynthApp {
 
     // Global synth settings
     glide_time: f32,
+
+    // Part manager state
+    parts: Vec<PartUiState>,
+    active_part_id: PartId,
+    next_part_id: u64,
 }
 
 impl SynthApp {
@@ -233,6 +240,12 @@ impl SynthApp {
         // can send commands to the engine.
         let midi_handler = MidiHandler::new(handle.command_sender());
 
+        // Initialize parts with a default part that matches the engine's default
+        // The engine starts with one part on CH1 (PartId::FIRST)
+        let parts = vec![PartUiState::default()];
+        let active_part_id = PartId::FIRST;
+        let next_part_id = 1; // Start at 1 since FIRST (0) is already used
+
         Self {
             handle,
             host: Some(host),
@@ -248,6 +261,9 @@ impl SynthApp {
             current_patch_name: patch_name,
             current_patch_path: None,
             glide_time,
+            parts,
+            active_part_id,
+            next_part_id,
         }
     }
 
@@ -464,8 +480,22 @@ impl eframe::App for SynthApp {
             .show(ctx, |ui| {
                 self.draw_keyboard(ui);
             });
-        
-        // Side panel with meters
+
+        // Left side panel with part manager
+        egui::SidePanel::left("part_manager_panel")
+            .min_width(280.0)
+            .max_width(350.0)
+            .show(ctx, |ui| {
+                show_part_manager(
+                    ui,
+                    &mut self.parts,
+                    &mut self.active_part_id,
+                    &mut self.handle,
+                    &mut self.next_part_id,
+                );
+            });
+
+        // Right side panel with meters
         egui::SidePanel::right("meters_panel")
             .min_width(80.0)
             .show(ctx, |ui| {
@@ -792,6 +822,12 @@ impl SynthApp {
     }
     
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
+        // Get the MIDI channel for the active part
+        let active_channel = self.parts.iter()
+            .find(|p| p.id == self.active_part_id)
+            .map(|p| p.channel)
+            .unwrap_or(MidiChannel::CH1);
+
         ui.horizontal(|ui| {
             // Panic button (moved here since keyboard handles its own header)
             if ui.add(egui::Button::new(RichText::new("PANIC").color(colors::ACCENT_RED))).clicked() {
@@ -799,6 +835,14 @@ impl SynthApp {
                 self.pressed_keys.clear();
                 // Keyboard will be cleared by AllNotesReleased event from engine
             }
+
+            // Show active part indicator
+            let active_name = self.parts.iter()
+                .find(|p| p.id == self.active_part_id)
+                .map(|p| p.name.as_str())
+                .unwrap_or("Part 1");
+            ui.separator();
+            ui.label(RichText::new(format!("Playing: {}", active_name)).color(colors::ACCENT_ORANGE));
         });
 
         // Note: Keyboard visual state is now driven by engine events (NoteTriggered/NoteReleased)
@@ -808,17 +852,23 @@ impl SynthApp {
         // Show the 88-key piano keyboard
         let event = self.keyboard.show(ui);
 
-        // Handle note events from mouse interaction
+        // Handle note events from mouse interaction - send to active part's channel
         if let Some(note) = event.note_on {
-            self.handle.note_on(note, NormalizedValue::new(0.8));
+            self.handle.note_on_channel(note, NormalizedValue::new(0.8), active_channel);
         }
         for note in event.note_off {
-            self.handle.note_off(note);
+            self.handle.note_off_channel(note, active_channel);
             // Note release will be reflected via NoteReleased event from engine
         }
     }
     
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+        // Get the MIDI channel for the active part
+        let active_channel = self.parts.iter()
+            .find(|p| p.id == self.active_part_id)
+            .map(|p| p.channel)
+            .unwrap_or(MidiChannel::CH1);
+
         let key_map: &[(egui::Key, u8)] = &[
             // Lower row: Z-M = C3-B3
             (egui::Key::Z, 48), (egui::Key::S, 49), (egui::Key::X, 50),
@@ -844,15 +894,15 @@ impl SynthApp {
                 let note = note_i32 as u8;
 
                 if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
-                    self.handle.note_on(note, NormalizedValue::new(0.8));
+                    self.handle.note_on_channel(note, NormalizedValue::new(0.8), active_channel);
                     self.pressed_keys.insert(note, true);
                     // Visual feedback will come from NoteTriggered engine event
                 }
 
                 if input.key_released(*key) {
-                    self.handle.note_off(note);
+                    self.handle.note_off_channel(note, active_channel);
                     self.pressed_keys.insert(note, false);
-                    // Visual feedback will come from NoteReleased engine event
+                    // Visual feedback will come from NoteReleased event from engine
                 }
             }
 

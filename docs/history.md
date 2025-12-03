@@ -1,5 +1,49 @@
 # Version History
 
+## [0.32.16] - 2024
+
+### Added - Part Manager UI (Phase 1)
+
+Workstation-style multi-instrument support with a new Part Manager panel.
+
+**Part Manager Features:**
+- Left side panel displaying list of instrument parts
+- Select active part (determines which MIDI channel keyboard plays on)
+- Editable part names
+- MIDI channel dropdown per part (1-16, Omni)
+- Volume knob per part with soft mute
+- Pan knob per part
+- Mute button (M) with visual feedback
+- Remove button (×) for parts
+- "+ Add Instrument" button to create new parts
+- Active part highlighted with orange tint
+
+**Keyboard Integration:**
+- GUI piano now sends notes to **active part's MIDI channel**
+- Computer keyboard (QWERTY) also respects active part channel
+- "Playing: [Part Name]" indicator above piano keyboard
+- Uses `note_on_channel`/`note_off_channel` instead of hardcoded CH1
+
+**New Types:**
+- `PartUiState` - GUI state for a part (mirrors engine's SynthPart)
+- `PartManagerResult` - Result of part manager interactions
+- `show_part_manager()` - Widget function for the panel
+
+**Architecture:**
+- GUI maintains its own `Vec<PartUiState>` (mirrors engine state)
+- Commands sent to engine: `AddPart`, `RemovePart`, `SetPartParameter`, `SetPartMidiChannel`
+- Soft mute via `Volume(0.0)` preserves reverb tails
+- Part IDs generated via counter in SynthApp
+
+**Files Changed:**
+| File | Change |
+|------|--------|
+| `src/gui/part_list.rs` | New module with `PartUiState`, `show_part_manager()` |
+| `src/gui/mod.rs` | Added `part_list` module export |
+| `src/gui/egui_backend.rs` | Part manager integration, keyboard channel routing |
+
+---
+
 ## [0.32.15] - 2024
 
 ### Improved - Knob Widget & Centralized Formatting
