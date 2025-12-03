@@ -217,7 +217,7 @@ impl Describable for Oscillator {
     }
 }
 
-impl VoiceModule for Oscillator {
+impl PolyModule for Oscillator {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -323,7 +323,7 @@ impl VoiceModule for Oscillator {
         self.sample_rate = SampleRate::new(sample_rate);
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

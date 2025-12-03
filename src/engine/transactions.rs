@@ -123,7 +123,7 @@ impl CommandBatch {
     }
 
     /// Add a module to the batch.
-    pub fn add_module(&mut self, id: ModuleId, module: Box<dyn crate::modules::VoiceModule>) -> &mut Self {
+    pub fn add_module(&mut self, id: ModuleId, module: Box<dyn crate::modules::PolyModule>) -> &mut Self {
         self.add_with_priority(
             EngineCommand::AddModuleInstance { id, module },
             10, // Modules added first
@@ -330,7 +330,7 @@ impl BatchResult {
 }
 
 // We need to implement Clone for EngineCommand for rollback support
-// This is a workaround since EngineCommand contains Box<dyn VoiceModule>
+// This is a workaround since EngineCommand contains Box<dyn PolyModule>
 impl Clone for EngineCommand {
     fn clone(&self) -> Self {
         match self {
@@ -437,31 +437,31 @@ impl Clone for EngineCommand {
                     enabled: *enabled,
                 }
             }
-            // Part management commands
-            EngineCommand::RemovePart { part_id } => {
-                EngineCommand::RemovePart { part_id: *part_id }
+            // Instrument management commands
+            EngineCommand::RemoveInstrument { instrument_id } => {
+                EngineCommand::RemoveInstrument { instrument_id: *instrument_id }
             }
-            EngineCommand::SetPartParameter { part_id, param } => {
-                EngineCommand::SetPartParameter {
-                    part_id: *part_id,
+            EngineCommand::SetInstrumentParameter { instrument_id, param } => {
+                EngineCommand::SetInstrumentParameter {
+                    instrument_id: *instrument_id,
                     param: *param,
                 }
             }
-            EngineCommand::SetPartMidiChannel { part_id, channel } => {
-                EngineCommand::SetPartMidiChannel {
-                    part_id: *part_id,
+            EngineCommand::SetInstrumentMidiChannel { instrument_id, channel } => {
+                EngineCommand::SetInstrumentMidiChannel {
+                    instrument_id: *instrument_id,
                     channel: *channel,
                 }
             }
-            EngineCommand::SetPartEnabled { part_id, enabled } => {
-                EngineCommand::SetPartEnabled {
-                    part_id: *part_id,
+            EngineCommand::SetInstrumentEnabled { instrument_id, enabled } => {
+                EngineCommand::SetInstrumentEnabled {
+                    instrument_id: *instrument_id,
                     enabled: *enabled,
                 }
             }
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
-            EngineCommand::AddPart { .. } => {
-                panic!("AddPart cannot be cloned - part instances are unique")
+            EngineCommand::AddInstrument { .. } => {
+                panic!("AddInstrument cannot be cloned - instrument instances are unique")
             }
             EngineCommand::AddModuleInstance { .. } => {
                 panic!("AddModuleInstance cannot be cloned - module instances are unique")

@@ -22,10 +22,10 @@ use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_settings_dialog, show_about_dialog, show_load_patch_dialog, show_save_patch_dialog, show_status_toast};
 use crate::gui::widgets::colors;
 use crate::gui::keyboard::PianoKeyboard;
-use crate::gui::rack_view::{RackView, ModulePalette, PaletteSelection, EffectType, VisualizerType};
+use crate::gui::patch_editor::{PatchEditor, ModulePalette, PaletteSelection, EffectType, VisualizerType};
 use crate::gui::patch_bridge;
-use crate::gui::part_list::{PartUiState, show_part_manager};
-use crate::engine::part::{PartId, MidiChannel};
+use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
+use crate::engine::instrument::{InstrumentId, MidiChannel};
 use crate::types::NormalizedValue;
 use crate::modules::{
     Describable, ModuleCategory,
@@ -168,7 +168,7 @@ struct SynthApp {
     midi_handler: MidiHandler,
 
     // Rack view state
-    rack_view: RackView,
+    patch_editor: PatchEditor,
 
     // Module ID generation - track instance counts per module type
     instance_counters: HashMap<TypedModuleType, u16>,
@@ -188,10 +188,10 @@ struct SynthApp {
     // Global synth settings
     glide_time: f32,
 
-    // Part manager state
-    parts: Vec<PartUiState>,
-    active_part_id: PartId,
-    next_part_id: u64,
+    // Instrument rack state
+    instruments: Vec<InstrumentUiState>,
+    active_instrument_id: InstrumentId,
+    next_instrument_id: u64,
 }
 
 impl SynthApp {
@@ -216,7 +216,7 @@ impl SynthApp {
         //
         // This guarantees GUI and Engine have exactly the same state.
 
-        let mut rack_view = RackView::new();
+        let mut patch_editor = PatchEditor::new();
         let mut instance_counters = HashMap::new();
         let mut keyboard = PianoKeyboard::new();
         let mut glide_time = 0.0;
@@ -228,7 +228,7 @@ impl SynthApp {
 
         patch_bridge::load_patch(
             &startup_patch,
-            &mut rack_view,
+            &mut patch_editor,
             &mut instance_counters,
             &mut handle,
             &mut keyboard,
@@ -240,11 +240,11 @@ impl SynthApp {
         // can send commands to the engine.
         let midi_handler = MidiHandler::new(handle.command_sender());
 
-        // Initialize parts with a default part that matches the engine's default
-        // The engine starts with one part on CH1 (PartId::FIRST)
-        let parts = vec![PartUiState::default()];
-        let active_part_id = PartId::FIRST;
-        let next_part_id = 1; // Start at 1 since FIRST (0) is already used
+        // Initialize instruments with a default instrument that matches the engine's default
+        // The engine starts with one instrument on CH1 (InstrumentId::FIRST)
+        let instruments = vec![InstrumentUiState::default()];
+        let active_instrument_id = InstrumentId::FIRST;
+        let next_instrument_id = 1; // Start at 1 since FIRST (0) is already used
 
         Self {
             handle,
@@ -252,7 +252,7 @@ impl SynthApp {
             config,
             latency,
             midi_handler,
-            rack_view,
+            patch_editor,
             instance_counters,
             keyboard,
             pressed_keys: HashMap::new(),
@@ -261,9 +261,9 @@ impl SynthApp {
             current_patch_name: patch_name,
             current_patch_path: None,
             glide_time,
-            parts,
-            active_part_id,
-            next_part_id,
+            instruments,
+            active_instrument_id,
+            next_instrument_id,
         }
     }
 
@@ -467,8 +467,8 @@ impl eframe::App for SynthApp {
                 ui.separator();
 
                 // Connection info
-                let conn_count = self.rack_view.connections().len();
-                let module_count = self.rack_view.module_ids().len();
+                let conn_count = self.patch_editor.connections().len();
+                let module_count = self.patch_editor.module_ids().len();
                 ui.label(RichText::new(format!("Modules: {} | Connections: {}", module_count, conn_count))
                     .color(colors::TEXT_DIM));
             });
@@ -481,17 +481,17 @@ impl eframe::App for SynthApp {
                 self.draw_keyboard(ui);
             });
 
-        // Left side panel with part manager
-        egui::SidePanel::left("part_manager_panel")
+        // Left side panel with instrument rack
+        egui::SidePanel::left("instrument_rack_panel")
             .min_width(280.0)
             .max_width(350.0)
             .show(ctx, |ui| {
-                show_part_manager(
+                show_instrument_rack(
                     ui,
-                    &mut self.parts,
-                    &mut self.active_part_id,
+                    &mut self.instruments,
+                    &mut self.active_instrument_id,
                     &mut self.handle,
-                    &mut self.next_part_id,
+                    &mut self.next_instrument_id,
                 );
             });
 
@@ -504,18 +504,18 @@ impl eframe::App for SynthApp {
 
         // Main content
         egui::CentralPanel::default().show(ctx, |ui| {
-            let result = self.rack_view.show(ui, &self.handle);
+            let result = self.patch_editor.show(ui, &self.handle);
             
             // Handle parameter changes - send Param directly (carries its own value)
             for (module_id, param) in result.param_changes {
                 // Check module category
-                let category = self.rack_view.module_descriptor(module_id)
+                let category = self.patch_editor.module_descriptor(module_id)
                     .map(|d| d.category);
 
                 match category {
                     Some(ModuleCategory::Effect) => {
                         // Effect module - use SetEffectParameter
-                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(&self.rack_view, module_id) {
+                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(&self.patch_editor, module_id) {
                             self.handle.send(EngineCommand::SetEffectParameter {
                                 effect_type,
                                 param,
@@ -551,10 +551,10 @@ impl eframe::App for SynthApp {
             // Handle module removal
             for module_id in result.modules_to_remove {
                 // Get module descriptor to determine type
-                let category = self.rack_view.module_descriptor(module_id)
+                let category = self.patch_editor.module_descriptor(module_id)
                     .map(|d| d.category);
                 
-                self.rack_view.remove_module(module_id);
+                self.patch_editor.remove_module(module_id);
                 
                 // Send appropriate remove command to engine based on category
                 match category {
@@ -581,7 +581,7 @@ impl eframe::App for SynthApp {
             
             // Handle new connections - now synced with engine
             for connection in result.connections_to_add {
-                self.rack_view.add_connection(connection.clone());
+                self.patch_editor.add_connection(connection.clone());
                 
                 // Send Connect command to engine
                 self.handle.send(EngineCommand::Connect {
@@ -610,7 +610,7 @@ impl SynthApp {
     /// for real-time safe addition to the audio engine.
     fn add_module_of_category(&mut self, category: ModuleCategory) {
         // Create module in GUI thread (real-time safe allocation)
-        let (module, descriptor, module_type): (Box<dyn crate::modules::VoiceModule>, _, TypedModuleType) = match category {
+        let (module, descriptor, module_type): (Box<dyn crate::modules::PolyModule>, _, TypedModuleType) = match category {
             ModuleCategory::Oscillator => {
                 let m = Oscillator::new();
                 let d = m.descriptor();
@@ -645,7 +645,7 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         // Send pre-created module to engine (real-time safe - just moves a pointer)
         self.handle.send(EngineCommand::AddModuleInstance {
@@ -657,10 +657,10 @@ impl SynthApp {
     fn add_math_oscillator_module(&mut self) {
         let m = MathOscillator::new();
         let descriptor = m.descriptor();
-        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MathOscillator);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             id: next_id,
@@ -671,10 +671,10 @@ impl SynthApp {
     fn add_sub_oscillator_module(&mut self) {
         let m = SubOscillator::new();
         let descriptor = m.descriptor();
-        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::SubOscillator);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             id: next_id,
@@ -685,10 +685,10 @@ impl SynthApp {
     fn add_noise_module(&mut self) {
         let m = NoiseGenerator::new();
         let descriptor = m.descriptor();
-        let module: Box<dyn crate::modules::VoiceModule> = Box::new(m);
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::Noise);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             id: next_id,
@@ -698,7 +698,7 @@ impl SynthApp {
 
     fn add_effect_module(&mut self, effect_type: EffectType) {
         // Create effect in GUI thread (real-time safe allocation)
-        let (effect, descriptor, module_type): (Box<dyn crate::modules::EffectModule>, _, TypedModuleType) = match effect_type {
+        let (effect, descriptor, module_type): (Box<dyn crate::modules::AudioEffect>, _, TypedModuleType) = match effect_type {
             EffectType::Delay => {
                 let e = Delay::new();
                 let d = e.descriptor();
@@ -742,7 +742,7 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
         
         // Send pre-created effect to engine (real-time safe - just moves a pointer)
         self.handle.send(EngineCommand::AddEffectInstance {
@@ -758,7 +758,7 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         // Create shared visualization buffer wrapped in Arc
         let buffer = std::sync::Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
@@ -784,7 +784,7 @@ impl SynthApp {
         let output = StereoOutput::new();
         let descriptor = output.descriptor();
         let next_id = self.next_module_id(TypedModuleType::StereoOutput);
-        self.rack_view.add_module(next_id, descriptor);
+        self.patch_editor.add_module(next_id, descriptor);
 
         // Send pre-created module to engine (real-time safe - just moves a pointer)
         self.handle.send(EngineCommand::AddModuleInstance {
@@ -822,9 +822,9 @@ impl SynthApp {
     }
     
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
-        // Get the MIDI channel for the active part
-        let active_channel = self.parts.iter()
-            .find(|p| p.id == self.active_part_id)
+        // Get the MIDI channel for the active instrument
+        let active_channel = self.instruments.iter()
+            .find(|p| p.id == self.active_instrument_id)
             .map(|p| p.channel)
             .unwrap_or(MidiChannel::CH1);
 
@@ -836,11 +836,11 @@ impl SynthApp {
                 // Keyboard will be cleared by AllNotesReleased event from engine
             }
 
-            // Show active part indicator
-            let active_name = self.parts.iter()
-                .find(|p| p.id == self.active_part_id)
+            // Show active instrument indicator
+            let active_name = self.instruments.iter()
+                .find(|p| p.id == self.active_instrument_id)
                 .map(|p| p.name.as_str())
-                .unwrap_or("Part 1");
+                .unwrap_or("Instrument 1");
             ui.separator();
             ui.label(RichText::new(format!("Playing: {}", active_name)).color(colors::ACCENT_ORANGE));
         });
@@ -852,7 +852,7 @@ impl SynthApp {
         // Show the 88-key piano keyboard
         let event = self.keyboard.show(ui);
 
-        // Handle note events from mouse interaction - send to active part's channel
+        // Handle note events from mouse interaction - send to active instrument's channel
         if let Some(note) = event.note_on {
             self.handle.note_on_channel(note, NormalizedValue::new(0.8), active_channel);
         }
@@ -863,9 +863,9 @@ impl SynthApp {
     }
     
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
-        // Get the MIDI channel for the active part
-        let active_channel = self.parts.iter()
-            .find(|p| p.id == self.active_part_id)
+        // Get the MIDI channel for the active instrument
+        let active_channel = self.instruments.iter()
+            .find(|p| p.id == self.active_instrument_id)
             .map(|p| p.channel)
             .unwrap_or(MidiChannel::CH1);
 
@@ -965,7 +965,7 @@ impl SynthApp {
         // Delegate to patch_bridge for the main loading logic
         patch_bridge::load_patch(
             patch,
-            &mut self.rack_view,
+            &mut self.patch_editor,
             &mut self.instance_counters,
             &mut self.handle,
             &mut self.keyboard,
@@ -977,7 +977,7 @@ impl SynthApp {
     /// Clears all modules and adds a default StereoOutput for immediate sound.
     fn reset_to_new_patch(&mut self) {
         // 1. Clear GUI state
-        self.rack_view.clear();
+        self.patch_editor.clear();
         self.instance_counters.clear();
         self.handle.visualization_buffers.clear();
 
@@ -999,7 +999,7 @@ impl SynthApp {
     fn create_patch_from_rack(&self) -> Option<Patch> {
         patch_bridge::create_patch_from_rack(
             &self.dialog_state.patch_save_name,
-            &self.rack_view,
+            &self.patch_editor,
             &self.keyboard,
             &self.handle,
             self.glide_time,

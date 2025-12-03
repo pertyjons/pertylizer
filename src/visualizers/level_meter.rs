@@ -104,7 +104,7 @@ impl Describable for LevelMeter {
     }
 }
 
-impl EffectModule for LevelMeter {
+impl AudioEffect for LevelMeter {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = context.sample_rate;
 

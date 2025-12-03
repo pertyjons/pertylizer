@@ -80,7 +80,7 @@ impl Describable for Amplifier {
     }
 }
 
-impl VoiceModule for Amplifier {
+impl PolyModule for Amplifier {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -172,7 +172,7 @@ impl VoiceModule for Amplifier {
     fn note_on(&mut self, _note: u8, _velocity: f32) {}
     fn note_off(&mut self) {}
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }
@@ -232,7 +232,7 @@ impl Describable for Mixer {
     }
 }
 
-impl VoiceModule for Mixer {
+impl PolyModule for Mixer {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -325,7 +325,7 @@ impl VoiceModule for Mixer {
     fn note_on(&mut self, _note: u8, _velocity: f32) {}
     fn note_off(&mut self) {}
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

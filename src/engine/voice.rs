@@ -143,7 +143,7 @@ pub const DEFAULT_PITCH_BEND_RANGE: Semitones = Semitones(2.0);
 /// Default maximum vibrato depth (2.5% = ~43 cents at full mod wheel).
 pub const DEFAULT_VIBRATO_DEPTH: NormalizedValue = NormalizedValue(0.025);
 
-/// Performance expression settings for a voice/part.
+/// Performance expression settings for a voice/instrument.
 ///
 /// These control how MIDI controllers affect the sound.
 #[derive(Debug, Clone, Copy)]

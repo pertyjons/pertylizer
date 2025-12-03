@@ -2,7 +2,7 @@
 
 use crate::engine::typed_params::{ModuleType, PhaserParam, Param};
 use crate::modules::{
-    Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
+    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate};
@@ -157,7 +157,7 @@ impl Describable for Phaser {
     }
 }
 
-impl EffectModule for Phaser {
+impl AudioEffect for Phaser {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
         let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();

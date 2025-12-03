@@ -1,5 +1,48 @@
 # Version History
 
+## [0.32.17] - 2024
+
+### Refactored - Architectural Terminology (Phase 2)
+
+Major terminology refactoring to align codebase with DAW/Workstation conventions.
+
+**Renamed Files:**
+| Old | New |
+|-----|-----|
+| `src/gui/rack_view.rs` | `src/gui/patch_editor.rs` |
+| `src/gui/part_list.rs` | `src/gui/instrument_rack.rs` |
+| `src/engine/part.rs` | `src/engine/instrument.rs` |
+| `src/engine/effect_chain.rs` | `src/engine/master_bus.rs` |
+
+**Renamed Types & Traits:**
+| Old | New | Rationale |
+|-----|-----|-----------|
+| `RackView` | `PatchEditor` | Shows inside of an instrument |
+| `VoiceModule` | `PolyModule` | Clarifies polyphonic duplication |
+| `EffectModule` | `AudioEffect` | Industry standard (VST, AU) |
+| `EffectChain` | `MasterBus` | Final audio summing stage |
+| `SynthPart` | `Instrument` | Workstation terminology |
+| `PartId` | `InstrumentId` | Consistent naming |
+| `PartParam` | `InstrumentParam` | Consistent naming |
+| `Track` (sequencer) | `SequencerTrack` | Avoid future AudioTrack conflict |
+
+**Renamed Fields & Variables:**
+| Old | New |
+|-----|-----|
+| `voice_template` | `voice_graph` |
+| `effect_chain` | `master_bus` |
+| `parts` | `instruments` |
+| `active_part_id` | `active_instrument_id` |
+
+**Updated Commands:**
+- `AddPart` → `AddInstrument`
+- `RemovePart` → `RemoveInstrument`
+- `SetPartParameter` → `SetInstrumentParameter`
+- `SetPartMidiChannel` → `SetInstrumentMidiChannel`
+- `SetPartEnabled` → `SetInstrumentEnabled`
+
+---
+
 ## [0.32.16] - 2024
 
 ### Added - Part Manager UI (Phase 1)

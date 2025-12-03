@@ -197,7 +197,7 @@ impl Describable for StereoOutput {
     }
 }
 
-impl VoiceModule for StereoOutput {
+impl PolyModule for StereoOutput {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -343,7 +343,7 @@ impl VoiceModule for StereoOutput {
     fn note_on(&mut self, _note: u8, _velocity: f32) {}
     fn note_off(&mut self) {}
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

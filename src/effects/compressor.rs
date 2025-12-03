@@ -2,7 +2,7 @@
 
 use crate::engine::typed_params::{CompressorParam, ModuleType, Param};
 use crate::modules::{
-    Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
+    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{Decibels, Milliseconds, NormalizedValue, Ratio, SampleRate};
@@ -157,7 +157,7 @@ impl Describable for Compressor {
     }
 }
 
-impl EffectModule for Compressor {
+impl AudioEffect for Compressor {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
 

@@ -186,7 +186,7 @@ impl Describable for Delay {
     }
 }
 
-impl EffectModule for Delay {
+impl AudioEffect for Delay {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffers();

@@ -459,7 +459,7 @@ impl Describable for MathOscillator {
     }
 }
 
-impl VoiceModule for MathOscillator {
+impl PolyModule for MathOscillator {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -578,7 +578,7 @@ impl VoiceModule for MathOscillator {
         // Most algorithms don't need special handling
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

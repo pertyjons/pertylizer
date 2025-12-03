@@ -2,7 +2,7 @@
 
 use crate::engine::typed_params::{FlangerParam, ModuleType, Param};
 use crate::modules::{
-    Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
+    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{BipolarValue, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate};
@@ -150,7 +150,7 @@ impl Describable for Flanger {
     }
 }
 
-impl EffectModule for Flanger {
+impl AudioEffect for Flanger {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffers();

@@ -686,7 +686,7 @@ pub trait Describable {
 /// Trait for voice modules (oscillators, filters, envelopes).
 ///
 /// Voice modules are instantiated per-voice in a polyphonic synth.
-pub trait VoiceModule: Describable + Send {
+pub trait PolyModule: Describable + Send {
     /// Process audio.
     ///
     /// # Arguments
@@ -732,13 +732,13 @@ pub trait VoiceModule: Describable + Send {
     }
 
     /// Clone into a boxed trait object.
-    fn box_clone(&self) -> Box<dyn VoiceModule>;
+    fn box_clone(&self) -> Box<dyn PolyModule>;
 }
 
 /// Trait for effect modules (delay, reverb, etc.).
 ///
 /// Effect modules process the mixed output of all voices.
-pub trait EffectModule: Describable + Send {
+pub trait AudioEffect: Describable + Send {
     /// Process audio in-place or with separate input/output.
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext);
 

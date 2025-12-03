@@ -1,16 +1,16 @@
-//! Synth part management for multitimbral playback.
+//! Instrument management for multitimbral playback.
 //!
-//! A `SynthPart` represents a single instrument/timbre that can respond
-//! to MIDI events on a specific channel. Each part has its own voice
+//! An `Instrument` represents a single instrument/timbre that can respond
+//! to MIDI events on a specific channel. Each instrument has its own voice
 //! allocator for independent polyphony control.
 //!
 //! ## Type Safety
 //!
 //! This module uses domain-specific types throughout:
-//! - [`PartId`] instead of `u64` for part identifiers
+//! - [`InstrumentId`] instead of `u64` for instrument identifiers
 //! - [`MidiChannel`] instead of `u8` for MIDI channel numbers
 //!
-//! This prevents common errors like mixing up part IDs with other identifiers.
+//! This prevents common errors like mixing up instrument IDs with other identifiers.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -20,19 +20,19 @@ use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
 use crate::types::{BipolarValue, Gain, NormalizedValue};
 
-/// Unique identifier for a synth part.
+/// Unique identifier for an instrument.
 ///
-/// Each part in the synth engine has a unique ID that persists for
+/// Each instrument in the synth engine has a unique ID that persists for
 /// its lifetime. IDs are never reused within a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct PartId(pub u64);
+pub struct InstrumentId(pub u64);
 
-impl PartId {
-    /// The default/first part ID.
+impl InstrumentId {
+    /// The default/first instrument ID.
     pub const FIRST: Self = Self(0);
 
-    /// Create a new part ID.
+    /// Create a new instrument ID.
     #[inline]
     pub const fn new(id: u64) -> Self {
         Self(id)
@@ -45,13 +45,13 @@ impl PartId {
     }
 }
 
-impl fmt::Display for PartId {
+impl fmt::Display for InstrumentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Part({})", self.0)
+        write!(f, "Instrument({})", self.0)
     }
 }
 
-impl From<u64> for PartId {
+impl From<u64> for InstrumentId {
     fn from(id: u64) -> Self {
         Self(id)
     }
@@ -146,31 +146,31 @@ impl Default for MidiChannel {
     }
 }
 
-/// Maximum buffer size for part audio buffers.
+/// Maximum buffer size for instrument audio buffers.
 const MAX_BUFFER_SIZE: usize = 4096;
 
-/// A synthesizer part - an independent instrument with its own voice allocation.
+/// A synthesizer instrument - an independent sound source with its own voice allocation.
 ///
-/// Parts enable multitimbral operation where different MIDI channels can
-/// play different sounds simultaneously. Each part has:
+/// Instruments enable multitimbral operation where different MIDI channels can
+/// play different sounds simultaneously. Each instrument has:
 /// - Its own voice allocator (polyphony, mono, legato modes)
 /// - Volume and pan controls
 /// - MIDI channel assignment
 /// - Internal audio buffers for voice processing
-pub struct SynthPart {
-    /// Unique identifier for this part.
-    id: PartId,
+pub struct Instrument {
+    /// Unique identifier for this instrument.
+    id: InstrumentId,
     /// Human-readable name.
     name: String,
-    /// MIDI channel this part responds to.
+    /// MIDI channel this instrument responds to.
     midi_channel: MidiChannel,
-    /// Voice allocator for this part.
+    /// Voice allocator for this instrument.
     allocator: VoiceAllocator,
     /// Output volume.
     volume: Gain,
     /// Stereo pan position.
     pan: BipolarValue,
-    /// Whether this part is enabled.
+    /// Whether this instrument is enabled.
     enabled: bool,
     /// Left channel buffer for voice summing.
     voice_left: AudioBuffer,
@@ -182,9 +182,9 @@ pub struct SynthPart {
     velocity_filter_sensitivity: NormalizedValue,
 }
 
-impl SynthPart {
-    /// Create a new synth part with the given ID and name.
-    pub fn new(id: PartId, name: impl Into<String>) -> Self {
+impl Instrument {
+    /// Create a new instrument with the given ID and name.
+    pub fn new(id: InstrumentId, name: impl Into<String>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -200,8 +200,8 @@ impl SynthPart {
         }
     }
 
-    /// Create a new synth part with a custom allocator configuration.
-    pub fn with_config(id: PartId, name: impl Into<String>, config: AllocatorConfig) -> Self {
+    /// Create a new instrument with a custom allocator configuration.
+    pub fn with_config(id: InstrumentId, name: impl Into<String>, config: AllocatorConfig) -> Self {
         Self {
             id,
             name: name.into(),
@@ -217,19 +217,19 @@ impl SynthPart {
         }
     }
 
-    /// Get the part ID.
+    /// Get the instrument ID.
     #[inline]
-    pub fn id(&self) -> PartId {
+    pub fn id(&self) -> InstrumentId {
         self.id
     }
 
-    /// Get the part name.
+    /// Get the instrument name.
     #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Set the part name.
+    /// Set the instrument name.
     #[inline]
     pub fn set_name(&mut self, name: impl Into<String>) {
         self.name = name.into();
@@ -283,19 +283,19 @@ impl SynthPart {
         self.pan = pan;
     }
 
-    /// Check if this part is enabled.
+    /// Check if this instrument is enabled.
     #[inline]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Enable or disable this part.
+    /// Enable or disable this instrument.
     #[inline]
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// Check if this part should respond to a MIDI event on the given channel.
+    /// Check if this instrument should respond to a MIDI event on the given channel.
     #[inline]
     pub fn responds_to_channel(&self, channel: u8) -> bool {
         self.enabled && self.midi_channel.matches(channel)
@@ -335,7 +335,7 @@ impl SynthPart {
         }
     }
 
-    /// Get the number of active voices in this part.
+    /// Get the number of active voices in this instrument.
     #[inline]
     pub fn active_voice_count(&self) -> usize {
         self.allocator.active_voice_count()
@@ -366,11 +366,11 @@ impl SynthPart {
         self.allocator.panic();
     }
 
-    /// Process all active voices in this part and mix into the output buffer.
+    /// Process all active voices in this instrument and mix into the output buffer.
     ///
     /// This method:
     /// 1. Processes each active voice through its signal chain
-    /// 2. Applies part volume and pan
+    /// 2. Applies instrument volume and pan
     /// 3. Mixes the result into the stereo output buffer
     ///
     /// # Arguments
@@ -391,12 +391,12 @@ impl SynthPart {
         self.voice_left.resize(samples);
         self.voice_right.resize(samples);
 
-        // Get part's stereo gain (includes volume and pan)
+        // Get instrument.s stereo gain (includes volume and pan)
         let (left_gain, right_gain) = self.stereo_gain();
         let left_gain = left_gain.as_f32();
         let right_gain = right_gain.as_f32();
 
-        // Process each voice in this part
+        // Process each voice in this instrument
         for voice in self.allocator.voices_mut() {
             if !voice.is_active() {
                 continue;
@@ -439,7 +439,7 @@ impl SynthPart {
                 voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
             }
 
-            // Mix stereo output into main buffer with part volume/pan
+            // Mix stereo output into main buffer with instrument volume/pan
             for i in 0..samples {
                 output[i * 2] += self.voice_left[i] * left_gain;
                 output[i * 2 + 1] += self.voice_right[i] * right_gain;
@@ -465,9 +465,9 @@ impl SynthPart {
     }
 }
 
-impl fmt::Debug for SynthPart {
+impl fmt::Debug for Instrument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SynthPart")
+        f.debug_struct("Instrument")
             .field("id", &self.id)
             .field("name", &self.name)
             .field("midi_channel", &self.midi_channel)
@@ -484,10 +484,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_part_id() {
-        let id = PartId::new(42);
+    fn test_instrument_id() {
+        let id = InstrumentId::new(42);
         assert_eq!(id.as_u64(), 42);
-        assert_eq!(format!("{}", id), "Part(42)");
+        assert_eq!(format!("{}", id), "Instrument(42)");
     }
 
     #[test]
@@ -525,64 +525,64 @@ mod tests {
     }
 
     #[test]
-    fn test_synth_part_creation() {
-        let part = SynthPart::new(PartId::FIRST, "Lead");
-        assert_eq!(part.id(), PartId::FIRST);
-        assert_eq!(part.name(), "Lead");
-        assert_eq!(part.midi_channel(), MidiChannel::CH1);
-        assert!(part.is_enabled());
-        assert_eq!(part.volume(), Gain::UNITY);
-        assert_eq!(part.pan(), BipolarValue::CENTER);
+    fn test_instrument_creation() {
+        let instrument = Instrument::new(InstrumentId::FIRST, "Lead");
+        assert_eq!(instrument.id(), InstrumentId::FIRST);
+        assert_eq!(instrument.name(), "Lead");
+        assert_eq!(instrument.midi_channel(), MidiChannel::CH1);
+        assert!(instrument.is_enabled());
+        assert_eq!(instrument.volume(), Gain::UNITY);
+        assert_eq!(instrument.pan(), BipolarValue::CENTER);
     }
 
     #[test]
-    fn test_synth_part_responds_to_channel() {
-        let mut part = SynthPart::new(PartId::new(1), "Bass");
-        part.set_midi_channel(MidiChannel::from_one_indexed(2).unwrap());
+    fn test_instrument_responds_to_channel() {
+        let mut instrument = Instrument::new(InstrumentId::new(1), "Bass");
+        instrument.set_midi_channel(MidiChannel::from_one_indexed(2).unwrap());
 
         // Should respond to channel 2 (zero-indexed: 1)
-        assert!(part.responds_to_channel(1));
-        assert!(!part.responds_to_channel(0));
+        assert!(instrument.responds_to_channel(1));
+        assert!(!instrument.responds_to_channel(0));
 
-        // Disabled part should not respond
-        part.set_enabled(false);
-        assert!(!part.responds_to_channel(1));
+        // Disabled instrument should not respond
+        instrument.set_enabled(false);
+        assert!(!instrument.responds_to_channel(1));
     }
 
     #[test]
-    fn test_synth_part_note_handling() {
-        let mut part = SynthPart::new(PartId::new(1), "Synth");
+    fn test_instrument_note_handling() {
+        let mut instrument = Instrument::new(InstrumentId::new(1), "Synth");
 
         // Note on should allocate a voice
-        let voice_id = part.note_on(60, 0.8);
+        let voice_id = instrument.note_on(60, 0.8);
         assert!(voice_id.is_some());
-        assert_eq!(part.active_voice_count(), 1);
+        assert_eq!(instrument.active_voice_count(), 1);
 
         // Note off should release
-        part.note_off(60);
+        instrument.note_off(60);
         // Voice should be releasing (still "active" in allocator terms until envelope finishes)
     }
 
     #[test]
     fn test_stereo_gain() {
-        let mut part = SynthPart::new(PartId::new(1), "Test");
+        let mut instrument = Instrument::new(InstrumentId::new(1), "Test");
 
         // Center pan at unity volume
-        let (left, right) = part.stereo_gain();
+        let (left, right) = instrument.stereo_gain();
         let sqrt_half = (0.5_f32).sqrt();
         assert!((left.as_f32() - sqrt_half).abs() < 0.01);
         assert!((right.as_f32() - sqrt_half).abs() < 0.01);
 
         // Full left pan
-        part.set_pan(BipolarValue::MIN);
-        let (left, right) = part.stereo_gain();
+        instrument.set_pan(BipolarValue::MIN);
+        let (left, right) = instrument.stereo_gain();
         assert!((left.as_f32() - 1.0).abs() < 0.01);
         assert!(right.as_f32() < 0.01);
 
         // Half volume
-        part.set_pan(BipolarValue::CENTER);
-        part.set_volume(Gain::new(0.5));
-        let (left, right) = part.stereo_gain();
+        instrument.set_pan(BipolarValue::CENTER);
+        instrument.set_volume(Gain::new(0.5));
+        let (left, right) = instrument.stereo_gain();
         assert!((left.as_f32() - sqrt_half * 0.5).abs() < 0.01);
         assert!((right.as_f32() - sqrt_half * 0.5).abs() < 0.01);
     }

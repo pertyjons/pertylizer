@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::effects::{Chorus, Delay, Distortion, Reverb};
 use crate::engine::commands::ModuleId;
 use crate::engine::params::ModuleType;
-use crate::modules::{AudioBuffer, EffectModule, ProcessContext};
+use crate::modules::{AudioBuffer, AudioEffect, ProcessContext};
 use crate::visualizers::VisualizationBuffer;
 
 /// Effect slot in the effect chain.
@@ -15,7 +15,7 @@ pub struct EffectSlot {
     /// Unique module ID
     pub module_id: ModuleId,
     /// The effect processor
-    pub effect: Box<dyn EffectModule>,
+    pub effect: Box<dyn AudioEffect>,
     /// Module type for type-safe lookup
     pub module_type: ModuleType,
     /// Whether the effect is enabled
@@ -27,7 +27,7 @@ pub struct VisualizerSlot {
     /// Unique module ID
     pub module_id: ModuleId,
     /// The visualizer processor
-    pub visualizer: Box<dyn EffectModule>,
+    pub visualizer: Box<dyn AudioEffect>,
     /// Shared buffer for visualization data
     pub buffer: Arc<VisualizationBuffer>,
     /// Whether the visualizer is enabled
@@ -35,7 +35,7 @@ pub struct VisualizerSlot {
 }
 
 /// Effect chain that manages effects and visualizers.
-pub struct EffectChain {
+pub struct MasterBus {
     /// Effect slots
     effects: Vec<EffectSlot>,
     /// Visualizer slots
@@ -44,7 +44,7 @@ pub struct EffectChain {
     effect_buffer: AudioBuffer,
 }
 
-impl EffectChain {
+impl MasterBus {
     /// Create a new effect chain with default effects.
     pub fn new() -> Self {
         let effects = vec![
@@ -105,7 +105,7 @@ impl EffectChain {
     }
 
     /// Add an effect instance.
-    pub fn add_effect(&mut self, id: ModuleId, mut effect: Box<dyn EffectModule>, sample_rate: f32) {
+    pub fn add_effect(&mut self, id: ModuleId, mut effect: Box<dyn AudioEffect>, sample_rate: f32) {
         effect.set_sample_rate(sample_rate);
         let module_type = effect.module_type();
 
@@ -126,7 +126,7 @@ impl EffectChain {
     pub fn add_visualizer(
         &mut self,
         id: ModuleId,
-        visualizer: Box<dyn EffectModule>,
+        visualizer: Box<dyn AudioEffect>,
         buffer: Arc<VisualizationBuffer>,
     ) {
         self.visualizers.push(VisualizerSlot {
@@ -199,7 +199,7 @@ impl EffectChain {
     }
 }
 
-impl Default for EffectChain {
+impl Default for MasterBus {
     fn default() -> Self {
         Self::new()
     }

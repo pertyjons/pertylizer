@@ -27,7 +27,7 @@
 //!
 //! - `widgets` - Reusable UI widgets (knobs, meters, ports, cables)
 //! - `module_panel` - Renders individual synth modules
-//! - `rack_view` - Canvas for arranging modules and connections
+//! - `patch_editor` - Canvas for arranging modules and connections
 
 #[cfg(feature = "gui-console")]
 pub mod console;
@@ -45,7 +45,7 @@ pub mod widgets;
 pub mod module_panel;
 
 #[cfg(feature = "gui-egui")]
-pub mod rack_view;
+pub mod patch_editor;
 
 #[cfg(feature = "gui-egui")]
 pub mod theme;
@@ -57,7 +57,7 @@ pub mod dialogs;
 pub mod patch_bridge;
 
 #[cfg(feature = "gui-egui")]
-pub mod part_list;
+pub mod instrument_rack;
 
 use crate::engine::{EngineHandle, SynthEngine, AllocatorConfig};
 use crate::audio::{AudioHostTrait, StreamConfig};

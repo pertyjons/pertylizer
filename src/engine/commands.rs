@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use super::part::{MidiChannel, PartId, SynthPart};
+use super::instrument::{MidiChannel, InstrumentId, Instrument};
 use super::typed_params::{ModuleType, Param};
 use crate::types::{BipolarValue, Bpm, Gain, NormalizedValue, Seconds};
 
@@ -117,7 +117,7 @@ impl<'de> Deserialize<'de> for ModuleId {
 /// 
 /// Each variant has a unique numeric ID and descriptive string name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum VoiceModule {
+pub enum PolyModule {
     Oscillator1,
     Oscillator2,
     Filter,
@@ -128,7 +128,7 @@ pub enum VoiceModule {
     Mixer,
 }
 
-impl VoiceModule {
+impl PolyModule {
     /// Get the module info: (module_type, instance, internal_name)
     pub const fn info(&self) -> (ModuleType, u16, &'static str) {
         match self {
@@ -159,13 +159,13 @@ impl VoiceModule {
         ModuleId { module_type, instance }
     }
 
-    /// Try to get VoiceModule from a ModuleId.
+    /// Try to get PolyModule from a ModuleId.
     pub fn from_module_id(id: ModuleId) -> Option<Self> {
         Self::ALL.iter().find(|v| v.module_id() == id).copied()
     }
     
     /// All voice modules.
-    pub const ALL: &'static [VoiceModule] = &[
+    pub const ALL: &'static [PolyModule] = &[
         Self::Oscillator1,
         Self::Oscillator2,
         Self::Filter,
@@ -199,7 +199,7 @@ impl ModuleTypeId {
     pub const DISTORTION: &'static str = "distortion";
     
     /// Create a module instance from this type ID.
-    pub fn create_module(&self) -> Option<Box<dyn crate::modules::VoiceModule>> {
+    pub fn create_module(&self) -> Option<Box<dyn crate::modules::PolyModule>> {
         use crate::modules::{Oscillator, Filter, Envelope, Lfo, Amplifier, Mixer};
         
         match self.0.as_str() {
@@ -241,32 +241,32 @@ impl PortId {
 /// These commands are processed in the audio callback, so they must
 /// be designed to be handled without blocking.
 pub enum EngineCommand {
-    // === Part management ===
-    /// Add a new synth part (pre-created in GUI thread for real-time safety).
-    AddPart {
-        part: Box<SynthPart>,
+    // === Instrument management ===
+    /// Add a new instrument (pre-created in GUI thread for real-time safety).
+    AddInstrument {
+        instrument: Box<Instrument>,
     },
 
-    /// Remove a synth part by ID.
-    RemovePart {
-        part_id: PartId,
+    /// Remove an instrument by ID.
+    RemoveInstrument {
+        instrument_id: InstrumentId,
     },
 
-    /// Set a parameter on a specific part.
-    SetPartParameter {
-        part_id: PartId,
-        param: PartParam,
+    /// Set a parameter on a specific instrument.
+    SetInstrumentParameter {
+        instrument_id: InstrumentId,
+        param: InstrumentParam,
     },
 
-    /// Set the MIDI channel for a part.
-    SetPartMidiChannel {
-        part_id: PartId,
+    /// Set the MIDI channel for an instrument.
+    SetInstrumentMidiChannel {
+        instrument_id: InstrumentId,
         channel: MidiChannel,
     },
 
-    /// Enable or disable a part.
-    SetPartEnabled {
-        part_id: PartId,
+    /// Enable or disable an instrument.
+    SetInstrumentEnabled {
+        instrument_id: InstrumentId,
         enabled: bool,
     },
 
@@ -317,10 +317,10 @@ pub enum EngineCommand {
 
     // === Parameter control ===
     /// Set a voice module parameter using the type-safe API.
-    /// Use VoiceModule to identify which module within the voice to update.
+    /// Use PolyModule to identify which module within the voice to update.
     /// The Param contains both the parameter type and its value.
     SetVoiceParameter {
-        target: VoiceModule,
+        target: PolyModule,
         param: Param,
     },
 
@@ -336,7 +336,7 @@ pub enum EngineCommand {
     /// The module is created in the GUI thread and sent via this command.
     AddModuleInstance {
         id: ModuleId,
-        module: Box<dyn crate::modules::VoiceModule>,
+        module: Box<dyn crate::modules::PolyModule>,
     },
 
     /// Remove a module from the graph.
@@ -414,7 +414,7 @@ pub enum EngineCommand {
     /// The effect is created in the GUI thread and sent via this command.
     AddEffectInstance {
         id: ModuleId,
-        effect: Box<dyn crate::modules::EffectModule>,
+        effect: Box<dyn crate::modules::AudioEffect>,
     },
     
     /// Remove an effect from the effect chain.
@@ -505,10 +505,10 @@ impl EffectType {
 /// Part-specific parameters that can be set via commands.
 /// All parameters use type-safe domain types.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PartParam {
-    /// Part volume (type-safe gain).
+pub enum InstrumentParam {
+    /// Instrument volume (type-safe gain).
     Volume(Gain),
-    /// Part pan (type-safe bipolar value: -1.0 left to +1.0 right).
+    /// Instrument pan (type-safe bipolar value: -1.0 left to +1.0 right).
     Pan(BipolarValue),
     /// Glide/portamento time (type-safe seconds).
     GlideTime(Seconds),
@@ -516,7 +516,7 @@ pub enum PartParam {
     AllocationMode(super::voice_allocator::AllocationMode),
     /// Voice stealing strategy.
     StealingStrategy(super::voice_allocator::StealingStrategy),
-    /// Maximum polyphony for this part.
+    /// Maximum polyphony for this instrument.
     MaxVoices(usize),
     /// Velocity to amplitude sensitivity (0 = constant, 1 = full dynamic).
     VelocityAmpSensitivity(NormalizedValue),
@@ -602,35 +602,35 @@ pub enum EngineEvent {
     AllNotesReleased,
 }
 
-// Manual Debug implementation because Box<dyn VoiceModule> doesn't implement Debug
+// Manual Debug implementation because Box<dyn PolyModule> doesn't implement Debug
 impl std::fmt::Debug for EngineCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            // Part commands
-            Self::AddPart { part } => {
-                f.debug_struct("AddPart")
-                    .field("part_id", &part.id())
-                    .field("name", &part.name())
+            // Instrument commands
+            Self::AddInstrument { instrument } => {
+                f.debug_struct("AddInstrument")
+                    .field("instrument_id", &instrument.id())
+                    .field("name", &instrument.name())
                     .finish()
             }
-            Self::RemovePart { part_id } => {
-                f.debug_struct("RemovePart").field("part_id", part_id).finish()
+            Self::RemoveInstrument { instrument_id } => {
+                f.debug_struct("RemoveInstrument").field("instrument_id", instrument_id).finish()
             }
-            Self::SetPartParameter { part_id, param } => {
-                f.debug_struct("SetPartParameter")
-                    .field("part_id", part_id)
+            Self::SetInstrumentParameter { instrument_id, param } => {
+                f.debug_struct("SetInstrumentParameter")
+                    .field("instrument_id", instrument_id)
                     .field("param", param)
                     .finish()
             }
-            Self::SetPartMidiChannel { part_id, channel } => {
-                f.debug_struct("SetPartMidiChannel")
-                    .field("part_id", part_id)
+            Self::SetInstrumentMidiChannel { instrument_id, channel } => {
+                f.debug_struct("SetInstrumentMidiChannel")
+                    .field("instrument_id", instrument_id)
                     .field("channel", channel)
                     .finish()
             }
-            Self::SetPartEnabled { part_id, enabled } => {
-                f.debug_struct("SetPartEnabled")
-                    .field("part_id", part_id)
+            Self::SetInstrumentEnabled { instrument_id, enabled } => {
+                f.debug_struct("SetInstrumentEnabled")
+                    .field("instrument_id", instrument_id)
                     .field("enabled", enabled)
                     .finish()
             }
@@ -690,7 +690,7 @@ impl std::fmt::Debug for EngineCommand {
                 // Can't debug the module itself, just show the ID
                 f.debug_struct("AddModuleInstance")
                     .field("id", id)
-                    .field("module", &"<dyn VoiceModule>")
+                    .field("module", &"<dyn PolyModule>")
                     .finish()
             }
             Self::RemoveModule { id } => {
@@ -738,7 +738,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::AddEffectInstance { id, .. } => {
                 f.debug_struct("AddEffectInstance")
                     .field("id", id)
-                    .field("effect", &"<dyn EffectModule>")
+                    .field("effect", &"<dyn AudioEffect>")
                     .finish()
             }
             Self::RemoveEffect { id } => {

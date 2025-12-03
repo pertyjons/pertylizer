@@ -176,7 +176,7 @@ impl Describable for Filter {
     }
 }
 
-impl VoiceModule for Filter {
+impl PolyModule for Filter {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -263,7 +263,7 @@ impl VoiceModule for Filter {
         self.sample_rate = SampleRate::new(sample_rate);
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }
@@ -385,7 +385,7 @@ impl Describable for LadderFilter {
     }
 }
 
-impl VoiceModule for LadderFilter {
+impl PolyModule for LadderFilter {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -466,7 +466,7 @@ impl VoiceModule for LadderFilter {
         self.sample_rate = SampleRate::new(sample_rate);
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

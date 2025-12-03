@@ -304,14 +304,14 @@ impl EngineHub {
 
     fn check_command_permission(&self, perms: &ClientPermissions, command: &EngineCommand) -> bool {
         match command {
-            // Part topology changes
-            EngineCommand::AddPart { .. }
-            | EngineCommand::RemovePart { .. } => perms.can_modify_topology,
+            // Instrument topology changes
+            EngineCommand::AddInstrument { .. }
+            | EngineCommand::RemoveInstrument { .. } => perms.can_modify_topology,
 
-            // Part parameter changes
-            EngineCommand::SetPartParameter { .. }
-            | EngineCommand::SetPartMidiChannel { .. }
-            | EngineCommand::SetPartEnabled { .. } => perms.can_modify_params,
+            // Instrument parameter changes
+            EngineCommand::SetInstrumentParameter { .. }
+            | EngineCommand::SetInstrumentMidiChannel { .. }
+            | EngineCommand::SetInstrumentEnabled { .. } => perms.can_modify_params,
 
             // Parameter changes
             EngineCommand::SetVoiceParameter { .. }

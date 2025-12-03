@@ -2,7 +2,7 @@
 
 use crate::engine::typed_params::{EqParam, ModuleType, Param};
 use crate::modules::{
-    Describable, EffectModule, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
+    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{Decibels, Hertz, NormalizedValue, SampleRate};
@@ -302,7 +302,7 @@ impl Describable for Eq {
     }
 }
 
-impl EffectModule for Eq {
+impl AudioEffect for Eq {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         // Update sample rate and recalculate coefficients if needed
         if (self.sample_rate.as_f32() - context.sample_rate).abs() > 1.0 {

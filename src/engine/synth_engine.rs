@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
 use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
-use crate::engine::effect_chain::{EffectChain, EffectSlot};
+use crate::engine::master_bus::{MasterBus, EffectSlot};
 use crate::engine::graph::ModuleGraph;
 use crate::engine::metering::MeteringSystem;
 use crate::engine::params::{
@@ -23,12 +23,12 @@ use crate::engine::params::{
 };
 use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
-use crate::engine::part::{MidiChannel, PartId, SynthPart};
+use crate::engine::instrument::{MidiChannel, InstrumentId, Instrument};
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::types::{Gain, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
     Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
-    VoiceModule as VoiceModuleTrait,
+    PolyModule as PolyModuleTrait,
 };
 use crate::visualizers::{LevelMeter, Oscilloscope, VisualizationBuffer};
 
@@ -49,20 +49,20 @@ const MAX_BUFFER_SIZE: usize = 4096;
 /// This prevents memory deallocation from happening on the audio thread.
 pub enum DroppedItem {
     /// A voice module from the modular graph.
-    Module(Box<dyn VoiceModuleTrait>),
-    /// A synth part with its voice allocator.
-    Part(Box<SynthPart>),
+    Module(Box<dyn PolyModuleTrait>),
+    /// An instrument with its voice allocator.
+    Instrument(Box<Instrument>),
 }
 
-// SAFETY: VoiceModule trait requires Send, and SynthPart is Send
+// SAFETY: PolyModule trait requires Send, and Instrument is Send
 unsafe impl Send for DroppedItem {}
 
 /// Wrapper for modules returned from audio thread for deferred cleanup.
 /// This allows dropping to happen on the main thread to avoid
 /// deallocations on the real-time audio thread.
-pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
+pub struct DroppedModule(pub Box<dyn PolyModuleTrait>);
 
-// SAFETY: VoiceModule trait requires Send
+// SAFETY: PolyModule trait requires Send
 unsafe impl Send for DroppedModule {}
 
 /// A clonable sender for engine commands.
@@ -121,8 +121,8 @@ pub struct EngineHandle {
     event_consumer: ringbuf::HeapCons<EngineEvent>,
     /// Receive dropped modules from audio thread (for main thread cleanup).
     return_consumer: ringbuf::HeapCons<DroppedModule>,
-    /// Receive dropped parts from audio thread (for main thread cleanup).
-    part_return_consumer: ringbuf::HeapCons<Box<SynthPart>>,
+    /// Receive dropped instruments from audio thread (for main thread cleanup).
+    instrument_return_consumer: ringbuf::HeapCons<Box<Instrument>>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -149,16 +149,16 @@ impl EngineHandle {
         self.command_sender.clone()
     }
 
-    /// Poll and drop any modules/parts returned from the audio thread.
+    /// Poll and drop any modules/instruments returned from the audio thread.
     /// Call this regularly from the main thread to clean up removed items.
     pub fn cleanup_dropped_modules(&mut self) {
         // Clean up dropped voice modules
         while self.return_consumer.try_pop().is_some() {
             // Module is dropped here on the main thread - no audio glitches!
         }
-        // Clean up dropped parts
-        while self.part_return_consumer.try_pop().is_some() {
-            // Part is dropped here on the main thread - no audio glitches!
+        // Clean up dropped instruments
+        while self.instrument_return_consumer.try_pop().is_some() {
+            // Instrument is dropped here on the main thread - no audio glitches!
         }
     }
 
@@ -167,7 +167,7 @@ impl EngineHandle {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
-            channel: super::part::MidiChannel::CH1,
+            channel: super::instrument::MidiChannel::CH1,
         })
     }
 
@@ -175,12 +175,12 @@ impl EngineHandle {
     pub fn note_off(&mut self, note: u8) -> bool {
         self.send(EngineCommand::NoteOff {
             note,
-            channel: super::part::MidiChannel::CH1,
+            channel: super::instrument::MidiChannel::CH1,
         })
     }
 
     /// Send a note on event to a specific channel.
-    pub fn note_on_channel(&mut self, note: u8, velocity: NormalizedValue, channel: super::part::MidiChannel) -> bool {
+    pub fn note_on_channel(&mut self, note: u8, velocity: NormalizedValue, channel: super::instrument::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
@@ -189,14 +189,14 @@ impl EngineHandle {
     }
 
     /// Send a note off event to a specific channel.
-    pub fn note_off_channel(&mut self, note: u8, channel: super::part::MidiChannel) -> bool {
+    pub fn note_off_channel(&mut self, note: u8, channel: super::instrument::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOff { note, channel })
     }
 
     /// Set a voice module parameter using the type-safe API.
     pub fn set_voice_parameter(
         &mut self,
-        target: crate::engine::commands::VoiceModule,
+        target: crate::engine::commands::PolyModule,
         param: crate::engine::typed_params::Param,
     ) -> bool {
         self.send(EngineCommand::SetVoiceParameter {
@@ -276,18 +276,18 @@ pub struct SynthEngine {
     event_producer: ringbuf::HeapProd<EngineEvent>,
     /// Send removed modules back to UI for dropping on main thread.
     return_producer: ringbuf::HeapProd<DroppedModule>,
-    /// Send removed parts back to UI for dropping on main thread.
-    part_return_producer: ringbuf::HeapProd<Box<SynthPart>>,
+    /// Send removed instruments back to UI for dropping on main thread.
+    instrument_return_producer: ringbuf::HeapProd<Box<Instrument>>,
     /// Shared state.
     state: Arc<EngineState>,
 
-    // === Part management (multitimbral) ===
-    /// All synthesizer parts (each with its own voice allocator).
-    parts: Vec<Box<SynthPart>>,
-    /// Counter for generating unique part IDs.
-    next_part_id: u64,
+    // === Instrument management (multitimbral) ===
+    /// All synthesizer instruments (each with its own voice allocator).
+    instruments: Vec<Box<Instrument>>,
+    /// Counter for generating unique instrument IDs.
+    next_instrument_id: u64,
     /// Template module graph for voices.
-    voice_template: ModuleGraph,
+    voice_graph: ModuleGraph,
 
     // === Global module graph ===
     /// The global module graph for modular routing.
@@ -297,7 +297,7 @@ pub struct SynthEngine {
     use_modular_routing: bool,
 
     // === Effect chain ===
-    effect_chain: EffectChain,
+    master_bus: MasterBus,
 
     // === Audio state ===
     sample_rate: f32,
@@ -344,35 +344,35 @@ impl SynthEngine {
         let return_rb = HeapRb::<DroppedModule>::new(RETURN_BUFFER_SIZE);
         let (return_producer, return_consumer) = return_rb.split();
 
-        // Create return buffer for parts to be dropped on main thread
-        let part_return_rb = HeapRb::<Box<SynthPart>>::new(RETURN_BUFFER_SIZE);
-        let (part_return_producer, part_return_consumer) = part_return_rb.split();
+        // Create return buffer for instruments to be dropped on main thread
+        let instrument_return_rb = HeapRb::<Box<Instrument>>::new(RETURN_BUFFER_SIZE);
+        let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
         // Create voice template with default signal chain
-        let voice_template = Self::create_default_voice_template();
+        let voice_graph = Self::create_default_voice_graph();
 
-        // Create default part with OMNI channel (responds to all MIDI channels)
-        let mut default_part = SynthPart::with_config(PartId::FIRST, "Default", config);
-        default_part.set_midi_channel(MidiChannel::OMNI);
+        // Create default instrument with OMNI channel (responds to all MIDI channels)
+        let mut default_instrument = Instrument::with_config(InstrumentId::FIRST, "Default", config);
+        default_instrument.set_midi_channel(MidiChannel::OMNI);
 
         // Initialize allocator with template graph (not a hardcoded Voice)
-        *default_part.allocator_mut() = VoiceAllocator::with_graph_template(
-            default_part.allocator().config().clone(),
-            &voice_template,
+        *default_instrument.allocator_mut() = VoiceAllocator::with_graph_template(
+            default_instrument.allocator().config().clone(),
+            &voice_graph,
         );
 
         let engine = Self {
             command_consumer,
             event_producer,
             return_producer,
-            part_return_producer,
+            instrument_return_producer,
             state: Arc::clone(&state),
-            parts: vec![Box::new(default_part)],
-            next_part_id: 1, // 0 is used by default part
-            voice_template,
+            instruments: vec![Box::new(default_instrument)],
+            next_instrument_id: 1, // 0 is used by default instrument
+            voice_graph,
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
-            effect_chain: EffectChain::new(),
+            master_bus: MasterBus::new(),
             sample_rate: 48000.0,
             master_volume: 1.0,
             voice_buffer: AudioBuffer::new(256),
@@ -388,7 +388,7 @@ impl SynthEngine {
             command_sender: CommandSender::new(command_producer),
             event_consumer,
             return_consumer,
-            part_return_consumer,
+            instrument_return_consumer,
             state,
             visualization_buffers: HashMap::new(),
         };
@@ -398,7 +398,7 @@ impl SynthEngine {
 
     /// Find an effect slot by its module type.
     fn find_effect_by_type(&mut self, module_type: ModuleType) -> Option<&mut EffectSlot> {
-        self.effect_chain.find_effect_by_type(module_type)
+        self.master_bus.find_effect_by_type(module_type)
     }
 
     /// Check if a module type belongs to the voice signal chain (polyphonic).
@@ -423,17 +423,17 @@ impl SynthEngine {
 
     /// Rebuild all voices from the current voice template.
     ///
-    /// Call this after modifying the voice_template to propagate changes
-    /// to all existing voices in all parts.
+    /// Call this after modifying the voice_graph to propagate changes
+    /// to all existing voices in all instruments.
     fn rebuild_all_voices(&mut self) {
-        for part in &mut self.parts {
-            part.allocator_mut().rebuild_from_graph(&self.voice_template);
+        for instrument in &mut self.instruments {
+            instrument.allocator_mut().rebuild_from_graph(&self.voice_graph);
         }
     }
 
     /// Find an effect slot by its module ID.
     fn find_effect_by_id(&mut self, module_id: ModuleId) -> Option<&mut EffectSlot> {
-        self.effect_chain.find_effect_by_id(module_id)
+        self.master_bus.find_effect_by_id(module_id)
     }
 
     /// Create the default voice template graph.
@@ -442,7 +442,7 @@ impl SynthEngine {
     /// It defines a basic subtractive synthesis signal chain:
     /// OSC1 + OSC2 -> Filter -> Amplifier
     /// with envelope modulation.
-    fn create_default_voice_template() -> ModuleGraph {
+    fn create_default_voice_graph() -> ModuleGraph {
         use crate::types::{Cents, Hertz, Seconds as TypedSeconds};
 
         let mut graph = ModuleGraph::new();
@@ -531,66 +531,66 @@ impl SynthEngine {
     /// Handle a single command.
     fn handle_command(&mut self, command: EngineCommand) {
         match command {
-            // === Part management commands ===
-            EngineCommand::AddPart { part } => {
-                self.parts.push(part);
+            // === Instrument management commands ===
+            EngineCommand::AddInstrument { instrument } => {
+                self.instruments.push(instrument);
             }
 
-            EngineCommand::RemovePart { part_id } => {
-                // Find and remove the part, sending it back to main thread for dropping
+            EngineCommand::RemoveInstrument { instrument_id } => {
+                // Find and remove the instrument, sending it back to main thread for dropping
                 // This is real-time safe: no deallocation happens on the audio thread
-                if let Some(idx) = self.parts.iter().position(|p| p.id() == part_id) {
-                    let part = self.parts.swap_remove(idx);
+                if let Some(idx) = self.instruments.iter().position(|p| p.id() == instrument_id) {
+                    let instrument = self.instruments.swap_remove(idx);
                     // Send to main thread for dropping - ignore if queue is full
-                    let _ = self.part_return_producer.try_push(part);
+                    let _ = self.instrument_return_producer.try_push(instrument);
                 }
             }
 
-            EngineCommand::SetPartParameter { part_id, param } => {
-                use crate::engine::commands::PartParam;
-                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
+            EngineCommand::SetInstrumentParameter { instrument_id, param } => {
+                use crate::engine::commands::InstrumentParam;
+                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
                     match param {
-                        PartParam::Volume(vol) => part.set_volume(vol),
-                        PartParam::Pan(pan) => part.set_pan(pan),
-                        PartParam::GlideTime(time) => part.allocator_mut().set_glide_time(time),
-                        PartParam::AllocationMode(mode) => part.allocator_mut().set_mode(mode),
-                        PartParam::StealingStrategy(strategy) => part.allocator_mut().set_stealing(strategy),
-                        PartParam::MaxVoices(_) => {
+                        InstrumentParam::Volume(vol) => instrument.set_volume(vol),
+                        InstrumentParam::Pan(pan) => instrument.set_pan(pan),
+                        InstrumentParam::GlideTime(time) => instrument.allocator_mut().set_glide_time(time),
+                        InstrumentParam::AllocationMode(mode) => instrument.allocator_mut().set_mode(mode),
+                        InstrumentParam::StealingStrategy(strategy) => instrument.allocator_mut().set_stealing(strategy),
+                        InstrumentParam::MaxVoices(_) => {
                             // Cannot change max voices at runtime without reallocating
                             // This would require recreating the allocator
                         }
-                        PartParam::VelocityAmpSensitivity(sens) => {
-                            part.set_velocity_amp_sensitivity(sens);
+                        InstrumentParam::VelocityAmpSensitivity(sens) => {
+                            instrument.set_velocity_amp_sensitivity(sens);
                         }
-                        PartParam::VelocityFilterSensitivity(sens) => {
-                            part.set_velocity_filter_sensitivity(sens);
+                        InstrumentParam::VelocityFilterSensitivity(sens) => {
+                            instrument.set_velocity_filter_sensitivity(sens);
                         }
                     }
                 }
             }
 
-            EngineCommand::SetPartMidiChannel { part_id, channel } => {
-                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
-                    part.set_midi_channel(channel);
+            EngineCommand::SetInstrumentMidiChannel { instrument_id, channel } => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
+                    instrument.set_midi_channel(channel);
                 }
             }
 
-            EngineCommand::SetPartEnabled { part_id, enabled } => {
-                if let Some(part) = self.parts.iter_mut().find(|p| p.id() == part_id) {
-                    part.set_enabled(enabled);
+            EngineCommand::SetInstrumentEnabled { instrument_id, enabled } => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
+                    instrument.set_enabled(enabled);
                 }
             }
 
-            // === Note control - route to parts by channel ===
+            // === Note control - route to instruments by channel ===
             EngineCommand::NoteOn { note, velocity, channel } => {
-                // Route to all parts that respond to this channel
+                // Route to all instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
                 let velocity_f32 = velocity.as_f32();
                 let mut note_triggered = false;
 
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        if part.note_on(note, velocity_f32).is_some() {
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        if instrument.note_on(note, velocity_f32).is_some() {
                             note_triggered = true;
                         }
                     }
@@ -612,11 +612,11 @@ impl SynthEngine {
             }
 
             EngineCommand::NoteOff { note, channel } => {
-                // Route to all parts that respond to this channel
+                // Route to all instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        part.note_off(note);
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        instrument.note_off(note);
                     }
                 }
                 // Also trigger note off in the modular graph
@@ -632,9 +632,9 @@ impl SynthEngine {
             }
 
             EngineCommand::AllNotesOff => {
-                // Release notes on all parts
-                for part in &mut self.parts {
-                    part.all_notes_off();
+                // Release notes on all instruments
+                for instrument in &mut self.instruments {
+                    instrument.all_notes_off();
                 }
                 if self.use_modular_routing {
                     self.module_graph.reset();
@@ -645,11 +645,11 @@ impl SynthEngine {
             }
 
             EngineCommand::PitchBend { value, channel } => {
-                // Apply pitch bend to all voices in parts that respond to this channel
+                // Apply pitch bend to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        for voice in part.allocator_mut().voices_mut() {
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        for voice in instrument.allocator_mut().voices_mut() {
                             voice.pitch_bend = value;
                         }
                     }
@@ -657,11 +657,11 @@ impl SynthEngine {
             }
 
             EngineCommand::ModWheel { value, channel } => {
-                // Apply mod wheel to all voices in parts that respond to this channel
+                // Apply mod wheel to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        for voice in part.allocator_mut().voices_mut() {
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        for voice in instrument.allocator_mut().voices_mut() {
                             voice.mod_wheel = value;
                         }
                     }
@@ -669,11 +669,11 @@ impl SynthEngine {
             }
 
             EngineCommand::Aftertouch { value, channel } => {
-                // Apply channel aftertouch to all voices in parts that respond to this channel
+                // Apply channel aftertouch to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        for voice in part.allocator_mut().voices_mut() {
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        for voice in instrument.allocator_mut().voices_mut() {
                             voice.aftertouch = value;
                         }
                     }
@@ -681,11 +681,11 @@ impl SynthEngine {
             }
 
             EngineCommand::PolyAftertouch { note, value, channel } => {
-                // Apply poly aftertouch to specific note in parts that respond to this channel
+                // Apply poly aftertouch to specific note in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for part in &mut self.parts {
-                    if part.responds_to_channel(channel_raw) {
-                        for voice in part.allocator_mut().voices_mut() {
+                for instrument in &mut self.instruments {
+                    if instrument.responds_to_channel(channel_raw) {
+                        for voice in instrument.allocator_mut().voices_mut() {
                             if voice.note == note {
                                 voice.aftertouch = value;
                             }
@@ -701,24 +701,24 @@ impl SynthEngine {
             }
 
             EngineCommand::SetGlideTime(time) => {
-                // Clamp to reasonable range: 0-5 seconds
+                // Clamp to reasonable range: 0-5 second instruments
                 let time_secs = Seconds::new(time.as_f32().clamp(0.0, 5.0));
-                // Apply to all parts
-                for part in &mut self.parts {
-                    part.allocator_mut().set_glide_time(time_secs);
+                // Apply to all instruments
+                for instrument in &mut self.instruments {
+                    instrument.allocator_mut().set_glide_time(time_secs);
                 }
             }
 
             EngineCommand::SetVoiceParameter { target, param } => {
-                // Get the ModuleId from the VoiceModule enum
+                // Get the ModuleId from the PolyModule enum
                 let module_id = target.module_id();
 
                 // Update the voice template (so new voices get the new value)
-                self.voice_template.set_param(module_id, param.clone());
+                self.voice_graph.set_param(module_id, param.clone());
 
-                // Apply to all existing voices in all parts
-                for part in &mut self.parts {
-                    for voice in part.allocator_mut().voices_mut() {
+                // Apply to all existing voices in all instruments
+                for instrument in &mut self.instruments {
+                    for voice in instrument.allocator_mut().voices_mut() {
                         voice.graph.set_param(module_id, param.clone());
                     }
                 }
@@ -728,11 +728,11 @@ impl SynthEngine {
                 // Check if this is a voice module or a global module
                 if Self::is_voice_module(module_id.module_type) {
                     // Voice module: update template and all active voices
-                    self.voice_template.set_param(module_id, param.clone());
+                    self.voice_graph.set_param(module_id, param.clone());
 
-                    // Apply to all existing voices in all parts (real-time update!)
-                    for part in &mut self.parts {
-                        for voice in part.allocator_mut().voices_mut() {
+                    // Apply to all existing voices in all instruments (real-time update!)
+                    for instrument in &mut self.instruments {
+                        for voice in instrument.allocator_mut().voices_mut() {
                             voice.graph.set_param(module_id, param.clone());
                         }
                     }
@@ -743,23 +743,23 @@ impl SynthEngine {
             }
 
             EngineCommand::Reset => {
-                // Panic all parts
-                for part in &mut self.parts {
-                    part.panic();
+                // Panic all instruments
+                for instrument in &mut self.instruments {
+                    instrument.panic();
                 }
-                self.effect_chain.reset();
+                self.master_bus.reset();
             }
 
             EngineCommand::ClearAllModules => {
-                // Clear all modules for patch loading - panic and disable all parts
+                // Clear all modules for patch loading - panic and disable all instruments
                 // to prevent "ghost sound" from hardcoded voice templates
-                for part in &mut self.parts {
-                    part.panic();
-                    part.set_enabled(false);
+                for instrument in &mut self.instruments {
+                    instrument.panic();
+                    instrument.set_enabled(false);
                 }
-                self.effect_chain.clear();
+                self.master_bus.clear();
                 self.module_graph.clear();
-                self.voice_template.clear();
+                self.voice_graph.clear();
                 self.rebuild_all_voices();
                 self.use_modular_routing = false;
             }
@@ -790,26 +790,26 @@ impl SynthEngine {
 
             EngineCommand::AddVisualizer { id, visualizer_type, buffer } => {
                 use crate::engine::commands::VisualizerType;
-                use crate::modules::EffectModule;
+                use crate::modules::AudioEffect;
 
-                let visualizer: Box<dyn EffectModule> = match visualizer_type {
+                let visualizer: Box<dyn AudioEffect> = match visualizer_type {
                     VisualizerType::Oscilloscope => Box::new(Oscilloscope::new()),
                     VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
                 };
 
-                self.effect_chain.add_visualizer(id, visualizer, buffer);
+                self.master_bus.add_visualizer(id, visualizer, buffer);
             }
 
             EngineCommand::RemoveVisualizer { id } => {
-                self.effect_chain.remove_visualizer(id);
+                self.master_bus.remove_visualizer(id);
             }
 
             EngineCommand::AddEffectInstance { id, effect } => {
-                self.effect_chain.add_effect(id, effect, self.sample_rate);
+                self.master_bus.add_effect(id, effect, self.sample_rate);
             }
 
             EngineCommand::RemoveEffect { id } => {
-                self.effect_chain.remove_effect(id);
+                self.master_bus.remove_effect(id);
             }
 
             // === Modular routing commands ===
@@ -818,7 +818,7 @@ impl SynthEngine {
                 // Route module to the appropriate graph based on type
                 if Self::is_voice_module(id.module_type) {
                     // Voice module: add to template and rebuild all voices
-                    self.voice_template.add_module_with_id(id, module);
+                    self.voice_graph.add_module_with_id(id, module);
                     self.rebuild_all_voices();
                 } else {
                     // Global module (effects, visualizers): add to global graph
@@ -829,11 +829,11 @@ impl SynthEngine {
 
             EngineCommand::RemoveModule { id } => {
                 // Try to remove from voice template first
-                if self.voice_template.get_module(id).is_some() {
+                if self.voice_graph.get_module(id).is_some() {
                     // Remove from voice template and rebuild all voices
-                    // Note: voice_template module is dropped immediately (not sent to main thread)
+                    // Note: voice_graph module is dropped immediately (not sent to main thread)
                     // because it's a template, not actively processing audio
-                    self.voice_template.remove_module(id);
+                    self.voice_graph.remove_module(id);
                     self.rebuild_all_voices();
                 } else if let Some(module) = self.module_graph.remove_module_and_return(id) {
                     // Remove from global graph and send back to main thread for dropping
@@ -844,12 +844,12 @@ impl SynthEngine {
 
             EngineCommand::Connect { from, to } => {
                 // Check if both modules exist in the voice template
-                let from_in_voice = self.voice_template.get_module(from.module).is_some();
-                let to_in_voice = self.voice_template.get_module(to.module).is_some();
+                let from_in_voice = self.voice_graph.get_module(from.module).is_some();
+                let to_in_voice = self.voice_graph.get_module(to.module).is_some();
 
                 if from_in_voice && to_in_voice {
                     // Both modules are in voice template: connect there and rebuild voices
-                    if let Err(e) = self.voice_template.connect(
+                    if let Err(e) = self.voice_graph.connect(
                         from.module,
                         &from.port,
                         to.module,
@@ -881,12 +881,12 @@ impl SynthEngine {
 
             EngineCommand::Disconnect { from, to } => {
                 // Check if both modules exist in the voice template
-                let from_in_voice = self.voice_template.get_module(from.module).is_some();
-                let to_in_voice = self.voice_template.get_module(to.module).is_some();
+                let from_in_voice = self.voice_graph.get_module(from.module).is_some();
+                let to_in_voice = self.voice_graph.get_module(to.module).is_some();
 
                 if from_in_voice && to_in_voice {
                     // Disconnect in voice template and rebuild voices
-                    if self.voice_template.disconnect(
+                    if self.voice_graph.disconnect(
                         from.module,
                         &from.port,
                         to.module,
@@ -907,8 +907,8 @@ impl SynthEngine {
 
             EngineCommand::DisconnectAll { module } => {
                 // Try voice template first
-                if self.voice_template.get_module(module).is_some() {
-                    self.voice_template.disconnect_all(module);
+                if self.voice_graph.get_module(module).is_some() {
+                    self.voice_graph.disconnect_all(module);
                     self.rebuild_all_voices();
                 } else {
                     self.module_graph.disconnect_all(module);
@@ -919,11 +919,11 @@ impl SynthEngine {
         }
     }
 
-    /// Process all active voices across all parts and mix.
+    /// Process all active voices across all instruments and mix.
     ///
-    /// Delegates to `SynthPart::process` for each part, which handles:
+    /// Delegates to `Instrument::process` for each instrument, which handles:
     /// - Voice processing through the signal chain
-    /// - Part volume and pan application
+    /// - Instrument volume and pan application
     /// - Mixing into the stereo output buffer
     fn process_voices(&mut self, context: &ProcessContext) {
         let num_channels = 2;
@@ -935,12 +935,12 @@ impl SynthEngine {
 
         let mut active_count = 0u32;
 
-        // Process each part - delegate to SynthPart::process
-        for part in &mut self.parts {
-            active_count += part.process(&mut self.mix_buffer, context);
+        // Process each instrument - delegate to Instrument::process
+        for instrument in &mut self.instruments {
+            active_count += instrument.process(&mut self.mix_buffer, context);
         }
 
-        // Update total voice count across all parts
+        // Update total voice count across all instruments
         self.state.voice_count.store(active_count);
     }
 
@@ -970,7 +970,7 @@ impl SynthEngine {
 
     /// Process the effect chain.
     fn process_effects(&mut self, context: &ProcessContext) {
-        self.effect_chain.process(&mut self.mix_buffer, context);
+        self.master_bus.process(&mut self.mix_buffer, context);
     }
 
     /// Update metering.
@@ -996,32 +996,32 @@ impl AudioProcessor for SynthEngine {
         let sample_count = SampleCount::new(context.frames);
         let sequencer_events = self.sequencer.process(sample_count);
 
-        // Route sequencer events to the appropriate parts
-        // InstrumentId maps to part index (0 = first part, 1 = second, etc.)
+        // Route sequencer events to the appropriate instruments
+        // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)
         for event in sequencer_events {
             match event {
                 crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, instrument, .. } => {
                     let note = pitch.as_midi();
                     let vel = velocity.as_f32();
-                    let part_index = instrument.0 as usize;
+                    let instrument_index = instrument.0 as usize;
 
-                    // Trigger note on the matching part, or first part if index out of bounds
-                    if let Some(part) = self.parts.get_mut(part_index) {
-                        part.note_on(note, vel);
-                    } else if let Some(first_part) = self.parts.first_mut() {
-                        // Fallback to first part if instrument index is out of range
-                        first_part.note_on(note, vel);
+                    // Trigger note on the matching instrument, or first instrument if index out of bounds
+                    if let Some(target) = self.instruments.get_mut(instrument_index) {
+                        target.note_on(note, vel);
+                    } else if let Some(first) = self.instruments.first_mut() {
+                        // Fallback to first instrument if instrument index is out of range
+                        first.note_on(note, vel);
                     }
                 }
                 crate::sequencer::SequencerEvent::NoteOff { pitch, instrument, .. } => {
                     let note = pitch.as_midi();
-                    let part_index = instrument.0 as usize;
+                    let instrument_index = instrument.0 as usize;
 
-                    // Trigger note off on the matching part
-                    if let Some(part) = self.parts.get_mut(part_index) {
-                        part.note_off(note);
-                    } else if let Some(first_part) = self.parts.first_mut() {
-                        first_part.note_off(note);
+                    // Trigger note off on the matching instrument
+                    if let Some(target) = self.instruments.get_mut(instrument_index) {
+                        target.note_off(note);
+                    } else if let Some(first) = self.instruments.first_mut() {
+                        first.note_off(note);
                     }
                 }
                 _ => {}
@@ -1088,9 +1088,9 @@ impl AudioProcessor for SynthEngine {
     }
 
     fn on_stream_stop(&mut self) {
-        // Panic all parts
-        for part in &mut self.parts {
-            part.panic();
+        // Panic all instruments
+        for instrument in &mut self.instruments {
+            instrument.panic();
         }
     }
 
@@ -1130,49 +1130,49 @@ mod tests {
         // Process commands
         engine.process_commands();
 
-        // Should have 3 active voices across all parts
-        let total_active: usize = engine.parts.iter()
+        // Should have 3 active voices across all instruments
+        let total_active: usize = engine.instruments.iter()
             .map(|p| p.active_voice_count())
             .sum();
         assert_eq!(total_active, 3);
     }
 
     #[test]
-    fn test_default_part_exists() {
+    fn test_default_instrument_exists() {
         let (engine, _handle) = SynthEngine::new();
 
-        // Engine should have one default part
-        assert_eq!(engine.parts.len(), 1);
-        assert_eq!(engine.parts[0].id(), crate::engine::part::PartId::FIRST);
-        assert_eq!(engine.parts[0].name(), "Default");
-        assert!(engine.parts[0].midi_channel().is_omni());
+        // Engine should have one default instrument
+        assert_eq!(engine.instruments.len(), 1);
+        assert_eq!(engine.instruments[0].id(), crate::engine::instrument::InstrumentId::FIRST);
+        assert_eq!(engine.instruments[0].name(), "Default");
+        assert!(engine.instruments[0].midi_channel().is_omni());
     }
 
     #[test]
     fn test_part_channel_routing() {
         let (mut engine, mut handle) = SynthEngine::new();
 
-        // Modify default part to listen to channel 1 only
-        engine.parts[0].set_midi_channel(
-            crate::engine::part::MidiChannel::from_one_indexed(1).unwrap()
+        // Modify default instrument to listen to channel 1 only
+        engine.instruments[0].set_midi_channel(
+            crate::engine::instrument::MidiChannel::from_one_indexed(1).unwrap()
         );
 
         // Send note on channel 1 - should be received
-        handle.note_on_channel(60, NormalizedValue::new(0.8), crate::engine::part::MidiChannel::CH1);
+        handle.note_on_channel(60, NormalizedValue::new(0.8), crate::engine::instrument::MidiChannel::CH1);
         engine.process_commands();
-        assert_eq!(engine.parts[0].active_voice_count(), 1);
+        assert_eq!(engine.instruments[0].active_voice_count(), 1);
 
         // Send note on channel 2 - should NOT be received
-        let ch2 = crate::engine::part::MidiChannel::from_one_indexed(2).unwrap();
+        let ch2 = crate::engine::instrument::MidiChannel::from_one_indexed(2).unwrap();
         handle.note_on_channel(64, NormalizedValue::new(0.8), ch2);
         engine.process_commands();
-        assert_eq!(engine.parts[0].active_voice_count(), 1); // Still 1
+        assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
     }
 
     /// Regression tests for dynamic routing.
     ///
     /// These tests verify that modules are correctly routed to either:
-    /// - voice_template (for polyphonic voice modules like Oscillator, Filter, etc.)
+    /// - voice_graph (for polyphonic voice modules like Oscillator, Filter, etc.)
     /// - module_graph (for global effects like Reverb, Delay, etc.)
     mod dynamic_routing {
         use super::*;
@@ -1180,13 +1180,13 @@ mod tests {
         use crate::modules::{Oscillator, Filter};
 
         /// Test A: Polyphonic Allocation
-        /// An Oscillator should be added to voice_template, NOT to module_graph.
+        /// An Oscillator should be added to voice_graph, NOT to module_graph.
         #[test]
-        fn test_oscillator_routed_to_voice_template() {
+        fn test_oscillator_routed_to_voice_graph() {
             let (mut engine, mut handle) = SynthEngine::new();
 
             // Count existing oscillators in voice template (there are 2 by default)
-            let initial_osc_count = engine.voice_template.module_ids()
+            let initial_osc_count = engine.voice_graph.module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
 
@@ -1201,10 +1201,10 @@ mod tests {
             });
             engine.process_commands();
 
-            // Verify: Oscillator should be in voice_template
+            // Verify: Oscillator should be in voice_graph
             assert!(
-                engine.voice_template.get_module(osc_id).is_some(),
-                "Oscillator should be in voice_template"
+                engine.voice_graph.get_module(osc_id).is_some(),
+                "Oscillator should be in voice_graph"
             );
 
             // Verify: Oscillator should NOT be in module_graph
@@ -1213,19 +1213,19 @@ mod tests {
                 "Oscillator should NOT be in module_graph"
             );
 
-            // Verify: voice_template oscillator count increased
-            let final_osc_count = engine.voice_template.module_ids()
+            // Verify: voice_graph oscillator count increased
+            let final_osc_count = engine.voice_graph.module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
             assert_eq!(final_osc_count, initial_osc_count + 1);
         }
 
-        // Note: Effects (Reverb, Delay, etc.) don't implement VoiceModule,
+        // Note: Effects (Reverb, Delay, etc.) don't implement PolyModule,
         // so they can't be added via AddModuleInstance. They use the separate
         // effect chain mechanism instead.
 
         /// Test B: Voice Propagation
-        /// Adding a module to voice_template should propagate to all voices in all parts.
+        /// Adding a module to voice_graph should propagate to all voices in all instruments.
         #[test]
         fn test_voice_module_propagates_to_voices() {
             let config = AllocatorConfig {
@@ -1240,7 +1240,7 @@ mod tests {
             let filter = Box::new(Filter::new());
 
             // First, verify that voices don't have this filter yet
-            for voice in engine.parts[0].allocator().voices() {
+            for voice in engine.instruments[0].allocator().voices() {
                 assert!(
                     voice.graph.get_module(filter_id).is_none(),
                     "Voice should not have filter_id before AddModuleInstance"
@@ -1254,8 +1254,8 @@ mod tests {
             });
             engine.process_commands();
 
-            // Verify: All voices in the default part should have the new filter
-            for (i, voice) in engine.parts[0].allocator().voices().iter().enumerate() {
+            // Verify: All voices in the default instrument should have the new filter
+            for (i, voice) in engine.instruments[0].allocator().voices().iter().enumerate() {
                 assert!(
                     voice.graph.get_module(filter_id).is_some(),
                     "Voice {} should have filter_id after AddModuleInstance", i
@@ -1294,15 +1294,15 @@ mod tests {
             });
             engine.process_commands();
 
-            // Verify: voice_template has the connection
-            let template_connections: Vec<_> = engine.voice_template.connections().collect();
+            // Verify: voice_graph has the connection
+            let template_connections: Vec<_> = engine.voice_graph.connections().collect();
             let has_connection = template_connections.iter().any(|c| {
                 c.from_module == new_osc_id && c.to_module == new_amp_id
             });
-            assert!(has_connection, "voice_template should have the connection");
+            assert!(has_connection, "voice_graph should have the connection");
 
             // Verify: All voices have the connection
-            for (i, voice) in engine.parts[0].allocator().voices().iter().enumerate() {
+            for (i, voice) in engine.instruments[0].allocator().voices().iter().enumerate() {
                 let voice_connections: Vec<_> = voice.graph.connections().collect();
                 let has_connection = voice_connections.iter().any(|c| {
                     c.from_module == new_osc_id && c.to_module == new_amp_id
@@ -1357,8 +1357,8 @@ mod tests {
             engine.process_commands();
 
             // Verify it exists
-            assert!(engine.voice_template.get_module(filter_id).is_some());
-            for voice in engine.parts[0].allocator().voices() {
+            assert!(engine.voice_graph.get_module(filter_id).is_some());
+            for voice in engine.instruments[0].allocator().voices() {
                 assert!(voice.graph.get_module(filter_id).is_some());
             }
 
@@ -1367,10 +1367,10 @@ mod tests {
             engine.process_commands();
 
             // Verify it's gone from template
-            assert!(engine.voice_template.get_module(filter_id).is_none());
+            assert!(engine.voice_graph.get_module(filter_id).is_none());
 
             // Verify it's gone from all voices
-            for voice in engine.parts[0].allocator().voices() {
+            for voice in engine.instruments[0].allocator().voices() {
                 assert!(voice.graph.get_module(filter_id).is_none());
             }
         }

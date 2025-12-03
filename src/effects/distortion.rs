@@ -167,7 +167,7 @@ impl Describable for Distortion {
     }
 }
 
-impl EffectModule for Distortion {
+impl AudioEffect for Distortion {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
         let mix = self.mix.as_f32();
@@ -351,7 +351,7 @@ impl Describable for Chorus {
     }
 }
 
-impl EffectModule for Chorus {
+impl AudioEffect for Chorus {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = SampleRate::new(context.sample_rate);
         self.resize_buffer();

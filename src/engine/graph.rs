@@ -44,7 +44,7 @@ impl Connection {
 /// Node in the module graph.
 struct GraphNode {
     /// The module.
-    module: Box<dyn VoiceModule>,
+    module: Box<dyn PolyModule>,
     /// Module descriptor (cached).
     descriptor: ModuleDescriptor,
     /// Output buffers.
@@ -105,7 +105,7 @@ impl ModuleGraph {
     }
 
     /// Add a module to the graph.
-    pub fn add_module(&mut self, module: Box<dyn VoiceModule>) -> ModuleId {
+    pub fn add_module(&mut self, module: Box<dyn PolyModule>) -> ModuleId {
         let module_type = module.module_type();
         let instance = self.next_instance(module_type);
         let id = ModuleId::new(module_type, instance);
@@ -131,7 +131,7 @@ impl ModuleGraph {
     }
 
     /// Add a module with a specific ID.
-    pub fn add_module_with_id(&mut self, id: ModuleId, module: Box<dyn VoiceModule>) {
+    pub fn add_module_with_id(&mut self, id: ModuleId, module: Box<dyn PolyModule>) {
         let descriptor = module.descriptor();
 
         let mut outputs = HashMap::new();
@@ -166,7 +166,7 @@ impl ModuleGraph {
 
     /// Remove a module from the graph and return it.
     /// Use this to defer dropping to a non-audio thread.
-    pub fn remove_module_and_return(&mut self, id: ModuleId) -> Option<Box<dyn VoiceModule>> {
+    pub fn remove_module_and_return(&mut self, id: ModuleId) -> Option<Box<dyn PolyModule>> {
         // Remove all connections involving this module
         self.connections.retain(|c| c.from_module != id && c.to_module != id);
         self.order_dirty = true;
@@ -174,12 +174,12 @@ impl ModuleGraph {
     }
 
     /// Get a module by ID.
-    pub fn get_module(&self, id: ModuleId) -> Option<&dyn VoiceModule> {
+    pub fn get_module(&self, id: ModuleId) -> Option<&dyn PolyModule> {
         self.nodes.get(&id).map(|n| n.module.as_ref())
     }
 
     /// Get a mutable module by ID.
-    pub fn get_module_mut(&mut self, id: ModuleId) -> Option<&mut (dyn VoiceModule + '_)> {
+    pub fn get_module_mut(&mut self, id: ModuleId) -> Option<&mut (dyn PolyModule + '_)> {
         if let Some(node) = self.nodes.get_mut(&id) {
             Some(node.module.as_mut())
         } else {

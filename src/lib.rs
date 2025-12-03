@@ -112,7 +112,7 @@ pub use modules::{
     Oscillator, Filter, LadderFilter, Envelope, Lfo, Amplifier, Mixer,
     Waveform, FilterType, LfoWaveform,
     ModuleDescriptor, ParameterDescriptor, PortDescriptor,
-    VoiceModule, EffectModule, Describable,
+    PolyModule, AudioEffect, Describable,
     AudioBuffer, ProcessContext,
     ModuleCategory, WidgetHint, ParameterUnit,
 };
@@ -138,7 +138,7 @@ pub use io::{PatchManager, PatchInfo};
 // Re-export sequencer types
 pub use sequencer::{
     // Core types
-    Song, Pattern, Track, Note,
+    Song, Pattern, SequencerTrack, Note,
     // Time types
     Tick, PatternTick, Duration, TimeSignature, TICKS_PER_QUARTER,
     // Pitch/velocity

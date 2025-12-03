@@ -23,7 +23,7 @@ use std::io::Write;
 use midir::{Ignore, MidiInput, MidiInputConnection};
 
 use crate::engine::commands::EngineCommand;
-use crate::engine::part::MidiChannel;
+use crate::engine::instrument::MidiChannel;
 use crate::engine::CommandSender;
 use crate::types::{BipolarValue, NormalizedValue};
 

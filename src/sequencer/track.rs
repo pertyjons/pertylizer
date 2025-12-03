@@ -1,12 +1,13 @@
-//! Track definition.
+//! Sequencer track definition.
 
 use serde::{Deserialize, Serialize};
 
 use super::ids::{InstrumentId, TrackId};
 
-/// A track in the song.
+/// A sequencer track in the song.
+/// Named SequencerTrack to distinguish from future AudioTrack.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track {
+pub struct SequencerTrack {
     /// Unique identifier.
     pub id: TrackId,
     /// Track name.
@@ -25,8 +26,8 @@ pub struct Track {
     pub color: TrackColor,
 }
 
-impl Track {
-    /// Create a new track.
+impl SequencerTrack {
+    /// Create a new sequencer track.
     pub fn new(id: TrackId, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_track_creation() {
-        let track = Track::new(TrackId(0), "Lead");
+        let track = SequencerTrack::new(TrackId(0), "Lead");
         assert_eq!(track.name, "Lead");
         assert_eq!(track.volume, 1.0);
         assert_eq!(track.pan, 0.5);
@@ -159,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_track_builder() {
-        let track = Track::new(TrackId(0), "Bass")
+        let track = SequencerTrack::new(TrackId(0), "Bass")
             .with_instrument(InstrumentId(1))
             .with_volume(0.8)
             .with_pan(0.3);
@@ -171,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_track_audibility() {
-        let mut track = Track::new(TrackId(0), "Test");
+        let mut track = SequencerTrack::new(TrackId(0), "Test");
 
         // Normal state
         assert!(track.is_audible(false));

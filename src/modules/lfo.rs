@@ -140,7 +140,7 @@ impl Describable for Lfo {
     }
 }
 
-impl VoiceModule for Lfo {
+impl PolyModule for Lfo {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -251,7 +251,7 @@ impl VoiceModule for Lfo {
     fn note_on(&mut self, _note: u8, _velocity: f32) {}
     fn note_off(&mut self) {}
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

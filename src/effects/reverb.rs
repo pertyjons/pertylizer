@@ -284,7 +284,7 @@ impl Describable for Reverb {
     }
 }
 
-impl EffectModule for Reverb {
+impl AudioEffect for Reverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         if (self.sample_rate.as_f32() - context.sample_rate).abs() > 1.0 {
             self.sample_rate = SampleRate::new(context.sample_rate);

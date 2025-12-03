@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod audio_safety {
-    use crate::modules::{Oscillator, Filter, Envelope, AudioBuffer, ProcessContext, VoiceModule, EffectModule};
+    use crate::modules::{Oscillator, Filter, Envelope, AudioBuffer, ProcessContext, PolyModule, AudioEffect};
     use crate::effects::{Delay, Reverb, Chorus, Distortion};
     use std::collections::HashMap;
 
@@ -203,7 +203,7 @@ mod audio_safety {
 #[cfg(test)]
 mod parameter_handling {
     use crate::engine::typed_params::{Param, OscillatorParam, FilterParam, EnvelopeParam};
-    use crate::modules::{Oscillator, Filter, Envelope, VoiceModule};
+    use crate::modules::{Oscillator, Filter, Envelope, PolyModule};
     use crate::types::{Hertz, NormalizedValue, Seconds};
 
     #[test]
@@ -585,14 +585,14 @@ mod engine_integration {
 
     #[test]
     fn test_engine_parameter_changes() {
-        use crate::engine::commands::VoiceModule;
+        use crate::engine::commands::PolyModule;
         use crate::engine::typed_params::{Param, OscillatorParam, Waveform};
 
         let (_engine, mut handle) = SynthEngine::new();
 
         // Change oscillator waveform
         handle.set_voice_parameter(
-            VoiceModule::Oscillator1,
+            PolyModule::Oscillator1,
             Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)),
         );
         // Parameter should be queued for application

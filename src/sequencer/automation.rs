@@ -186,7 +186,7 @@ pub enum InstrumentParam {
     Decay,
     Sustain,
     Release,
-    // Can be extended to match VoiceModule parameters
+    // Can be extended to match PolyModule parameters
 }
 
 /// Automatable track parameters.

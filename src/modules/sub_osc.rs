@@ -125,7 +125,7 @@ impl Describable for SubOscillator {
     }
 }
 
-impl VoiceModule for SubOscillator {
+impl PolyModule for SubOscillator {
     fn process(
         &mut self,
         _inputs: &HashMap<String, &AudioBuffer>,
@@ -192,7 +192,7 @@ impl VoiceModule for SubOscillator {
         // Sub-oscillator doesn't need to do anything on note off
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

@@ -43,7 +43,7 @@ pub struct PendingConnection {
 }
 
 /// The main rack view state.
-pub struct RackView {
+pub struct PatchEditor {
     /// All module panels.
     panels: HashMap<ModuleId, ModulePanelState>,
     /// All connections.
@@ -68,7 +68,7 @@ pub struct RackView {
     connectivity: HashMap<ModuleId, ModuleConnectivity>,
 }
 
-impl RackView {
+impl PatchEditor {
     pub fn new() -> Self {
         Self {
             panels: HashMap::new(),
@@ -299,8 +299,8 @@ impl RackView {
         &mut self,
         ui: &mut Ui,
         handle: &EngineHandle,
-    ) -> RackViewResult {
-        let mut result = RackViewResult::default();
+    ) -> PatchEditorResult {
+        let mut result = PatchEditorResult::default();
 
         // Canvas background
         let canvas_rect = ui.available_rect_before_wrap();
@@ -720,7 +720,7 @@ impl RackView {
         to_remove
     }
 
-    fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut RackViewResult) {
+    fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
         let pointer_pos = ui.input(|i| i.pointer.interact_pos());
 
         // Check for port clicks
@@ -887,7 +887,7 @@ impl RackView {
     }
 }
 
-impl Default for RackView {
+impl Default for PatchEditor {
     fn default() -> Self {
         Self::new()
     }
@@ -895,7 +895,7 @@ impl Default for RackView {
 
 /// Result from drawing the rack view.
 #[derive(Default)]
-pub struct RackViewResult {
+pub struct PatchEditorResult {
     /// Parameter changes to send to engine.
     /// Each entry is (module_id, Param with value).
     pub param_changes: Vec<(ModuleId, Param)>,

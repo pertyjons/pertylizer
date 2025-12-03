@@ -191,7 +191,7 @@ impl Describable for NoiseGenerator {
     }
 }
 
-impl VoiceModule for NoiseGenerator {
+impl PolyModule for NoiseGenerator {
     fn process(
         &mut self,
         _inputs: &HashMap<String, &AudioBuffer>,
@@ -260,7 +260,7 @@ impl VoiceModule for NoiseGenerator {
         // Noise doesn't need to do anything on note off
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

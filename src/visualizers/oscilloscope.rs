@@ -127,7 +127,7 @@ impl Describable for Oscilloscope {
     }
 }
 
-impl EffectModule for Oscilloscope {
+impl AudioEffect for Oscilloscope {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = context.sample_rate;
 

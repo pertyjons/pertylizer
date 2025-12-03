@@ -272,7 +272,7 @@ impl Describable for Envelope {
     }
 }
 
-impl VoiceModule for Envelope {
+impl PolyModule for Envelope {
     fn process(
         &mut self,
         inputs: &HashMap<String, &AudioBuffer>,
@@ -367,7 +367,7 @@ impl VoiceModule for Envelope {
         self.release();
     }
 
-    fn box_clone(&self) -> Box<dyn VoiceModule> {
+    fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
 }

@@ -1,46 +1,46 @@
-//! Part Manager UI for managing multiple instrument parts.
+//! Instrument Rack UI for managing multiple instruments.
 //!
-//! Provides a panel for visualizing and controlling synth parts (instruments),
+//! Provides a panel for visualizing and controlling instruments (instruments),
 //! including volume, pan, MIDI channel, and mute controls.
 
 use eframe::egui::{self, RichText, Ui};
 use crate::engine::{
     EngineHandle,
     EngineCommand,
-    PartParam,
-    part::{PartId, MidiChannel, SynthPart},
+    InstrumentParam,
+    instrument::{InstrumentId, MidiChannel, Instrument},
 };
 use crate::types::{Gain, BipolarValue};
 use super::widgets::{Knob, colors};
 use super::theme::theme;
 
-/// GUI state for a single synth part.
+/// GUI state for a single instrument.
 ///
-/// This mirrors the engine's SynthPart state for display purposes.
+/// This mirrors the engine's Instrument state for display purposes.
 /// Updates are sent to the engine via EngineCommands when values change.
 #[derive(Debug, Clone)]
-pub struct PartUiState {
-    /// Unique identifier matching the engine's PartId.
-    pub id: PartId,
-    /// Display name for this part.
+pub struct InstrumentUiState {
+    /// Unique identifier matching the engine's InstrumentId.
+    pub id: InstrumentId,
+    /// Display name for this instrument.
     pub name: String,
-    /// MIDI channel this part responds to.
+    /// MIDI channel this instrument responds to.
     pub channel: MidiChannel,
     /// Output volume (0.0 = mute, 1.0 = unity).
     pub volume: Gain,
     /// Stereo pan position (-1.0 = left, 0.0 = center, +1.0 = right).
     pub pan: BipolarValue,
-    /// Whether this part is muted (uses volume = 0 for soft mute).
+    /// Whether this instrument is muted (uses volume = 0 for soft mute).
     pub muted: bool,
     /// Stored volume when muted (to restore on unmute).
     stored_volume: Gain,
 }
 
-impl Default for PartUiState {
+impl Default for InstrumentUiState {
     fn default() -> Self {
         Self {
-            id: PartId::FIRST,
-            name: "Part 1".to_string(),
+            id: InstrumentId::FIRST,
+            name: "Instrument 1".to_string(),
             channel: MidiChannel::CH1,
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
@@ -50,9 +50,9 @@ impl Default for PartUiState {
     }
 }
 
-impl PartUiState {
-    /// Create a new part with the given ID and name.
-    pub fn new(id: PartId, name: impl Into<String>) -> Self {
+impl InstrumentUiState {
+    /// Create a new instrument with the given ID and name.
+    pub fn new(id: InstrumentId, name: impl Into<String>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -64,7 +64,7 @@ impl PartUiState {
         }
     }
 
-    /// Create a new part with a specific MIDI channel.
+    /// Create a new instrument with a specific MIDI channel.
     pub fn with_channel(mut self, channel: MidiChannel) -> Self {
         self.channel = channel;
         self
@@ -86,29 +86,29 @@ impl PartUiState {
     }
 }
 
-/// Result of part manager interactions.
+/// Result of instrument rack interactions.
 #[derive(Debug, Default)]
-pub struct PartManagerResult {
-    /// The newly selected active part, if changed.
-    pub active_part_changed: Option<PartId>,
+pub struct InstrumentRackResult {
+    /// The newly selected active instrument, if changed.
+    pub active_instrument_changed: Option<InstrumentId>,
 }
 
-/// Show the part manager panel.
+/// Show the instrument rack panel.
 ///
 /// # Arguments
 /// * `ui` - The egui UI context
-/// * `parts` - Mutable list of part UI states
-/// * `active_part_id` - Currently selected part for keyboard input
+/// * `instruments` - Mutable list of instrument UI states
+/// * `active_instrument_id` - Currently selected instrument for keyboard input
 /// * `handle` - Engine handle for sending commands
-/// * `next_part_id` - Counter for generating new part IDs
-pub fn show_part_manager(
+/// * `next_instrument_id` - Counter for generating new instrument IDs
+pub fn show_instrument_rack(
     ui: &mut Ui,
-    parts: &mut Vec<PartUiState>,
-    active_part_id: &mut PartId,
+    instruments: &mut Vec<InstrumentUiState>,
+    active_instrument_id: &mut InstrumentId,
     handle: &mut EngineHandle,
-    next_part_id: &mut u64,
-) -> PartManagerResult {
-    let mut result = PartManagerResult::default();
+    next_instrument_id: &mut u64,
+) -> InstrumentRackResult {
+    let mut result = InstrumentRackResult::default();
     let t = theme();
 
     ui.vertical(|ui| {
@@ -121,18 +121,18 @@ pub fn show_part_manager(
         ui.add_space(4.0);
 
         // Capture len before iterating to avoid borrow issues
-        let can_remove = parts.len() > 1;
-        let mut part_to_remove: Option<usize> = None;
+        let can_remove_instrument = instruments.len() > 1;
+        let mut instrument_to_remove: Option<usize> = None;
 
-        // Scrollable list of parts
+        // Scrollable list of instruments
         egui::ScrollArea::vertical()
             .max_height(ui.available_height() - 40.0)
             .show(ui, |ui| {
-                for idx in 0..parts.len() {
-                    let part_id = parts[idx].id;
-                    let is_active = part_id == *active_part_id;
+                for idx in 0..instruments.len() {
+                    let instrument_id = instruments[idx].id;
+                    let is_active = instrument_id == *active_instrument_id;
 
-                    // Part row frame
+                    // Instrument row frame
                     let frame_color = if is_active {
                         colors::ACCENT_ORANGE.gamma_multiply(0.2)
                     } else {
@@ -148,13 +148,13 @@ pub fn show_part_manager(
                                 // Selection indicator / radio button
                                 let response = ui.selectable_label(is_active, "");
                                 if response.clicked() {
-                                    *active_part_id = part_id;
-                                    result.active_part_changed = Some(part_id);
+                                    *active_instrument_id = instrument_id;
+                                    result.active_instrument_changed = Some(instrument_id);
                                 }
 
-                                // Part name (editable)
+                                // Instrument name (editable)
                                 ui.add(
-                                    egui::TextEdit::singleline(&mut parts[idx].name)
+                                    egui::TextEdit::singleline(&mut instruments[idx].name)
                                         .desired_width(80.0)
                                         .font(egui::FontId::proportional(t.fonts.size_small))
                                 );
@@ -162,22 +162,22 @@ pub fn show_part_manager(
                                 ui.add_space(4.0);
 
                                 // MIDI Channel dropdown
-                                let channel = parts[idx].channel;
+                                let channel = instruments[idx].channel;
                                 let channel_label = if channel.is_omni() {
                                     "Omni".to_string()
                                 } else {
-                                    format!("Ch{}", channel.as_one_indexed())
+                                    format!("Ch {}", channel.as_one_indexed())
                                 };
 
-                                egui::ComboBox::from_id_salt(format!("ch_{}", part_id.as_u64()))
+                                egui::ComboBox::from_id_salt(format!("ch_{}", instrument_id.as_u64()))
                                     .selected_text(RichText::new(&channel_label).size(t.fonts.size_small))
                                     .width(50.0)
                                     .show_ui(ui, |ui| {
                                         // Omni option
                                         if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
-                                            parts[idx].channel = MidiChannel::OMNI;
-                                            handle.send(EngineCommand::SetPartMidiChannel {
-                                                part_id,
+                                            instruments[idx].channel = MidiChannel::OMNI;
+                                            handle.send(EngineCommand::SetInstrumentMidiChannel {
+                                                instrument_id,
                                                 channel: MidiChannel::OMNI,
                                             });
                                         }
@@ -187,9 +187,9 @@ pub fn show_part_manager(
                                             let is_selected = !channel.is_omni()
                                                 && channel.as_one_indexed() == ch;
                                             if ui.selectable_label(is_selected, format!("Ch {}", ch)).clicked() {
-                                                parts[idx].channel = midi_ch;
-                                                handle.send(EngineCommand::SetPartMidiChannel {
-                                                    part_id,
+                                                instruments[idx].channel = midi_ch;
+                                                handle.send(EngineCommand::SetInstrumentMidiChannel {
+                                                    instrument_id,
                                                     channel: midi_ch,
                                                 });
                                             }
@@ -199,8 +199,8 @@ pub fn show_part_manager(
                                 ui.add_space(4.0);
 
                                 // Volume knob (small)
-                                let muted = parts[idx].muted;
-                                let mut vol = parts[idx].volume.as_f32();
+                                let muted = instruments[idx].muted;
+                                let mut vol = instruments[idx].volume.as_f32();
                                 let vol_response = Knob::new(&mut vol, 0.0, 1.0)
                                     .default(1.0)
                                     .label("Vol")
@@ -209,16 +209,16 @@ pub fn show_part_manager(
                                     .show(ui);
 
                                 if vol_response.changed() && !muted {
-                                    parts[idx].volume = Gain::new(vol);
-                                    parts[idx].stored_volume = parts[idx].volume;
-                                    handle.send(EngineCommand::SetPartParameter {
-                                        part_id,
-                                        param: PartParam::Volume(parts[idx].volume),
+                                    instruments[idx].volume = Gain::new(vol);
+                                    instruments[idx].stored_volume = instruments[idx].volume;
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::Volume(instruments[idx].volume),
                                     });
                                 }
 
                                 // Pan knob (small)
-                                let current_pan = parts[idx].pan.as_f32();
+                                let current_pan = instruments[idx].pan.as_f32();
                                 let mut pan = current_pan;
                                 Knob::new(&mut pan, -1.0, 1.0)
                                     .default(0.0)
@@ -228,10 +228,10 @@ pub fn show_part_manager(
                                     .show(ui);
 
                                 if (pan - current_pan).abs() > f32::EPSILON {
-                                    parts[idx].pan = BipolarValue::new(pan);
-                                    handle.send(EngineCommand::SetPartParameter {
-                                        part_id,
-                                        param: PartParam::Pan(parts[idx].pan),
+                                    instruments[idx].pan = BipolarValue::new(pan);
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::Pan(instruments[idx].pan),
                                     });
                                 }
 
@@ -242,20 +242,20 @@ pub fn show_part_manager(
                                     egui::Button::new(RichText::new(mute_text).color(mute_color).size(t.fonts.size_small))
                                         .min_size(egui::vec2(24.0, 24.0))
                                 ).clicked() {
-                                    let new_volume = parts[idx].toggle_mute();
-                                    handle.send(EngineCommand::SetPartParameter {
-                                        part_id,
-                                        param: PartParam::Volume(new_volume),
+                                    let new_volume = instruments[idx].toggle_mute();
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::Volume(new_volume),
                                     });
                                 }
 
-                                // Remove button (only if more than one part)
-                                if can_remove {
+                                // Remove button (only if more than one instrument)
+                                if can_remove_instrument {
                                     if ui.add(
                                         egui::Button::new(RichText::new("×").color(colors::TEXT_DIM).size(t.fonts.size_small))
                                             .min_size(egui::vec2(20.0, 24.0))
                                     ).on_hover_text("Remove instrument").clicked() {
-                                        part_to_remove = Some(idx);
+                                        instrument_to_remove = Some(idx);
                                     }
                                 }
                             });
@@ -265,17 +265,17 @@ pub fn show_part_manager(
                 }
             });
 
-        // Handle part removal (after iteration to avoid borrow issues)
-        if let Some(idx) = part_to_remove {
-            let removed_part = parts.remove(idx);
-            handle.send(EngineCommand::RemovePart {
-                part_id: removed_part.id,
+        // Handle instrument removal (after iteration to avoid borrow issues)
+        if let Some(idx) = instrument_to_remove {
+            let removed_instrument = instruments.remove(idx);
+            handle.send(EngineCommand::RemoveInstrument {
+                instrument_id: removed_instrument.id,
             });
 
-            // If we removed the active part, select the first one
-            if removed_part.id == *active_part_id && !parts.is_empty() {
-                *active_part_id = parts[0].id;
-                result.active_part_changed = Some(*active_part_id);
+            // If we removed the active instrument, select the first one
+            if removed_instrument.id == *active_instrument_id && !instruments.is_empty() {
+                *active_instrument_id = instruments[0].id;
+                result.active_instrument_changed = Some(*active_instrument_id);
             }
         }
 
@@ -283,32 +283,32 @@ pub fn show_part_manager(
         ui.separator();
         ui.add_space(4.0);
 
-        // Add new part button
+        // Add new instrument button
         if ui.button(RichText::new("+ Add Instrument").size(t.fonts.size_small)).clicked() {
-            let new_id = PartId::new(*next_part_id);
-            *next_part_id += 1;
+            let new_id = InstrumentId::new(*next_instrument_id);
+            *next_instrument_id += 1;
 
-            let part_num = parts.len() + 1;
-            let new_name = format!("Part {}", part_num);
+            let instrument_num = instruments.len() + 1;
+            let new_name = format!("Instrument {}", instrument_num);
 
             // Assign next available channel
-            let new_channel = MidiChannel::from_one_indexed(part_num as u8)
+            let new_channel = MidiChannel::from_one_indexed(instrument_num as u8)
                 .unwrap_or(MidiChannel::CH1);
 
             // Create UI state
-            let new_ui_part = PartUiState::new(new_id, &new_name)
+            let new_ui_instrument = InstrumentUiState::new(new_id, &new_name)
                 .with_channel(new_channel);
 
-            // Create engine part (Box for real-time safety)
-            let mut engine_part = SynthPart::new(new_id, &new_name);
-            engine_part.set_midi_channel(new_channel);
+            // Create engine instrument (Box for real-time safety)
+            let mut engine_instrument = Instrument::new(new_id, &new_name);
+            engine_instrument.set_midi_channel(new_channel);
 
             // Send to engine
-            handle.send(EngineCommand::AddPart {
-                part: Box::new(engine_part),
+            handle.send(EngineCommand::AddInstrument {
+                instrument: Box::new(engine_instrument),
             });
 
-            parts.push(new_ui_part);
+            instruments.push(new_ui_instrument);
         }
     });
 

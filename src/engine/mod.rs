@@ -11,11 +11,11 @@
 //! - Transactional command batching
 
 pub mod commands;
-pub mod effect_chain;
+pub mod master_bus;
 pub mod graph;
 pub mod metering;
 pub mod params;
-pub mod part;
+pub mod instrument;
 pub mod sequencer_engine;
 pub mod state;
 pub mod synth_engine;
@@ -35,8 +35,8 @@ pub mod transactions;
 pub mod visual_state;
 
 pub use commands::{
-    ModuleId, VoiceModule, ModuleTypeId, PortId, EngineCommand, VisualizerType, EffectType,
-    PartParam, EngineEvent,
+    ModuleId, PolyModule, ModuleTypeId, PortId, EngineCommand, VisualizerType, EffectType,
+    InstrumentParam, EngineEvent,
 };
 pub use state::*;
 pub use synth_engine::{SynthEngine, EngineHandle, CommandSender};
@@ -44,7 +44,7 @@ pub use sequencer_engine::{SequencerEngine, PlayState};
 pub use voice::{Voice, VoiceState};
 pub use voice_allocator::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy, NotePriority};
 pub use graph::{ModuleGraph, Connection, GraphError};
-pub use part::{PartId, MidiChannel, SynthPart};
+pub use instrument::{InstrumentId, MidiChannel, Instrument};
 
 // Re-export typed parameter system
 pub use params::{

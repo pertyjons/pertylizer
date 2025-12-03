@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::ids::{PatternId, TrackId};
 use super::pattern::Pattern;
 use super::time::{Duration, Tick, TimeSignature, TICKS_PER_QUARTER};
-use super::track::Track;
+use super::track::SequencerTrack;
 
 /// Tempo change event.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ pub struct Song {
     next_pattern_id: u32,
 
     // Track storage
-    tracks: HashMap<TrackId, Track>,
+    tracks: HashMap<TrackId, SequencerTrack>,
     next_track_id: u16,
 
     // Arrangement
@@ -198,22 +198,22 @@ impl Song {
     pub fn create_track(&mut self, name: impl Into<String>) -> TrackId {
         let id = TrackId(self.next_track_id);
         self.next_track_id += 1;
-        self.tracks.insert(id, Track::new(id, name));
+        self.tracks.insert(id, SequencerTrack::new(id, name));
         id
     }
 
     /// Get a track by ID.
-    pub fn track(&self, id: TrackId) -> Option<&Track> {
+    pub fn track(&self, id: TrackId) -> Option<&SequencerTrack> {
         self.tracks.get(&id)
     }
 
     /// Get a mutable track by ID.
-    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut Track> {
+    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut SequencerTrack> {
         self.tracks.get_mut(&id)
     }
 
     /// Get all tracks.
-    pub fn tracks(&self) -> impl Iterator<Item = &Track> {
+    pub fn tracks(&self) -> impl Iterator<Item = &SequencerTrack> {
         self.tracks.values()
     }
 
@@ -223,7 +223,7 @@ impl Song {
     }
 
     /// Delete a track.
-    pub fn delete_track(&mut self, id: TrackId) -> Option<Track> {
+    pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
         // Also remove placements on this track
         self.arrangement.retain(|p| p.track_id != id);
         self.tracks.remove(&id)
