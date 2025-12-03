@@ -285,9 +285,9 @@ pub struct Sizes {
 impl Sizes {
     pub const fn default_sizes() -> Self {
         Self {
-            knob_size: 56.0,
-            knob_size_small: 40.0,
-            knob_size_large: 68.0,
+            knob_size: 72.0,
+            knob_size_small: 56.0,
+            knob_size_large: 88.0,
             knob_label_height: 24.0,
             
             port_size: 12.0,

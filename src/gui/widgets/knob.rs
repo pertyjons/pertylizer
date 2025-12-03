@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
-use crate::modules::core::{ParameterDescriptor, ResponseCurve};
+use crate::modules::core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
 use super::{colors, theme};
 
 /// A rotary knob widget.
@@ -12,6 +12,7 @@ pub struct Knob<'a> {
     max: f32,
     default: f32,
     response_curve: ResponseCurve,
+    unit: ParameterUnit,
     label: String,
     size: f32,
     accent_color: Color32,
@@ -25,8 +26,9 @@ impl<'a> Knob<'a> {
             max,
             default: (min + max) / 2.0,
             response_curve: ResponseCurve::Linear,
+            unit: ParameterUnit::None,
             label: String::new(),
-            size: 48.0,
+            size: 80.0,
             accent_color: colors::ACCENT_ORANGE,
         }
     }
@@ -38,10 +40,21 @@ impl<'a> Knob<'a> {
             max: descriptor.max,
             default: descriptor.default,
             response_curve: descriptor.response_curve,
+            unit: descriptor.unit,
             label: descriptor.name.clone(),
-            size: 48.0,
+            size: 80.0,
             accent_color: colors::ACCENT_ORANGE,
         }
+    }
+
+    pub fn unit(mut self, unit: ParameterUnit) -> Self {
+        self.unit = unit;
+        self
+    }
+
+    /// Format the value with the appropriate unit suffix
+    fn format_value(&self) -> String {
+        self.unit.format(*self.value)
     }
 
     pub fn default(mut self, default: f32) -> Self {
@@ -70,13 +83,23 @@ impl<'a> Knob<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        // Allocate extra height for the label if present
-        let label_height = if self.label.is_empty() { 0.0 } else { theme().sizes.knob_label_height };
-        let desired_size = Vec2::new(self.size, self.size + label_height);
+        let t = theme();
+        let padding = 6.0;
+        let label_height = if self.label.is_empty() { 0.0 } else { t.sizes.knob_label_height };
+
+        // Total widget size includes padding and label
+        let widget_width = self.size + padding * 2.0;
+        let widget_height = self.size + label_height + padding * 2.0;
+        let desired_size = Vec2::new(widget_width, widget_height);
+
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
-        // The knob circle area is the top square portion
-        let knob_rect = egui::Rect::from_min_size(rect.min, Vec2::splat(self.size));
+        // The knob circle area is centered in the top portion
+        let knob_size = self.size - padding;
+        let knob_rect = egui::Rect::from_center_size(
+            Pos2::new(rect.center().x, rect.top() + padding + knob_size / 2.0),
+            Vec2::splat(knob_size),
+        );
 
         if response.double_clicked() {
             *self.value = self.default;
@@ -90,14 +113,19 @@ impl<'a> Knob<'a> {
             *self.value = self.response_curve.denormalize(new_normalized, self.min, self.max);
         }
 
-        // Draw knob
         let painter = ui.painter();
+
+        // Draw frame around entire widget
+        painter.rect_filled(rect, 4.0, colors::BG_DARK);
+        painter.rect_stroke(rect, 4.0, Stroke::new(1.0, colors::BG_WIDGET), egui::StrokeKind::Inside);
+
+        // Draw knob circle
         let center = knob_rect.center();
-        let radius = knob_rect.width() / 2.0 - 4.0;
+        let radius = knob_rect.width() / 2.0 - 2.0;
 
         // Background circle
         painter.circle_filled(center, radius, colors::BG_WIDGET);
-        painter.circle_stroke(center, radius, Stroke::new(2.0, colors::BG_DARK));
+        painter.circle_stroke(center, radius, Stroke::new(1.5, colors::BG_PANEL));
 
         // Value arc
         let normalized = self.response_curve.normalize(*self.value, self.min, self.max);
@@ -115,29 +143,36 @@ impl<'a> Knob<'a> {
             let a0 = start_angle + t0 * (end_angle - start_angle);
             let a1 = start_angle + t1 * (end_angle - start_angle);
 
-            let inner_radius = radius - 6.0;
+            let inner_radius = radius - 5.0;
             let p0 = center + Vec2::new(a0.cos(), a0.sin()) * inner_radius;
             let p1 = center + Vec2::new(a1.cos(), a1.sin()) * inner_radius;
 
-            painter.line_segment([p0, p1], Stroke::new(4.0, self.accent_color));
+            painter.line_segment([p0, p1], Stroke::new(3.0, self.accent_color));
         }
 
-        // Indicator line
-        let indicator_inner = radius * 0.3;
-        let indicator_outer = radius * 0.7;
-        let p_inner = center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_inner;
-        let p_outer = center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_outer;
-        painter.line_segment([p_inner, p_outer], Stroke::new(2.0, colors::TEXT_PRIMARY));
+        // Indicator dot at the edge
+        let indicator_radius = radius - 8.0;
+        let indicator_pos = center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
+        painter.circle_filled(indicator_pos, 3.0, colors::TEXT_PRIMARY);
 
-        // Label below knob circle
+        // Value text in center of knob
+        let value_text = self.format_value();
+        painter.text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            &value_text,
+            t.fonts.small(),
+            colors::TEXT_PRIMARY,
+        );
+
+        // Label below knob circle, inside frame
         if !self.label.is_empty() {
-            let t = theme();
-            let label_pos = Pos2::new(knob_rect.center().x, knob_rect.bottom() + t.spacing.label_spacing);
+            let label_pos = Pos2::new(rect.center().x, knob_rect.bottom() + 4.0);
             painter.text(
                 label_pos,
                 egui::Align2::CENTER_TOP,
                 &self.label,
-                t.fonts.normal(),
+                t.fonts.small(),
                 colors::TEXT_SECONDARY,
             );
         }

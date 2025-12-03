@@ -1164,6 +1164,7 @@ fn draw_module_panel_params(
                     Knob::new(&mut value, param.min, param.max)
                         .default(param.default)
                         .response_curve(param.response_curve)
+                        .unit(param.unit)
                         .label(&param.name)
                         .size(theme().sizes.knob_size)
                         .accent_color(accent_color)
@@ -1173,8 +1174,6 @@ fn draw_module_panel_params(
                         state.param_values.insert(param.name.clone(), value);
                         param_changes.push(param.id.with_f32(value));
                     }
-
-                    ui.label(egui::RichText::new(param.format(value)).size(theme().fonts.size_small).color(colors::TEXT_DIM));
                 });
             }
         });

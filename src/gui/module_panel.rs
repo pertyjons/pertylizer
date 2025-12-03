@@ -286,6 +286,7 @@ fn draw_knob_param(
         Knob::new(&mut value, param.min, param.max)
             .default(param.default)
             .response_curve(param.response_curve)
+            .unit(param.unit)
             .label(&param.name)
             .size(size)
             .accent_color(accent_color)
@@ -296,13 +297,6 @@ fn draw_knob_param(
             // Create new param with updated value
             param_changes.push(param.id.with_f32(value));
         }
-
-        // Value display
-        ui.label(
-            egui::RichText::new(param.format(value))
-                .small()
-                .color(colors::TEXT_DIM),
-        );
     });
 }
 

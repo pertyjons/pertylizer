@@ -79,6 +79,7 @@ impl GuiBackend for EguiBackend {
             &config.title,
             options,
             Box::new(|cc| {
+                setup_custom_fonts(&cc.egui_ctx);
                 setup_custom_style(&cc.egui_ctx);
                 Ok(Box::new(app))
             }),
@@ -86,6 +87,35 @@ impl GuiBackend for EguiBackend {
 
         Ok(())
     }
+}
+
+/// Setup custom fonts for retro-digital aesthetic.
+fn setup_custom_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Install Share Tech Mono - a retro-digital monospace font
+    fonts.font_data.insert(
+        "ShareTechMono".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/ShareTechMono-Regular.ttf"
+        ))),
+    );
+
+    // Set as highest priority for Proportional (UI text)
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "ShareTechMono".to_owned());
+
+    // Set as highest priority for Monospace (values/code)
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "ShareTechMono".to_owned());
+
+    ctx.set_fonts(fonts);
 }
 
 /// Setup custom egui style for synth look.

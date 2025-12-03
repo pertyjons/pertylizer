@@ -1,5 +1,42 @@
 # Version History
 
+## [0.32.15] - 2024
+
+### Improved - Knob Widget & Centralized Formatting
+
+Major improvements to the Knob widget appearance and centralized value formatting in `ParameterUnit`.
+
+**Knob Widget Improvements:**
+- Increased default size from 48px to 72px for better readability
+- Added frame/border around entire knob widget (knob circle + label)
+- Value now displayed inside knob circle with proper unit formatting
+- Indicator changed from line to small dot for cleaner look
+- Removed redundant value label below knob (now shown inside)
+
+**Centralized Formatting:**
+- New `ParameterUnit::format(value)` method for consistent value display
+- All formatting logic now in one place (`src/modules/core.rs:295-318`)
+- `ParameterDescriptor::format()` now delegates to `unit.format()`
+- `Knob::format_value()` now delegates to `unit.format()`
+
+**Custom Font:**
+- Added "Share Tech Mono" font for retro-digital aesthetic
+- Font files in `assets/fonts/ShareTechMono-Regular.ttf`
+- Configured in `egui_backend.rs` via `FontDefinitions`
+
+**Files Changed:**
+| File | Change |
+|------|--------|
+| `src/modules/core.rs` | Added `ParameterUnit::format()`, simplified `ParameterDescriptor::format()` |
+| `src/gui/widgets/knob.rs` | Frame, value display inside circle, dot indicator, delegated formatting |
+| `src/gui/theme.rs` | Increased knob sizes (72, 56, 88) |
+| `src/gui/rack_view.rs` | Added `.unit(param.unit)` to Knob, removed value label |
+| `src/gui/module_panel.rs` | Added `.unit(param.unit)` to Knob, removed value label |
+| `src/gui/egui_backend.rs` | Custom font loading |
+| `assets/fonts/` | New font directory with Share Tech Mono |
+
+---
+
 ## [0.32.14] - 2024
 
 ### Added - MIDI Input Support with GUI Port Selection

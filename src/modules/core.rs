@@ -291,6 +291,31 @@ impl ParameterUnit {
             Self::Ratio => ":1",
         }
     }
+
+    /// Format a value with this unit for display.
+    pub fn format(&self, value: f32) -> String {
+        match self {
+            Self::Hertz => {
+                if value >= 1000.0 {
+                    format!("{:.2} kHz", value / 1000.0)
+                } else {
+                    format!("{:.1} Hz", value)
+                }
+            }
+            Self::Decibels => format!("{:.1} dB", value),
+            Self::Percent => format!("{:.0}%", value * 100.0),
+            Self::Milliseconds => format!("{:.1} ms", value),
+            Self::Seconds => format!("{:.2} s", value),
+            Self::Semitones => format!("{:.0} st", value),
+            Self::Cents => format!("{:.0} ct", value),
+            Self::Octaves => format!("{:.1} oct", value),
+            Self::Beats => format!("{:.1} beats", value),
+            Self::BeatsPerMinute => format!("{:.0} BPM", value),
+            Self::Samples => format!("{:.0} smp", value),
+            Self::Ratio => format!("{:.1}:1", value),
+            Self::None => format!("{:.2}", value),
+        }
+    }
 }
 
 /// A choice option for dropdown parameters.
@@ -479,22 +504,7 @@ impl ParameterDescriptor {
             }
         }
 
-        let formatted = match self.unit {
-            ParameterUnit::Hertz => {
-                if value >= 1000.0 {
-                    format!("{:.2} kHz", value / 1000.0)
-                } else {
-                    format!("{:.1} Hz", value)
-                }
-            }
-            ParameterUnit::Decibels => format!("{:.1} dB", value),
-            ParameterUnit::Percent => format!("{:.0}%", value * 100.0),
-            ParameterUnit::Milliseconds => format!("{:.1} ms", value),
-            ParameterUnit::Seconds => format!("{:.2} s", value),
-            _ => format!("{:.2}{}", value, self.unit.suffix()),
-        };
-
-        formatted
+        self.unit.format(value)
     }
 }
 
