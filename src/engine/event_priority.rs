@@ -165,6 +165,9 @@ impl PrioritizedEventProducer {
             EngineEvent::VoiceCount(_) => EventPriority::High,
             EngineEvent::ParameterChanged { .. } => EventPriority::High,
             EngineEvent::EnvelopeStage { .. } => EventPriority::High,
+            EngineEvent::NoteTriggered { .. } => EventPriority::High,
+            EngineEvent::NoteReleased { .. } => EventPriority::High,
+            EngineEvent::AllNotesReleased => EventPriority::High,
 
             // Extended events (when added)
             // EngineEvent::ModuleAdded { .. } => EventPriority::High,

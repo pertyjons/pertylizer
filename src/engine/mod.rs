@@ -39,7 +39,7 @@ pub use commands::{
     PartParam, EngineEvent,
 };
 pub use state::*;
-pub use synth_engine::{SynthEngine, EngineHandle};
+pub use synth_engine::{SynthEngine, EngineHandle, CommandSender};
 pub use sequencer_engine::{SequencerEngine, PlayState};
 pub use voice::{Voice, VoiceState};
 pub use voice_allocator::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy, NotePriority};

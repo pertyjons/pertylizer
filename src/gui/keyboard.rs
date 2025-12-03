@@ -34,8 +34,8 @@ impl Default for KeyboardEvent {
 
 /// Piano keyboard widget with 88 keys
 pub struct PianoKeyboard {
-    /// Currently pressed keys (MIDI note -> pressed)
-    pressed_keys: HashMap<u8, bool>,
+    /// Currently pressed keys (MIDI note -> velocity 0.0-1.0)
+    pressed_keys: HashMap<u8, f32>,
     /// Keys pressed by mouse (need to track separately for release)
     mouse_pressed_keys: HashMap<u8, bool>,
     /// Current octave offset for computer keyboard (-2 to +4)
@@ -65,14 +65,24 @@ impl PianoKeyboard {
         self.octave_offset = offset.clamp(-2, 4);
     }
 
-    /// Mark a note as pressed (for visual feedback)
-    pub fn set_note_pressed(&mut self, note: u8, pressed: bool) {
-        self.pressed_keys.insert(note, pressed);
+    /// Mark a note as pressed with velocity (for visual feedback)
+    pub fn set_note_on(&mut self, note: u8, velocity: f32) {
+        self.pressed_keys.insert(note, velocity.clamp(0.0, 1.0));
+    }
+
+    /// Mark a note as released
+    pub fn set_note_off(&mut self, note: u8) {
+        self.pressed_keys.remove(&note);
     }
 
     /// Check if a note is pressed
     pub fn is_note_pressed(&self, note: u8) -> bool {
-        self.pressed_keys.get(&note).copied().unwrap_or(false)
+        self.pressed_keys.contains_key(&note)
+    }
+
+    /// Get the velocity of a pressed note (0.0 if not pressed)
+    pub fn get_velocity(&self, note: u8) -> f32 {
+        self.pressed_keys.get(&note).copied().unwrap_or(0.0)
     }
 
     /// Clear all pressed notes
@@ -238,13 +248,15 @@ impl PianoKeyboard {
                 Vec2::new(white_key_width - 1.0, white_key_height),
             );
 
-            let is_pressed = self.pressed_keys.get(&note).copied().unwrap_or(false);
+            let velocity = self.pressed_keys.get(&note).copied();
             let is_in_highlight = note >= highlight_start && note < highlight_end;
             let is_hovered = hover_pos.map(|p| key_rect.contains(p) && hovered_black_key.is_none()).unwrap_or(false);
 
-            // Determine fill color
-            let fill = if is_pressed {
-                colors::ACCENT_ORANGE
+            // Determine fill color (velocity modulates brightness)
+            let fill = if let Some(vel) = velocity {
+                // Intensity: 0.4 base + 0.6 * velocity (soft notes visible, hard notes bright)
+                let intensity = 0.4 + (0.6 * vel);
+                colors::ACCENT_ORANGE.gamma_multiply(intensity)
             } else if is_hovered {
                 Color32::from_rgb(230, 230, 235)
             } else if is_in_highlight {
@@ -311,13 +323,15 @@ impl PianoKeyboard {
                 Vec2::new(black_key_width, black_key_height),
             );
 
-            let is_pressed = self.pressed_keys.get(&note).copied().unwrap_or(false);
+            let velocity = self.pressed_keys.get(&note).copied();
             let is_in_highlight = note >= highlight_start && note < highlight_end;
             let is_hovered = hover_pos.map(|p| key_rect.contains(p)).unwrap_or(false);
 
-            // Determine fill color
-            let fill = if is_pressed {
-                colors::ACCENT_ORANGE
+            // Determine fill color (velocity modulates brightness)
+            let fill = if let Some(vel) = velocity {
+                // Intensity: 0.4 base + 0.6 * velocity (soft notes visible, hard notes bright)
+                let intensity = 0.4 + (0.6 * vel);
+                colors::ACCENT_ORANGE.gamma_multiply(intensity)
             } else if is_hovered {
                 Color32::from_rgb(60, 60, 65)
             } else if is_in_highlight {
@@ -347,9 +361,9 @@ impl PianoKeyboard {
         // Handle mouse press/release
         if let Some(note) = clicked_note {
             if !self.mouse_pressed_keys.get(&note).copied().unwrap_or(false) {
-                // New note pressed
+                // New note pressed (use default velocity 0.8 for mouse clicks)
                 self.mouse_pressed_keys.insert(note, true);
-                self.pressed_keys.insert(note, true);
+                self.pressed_keys.insert(note, 0.8);
                 event.note_on = Some(note);
             }
         }

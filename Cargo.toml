@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.32.13"
+version = "0.32.14"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"
@@ -16,6 +16,9 @@ gui-egui = ["dep:eframe", "dep:egui"]
 [dependencies]
 # Audio I/O
 cpal = "0.16"
+
+# MIDI I/O
+midir = "0.10"
 
 # Lock-free communication
 ringbuf = "0.4"

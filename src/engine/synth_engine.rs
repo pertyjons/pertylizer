@@ -5,6 +5,7 @@
 //! - ModuleGraph for signal routing within each voice
 //! - Effect chain for post-voice processing
 
+use parking_lot::Mutex;
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::HeapRb;
 use std::collections::HashMap;
@@ -64,10 +65,58 @@ pub struct DroppedModule(pub Box<dyn VoiceModuleTrait>);
 // SAFETY: VoiceModule trait requires Send
 unsafe impl Send for DroppedModule {}
 
+/// A clonable sender for engine commands.
+///
+/// This wrapper allows multiple sources (GUI, MIDI, automation) to send
+/// commands to the engine. Uses Mutex for thread-safe access to the
+/// ring buffer producer - the overhead is minimal since command sending
+/// is infrequent compared to audio processing.
+#[derive(Clone)]
+pub struct CommandSender {
+    producer: Arc<Mutex<ringbuf::HeapProd<EngineCommand>>>,
+}
+
+impl CommandSender {
+    /// Create a new CommandSender from a ring buffer producer.
+    pub fn new(producer: ringbuf::HeapProd<EngineCommand>) -> Self {
+        Self {
+            producer: Arc::new(Mutex::new(producer)),
+        }
+    }
+
+    /// Send a command to the engine (non-blocking, may fail if queue full).
+    pub fn send(&self, command: EngineCommand) -> bool {
+        self.producer.lock().try_push(command).is_ok()
+    }
+
+    /// Send a command to the engine, blocking until there's space.
+    /// Use this when loading patches or doing bulk operations.
+    pub fn send_blocking(&self, command: EngineCommand) -> bool {
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 10000;
+        let mut cmd = command;
+
+        loop {
+            match self.producer.lock().try_push(cmd) {
+                Ok(()) => return true,
+                Err(returned_cmd) => {
+                    cmd = returned_cmd;
+                    attempts += 1;
+                    if attempts >= MAX_ATTEMPTS {
+                        eprintln!("Command queue timeout after {} attempts!", MAX_ATTEMPTS);
+                        return self.producer.lock().try_push(cmd).is_ok();
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    }
+}
+
 /// Handle for the UI to communicate with the engine.
 pub struct EngineHandle {
-    /// Send commands to the engine.
-    command_producer: ringbuf::HeapProd<EngineCommand>,
+    /// Send commands to the engine (clonable for sharing with MIDI, etc.).
+    command_sender: CommandSender,
     /// Receive events from the engine.
     event_consumer: ringbuf::HeapCons<EngineEvent>,
     /// Receive dropped modules from audio thread (for main thread cleanup).
@@ -83,33 +132,21 @@ pub struct EngineHandle {
 impl EngineHandle {
     /// Send a command to the engine (non-blocking, may fail if queue full).
     pub fn send(&mut self, command: EngineCommand) -> bool {
-        self.command_producer.try_push(command).is_ok()
+        self.command_sender.send(command)
     }
 
     /// Send a command to the engine, blocking until there's space in the queue.
     /// Use this when loading patches or doing bulk operations.
     /// Returns false only if there's a timeout (deadlock protection).
     pub fn send_blocking(&mut self, command: EngineCommand) -> bool {
-        let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 10000; // ~10 seconds at 1ms sleep
-        let mut cmd = command;
+        self.command_sender.send_blocking(command)
+    }
 
-        loop {
-            match self.command_producer.try_push(cmd) {
-                Ok(()) => return true,
-                Err(returned_cmd) => {
-                    cmd = returned_cmd; // ringbuf returns the value directly on error
-                    attempts += 1;
-                    if attempts >= MAX_ATTEMPTS {
-                        eprintln!("Command queue timeout after {} attempts!", MAX_ATTEMPTS);
-                        // Final attempt, drop the command if it fails
-                        return self.command_producer.try_push(cmd).is_ok();
-                    }
-                    // Give the audio thread time to process commands
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-            }
-        }
+    /// Get a clonable command sender for sharing with other sources (MIDI, etc.).
+    ///
+    /// This allows multiple threads/sources to send commands to the engine.
+    pub fn command_sender(&self) -> CommandSender {
+        self.command_sender.clone()
     }
 
     /// Poll and drop any modules/parts returned from the audio thread.
@@ -348,7 +385,7 @@ impl SynthEngine {
         };
 
         let handle = EngineHandle {
-            command_producer,
+            command_sender: CommandSender::new(command_producer),
             event_consumer,
             return_consumer,
             part_return_consumer,
@@ -549,14 +586,28 @@ impl SynthEngine {
                 // Route to all parts that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
                 let velocity_f32 = velocity.as_f32();
+                let mut note_triggered = false;
+
                 for part in &mut self.parts {
                     if part.responds_to_channel(channel_raw) {
-                        part.note_on(note, velocity_f32);
+                        if part.note_on(note, velocity_f32).is_some() {
+                            note_triggered = true;
+                        }
                     }
                 }
                 // Also trigger note on in the modular graph
                 if self.use_modular_routing {
                     self.module_graph.note_on(note, velocity_f32);
+                    note_triggered = true;
+                }
+
+                // Emit NoteTriggered event for GUI feedback
+                if note_triggered {
+                    let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
+                        note,
+                        velocity: velocity_f32,
+                        channel,
+                    });
                 }
             }
 
@@ -572,6 +623,12 @@ impl SynthEngine {
                 if self.use_modular_routing {
                     self.module_graph.note_off();
                 }
+
+                // Emit NoteReleased event for GUI feedback
+                let _ = self.event_producer.try_push(EngineEvent::NoteReleased {
+                    note,
+                    channel,
+                });
             }
 
             EngineCommand::AllNotesOff => {
@@ -582,6 +639,9 @@ impl SynthEngine {
                 if self.use_modular_routing {
                     self.module_graph.reset();
                 }
+
+                // Emit AllNotesReleased event for GUI feedback
+                let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
             }
 
             EngineCommand::PitchBend { value, channel } => {

@@ -1,5 +1,63 @@
 # Version History
 
+## [0.32.14] - 2024
+
+### Added - MIDI Input Support with GUI Port Selection
+
+Complete hardware MIDI input support using midir with interactive port selection and velocity visualization.
+
+**MIDI Features:**
+- Clickable MIDI port selector in menu bar (`🎹 [port name] ▼`)
+- Auto-selection of hardware ports (skips virtual "Midi Through" ports)
+- Real-time port switching without restart
+- Type-safe MIDI parsing: raw bytes → domain types (NormalizedValue, BipolarValue, MidiChannel)
+- MIDI NoteOn with velocity 0 correctly handled as NoteOff
+- Pitch bend (14-bit) mapped to BipolarValue (-1.0 to +1.0)
+- Mod wheel (CC1), channel aftertouch, poly aftertouch support
+- All Notes Off (CC123) support
+- Debug logging to stdout for troubleshooting
+
+**Velocity Visualization:**
+- Piano keyboard now shows velocity intensity via color brightness
+- Formula: `intensity = 0.4 + (0.6 * velocity)`
+- Soft notes: dim orange, Hard notes: bright orange
+- `PianoKeyboard` data structure changed from `HashMap<u8, bool>` to `HashMap<u8, f32>`
+- New methods: `set_note_on(note, velocity)`, `set_note_off(note)`, `get_velocity(note)`
+
+**Architecture:**
+- `MidiHandler` in `src/io/midi.rs` - hardware layer with dynamic port connection
+- `CommandSender` in `src/engine/synth_engine.rs` - clonable `Arc<Mutex<...>>` wrapper for thread-safe command sending from multiple sources (GUI + MIDI)
+- Engine emits `NoteTriggered`/`NoteReleased`/`AllNotesReleased` events
+- Single source of truth: GUI keyboard reflects engine state, not input source
+
+**New EngineEvent Variants:**
+- `NoteTriggered { note, velocity, channel }` - emitted when engine triggers a note
+- `NoteReleased { note, channel }` - emitted when engine releases a note
+- `AllNotesReleased` - emitted on panic/all-notes-off
+
+**Files Changed:**
+| File | Change |
+|------|--------|
+| `Cargo.toml` | Added `midir = "0.10"` dependency |
+| `src/io/midi.rs` | New MIDI module with `MidiHandler`, `parse_midi()`, port management |
+| `src/io/mod.rs` | Export `MidiHandler`, `MidiError` |
+| `src/engine/synth_engine.rs` | Added `CommandSender`, emit note events on NoteOn/NoteOff/AllNotesOff |
+| `src/engine/commands.rs` | Added `NoteTriggered`/`NoteReleased`/`AllNotesReleased` events |
+| `src/engine/event_priority.rs` | Added high priority for note events |
+| `src/engine/mod.rs` | Export `CommandSender` |
+| `src/gui/keyboard.rs` | Velocity storage (`f32`), `set_note_on`/`set_note_off`, intensity rendering |
+| `src/gui/egui_backend.rs` | MIDI port selector dropdown, poll note events for keyboard feedback |
+| `examples/midi_test.rs` | Standalone MIDI diagnostic tool |
+
+### Technical Details
+- MIDI callback runs on midir's background thread
+- `CommandSender` uses `Arc<Mutex<HeapProd>>` for lock-free command queue access
+- Port selection persists during runtime (no restart needed)
+- 11 unit tests for MIDI parsing (note on/off, pitch bend, CC, aftertouch)
+- Separation of concerns: Engine knows only `EngineCommand`, not MIDI hardware
+
+---
+
 ## [0.32.13] - 2024
 
 ### Fixed - Stereo Output Parameter Changes

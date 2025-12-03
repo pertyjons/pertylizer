@@ -14,9 +14,10 @@ use std::path::PathBuf;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke, Vec2};
 
 use crate::audio::AudioHostTrait;
-use crate::engine::{EngineCommand, EngineHandle, SynthEngine, ModuleId};
+use crate::engine::{EngineCommand, EngineEvent, EngineHandle, SynthEngine, ModuleId};
 use crate::engine::commands::PortId;
 use crate::engine::ModuleType as TypedModuleType;
+use crate::io::MidiHandler;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_settings_dialog, show_about_dialog, show_load_patch_dialog, show_save_patch_dialog, show_status_toast};
 use crate::gui::widgets::colors;
@@ -131,6 +132,9 @@ struct SynthApp {
     config: SynthGuiConfig,
     latency: std::time::Duration,
 
+    // MIDI input handler
+    midi_handler: MidiHandler,
+
     // Rack view state
     rack_view: RackView,
 
@@ -194,11 +198,17 @@ impl SynthApp {
             &mut glide_time,
         );
 
+        // Initialize MIDI input (connects to first available port)
+        // The MidiHandler gets a clone of the command sender, so both GUI and MIDI
+        // can send commands to the engine.
+        let midi_handler = MidiHandler::new(handle.command_sender());
+
         Self {
             handle,
             host: Some(host),
             config,
             latency,
+            midi_handler,
             rack_view,
             instance_counters,
             keyboard,
@@ -223,6 +233,27 @@ impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
+
+        // Poll for engine events (note feedback, etc.)
+        // This ensures the GUI keyboard reflects what the engine is actually playing,
+        // regardless of whether notes came from MIDI, sequencer, or GUI.
+        while let Some(event) = self.handle.poll_event() {
+            match event {
+                EngineEvent::NoteTriggered { note, velocity, .. } => {
+                    self.keyboard.set_note_on(note, velocity);
+                }
+                EngineEvent::NoteReleased { note, .. } => {
+                    self.keyboard.set_note_off(note);
+                    self.pressed_keys.remove(&note);
+                }
+                EngineEvent::AllNotesReleased => {
+                    self.keyboard.clear_pressed();
+                    self.pressed_keys.clear();
+                }
+                // Other events (meters, etc.) are handled elsewhere
+                _ => {}
+            }
+        }
 
         // Handle keyboard input
         self.handle_keyboard_input(ctx);
@@ -292,6 +323,47 @@ impl eframe::App for SynthApp {
                     ui.label(RichText::new(format!("Voices: {}", self.handle.voice_count())).color(colors::TEXT_SECONDARY));
                     ui.separator();
                     ui.label(RichText::new(format!("Latency: {:.1}ms", self.latency.as_secs_f64() * 1000.0)).color(colors::TEXT_DIM));
+                    ui.separator();
+                    // MIDI port selector (styled as button with dropdown indicator)
+                    let midi_label = if self.midi_handler.is_connected() {
+                        let port_name = self.midi_handler.port_name().unwrap_or("Unknown");
+                        // Shorten long port names for display
+                        let short_name = if port_name.len() > 20 {
+                            format!("{}...", &port_name[..17])
+                        } else {
+                            port_name.to_string()
+                        };
+                        RichText::new(format!("🎹 {} ▼", short_name)).color(colors::METER_GREEN)
+                    } else {
+                        RichText::new("🎹 MIDI ▼").color(colors::TEXT_DIM)
+                    };
+
+                    ui.menu_button(midi_label, |ui| {
+                        ui.set_min_width(250.0);
+                        let ports = MidiHandler::list_ports();
+                        if ports.is_empty() {
+                            ui.label(RichText::new("No MIDI ports available").color(colors::TEXT_DIM));
+                        } else {
+                            for port in &ports {
+                                let is_current = self.midi_handler.port_name() == Some(port.as_str());
+                                let label = if is_current {
+                                    RichText::new(format!("● {}", port)).color(colors::METER_GREEN)
+                                } else {
+                                    RichText::new(format!("  {}", port))
+                                };
+                                if ui.button(label).clicked() {
+                                    if let Err(e) = self.midi_handler.connect_to(port) {
+                                        eprintln!("MIDI connection error: {}", e);
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("🔄 Refresh").clicked() {
+                            ui.close();
+                        }
+                    });
                     ui.separator();
                     // Current patch name
                     ui.label(RichText::new(format!("Patch: {}", self.current_patch_name)).color(colors::ACCENT_CYAN));
@@ -693,16 +765,15 @@ impl SynthApp {
         ui.horizontal(|ui| {
             // Panic button (moved here since keyboard handles its own header)
             if ui.add(egui::Button::new(RichText::new("PANIC").color(colors::ACCENT_RED))).clicked() {
-                self.handle.send(EngineCommand::Reset);
+                self.handle.send(EngineCommand::AllNotesOff);
                 self.pressed_keys.clear();
-                self.keyboard.clear_pressed();
+                // Keyboard will be cleared by AllNotesReleased event from engine
             }
         });
 
-        // Sync pressed keys to keyboard for visual feedback
-        for (&note, &pressed) in &self.pressed_keys {
-            self.keyboard.set_note_pressed(note, pressed);
-        }
+        // Note: Keyboard visual state is now driven by engine events (NoteTriggered/NoteReleased)
+        // in the main update loop. This ensures the GUI reflects what the engine is actually
+        // playing, regardless of input source (MIDI, sequencer, or GUI).
 
         // Show the 88-key piano keyboard
         let event = self.keyboard.show(ui);
@@ -713,7 +784,7 @@ impl SynthApp {
         }
         for note in event.note_off {
             self.handle.note_off(note);
-            self.keyboard.set_note_pressed(note, false);
+            // Note release will be reflected via NoteReleased event from engine
         }
     }
     
@@ -745,13 +816,13 @@ impl SynthApp {
                 if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
                     self.handle.note_on(note, NormalizedValue::new(0.8));
                     self.pressed_keys.insert(note, true);
-                    self.keyboard.set_note_pressed(note, true);
+                    // Visual feedback will come from NoteTriggered engine event
                 }
 
                 if input.key_released(*key) {
                     self.handle.note_off(note);
                     self.pressed_keys.insert(note, false);
-                    self.keyboard.set_note_pressed(note, false);
+                    // Visual feedback will come from NoteReleased engine event
                 }
             }
 

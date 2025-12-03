@@ -568,6 +568,38 @@ pub enum EngineEvent {
         /// Downsampled waveform data.
         data: Vec<f32>,
     },
+
+    /// A note was successfully triggered by the engine.
+    ///
+    /// This event is sent whenever a note starts playing, regardless of
+    /// the source (MIDI, sequencer, or UI). Use this to update the GUI
+    /// keyboard to show which notes the engine is actually playing.
+    NoteTriggered {
+        /// MIDI note number (0-127).
+        note: u8,
+        /// Velocity as normalized value (0.0-1.0).
+        velocity: f32,
+        /// MIDI channel the note was triggered on.
+        channel: MidiChannel,
+    },
+
+    /// A note was released by the engine.
+    ///
+    /// This event is sent when a note stops playing (enters release phase).
+    /// The note may still be audible during the release, but the key should
+    /// no longer appear "pressed" in the GUI.
+    NoteReleased {
+        /// MIDI note number (0-127).
+        note: u8,
+        /// MIDI channel the note was released on.
+        channel: MidiChannel,
+    },
+
+    /// All notes were released (panic/all-notes-off).
+    ///
+    /// This is sent when AllNotesOff command is processed, allowing the
+    /// GUI to clear all pressed keys at once.
+    AllNotesReleased,
 }
 
 // Manual Debug implementation because Box<dyn VoiceModule> doesn't implement Debug
