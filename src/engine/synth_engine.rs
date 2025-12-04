@@ -416,9 +416,9 @@ impl SynthEngine {
     /// Each instrument uses its own voice_graph as the template.
     /// Call this after bulk operations that affect all instruments.
     fn rebuild_all_instrument_voices(&mut self) {
-        for instrument in &mut self.instruments {
-            instrument.rebuild_voices();
-        }
+        self.instruments
+            .iter_mut()
+            .for_each(|inst| inst.rebuild_voices());
     }
 
     /// Find an effect slot by its module ID in a specific instrument's effect chain.
@@ -634,51 +634,58 @@ impl SynthEngine {
             EngineCommand::PitchBend { value, channel } => {
                 // Apply pitch bend to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice.pitch_bend = value;
-                        }
-                    }
-                }
+                self.instruments
+                    .iter_mut()
+                    .filter(|inst| inst.responds_to_channel(channel_raw))
+                    .for_each(|inst| {
+                        inst.allocator_mut()
+                            .voices_mut()
+                            .iter_mut()
+                            .for_each(|voice| voice.pitch_bend = value)
+                    });
             }
 
             EngineCommand::ModWheel { value, channel } => {
                 // Apply mod wheel to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice.mod_wheel = value;
-                        }
-                    }
-                }
+                self.instruments
+                    .iter_mut()
+                    .filter(|inst| inst.responds_to_channel(channel_raw))
+                    .for_each(|inst| {
+                        inst.allocator_mut()
+                            .voices_mut()
+                            .iter_mut()
+                            .for_each(|voice| voice.mod_wheel = value)
+                    });
             }
 
             EngineCommand::Aftertouch { value, channel } => {
                 // Apply channel aftertouch to all voices in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice.aftertouch = value;
-                        }
-                    }
-                }
+                self.instruments
+                    .iter_mut()
+                    .filter(|inst| inst.responds_to_channel(channel_raw))
+                    .for_each(|inst| {
+                        inst.allocator_mut()
+                            .voices_mut()
+                            .iter_mut()
+                            .for_each(|voice| voice.aftertouch = value)
+                    });
             }
 
             EngineCommand::PolyAftertouch { note, value, channel } => {
                 // Apply poly aftertouch to specific note in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
-                for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            if voice.note() == Some(note) {
-                                voice.aftertouch = value;
-                            }
-                        }
-                    }
-                }
+                self.instruments
+                    .iter_mut()
+                    .filter(|inst| inst.responds_to_channel(channel_raw))
+                    .for_each(|inst| {
+                        inst.allocator_mut()
+                            .voices_mut()
+                            .iter_mut()
+                            .filter(|voice| voice.note() == Some(note))
+                            .for_each(|voice| voice.aftertouch = value)
+                    });
             }
 
             EngineCommand::SetMasterVolume(vol) => {
@@ -1150,9 +1157,9 @@ impl AudioProcessor for SynthEngine {
 
     fn on_stream_stop(&mut self) {
         // Panic all instruments
-        for instrument in &mut self.instruments {
-            instrument.panic();
-        }
+        self.instruments
+            .iter_mut()
+            .for_each(|inst| inst.panic());
     }
 
     fn on_error(&mut self, error: crate::audio::AudioError) {

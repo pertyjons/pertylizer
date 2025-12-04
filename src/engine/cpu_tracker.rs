@@ -169,9 +169,9 @@ impl ModuleCpuTracker {
     }
 
     fn update_all_stats(&mut self) {
-        for tracker in self.trackers.values_mut() {
-            tracker.update_stats(self.block_duration);
-        }
+        self.trackers
+            .values_mut()
+            .for_each(|tracker| tracker.update_stats(self.block_duration));
 
         // Reset totals
         self.total_accumulated = Duration::ZERO;

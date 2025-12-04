@@ -28,12 +28,8 @@ const MAX_BUFFER_SIZE: usize = 4096;
 /// Avoids expensive powf() calls during audio processing.
 /// Initialized once on first access.
 static NOTE_FREQ_TABLE: LazyLock<[f32; 128]> = LazyLock::new(|| {
-    let mut table = [0.0f32; 128];
-    for i in 0..128 {
-        // 440.0 * 2^((note - 69) / 12)
-        table[i] = 440.0 * 2.0f32.powf((i as f32 - 69.0) / 12.0);
-    }
-    table
+    // 440.0 * 2^((note - 69) / 12)
+    std::array::from_fn(|i| 440.0 * 2.0f32.powf((i as f32 - 69.0) / 12.0))
 });
 
 /// Voice state with embedded data - "Make Invalid States Unrepresentable".

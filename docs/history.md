@@ -1,5 +1,30 @@
 # Version History
 
+## [0.33.1] - 2024
+
+### Refactored - Idiomatic Iterator Conversions
+
+Konverterade utvalda for-loopar till idiomatiska iterator-kedjor där det förbättrar läsbarhet utan prestandakostnad.
+
+**Konverterade (utanför hot path):**
+
+| Fil | Ändring |
+|-----|---------|
+| `graph.rs` | `note_on()`, `note_off()`, `reset()` → `.values_mut().for_each()` |
+| `graph.rs` | Output-modulssökning → `.filter().find_map()` |
+| `synth_engine.rs` | `rebuild_all_instrument_voices()` → `.iter_mut().for_each()` |
+| `synth_engine.rs` | `on_stream_stop()` → `.iter_mut().for_each()` |
+| `synth_engine.rs` | MIDI CC broadcast (PitchBend, ModWheel, Aftertouch) → `.filter().for_each()` |
+| `cpu_tracker.rs` | `update_all_stats()` → `.values_mut().for_each()` |
+| `voice.rs` | `NOTE_FREQ_TABLE` init → `std::array::from_fn()` |
+
+**Behållet som for-loopar (hot path):**
+- Alla audio DSP loops (fade, voice summering, interleaving)
+- Effect chain processing (buffer mutation mellan iterationer)
+- Sequencer event processing (komplex match-logik)
+
+---
+
 ## [0.33.0] - 2024
 
 ### Added - Type System Extensions

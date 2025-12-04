@@ -309,31 +309,33 @@ impl ModuleGraph {
 
         // Priority 2: Find a "sink" module (has connections IN but none OUT)
         // This ensures we only use modules that are actually endpoints in the graph
-        for &module_id in self.processing_order.iter().rev() {
-            let is_sink = self.is_sink(module_id);
-            let has_inputs = self.connections.iter().any(|c| c.to_module == module_id);
+        let found = self
+            .processing_order
+            .iter()
+            .rev()
+            .copied()
+            .filter(|&id| self.is_sink(id))
+            .filter(|&id| self.connections.iter().any(|c| c.to_module == id))
+            .find_map(|id| self.nodes.get(&id)?.outputs.get("out"));
 
-            if is_sink && has_inputs {
-                if let Some(node) = self.nodes.get(&module_id) {
-                    if let Some(out_buf) = node.outputs.get("out") {
-                        output.copy_from(out_buf);
-                        return;
-                    }
-                }
-            }
+        if let Some(out_buf) = found {
+            output.copy_from(out_buf);
+            return;
         }
 
         // Priority 3: If there are connections, use the last connected sink
         if !self.connections.is_empty() {
-            for &module_id in self.processing_order.iter().rev() {
-                if self.is_sink(module_id) {
-                    if let Some(node) = self.nodes.get(&module_id) {
-                        if let Some(out_buf) = node.outputs.get("out") {
-                            output.copy_from(out_buf);
-                            return;
-                        }
-                    }
-                }
+            let found = self
+                .processing_order
+                .iter()
+                .rev()
+                .copied()
+                .filter(|&id| self.is_sink(id))
+                .find_map(|id| self.nodes.get(&id)?.outputs.get("out"));
+
+            if let Some(out_buf) = found {
+                output.copy_from(out_buf);
+                return;
             }
         }
 
@@ -344,23 +346,23 @@ impl ModuleGraph {
 
     /// Trigger note on for all modules.
     pub fn note_on(&mut self, note: MidiNote, velocity: f32) {
-        for node in self.nodes.values_mut() {
-            node.module.note_on(note, velocity);
-        }
+        self.nodes
+            .values_mut()
+            .for_each(|node| node.module.note_on(note, velocity));
     }
 
     /// Trigger note off for all modules.
     pub fn note_off(&mut self) {
-        for node in self.nodes.values_mut() {
-            node.module.note_off();
-        }
+        self.nodes
+            .values_mut()
+            .for_each(|node| node.module.note_off());
     }
 
     /// Reset all modules.
     pub fn reset(&mut self) {
-        for node in self.nodes.values_mut() {
-            node.module.reset();
-        }
+        self.nodes
+            .values_mut()
+            .for_each(|node| node.module.reset());
     }
 
     /// Get a module's output buffer by port name (for extracting stereo outputs).
