@@ -1,5 +1,74 @@
 # Version History
 
+## [0.32.21] - 2024
+
+### Refactored - Type Safety and Enums
+
+Refaktorering för att utnyttja Rusts typsystem maximalt. Målet: "Make Invalid States Unrepresentable".
+
+**1. Berikad `ModuleType` enum (src/engine/params/mod.rs):**
+
+Flyttade klassificeringslogik från `SynthEngine` till `ModuleType` för ökad kohesion:
+
+| Metod | Beskrivning |
+|-------|-------------|
+| `is_voice_module()` | Oscillator, Filter, Envelope, Lfo, Amplifier, etc. |
+| `is_effect()` | Delay, Reverb, Distortion, Chorus, Phaser, etc. |
+| `is_visualizer()` | Oscilloscope, LevelMeter |
+| `is_global()` | `!is_voice_module()` |
+| `is_sample_based()` | SamplePlayer, GranularSynth, Wavetable |
+
+Tog bort `SynthEngine::is_voice_module()` - logiken finns nu i typen själv.
+
+**2. Unifierad `EffectChain` (src/engine/effect_chain.rs):**
+
+Skapade `ChainSlot` enum för flexibel routing:
+```rust
+pub enum ChainSlot {
+    Effect(EffectSlot),
+    Visualizer(VisualizerSlot),
+}
+```
+
+- `EffectChain` använder nu `slots: Vec<ChainSlot>` istället för separata `effects` och `visualizers`
+- Möjliggör att placera Oscilloskop *mellan* effekter (t.ex. efter Delay men före Reverb)
+- Unified `process()` loop som hanterar båda typerna
+
+**3. Typsäker `VoiceState` (src/engine/voice.rs):**
+
+Data-bärande enum som gör ogiltiga tillstånd omöjliga:
+```rust
+pub enum VoiceState {
+    Idle,  // Ingen data - kan inte läsa "note" från idle voice
+    Active { note: u8, velocity: NormalizedValue, start_time: u64 },
+    Releasing { note: u8, velocity: NormalizedValue, start_time: u64 },
+    Stealing { fade_counter: usize, fade_total: usize },
+}
+```
+
+**Voice struct förenklad:**
+- Tog bort `note`, `velocity`, `trigger_time`, `steal_fade_counter` från `Voice`
+- Data finns nu inuti `VoiceState`
+- Lade till accessor-metoder: `note() -> Option<u8>`, `velocity() -> Option<NormalizedValue>`
+
+**Uppdaterade filer:**
+- `src/engine/voice.rs` - VoiceState och Voice refaktorerad
+- `src/engine/voice_allocator.rs` - Pattern matching istället för direkta fältåtkomster
+- `src/engine/instrument.rs` - Stealing fade-out använder pattern matching
+- `src/engine/synth_engine.rs` - PolyAftertouch använder `voice.note()`
+
+**Fördelar:**
+- Kompilatorn tvingar hantering av alla tillstånd
+- Omöjligt att läsa "current note" från en idle voice
+- Tydligare API med `Option<T>` för data som kanske inte finns
+
+**Verification:**
+- ✅ Alla 260 enhetstester passerar
+- ✅ Inga "irrefutable pattern" varningar
+- ✅ Kod kompilerar utan varningar
+
+---
+
 ## [0.32.20] - 2024
 
 ### Refactored - Per-Instrument Effects (Phase 3.5)

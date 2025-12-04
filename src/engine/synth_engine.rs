@@ -407,26 +407,6 @@ impl SynthEngine {
             .and_then(|inst| inst.effect_chain_mut().find_effect_by_type(module_type))
     }
 
-    /// Check if a module type belongs to the voice signal chain (polyphonic).
-    ///
-    /// Voice modules are duplicated per voice and process within the voice allocator.
-    /// Global modules (effects, visualizers) exist once and process after voice mixing.
-    fn is_voice_module(module_type: ModuleType) -> bool {
-        matches!(
-            module_type,
-            ModuleType::Oscillator
-                | ModuleType::MathOscillator
-                | ModuleType::SubOscillator
-                | ModuleType::Noise
-                | ModuleType::Filter
-                | ModuleType::Envelope
-                | ModuleType::Lfo
-                | ModuleType::Amplifier
-                | ModuleType::Mixer
-                | ModuleType::StereoOutput
-        )
-    }
-
     /// Rebuild all voices for all instruments.
     ///
     /// Each instrument uses its own voice_graph as the template.
@@ -689,7 +669,7 @@ impl SynthEngine {
                 for instrument in &mut self.instruments {
                     if instrument.responds_to_channel(channel_raw) {
                         for voice in instrument.allocator_mut().voices_mut() {
-                            if voice.note == note {
+                            if voice.note() == Some(note) {
                                 voice.aftertouch = value;
                             }
                         }
@@ -1393,32 +1373,26 @@ mod tests {
             }
         }
 
-        /// Test E: is_voice_module correctly classifies module types
+        /// Test E: ModuleType classification methods work correctly
+        /// (Tests moved to src/engine/params/mod.rs - ModuleType now owns this logic)
         #[test]
-        fn test_is_voice_module_classification() {
+        fn test_module_type_classification() {
             // Voice modules (should be true)
-            assert!(SynthEngine::is_voice_module(ModuleType::Oscillator));
-            assert!(SynthEngine::is_voice_module(ModuleType::MathOscillator));
-            assert!(SynthEngine::is_voice_module(ModuleType::SubOscillator));
-            assert!(SynthEngine::is_voice_module(ModuleType::Noise));
-            assert!(SynthEngine::is_voice_module(ModuleType::Filter));
-            assert!(SynthEngine::is_voice_module(ModuleType::Envelope));
-            assert!(SynthEngine::is_voice_module(ModuleType::Lfo));
-            assert!(SynthEngine::is_voice_module(ModuleType::Amplifier));
-            assert!(SynthEngine::is_voice_module(ModuleType::Mixer));
-            assert!(SynthEngine::is_voice_module(ModuleType::StereoOutput));
+            assert!(ModuleType::Oscillator.is_voice_module());
+            assert!(ModuleType::Filter.is_voice_module());
+            assert!(ModuleType::StereoOutput.is_voice_module());
 
-            // Global modules (should be false)
-            assert!(!SynthEngine::is_voice_module(ModuleType::Delay));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Reverb));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Chorus));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Distortion));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Phaser));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Flanger));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Compressor));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Eq));
-            assert!(!SynthEngine::is_voice_module(ModuleType::Oscilloscope));
-            assert!(!SynthEngine::is_voice_module(ModuleType::LevelMeter));
+            // Effects (should be true for is_effect)
+            assert!(ModuleType::Delay.is_effect());
+            assert!(ModuleType::Reverb.is_effect());
+
+            // Visualizers
+            assert!(ModuleType::Oscilloscope.is_visualizer());
+            assert!(ModuleType::LevelMeter.is_visualizer());
+
+            // Global = !is_voice_module
+            assert!(ModuleType::Delay.is_global());
+            assert!(!ModuleType::Oscillator.is_global());
         }
 
         /// Test F: Remove voice module propagates to voices

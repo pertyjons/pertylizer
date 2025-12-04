@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.32.20"
+version = "0.32.21"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"

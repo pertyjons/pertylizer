@@ -75,6 +75,82 @@ pub enum ModuleType {
 }
 
 impl ModuleType {
+    // ========================================================================
+    // MODULE CLASSIFICATION METHODS
+    // ========================================================================
+
+    /// Check if this module type is a voice module (polyphonic).
+    ///
+    /// Voice modules are duplicated per voice and process within the voice allocator.
+    /// They exist once per active voice.
+    #[inline]
+    pub fn is_voice_module(&self) -> bool {
+        matches!(
+            self,
+            Self::Oscillator
+                | Self::MathOscillator
+                | Self::SubOscillator
+                | Self::Noise
+                | Self::Filter
+                | Self::Envelope
+                | Self::Lfo
+                | Self::Amplifier
+                | Self::Mixer
+                | Self::StereoOutput
+        )
+    }
+
+    /// Check if this module type is an audio effect.
+    ///
+    /// Effects process audio in series after voice mixing. They exist once
+    /// per instrument in the effect chain.
+    #[inline]
+    pub fn is_effect(&self) -> bool {
+        matches!(
+            self,
+            Self::Delay
+                | Self::Reverb
+                | Self::Distortion
+                | Self::Chorus
+                | Self::Phaser
+                | Self::Flanger
+                | Self::Compressor
+                | Self::Eq
+        )
+    }
+
+    /// Check if this module type is a visualizer.
+    ///
+    /// Visualizers capture audio data for display but don't modify the signal.
+    #[inline]
+    pub fn is_visualizer(&self) -> bool {
+        matches!(self, Self::Oscilloscope | Self::LevelMeter)
+    }
+
+    /// Check if this module type is global (not a voice module).
+    ///
+    /// Global modules (effects, visualizers, sample-based) exist once per instrument
+    /// and process audio after voice mixing.
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        !self.is_voice_module()
+    }
+
+    /// Check if this module type is sample-based.
+    ///
+    /// Sample-based modules work with audio files rather than synthesis.
+    #[inline]
+    pub fn is_sample_based(&self) -> bool {
+        matches!(
+            self,
+            Self::SamplePlayer | Self::SampleRecorder | Self::GranularSynth | Self::Wavetable
+        )
+    }
+
+    // ========================================================================
+    // DISPLAY AND CONVERSION METHODS
+    // ========================================================================
+
     /// Get the display name for this module type.
     pub fn name(&self) -> &'static str {
         match self {
@@ -488,6 +564,60 @@ impl Port {
 mod tests {
     use super::*;
     use crate::types::Hertz;
+
+    #[test]
+    fn test_module_type_is_voice_module() {
+        // Voice modules (should be true)
+        assert!(ModuleType::Oscillator.is_voice_module());
+        assert!(ModuleType::MathOscillator.is_voice_module());
+        assert!(ModuleType::SubOscillator.is_voice_module());
+        assert!(ModuleType::Noise.is_voice_module());
+        assert!(ModuleType::Filter.is_voice_module());
+        assert!(ModuleType::Envelope.is_voice_module());
+        assert!(ModuleType::Lfo.is_voice_module());
+        assert!(ModuleType::Amplifier.is_voice_module());
+        assert!(ModuleType::Mixer.is_voice_module());
+        assert!(ModuleType::StereoOutput.is_voice_module());
+
+        // Global modules (should be false)
+        assert!(!ModuleType::Delay.is_voice_module());
+        assert!(!ModuleType::Reverb.is_voice_module());
+        assert!(!ModuleType::Oscilloscope.is_voice_module());
+    }
+
+    #[test]
+    fn test_module_type_is_effect() {
+        // Effects (should be true)
+        assert!(ModuleType::Delay.is_effect());
+        assert!(ModuleType::Reverb.is_effect());
+        assert!(ModuleType::Distortion.is_effect());
+        assert!(ModuleType::Chorus.is_effect());
+        assert!(ModuleType::Phaser.is_effect());
+        assert!(ModuleType::Flanger.is_effect());
+        assert!(ModuleType::Compressor.is_effect());
+        assert!(ModuleType::Eq.is_effect());
+
+        // Non-effects (should be false)
+        assert!(!ModuleType::Oscillator.is_effect());
+        assert!(!ModuleType::Oscilloscope.is_effect());
+    }
+
+    #[test]
+    fn test_module_type_is_visualizer() {
+        assert!(ModuleType::Oscilloscope.is_visualizer());
+        assert!(ModuleType::LevelMeter.is_visualizer());
+        assert!(!ModuleType::Oscillator.is_visualizer());
+        assert!(!ModuleType::Delay.is_visualizer());
+    }
+
+    #[test]
+    fn test_module_type_is_global() {
+        // Global = !is_voice_module
+        assert!(ModuleType::Delay.is_global());
+        assert!(ModuleType::Oscilloscope.is_global());
+        assert!(!ModuleType::Oscillator.is_global());
+        assert!(!ModuleType::Filter.is_global());
+    }
 
     #[test]
     fn test_param_module_type() {

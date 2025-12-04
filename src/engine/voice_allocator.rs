@@ -148,23 +148,17 @@ impl VoiceAllocator {
     /// Used when the voice template changes (module added/removed/reconnected).
     pub fn rebuild_from_graph(&mut self, graph_template: &crate::engine::graph::ModuleGraph) {
         for (i, voice) in self.voices.iter_mut().enumerate() {
-            let was_active = voice.is_active();
-            let old_note = voice.note;
-            let old_velocity = voice.velocity;
+            // VoiceState now contains all note data (note, velocity, start_time)
             let old_state = voice.state;
             let old_age = voice.age;
-            let old_trigger_time = voice.trigger_time;
 
             // Replace with new graph
             *voice = Voice::from_graph(i as u32, graph_template.clone_structure());
 
             // Restore state if voice was active (preserves playing notes during template changes)
-            if was_active {
-                voice.note = old_note;
-                voice.velocity = old_velocity;
+            if old_state.is_active() {
                 voice.state = old_state;
                 voice.age = old_age;
-                voice.trigger_time = old_trigger_time;
             }
         }
     }
@@ -229,8 +223,11 @@ impl VoiceAllocator {
             AllocationMode::Polyphonic => {
                 // Release all voices playing this note
                 for voice in &mut self.voices {
-                    if voice.note == note && voice.state == VoiceState::Active {
-                        voice.note_off();
+                    // Use pattern matching on VoiceState::Active to check note
+                    if let VoiceState::Active { note: voice_note, .. } = voice.state {
+                        if voice_note == note {
+                            voice.note_off();
+                        }
                     }
                 }
             }
@@ -240,7 +237,7 @@ impl VoiceAllocator {
                     // Glide to previous note
                     if let Some(voice) = self.voices.iter_mut().find(|v| v.is_active()) {
                         voice.set_glide_time(self.config.glide_time);
-                        
+
                         if self.config.mode == AllocationMode::Legato {
                             // Legato: just glide pitch, don't retrigger
                             voice.glide_to_note(prev_note);
@@ -259,9 +256,9 @@ impl VoiceAllocator {
                 }
             }
             AllocationMode::Unison => {
-                // Release all voices
+                // Release all voices playing this note
                 for voice in &mut self.voices {
-                    if voice.note == note {
+                    if voice.note() == Some(note) {
                         voice.note_off();
                     }
                 }
@@ -303,7 +300,7 @@ impl VoiceAllocator {
 
         // Try to reuse a voice playing the same note
         if self.config.stealing == StealingStrategy::SameNote {
-            if let Some(voice) = self.voices.iter_mut().find(|v| v.note == note) {
+            if let Some(voice) = self.voices.iter_mut().find(|v| v.note() == Some(note)) {
                 voice.note_on(note, velocity, self.time);
                 return Some(voice.id);
             }
@@ -391,7 +388,7 @@ impl VoiceAllocator {
                 self.voices
                     .iter()
                     .enumerate()
-                    .filter(|(_, v)| v.state == VoiceState::Releasing)
+                    .filter(|(_, v)| matches!(v.state, VoiceState::Releasing { .. }))
                     .max_by_key(|(_, v)| v.age)
                     .map(|(i, _)| i)
                     .or_else(|| {
@@ -402,7 +399,7 @@ impl VoiceAllocator {
                             .map(|(i, _)| i)
                     })
             }
-            
+
             StealingStrategy::LowestPriority => {
                 // Releasing voices first, then oldest
                 self.voices
@@ -410,9 +407,9 @@ impl VoiceAllocator {
                     .enumerate()
                     .min_by_key(|(_, v)| {
                         let state_priority = match v.state {
-                            VoiceState::Releasing => 0,
-                            VoiceState::Stealing => 1,
-                            VoiceState::Active => 2,
+                            VoiceState::Releasing { .. } => 0,
+                            VoiceState::Stealing { .. } => 1,
+                            VoiceState::Active { .. } => 2,
                             VoiceState::Idle => 3,
                         };
                         (state_priority, std::cmp::Reverse(v.age))
@@ -488,10 +485,12 @@ mod tests {
 
         // Release one
         allocator.note_off(60);
-        
+
         // Should have one releasing
-        let releasing = allocator.voices.iter()
-            .filter(|v| v.state == VoiceState::Releasing)
+        let releasing = allocator
+            .voices
+            .iter()
+            .filter(|v| matches!(v.state, VoiceState::Releasing { .. }))
             .count();
         assert_eq!(releasing, 1);
     }
@@ -510,10 +509,10 @@ mod tests {
 
         // Only one voice should be active
         assert_eq!(allocator.active_voice_count(), 1);
-        
+
         // And it should be playing the latest note
         let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
-        assert_eq!(active.note, 64);
+        assert_eq!(active.note(), Some(64));
     }
 
     #[test]

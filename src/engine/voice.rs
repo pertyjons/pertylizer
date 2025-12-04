@@ -36,17 +36,95 @@ static NOTE_FREQ_TABLE: LazyLock<[f32; 128]> = LazyLock::new(|| {
     table
 });
 
-/// Voice state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Voice state with embedded data - "Make Invalid States Unrepresentable".
+///
+/// Each state variant carries only the data that is valid for that state:
+/// - `Idle`: No data (a voice that isn't playing has no note/velocity)
+/// - `Active`/`Releasing`: Has note, velocity, and start time
+/// - `Stealing`: Has fade counter for smooth transition
+///
+/// This design ensures you can't accidentally read a "current note" from an idle voice.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VoiceState {
-    /// Voice is not playing.
+    /// Voice is not playing - no note data available.
     Idle,
+
     /// Voice is actively playing a note.
-    Active,
-    /// Voice is in release phase.
-    Releasing,
-    /// Voice was stolen and is fading out.
-    Stealing,
+    Active {
+        /// MIDI note number (0-127)
+        note: u8,
+        /// Note velocity (type-safe normalized value 0.0-1.0)
+        velocity: NormalizedValue,
+        /// When this voice was triggered (in samples, for voice stealing priority)
+        start_time: u64,
+    },
+
+    /// Voice is in release phase (note off received, envelope releasing).
+    Releasing {
+        /// MIDI note number (kept for potential re-trigger or display)
+        note: u8,
+        /// Original velocity (kept for release velocity calculations)
+        velocity: NormalizedValue,
+        /// Original start time
+        start_time: u64,
+    },
+
+    /// Voice was stolen and is fading out quickly.
+    Stealing {
+        /// Remaining fade-out samples
+        fade_counter: usize,
+        /// Total fade samples (for calculating fade ratio)
+        fade_total: usize,
+    },
+}
+
+impl VoiceState {
+    /// Check if voice is idle (not producing sound).
+    #[inline]
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    /// Check if voice is active (playing or releasing).
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    /// Check if voice is in stealing fade-out.
+    #[inline]
+    pub fn is_stealing(&self) -> bool {
+        matches!(self, Self::Stealing { .. })
+    }
+
+    /// Get the note if the voice is playing (Active or Releasing).
+    #[inline]
+    pub fn note(&self) -> Option<u8> {
+        match self {
+            Self::Active { note, .. } | Self::Releasing { note, .. } => Some(*note),
+            _ => None,
+        }
+    }
+
+    /// Get the velocity if the voice is playing.
+    #[inline]
+    pub fn velocity(&self) -> Option<NormalizedValue> {
+        match self {
+            Self::Active { velocity, .. } | Self::Releasing { velocity, .. } => Some(*velocity),
+            _ => None,
+        }
+    }
+
+    /// Get the start time if the voice is playing.
+    #[inline]
+    pub fn start_time(&self) -> Option<u64> {
+        match self {
+            Self::Active { start_time, .. } | Self::Releasing { start_time, .. } => {
+                Some(*start_time)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Glide (portamento) state for smooth pitch transitions.
@@ -173,18 +251,21 @@ impl Default for ExpressionSettings {
 ///
 /// The voice now uses a `ModuleGraph` for its signal chain, enabling dynamic
 /// routing that can be configured by the user.
+///
+/// ## State Management
+///
+/// All note-specific data (note, velocity, start_time) is now stored inside
+/// `VoiceState`. This ensures you cannot access "the current note" from an
+/// idle voice - the type system prevents it.
 pub struct Voice {
     /// Unique voice ID.
     pub id: u32,
-    /// Current state.
+
+    /// Current state (carries note/velocity data when active).
     pub state: VoiceState,
-    /// Currently playing MIDI note (0-127).
-    pub note: u8,
-    /// Note velocity (type-safe normalized value 0.0-1.0).
-    pub velocity: NormalizedValue,
-    /// When this voice was triggered (for voice stealing priority).
-    pub trigger_time: u64,
-    /// Age in samples (for voice stealing).
+
+    /// Age in samples since note-on (for voice stealing priority).
+    /// Incremented each process() call when voice is active.
     pub age: u64,
 
     // === Macro controllers (type-safe) ===
@@ -199,12 +280,10 @@ pub struct Voice {
     pub expression: ExpressionSettings,
 
     /// The module graph that defines this voice's signal chain.
-    /// This replaces the old hardcoded module list.
     pub graph: ModuleGraph,
 
-    /// Steal fade-out counter.
-    pub steal_fade_samples: usize,
-    pub steal_fade_counter: usize,
+    /// Default steal fade duration in samples.
+    steal_fade_samples: usize,
 
     /// Glide state for portamento.
     pub glide: GlideState,
@@ -228,9 +307,6 @@ impl Voice {
         Self {
             id,
             state: VoiceState::Idle,
-            note: 0,
-            velocity: NormalizedValue::MIN,
-            trigger_time: 0,
             age: 0,
             // Macro controllers default to neutral positions
             pitch_bend: BipolarValue::CENTER,
@@ -239,7 +315,6 @@ impl Voice {
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
             steal_fade_samples: 128,
-            steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: None,
@@ -260,9 +335,6 @@ impl Voice {
         Self {
             id,
             state: VoiceState::Idle,
-            note: 0,
-            velocity: NormalizedValue::MIN,
-            trigger_time: 0,
             age: 0,
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
@@ -270,7 +342,6 @@ impl Voice {
             expression: ExpressionSettings::default(),
             graph,
             steal_fade_samples: 128,
-            steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: output_id,
@@ -330,8 +401,9 @@ impl Voice {
     pub fn note_on(&mut self, note: u8, velocity: NormalizedValue, time: u64) {
         let target_freq = Self::note_to_freq(note);
 
-        // Start glide from current position if we have a glide time
-        if self.glide_time.as_f32() > 0.0 && self.state == VoiceState::Active {
+        // Start glide from current position if we have a glide time and were already active
+        let was_active = matches!(self.state, VoiceState::Active { .. });
+        if self.glide_time.as_f32() > 0.0 && was_active {
             self.glide.start(target_freq, self.glide_time.as_f32());
         } else {
             // No glide - set frequency immediately
@@ -341,21 +413,25 @@ impl Voice {
             self.glide.active = false;
         }
 
-        self.note = note;
-        self.velocity = velocity;
-        self.trigger_time = time;
+        // Set state with embedded note data
+        self.state = VoiceState::Active {
+            note,
+            velocity,
+            start_time: time,
+        };
         self.age = 0;
-        self.state = VoiceState::Active;
 
         // Notify all modules in the graph
         self.graph.note_on(note, velocity.as_f32());
     }
 
     /// Change pitch without retriggering (for legato mode).
-    pub fn glide_to_note(&mut self, note: u8) {
-        let target_freq = Self::note_to_freq(note);
-        self.note = note;
+    ///
+    /// Updates the note in the current state if active.
+    pub fn glide_to_note(&mut self, new_note: u8) {
+        let target_freq = Self::note_to_freq(new_note);
 
+        // Update glide target
         if self.glide_time.as_f32() > 0.0 {
             self.glide.start(target_freq, self.glide_time.as_f32());
         } else {
@@ -363,37 +439,71 @@ impl Voice {
             self.glide.to_freq = target_freq;
             self.glide.active = false;
         }
+
+        // Update the note in the state (only if active)
+        if let VoiceState::Active {
+            note,
+            velocity: _,
+            start_time: _,
+        } = &mut self.state
+        {
+            *note = new_note;
+        }
     }
 
     /// Trigger note off.
     pub fn note_off(&mut self) {
-        if self.state == VoiceState::Active {
-            self.state = VoiceState::Releasing;
+        // Transition from Active to Releasing, preserving the note data
+        if let VoiceState::Active {
+            note,
+            velocity,
+            start_time,
+        } = self.state
+        {
+            self.state = VoiceState::Releasing {
+                note,
+                velocity,
+                start_time,
+            };
             self.graph.note_off();
         }
     }
 
     /// Start voice stealing (quick fade-out).
     pub fn steal(&mut self) {
-        self.state = VoiceState::Stealing;
-        self.steal_fade_counter = self.steal_fade_samples;
+        self.state = VoiceState::Stealing {
+            fade_counter: self.steal_fade_samples,
+            fade_total: self.steal_fade_samples,
+        };
     }
 
     /// Check if voice is available for new notes.
+    #[inline]
     pub fn is_available(&self) -> bool {
-        self.state == VoiceState::Idle
+        self.state.is_idle()
     }
 
     /// Check if voice is producing sound.
+    #[inline]
     pub fn is_active(&self) -> bool {
-        self.state != VoiceState::Idle
+        self.state.is_active()
+    }
+
+    /// Get the note this voice is playing, if any.
+    #[inline]
+    pub fn note(&self) -> Option<u8> {
+        self.state.note()
+    }
+
+    /// Get the velocity of this voice, if playing.
+    #[inline]
+    pub fn velocity(&self) -> Option<NormalizedValue> {
+        self.state.velocity()
     }
 
     /// Reset the voice to idle state.
     pub fn reset(&mut self) {
         self.state = VoiceState::Idle;
-        self.note = 0;
-        self.velocity = NormalizedValue::MIN;
         self.age = 0;
         self.glide = GlideState::default();
         // Note: We don't reset macro controllers here since they are channel-wide,
@@ -415,6 +525,9 @@ impl Voice {
         context: &ProcessContext,
     ) {
         let samples = context.samples;
+
+        // Get velocity from state (defaults to 1.0 if not playing - shouldn't happen)
+        let velocity = self.state.velocity().unwrap_or(NormalizedValue::MAX);
 
         // === Calculate frequency with pitch bend using strong types ===
         let base_freq = Hertz::new(self.glide.get_frequency());
@@ -470,7 +583,7 @@ impl Voice {
 
         // Apply velocity scaling
         let amp_sens = self.expression.velocity_to_amp.as_f32();
-        let amp_scale = (1.0 - amp_sens) + amp_sens * self.velocity.as_f32();
+        let amp_scale = (1.0 - amp_sens) + amp_sens * velocity.as_f32();
 
         for i in 0..samples {
             left_out[i] *= amp_scale;
@@ -491,9 +604,6 @@ impl Voice {
         Self {
             id: self.id,
             state: VoiceState::Idle,
-            note: 0,
-            velocity: NormalizedValue::MIN,
-            trigger_time: 0,
             age: 0,
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
@@ -501,7 +611,6 @@ impl Voice {
             expression: self.expression,
             graph: cloned_graph,
             steal_fade_samples: self.steal_fade_samples,
-            steal_fade_counter: 0,
             glide: GlideState::default(),
             glide_time: self.glide_time,
             output_module_id: output_id,

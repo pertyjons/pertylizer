@@ -479,9 +479,9 @@ impl Instrument {
             voice.glide.update(delta_time);
             voice.age += samples as u64;
 
-            // Handle stealing fade-out
-            if voice.state == VoiceState::Stealing {
-                if voice.steal_fade_counter == 0 {
+            // Handle stealing fade-out completion
+            if let VoiceState::Stealing { fade_counter, .. } = voice.state {
+                if fade_counter == 0 {
                     voice.reset();
                     continue;
                 }
@@ -495,18 +495,27 @@ impl Instrument {
             voice.process_audio(&mut temp_left, &mut temp_right, context);
 
             // Apply stealing fade-out if needed
-            if voice.state == VoiceState::Stealing {
-                let fade_samples = voice.steal_fade_counter.min(samples);
+            if let VoiceState::Stealing {
+                fade_counter,
+                fade_total,
+            } = voice.state
+            {
+                let fade_samples = fade_counter.min(samples);
                 for i in 0..samples {
                     let fade = if i < fade_samples {
-                        (voice.steal_fade_counter - i) as f32 / voice.steal_fade_samples as f32
+                        (fade_counter - i) as f32 / fade_total as f32
                     } else {
                         0.0
                     };
                     temp_left[i] *= fade;
                     temp_right[i] *= fade;
                 }
-                voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
+                // Update the fade counter in the state
+                let new_counter = fade_counter.saturating_sub(samples);
+                voice.state = VoiceState::Stealing {
+                    fade_counter: new_counter,
+                    fade_total,
+                };
             }
 
             // Sum into instrument buffers
