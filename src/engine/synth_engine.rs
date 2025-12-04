@@ -25,7 +25,7 @@ use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
 use crate::engine::instrument::{MidiChannel, InstrumentId, Instrument};
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use crate::types::{Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
+use crate::types::{Bpm, Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
     Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
     PolyModule as PolyModuleTrait,
@@ -1087,9 +1087,9 @@ impl AudioProcessor for SynthEngine {
         }
 
         let process_context = ProcessContext {
-            sample_rate: context.sample_rate.as_f32(),
+            sample_rate: crate::types::SampleRate::new(context.sample_rate.as_f32()),
             samples: context.frames,
-            tempo: 120.0,
+            tempo: Bpm::DEFAULT,
             is_playing: self.state.transport.is_playing(),
             position_beats: self.state.transport.position_beats.load(),
         };

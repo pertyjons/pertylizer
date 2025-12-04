@@ -87,7 +87,7 @@ impl PolyModule for Amplifier {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_left.resize(context.samples);
         self.output_right.resize(context.samples);
 

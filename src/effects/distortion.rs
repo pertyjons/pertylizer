@@ -169,7 +169,7 @@ impl Describable for Distortion {
 
 impl AudioEffect for Distortion {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         let mix = self.mix.as_f32();
 
         for i in 0..input.len().min(output.len()) {
@@ -353,7 +353,7 @@ impl Describable for Chorus {
 
 impl AudioEffect for Chorus {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.resize_buffer();
 
         let base_delay_ms = 7.0;
@@ -469,7 +469,7 @@ mod tests {
             let mut output = [0.0f32; 100];
 
             let context = ProcessContext {
-                sample_rate: 48000.0,
+                sample_rate: SampleRate::DVD_QUALITY,
                 samples: 100,
                 ..Default::default()
             };

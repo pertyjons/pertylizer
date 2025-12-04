@@ -188,12 +188,12 @@ impl Describable for Delay {
 
 impl AudioEffect for Delay {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.resize_buffers();
 
         // Calculate effective delay time (synced or manual)
         let effective_time = if self.tempo_sync {
-            self.synced_delay_time(context.tempo)
+            self.synced_delay_time(context.tempo.as_f32())
         } else {
             self.time_left
         };
@@ -392,7 +392,7 @@ mod tests {
         delay.resize_buffers();
 
         let context = ProcessContext {
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             samples: 256,
             ..Default::default()
         };

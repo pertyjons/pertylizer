@@ -286,8 +286,8 @@ impl Describable for Reverb {
 
 impl AudioEffect for Reverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        if (self.sample_rate.as_f32() - context.sample_rate).abs() > 1.0 {
-            self.sample_rate = SampleRate::new(context.sample_rate);
+        if (self.sample_rate.as_f32() - context.sample_rate.as_f32()).abs() > 1.0 {
+            self.sample_rate = context.sample_rate;
             self.resize_for_sample_rate();
         }
 
@@ -450,7 +450,7 @@ mod tests {
         reverb.resize_for_sample_rate();
 
         let context = ProcessContext {
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             samples: 256,
             ..Default::default()
         };

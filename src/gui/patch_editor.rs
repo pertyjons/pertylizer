@@ -296,10 +296,15 @@ impl PatchEditor {
     }
 
     /// Draw the rack view.
+    ///
+    /// The `instrument_id` is used to namespace egui widget IDs, preventing
+    /// collisions when multiple instruments have modules with the same ModuleId
+    /// (e.g., both have "osc-1").
     pub fn show(
         &mut self,
         ui: &mut Ui,
         handle: &EngineHandle,
+        instrument_id: u64,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
@@ -372,7 +377,8 @@ impl PatchEditor {
             let dimmed_accent = accent_color.gamma_multiply(opacity);
 
             let mut open = true;
-            let window_id = egui::Id::new(("module_window", module_id.to_string()));
+            // Include instrument_id in the hash to prevent ID collisions across instruments
+            let window_id = egui::Id::new((instrument_id, "module_window", module_id.to_string()));
 
             // Create frame with dimming for disconnected modules
             let frame = egui::Frame::window(&ui.ctx().style())

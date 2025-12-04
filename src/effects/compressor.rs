@@ -159,7 +159,7 @@ impl Describable for Compressor {
 
 impl AudioEffect for Compressor {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
 
         let attack_coeff = self.attack_coeff();
         let release_coeff = self.release_coeff();

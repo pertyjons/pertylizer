@@ -528,7 +528,7 @@ impl eframe::App for SynthApp {
                 .map(|i| &mut i.patch_editor)
                 .expect("Active instrument not found");
 
-            let result = patch_editor.show(ui, &self.handle);
+            let result = patch_editor.show(ui, &self.handle, active_id.as_u64());
 
             // Handle parameter changes - send Param directly (carries its own value)
             for (module_id, param) in result.param_changes {

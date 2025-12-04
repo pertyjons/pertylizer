@@ -11,7 +11,22 @@
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:github.com)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/eq.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/phaser.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/compressor.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/reverb.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/delay.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/flanger.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/effects/distortion.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/oscillator.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/envelope.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/lfo.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/sub_osc.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/amplifier.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/math_oscillator.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/filter.rs )",
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/noise.rs)"
     ],
     "deny": [],
     "ask": []

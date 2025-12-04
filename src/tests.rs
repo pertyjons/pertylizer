@@ -11,14 +11,14 @@
 mod audio_safety {
     use crate::modules::{Oscillator, Filter, Envelope, AudioBuffer, ProcessContext, PolyModule, AudioEffect};
     use crate::effects::{Delay, Reverb, Chorus, Distortion};
-    use crate::types::MidiNote;
+    use crate::types::{Bpm, MidiNote, SampleRate};
     use std::collections::HashMap;
 
     fn make_context(samples: usize) -> ProcessContext {
         ProcessContext {
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             samples,
-            tempo: 120.0,
+            tempo: Bpm::DEFAULT,
             is_playing: false,
             position_beats: 0.0,
         }

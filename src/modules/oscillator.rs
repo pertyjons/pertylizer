@@ -224,7 +224,7 @@ impl PolyModule for Oscillator {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
         let fm_input = inputs.get("fm");

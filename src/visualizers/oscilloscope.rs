@@ -129,7 +129,7 @@ impl Describable for Oscilloscope {
 
 impl AudioEffect for Oscilloscope {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
+        self.sample_rate = context.sample_rate.as_f32();
 
         // Pass-through: copy input to output
         output.copy_from_slice(input);

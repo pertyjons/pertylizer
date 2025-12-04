@@ -159,7 +159,7 @@ impl Describable for Phaser {
 
 impl AudioEffect for Phaser {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
 
         // Process stereo interleaved

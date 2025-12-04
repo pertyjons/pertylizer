@@ -11,7 +11,7 @@ use std::f32::consts::PI;
 
 use crate::engine::typed_params::{Param, FilterParam, FilterMode, ModuleType};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, Gain, Hertz, MidiNote, NormalizedValue, SampleRate};
+use crate::types::{BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, SampleRate};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
@@ -183,7 +183,7 @@ impl PolyModule for Filter {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
         let audio_in = inputs.get("in");
@@ -275,8 +275,10 @@ pub struct LadderFilter {
     resonance: NormalizedValue,
     drive: Gain,
     sample_rate: SampleRate,
-    stage: [f32; 4],
-    delay: [f32; 4],
+    /// 4-stage filter state (type-safe DSP state)
+    stage: [FilterState; 4],
+    /// 4-stage delay state (type-safe DSP state)
+    delay: [FilterState; 4],
     output_buffer: AudioBuffer,
 }
 
@@ -287,8 +289,8 @@ impl LadderFilter {
             resonance: NormalizedValue::MIN,
             drive: Gain::UNITY,
             sample_rate: SampleRate::DVD_QUALITY,
-            stage: [0.0; 4],
-            delay: [0.0; 4],
+            stage: [FilterState::ZERO; 4],
+            delay: [FilterState::ZERO; 4],
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -312,24 +314,27 @@ impl LadderFilter {
             input
         };
 
-        let feedback = k * self.delay[3];
+        let feedback = k * self.delay[3].as_f32();
         let input_with_fb = driven - feedback;
 
         for i in 0..4 {
             let prev = if i == 0 {
                 input_with_fb
             } else {
-                self.stage[i - 1]
+                self.stage[i - 1].as_f32()
             };
-            self.stage[i] = (prev - self.delay[i]) * g / (1.0 + g) + self.delay[i];
-            self.delay[i] = self.stage[i];
+            let delay_val = self.delay[i].as_f32();
+            let new_stage = (prev - delay_val) * g / (1.0 + g) + delay_val;
 
-            if self.drive.as_f32() > 1.0 {
-                self.stage[i] = Self::saturate(self.stage[i]);
-            }
+            self.stage[i] = FilterState::new(if self.drive.as_f32() > 1.0 {
+                Self::saturate(new_stage)
+            } else {
+                new_stage
+            });
+            self.delay[i] = self.stage[i];
         }
 
-        self.stage[3]
+        self.stage[3].as_f32()
     }
 }
 
@@ -392,7 +397,7 @@ impl PolyModule for LadderFilter {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
         let audio_in = inputs.get("in");
@@ -455,8 +460,8 @@ impl PolyModule for LadderFilter {
     }
 
     fn reset(&mut self) {
-        self.stage = [0.0; 4];
-        self.delay = [0.0; 4];
+        self.stage.fill(FilterState::ZERO);
+        self.delay.fill(FilterState::ZERO);
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}

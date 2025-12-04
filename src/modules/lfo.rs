@@ -147,7 +147,7 @@ impl PolyModule for Lfo {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
         let retrigger_input = inputs.get("retrigger");
@@ -164,7 +164,7 @@ impl PolyModule for Lfo {
             }
 
             let base_rate = if self.tempo_sync {
-                Hertz::new(context.tempo / 60.0 / self.sync_division.as_f32())
+                Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
             } else {
                 self.rate
             };

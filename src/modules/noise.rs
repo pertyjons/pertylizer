@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{ModuleType, NoiseParam, NoiseType, Param};
 use crate::modules::core::*;
-use crate::types::{Gain, MidiNote, SampleRate};
+use crate::types::{FilterState, Gain, MidiNote, SampleRate};
 
 /// Advanced noise generator with spectral coloring.
 #[derive(Clone)]
@@ -24,16 +24,16 @@ pub struct NoiseGenerator {
     level: Gain,
 
     // State for pink noise (Voss-McCartney algorithm)
-    pink_rows: [f32; 16],
-    pink_running_sum: f32,
+    pink_rows: [FilterState; 16],
+    pink_running_sum: FilterState,
     pink_index: u32,
 
     // State for brown noise (integrator)
-    brown_state: f32,
+    brown_state: FilterState,
 
     // State for blue/violet noise (differentiator)
-    blue_prev: f32,
-    violet_prev: [f32; 2],
+    blue_prev: FilterState,
+    violet_prev: [FilterState; 2],
 
     // Sample rate
     sample_rate: SampleRate,
@@ -47,12 +47,12 @@ impl NoiseGenerator {
         Self {
             noise_type: NoiseType::White,
             level: Gain::new(0.8),
-            pink_rows: [0.0; 16],
-            pink_running_sum: 0.0,
+            pink_rows: [FilterState::ZERO; 16],
+            pink_running_sum: FilterState::ZERO,
             pink_index: 0,
-            brown_state: 0.0,
-            blue_prev: 0.0,
-            violet_prev: [0.0; 2],
+            brown_state: FilterState::ZERO,
+            blue_prev: FilterState::ZERO,
+            violet_prev: [FilterState::ZERO; 2],
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(256),
         }
@@ -78,15 +78,16 @@ impl NoiseGenerator {
         // Find which rows need updating (trailing zeros indicate the row)
         for i in 0..16 {
             if (changed & (1 << i)) != 0 {
-                self.pink_running_sum -= self.pink_rows[i];
-                self.pink_rows[i] = (fastrand::f32() * 2.0 - 1.0) * 0.5;
-                self.pink_running_sum += self.pink_rows[i];
+                let running_sum = self.pink_running_sum.as_f32() - self.pink_rows[i].as_f32();
+                let new_row = (fastrand::f32() * 2.0 - 1.0) * 0.5;
+                self.pink_rows[i] = FilterState::new(new_row);
+                self.pink_running_sum = FilterState::new(running_sum + new_row);
                 break;
             }
         }
 
         // Combine and normalize
-        (self.pink_running_sum + white) / 5.0
+        (self.pink_running_sum.as_f32() + white) / 5.0
     }
 
     /// Generate brown noise by integrating white noise.
@@ -97,10 +98,11 @@ impl NoiseGenerator {
 
         // Leaky integrator to prevent DC drift
         // Coefficient tuned for stable output
-        self.brown_state = self.brown_state * 0.99 + white * 0.1;
+        let new_state = self.brown_state.as_f32() * 0.99 + white * 0.1;
+        self.brown_state = FilterState::new(new_state);
 
         // Normalize output (brown noise tends to have lower amplitude)
-        self.brown_state * 3.5
+        new_state * 3.5
     }
 
     /// Generate blue noise by differentiating white noise.
@@ -110,8 +112,8 @@ impl NoiseGenerator {
         let white = Self::white_noise();
 
         // Simple differentiator (high-pass character)
-        let output = white - self.blue_prev;
-        self.blue_prev = white;
+        let output = white - self.blue_prev.as_f32();
+        self.blue_prev = FilterState::new(white);
 
         // Normalize (differentiation increases amplitude)
         output * 0.5
@@ -124,11 +126,11 @@ impl NoiseGenerator {
         let white = Self::white_noise();
 
         // Double differentiator
-        let diff1 = white - self.violet_prev[0];
-        let output = diff1 - self.violet_prev[1];
+        let diff1 = white - self.violet_prev[0].as_f32();
+        let output = diff1 - self.violet_prev[1].as_f32();
 
         self.violet_prev[1] = self.violet_prev[0];
-        self.violet_prev[0] = white;
+        self.violet_prev[0] = FilterState::new(white);
 
         // Normalize (double differentiation significantly increases amplitude)
         output * 0.35
@@ -198,7 +200,7 @@ impl PolyModule for NoiseGenerator {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = SampleRate::new(context.sample_rate);
+        self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
         for i in 0..context.samples {
@@ -243,12 +245,12 @@ impl PolyModule for NoiseGenerator {
 
     fn reset(&mut self) {
         // Reset all filter states to avoid clicks
-        self.pink_rows = [0.0; 16];
-        self.pink_running_sum = 0.0;
+        self.pink_rows.fill(FilterState::ZERO);
+        self.pink_running_sum = FilterState::ZERO;
         self.pink_index = 0;
-        self.brown_state = 0.0;
-        self.blue_prev = 0.0;
-        self.violet_prev = [0.0; 2];
+        self.brown_state = FilterState::ZERO;
+        self.blue_prev = FilterState::ZERO;
+        self.violet_prev.fill(FilterState::ZERO);
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: f32) {

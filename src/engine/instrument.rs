@@ -475,7 +475,7 @@ impl Instrument {
             active_count += 1;
 
             // Update glide and increment age
-            let delta_time = samples as f32 / context.sample_rate;
+            let delta_time = samples as f32 / context.sample_rate.as_f32();
             voice.glide.update(delta_time);
             voice.age = voice.age + SampleCount::new(samples);
 

@@ -1,5 +1,55 @@
 # Version History
 
+## [0.32.23] - 2024
+
+### Fixed - PatchEditor GUI ID Collision
+
+När man bytte mellan instrument kunde moduler från det föregående instrumentet synas eller krocka eftersom de delade samma `ModuleId` (t.ex. "osc-1") och därmed samma `egui::Id`.
+
+**Lösning:**
+- `PatchEditor::show()` tar nu `instrument_id: u64` som argument
+- Window ID inkluderar instrument_id: `egui::Id::new((instrument_id, "module_window", module_id))`
+- Varje instruments moduler får nu unika GUI-identifierare
+
+### Refactored - Fortsatt Type Hardening
+
+**LadderFilter med FilterState:**
+| Fält | Före → Efter |
+|------|--------------|
+| `stage` | `[f32; 4]` → `[FilterState; 4]` |
+| `delay` | `[f32; 4]` → `[FilterState; 4]` |
+
+**NoiseGenerator med FilterState:**
+| Fält | Före → Efter |
+|------|--------------|
+| `pink_rows` | `[f32; 16]` → `[FilterState; 16]` |
+| `pink_running_sum` | `f32` → `FilterState` |
+| `brown_state` | `f32` → `FilterState` |
+| `blue_prev` | `f32` → `FilterState` |
+| `violet_prev` | `[f32; 2]` → `[FilterState; 2]` |
+
+**ProcessContext med SampleRate och Bpm:**
+| Fält | Före → Efter |
+|------|--------------|
+| `sample_rate` | `f32` → `SampleRate` |
+| `tempo` | `f32` → `Bpm` |
+
+**Förenkling i 17 modulfiler:**
+```rust
+// Före
+self.sample_rate = SampleRate::new(context.sample_rate);
+
+// Efter
+self.sample_rate = context.sample_rate;
+```
+
+**Verification:**
+- ✅ Alla 260 enhetstester passerar
+- ✅ GUI-element separerade per instrument
+- ✅ DSP-state använder typade FilterState
+
+---
+
 ## [0.32.22] - 2024
 
 ### Refactored - Total Type Hardening

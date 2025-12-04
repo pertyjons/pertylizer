@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
 use crate::engine::typed_params::{Param, ModuleType as TypedModuleType};
-use crate::types::MidiNote;
+use crate::types::{Bpm, MidiNote, SampleRate};
 
 // ============================================================================
 // Buffer types
@@ -110,12 +110,12 @@ impl std::ops::IndexMut<usize> for AudioBuffer {
 /// Context passed to modules during processing.
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessContext {
-    /// Sample rate in Hz.
-    pub sample_rate: f32,
+    /// Sample rate (type-safe Hz).
+    pub sample_rate: SampleRate,
     /// Number of samples to process.
     pub samples: usize,
-    /// Current tempo in BPM.
-    pub tempo: f32,
+    /// Current tempo (type-safe BPM).
+    pub tempo: Bpm,
     /// Is transport playing.
     pub is_playing: bool,
     /// Current position in beats.
@@ -125,9 +125,9 @@ pub struct ProcessContext {
 impl Default for ProcessContext {
     fn default() -> Self {
         Self {
-            sample_rate: 48000.0,
+            sample_rate: SampleRate::DVD_QUALITY,
             samples: 256,
-            tempo: 120.0,
+            tempo: Bpm::DEFAULT,
             is_playing: false,
             position_beats: 0.0,
         }
