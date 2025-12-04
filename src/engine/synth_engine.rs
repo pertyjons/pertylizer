@@ -22,6 +22,7 @@ use crate::engine::params::{
     Param, Waveform,
 };
 use crate::engine::sequencer_engine::SequencerEngine;
+use crate::sequencer::SequencerEvent;
 use crate::engine::state::EngineState;
 use crate::engine::instrument::{MidiChannel, InstrumentId, Instrument};
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
@@ -322,6 +323,8 @@ pub struct SynthEngine {
 
     // === Sequencer ===
     sequencer: SequencerEngine,
+    /// Pre-allocated buffer for sequencer events (real-time safe).
+    sequencer_event_buffer: Vec<SequencerEvent>,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -354,9 +357,9 @@ impl SynthEngine {
         let instrument_return_rb = HeapRb::<Box<Instrument>>::new(RETURN_BUFFER_SIZE);
         let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
-        // Create default instrument with OMNI channel (responds to all MIDI channels)
+        // Create default instrument on Channel 1 (strict channel separation)
         let mut default_instrument = Instrument::with_config(InstrumentId::FIRST, "Default", config);
-        default_instrument.set_midi_channel(MidiChannel::OMNI);
+        default_instrument.set_midi_channel(MidiChannel::CH1);
 
         // Populate the instrument's voice graph with default signal chain
         Self::populate_default_voice_graph(default_instrument.voice_graph_mut());
@@ -384,6 +387,7 @@ impl SynthEngine {
             graph_output: AudioBuffer::new(256),
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(crate::types::SampleRate::DVD_QUALITY),
+            sequencer_event_buffer: Vec::with_capacity(128),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -1050,13 +1054,14 @@ impl AudioProcessor for SynthEngine {
         // Process commands
         self.process_commands();
 
-        // Process sequencer with type-safe sample count
+        // Process sequencer with type-safe sample count (real-time safe: reuses buffer)
         let sample_count = SampleCount::new(context.frames);
-        let sequencer_events = self.sequencer.process(sample_count);
+        self.sequencer_event_buffer.clear();
+        self.sequencer.process(sample_count, &mut self.sequencer_event_buffer);
 
         // Route sequencer events to the appropriate instruments
         // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)
-        for event in sequencer_events {
+        for event in &self.sequencer_event_buffer {
             match event {
                 crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, instrument, .. } => {
                     let note = MidiNote::new(pitch.as_midi());
@@ -1197,11 +1202,11 @@ mod tests {
     fn test_default_instrument_exists() {
         let (engine, _handle) = SynthEngine::new();
 
-        // Engine should have one default instrument
+        // Engine should have one default instrument on Channel 1
         assert_eq!(engine.instruments.len(), 1);
         assert_eq!(engine.instruments[0].id(), crate::engine::instrument::InstrumentId::FIRST);
         assert_eq!(engine.instruments[0].name(), "Default");
-        assert!(engine.instruments[0].midi_channel().is_omni());
+        assert_eq!(engine.instruments[0].midi_channel(), MidiChannel::CH1);
     }
 
     #[test]

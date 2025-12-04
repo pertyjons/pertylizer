@@ -178,17 +178,21 @@ impl SequencerEngine {
         self.looping
     }
 
-    /// Process a buffer of samples and return generated events.
+    /// Process a buffer of samples and append generated events to the buffer.
     ///
     /// This is the main entry point called from the audio thread.
     /// It advances the sequencer position by the given number of samples
-    /// and returns any events that should occur during this time window.
-    pub fn process(&mut self, samples: SampleCount) -> Vec<SequencerEvent> {
+    /// and appends any events that should occur during this time window.
+    ///
+    /// # Real-time Safety
+    ///
+    /// This method does not allocate memory. The caller should provide a
+    /// pre-allocated buffer (typically cleared before each call) to collect
+    /// events without heap allocations in the audio thread.
+    pub fn process(&mut self, samples: SampleCount, events: &mut Vec<SequencerEvent>) {
         if self.play_state != PlayState::Playing {
-            return Vec::new();
+            return;
         }
-
-        let mut events = Vec::new();
 
         // Calculate how many ticks to advance
         // Formula: delta_ticks = (samples / sample_rate) * (bpm / 60) * TICKS_PER_QUARTER
@@ -203,10 +207,10 @@ impl SequencerEngine {
             self.tick_accumulator -= 1.0;
 
             // First, collect events at current tick from the song
-            self.collect_events_at_tick(&mut events);
+            self.collect_events_at_tick(events);
 
             // Check for note-offs from active notes
-            self.check_note_offs(&mut events);
+            self.check_note_offs(events);
 
             // Advance position
             self.current_tick = Tick(self.current_tick.0 + 1);
@@ -214,7 +218,7 @@ impl SequencerEngine {
             // Handle looping
             if self.looping && self.current_tick >= self.loop_end {
                 // Release all notes at loop point
-                events.extend(self.release_all_notes());
+                self.release_all_notes_into(events);
                 self.active_notes.clear();
                 self.current_tick = self.loop_start;
             }
@@ -222,8 +226,6 @@ impl SequencerEngine {
             // Update tempo if it changed at this tick
             self.update_cached_tempo();
         }
-
-        events
     }
 
     /// Update the cached tempo from the song.
@@ -330,7 +332,21 @@ impl SequencerEngine {
         }
     }
 
-    /// Release all currently active notes.
+    /// Release all currently active notes, appending to the provided buffer.
+    fn release_all_notes_into(&self, events: &mut Vec<SequencerEvent>) {
+        for note in &self.active_notes {
+            events.push(SequencerEvent::NoteOff {
+                tick: self.current_tick,
+                pitch: note.pitch,
+                instrument: note.instrument,
+            });
+        }
+    }
+
+    /// Release all currently active notes and return them as a new vector.
+    ///
+    /// Note: This allocates and should only be called from non-audio threads
+    /// (e.g., stop() and seek() which are typically called from the UI thread).
     fn release_all_notes(&self) -> Vec<SequencerEvent> {
         self.active_notes
             .iter()
@@ -420,7 +436,8 @@ mod tests {
         // Process enough samples to advance several ticks
         // At 120 BPM, 48000 Hz: 1 second = 1920 ticks
         // 480 samples = 10ms = ~19 ticks
-        let _ = seq.process(SampleCount::new(480));
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(480), &mut events);
 
         assert!(seq.current_tick().0 > 0);
     }
@@ -435,7 +452,8 @@ mod tests {
         // Process enough samples to advance past tick 0
         // At 120 BPM, 48000 Hz: we need ~25 samples per tick
         // Process 1000 samples to ensure we pass tick 0
-        let events = seq.process(SampleCount::new(1000));
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
 
         // Should have at least one NoteOn event
         let note_ons: Vec<_> = events.iter().filter(|e| e.is_note_on()).collect();
@@ -450,7 +468,8 @@ mod tests {
         seq.play();
 
         // Process enough samples to trigger the note at tick 0
-        let _ = seq.process(SampleCount::new(1000));
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
 
         // Stop should release notes
         let stop_events = seq.stop();
@@ -483,8 +502,10 @@ mod tests {
         seq.play();
 
         // Process enough to go past the loop point
+        let mut events = Vec::new();
         for _ in 0..100 {
-            let _ = seq.process(SampleCount::new(48));
+            events.clear();
+            seq.process(SampleCount::new(48), &mut events);
         }
 
         // Position should be within loop range

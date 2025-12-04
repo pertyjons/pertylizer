@@ -1,5 +1,56 @@
 # Version History
 
+## [0.32.25] - 2024
+
+### Fixed - Instrument Channel Isolation (OMNI Bug)
+
+Standardinstrumentet initierades med `MidiChannel::OMNI`, vilket orsakade att det spelade tillsammans med alla nya instrument (eftersom det lyssnade på alla kanaler).
+
+**Problem:**
+- Instrument 1 var inställt på OMNI i motorn men GUI visade "Ch 1"
+- När Instrument 2 lades till och spelade på Kanal 2, lyssnade Instrument 1 också
+- Resultatet var oönskad layering av ljud
+
+**Lösning:**
+```rust
+// Före
+default_instrument.set_midi_channel(MidiChannel::OMNI);
+
+// Efter
+default_instrument.set_midi_channel(MidiChannel::CH1);
+```
+
+### Optimized - Real-time Safe Sequencer
+
+Refaktorerade `SequencerEngine::process()` för att undvika heap-allokeringar i audio-tråden.
+
+**Problem:**
+`process()` skapade en ny `Vec<SequencerEvent>` vid varje audio callback, vilket kan orsaka ljudhack vid låg latency.
+
+**Lösning:**
+
+| Komponent | Ändring |
+|-----------|---------|
+| `SequencerEngine::process()` | Tar nu `&mut Vec<SequencerEvent>` istället för att returnera `Vec` |
+| `SynthEngine` | Äger en `sequencer_event_buffer: Vec<SequencerEvent>` med kapacitet 128 |
+| Audio callback | Återanvänder samma buffer varje callback |
+
+```rust
+// Före (allokerar varje callback)
+let events = self.sequencer.process(sample_count);
+
+// Efter (real-time safe)
+self.sequencer_event_buffer.clear();
+self.sequencer.process(sample_count, &mut self.sequencer_event_buffer);
+```
+
+**Verification:**
+- ✅ Alla 260 enhetstester passerar
+- ✅ Ingen heap-allokering i audio-tråden under normal playback
+- ✅ Instrument isolerade på sina respektive MIDI-kanaler
+
+---
+
 ## [0.32.24] - 2024
 
 ### Refactored - DSP Type Hardening & Encapsulation
