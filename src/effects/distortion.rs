@@ -102,8 +102,8 @@ impl Distortion {
     fn apply_tone(&mut self, input: f32) -> f32 {
         // Map tone parameter to cutoff frequency
         let tone = self.tone.as_f32();
-        let cutoff = 200.0 + tone * tone * 15000.0;
-        let coef = (-std::f32::consts::TAU * cutoff / self.sample_rate.as_f32()).exp();
+        let cutoff = Hertz::new(200.0 + tone * tone * 15000.0);
+        let coef = cutoff.to_exp_coeff(self.sample_rate);
         self.filter_state = input * (1.0 - coef) + self.filter_state * coef;
         self.filter_state
     }

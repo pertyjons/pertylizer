@@ -8,7 +8,7 @@
 
 use crate::engine::typed_params::{ModuleType, Param, ReverbParam};
 use crate::modules::core::*;
-use crate::types::{NormalizedValue, SampleRate, Seconds};
+use crate::types::{FilterState, NormalizedValue, SampleRate, Seconds};
 
 /// Comb filter for reverb.
 struct CombFilter {
@@ -16,7 +16,7 @@ struct CombFilter {
     index: usize,
     feedback: f32,
     damp: f32,
-    filter_state: f32,
+    filter_state: FilterState,
 }
 
 impl CombFilter {
@@ -26,7 +26,7 @@ impl CombFilter {
             index: 0,
             feedback,
             damp,
-            filter_state: 0.0,
+            filter_state: FilterState::ZERO,
         }
     }
 
@@ -50,9 +50,10 @@ impl CombFilter {
         let output = self.buffer[self.index];
 
         // Lowpass filter in feedback path for damping
-        self.filter_state = output * (1.0 - self.damp) + self.filter_state * self.damp;
+        let new_state = output * (1.0 - self.damp) + self.filter_state.as_f32() * self.damp;
+        self.filter_state = FilterState::new(new_state);
 
-        self.buffer[self.index] = input + self.filter_state * self.feedback;
+        self.buffer[self.index] = input + self.filter_state.as_f32() * self.feedback;
 
         self.index = (self.index + 1) % self.buffer.len();
 
@@ -61,7 +62,7 @@ impl CombFilter {
 
     fn clear(&mut self) {
         self.buffer.fill(0.0);
-        self.filter_state = 0.0;
+        self.filter_state = FilterState::ZERO;
     }
 }
 

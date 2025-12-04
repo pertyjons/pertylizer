@@ -154,6 +154,12 @@ impl Milliseconds {
     pub fn to_seconds(self) -> Seconds {
         Seconds::new(self.0 / 1000.0)
     }
+
+    /// Convert to sample count.
+    #[inline]
+    pub fn to_samples(self, sample_rate: SampleRate) -> usize {
+        ((self.0 / 1000.0) * sample_rate.as_f32()).round() as usize
+    }
 }
 
 impl From<Seconds> for Milliseconds {

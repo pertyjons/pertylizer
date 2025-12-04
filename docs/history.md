@@ -1,5 +1,55 @@
 # Version History
 
+## [0.32.24] - 2024
+
+### Refactored - DSP Type Hardening & Encapsulation
+
+Fortsatt type hardening och DSP-inkapsling för effektmoduler och typer.
+
+**Del 1: Type Hardening - Effects (State)**
+
+| Modul | Fält | Före → Efter |
+|-------|------|--------------|
+| Reverb CombFilter | `filter_state` | `f32` → `FilterState` |
+| Phaser AllPassStage | `delay` | `f32` → `FilterState` |
+
+**Del 2: DSP-Inkapsling (New Methods)**
+
+| Typ | Ny Metod | Beskrivning |
+|-----|----------|-------------|
+| `Hertz` | `to_tan_coeff(sample_rate)` | `tan(π * freq / sr)` för filter design |
+| `Hertz` | `to_exp_coeff(sample_rate)` | `exp(-2π * freq / sr)` för one-pole filter |
+| `Milliseconds` | `to_samples(sample_rate)` | Konvertera till sample count |
+| `FilterState` | `process_allpass(input, coeff)` | First-order allpass filter |
+
+**Del 3: Applicerade DSP-Inkapsling**
+
+| Modul | Ändring |
+|-------|---------|
+| Filter (SVF, Ladder) | Använder `Hertz::to_tan_coeff()` |
+| Phaser | Använder `Hertz::to_tan_coeff()` och `FilterState::process_allpass()` |
+| Distortion | Använder `Hertz::to_exp_coeff()` för tone filter |
+| Delay | Använder `Hertz::to_exp_coeff()` och `FilterState::one_pole()` |
+
+**Del 4: Fixed Tempo Link**
+
+```rust
+// Före
+tempo: Bpm::DEFAULT,
+
+// Efter
+tempo: Bpm::new(self.state.transport.get_tempo()),
+```
+
+SynthEngine använder nu transport-tempo istället för hårdkodat default-värde.
+
+**Verification:**
+- ✅ Alla 260 enhetstester passerar
+- ✅ DSP-beräkningar nu inkapslade i typmetoder
+- ✅ Tempo-synkade effekter fungerar korrekt
+
+---
+
 ## [0.32.23] - 2024
 
 ### Fixed - PatchEditor GUI ID Collision

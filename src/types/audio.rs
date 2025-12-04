@@ -259,6 +259,19 @@ impl FilterState {
         self.0 = input + (self.0 - input) * coeff;
         self.0
     }
+
+    /// Process through first-order allpass filter.
+    ///
+    /// Implements: y[n] = coeff * (x[n] - y[n-1]) + y[n-1]
+    /// The state stores the previous output (y[n-1]).
+    /// Used in phasers for frequency-dependent phase shifting.
+    #[inline]
+    pub fn process_allpass(&mut self, input: f32, coeff: f32) -> f32 {
+        let prev_output = self.0;
+        let output = coeff * (input - prev_output) + prev_output;
+        self.0 = output;
+        output
+    }
 }
 
 impl From<f32> for FilterState {

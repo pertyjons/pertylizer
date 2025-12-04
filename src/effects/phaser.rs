@@ -5,30 +5,36 @@ use crate::modules::{
     Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{BipolarValue, Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{BipolarValue, FilterState, Hertz, NormalizedValue, Phase, SampleRate};
 
 /// Number of all-pass filter stages (fixed at 6 for classic phaser sound).
 const NUM_STAGES: usize = 6;
 
 /// A single first-order all-pass filter stage.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct AllPassStage {
-    delay: f32,
+    delay: FilterState,
+}
+
+impl Default for AllPassStage {
+    fn default() -> Self {
+        Self {
+            delay: FilterState::ZERO,
+        }
+    }
 }
 
 impl AllPassStage {
     /// Process a sample through the all-pass filter.
-    /// First-order all-pass: y[n] = a * (x[n] - y[n-1]) + x[n-1]
+    /// First-order all-pass: y[n] = coeff * (x[n] - y[n-1]) + y[n-1]
     /// The coefficient determines the center frequency of the phase shift.
     #[inline]
     fn process(&mut self, input: f32, coeff: f32) -> f32 {
-        let output = coeff * (input - self.delay) + self.delay;
-        self.delay = output;
-        output
+        self.delay.process_allpass(input, coeff)
     }
 
     fn reset(&mut self) {
-        self.delay = 0.0;
+        self.delay.reset();
     }
 }
 
@@ -75,8 +81,8 @@ impl Phaser {
 
     /// Calculate all-pass coefficient from frequency.
     #[inline]
-    fn freq_to_coeff(&self, freq: f32) -> f32 {
-        let tan_val = (std::f32::consts::PI * freq / self.sample_rate.as_f32()).tan();
+    fn freq_to_coeff(&self, freq: Hertz) -> f32 {
+        let tan_val = freq.to_tan_coeff(self.sample_rate);
         (tan_val - 1.0) / (tan_val + 1.0)
     }
 }
@@ -181,8 +187,8 @@ impl AudioEffect for Phaser {
 
             // Calculate modulated frequency
             let depth = self.depth.as_f32();
-            let freq_mod = self.center_freq.as_f32() * (1.0 + lfo * depth * 0.8);
-            let freq_mod = freq_mod.clamp(100.0, self.sample_rate.as_f32() * 0.45);
+            let freq_mod_hz = self.center_freq.as_f32() * (1.0 + lfo * depth * 0.8);
+            let freq_mod = Hertz::new(freq_mod_hz.clamp(100.0, self.sample_rate.as_f32() * 0.45));
 
             // Calculate coefficient for all-pass filters
             let coeff = self.freq_to_coeff(freq_mod);

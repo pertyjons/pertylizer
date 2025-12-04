@@ -104,6 +104,24 @@ impl Hertz {
             f32::INFINITY
         }
     }
+
+    /// Calculate tangent coefficient for filter design.
+    ///
+    /// Returns `tan(π * freq / sample_rate)`, used in bilinear transform
+    /// for converting analog filter designs to digital.
+    #[inline]
+    pub fn to_tan_coeff(self, sample_rate: SampleRate) -> f32 {
+        (std::f32::consts::PI * self.0 / sample_rate.0).tan()
+    }
+
+    /// Calculate exponential decay coefficient.
+    ///
+    /// Returns `exp(-2π * freq / sample_rate)`, used for one-pole
+    /// lowpass filters where the frequency represents the cutoff.
+    #[inline]
+    pub fn to_exp_coeff(self, sample_rate: SampleRate) -> f32 {
+        (-TAU * self.0 / sample_rate.0).exp()
+    }
 }
 
 impl Clampable for Hertz {

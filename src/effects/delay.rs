@@ -105,9 +105,8 @@ impl Delay {
         cutoff: Hertz,
         sample_rate: SampleRate,
     ) -> f32 {
-        let coef = (-std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32()).exp();
-        state.0 = input * (1.0 - coef) + state.0 * coef;
-        state.0
+        let coef = cutoff.to_exp_coeff(sample_rate);
+        state.one_pole(input, coef)
     }
 }
 

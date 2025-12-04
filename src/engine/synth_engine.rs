@@ -1089,7 +1089,7 @@ impl AudioProcessor for SynthEngine {
         let process_context = ProcessContext {
             sample_rate: crate::types::SampleRate::new(context.sample_rate.as_f32()),
             samples: context.frames,
-            tempo: Bpm::DEFAULT,
+            tempo: Bpm::new(self.state.transport.get_tempo()),
             is_playing: self.state.transport.is_playing(),
             position_beats: self.state.transport.position_beats.load(),
         };

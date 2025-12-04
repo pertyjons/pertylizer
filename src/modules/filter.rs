@@ -7,7 +7,6 @@
 //! - Key tracking
 
 use std::collections::HashMap;
-use std::f32::consts::PI;
 
 use crate::engine::typed_params::{Param, FilterParam, FilterMode, ModuleType};
 use crate::modules::core::*;
@@ -60,11 +59,12 @@ impl Filter {
 
     #[inline]
     fn process_sample(&mut self, input: f32, cutoff_mod: f32, res_mod: f32) -> f32 {
-        let cutoff = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod))
+        let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod))
             .clamp(20.0, self.sample_rate.as_f32() * 0.49);
+        let cutoff = Hertz::new(cutoff_hz);
         let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 1.0);
 
-        let g = (PI * cutoff / self.sample_rate.as_f32()).tan();
+        let g = cutoff.to_tan_coeff(self.sample_rate);
         let k = 2.0 - 2.0 * resonance;
 
         let a1 = 1.0 / (1.0 + g * (g + k));
@@ -302,10 +302,12 @@ impl LadderFilter {
 
     #[inline]
     fn process_sample(&mut self, input: f32, effective_cutoff: Hertz) -> f32 {
-        let cutoff = effective_cutoff
-            .as_f32()
-            .clamp(20.0, self.sample_rate.as_f32() * 0.49);
-        let g = (PI * cutoff / self.sample_rate.as_f32()).tan();
+        let cutoff = Hertz::new(
+            effective_cutoff
+                .as_f32()
+                .clamp(20.0, self.sample_rate.as_f32() * 0.49),
+        );
+        let g = cutoff.to_tan_coeff(self.sample_rate);
         let k = self.resonance.as_f32() * 4.0;
 
         let driven = if self.drive.as_f32() > 1.0 {
