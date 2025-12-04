@@ -1,5 +1,5 @@
 - När jag skriver 'git commit' vill jag att du lägger till (git add) alla filer som är endrade och committar dessa med en kort beskrivning.
-- När jag skriver 'uppdatera version' vill jag att du skriver till filen docs/history.md med versions nummer och vad som implementerats sedan senaste versionen.
+- När jag skriver 'uppdatera version' vill jag att du skriver till filen docs/history.md med versions nummer och vad som implementerats sedan senaste versionen. Jag vill ävern att du kontrollerar filen docs/TODO.md och checkar av om saker är gjorda.
 - Jag vill att du använder dig av Rusts så mycket som möjligt: New Type Idiom som det finns instruktioner om här: https://doc.rust-lang.org/rust-by-example/generics/new_types.html
 - We don't need backwards compability as we are under a development phase and have not released anything yet.
 - Print the /usage after each prompt so I know how much is left

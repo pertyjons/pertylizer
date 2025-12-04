@@ -415,40 +415,58 @@ pub enum EngineCommand {
     },
 
     // === Visualizer control ===
-    /// Add a visualizer module.
+    /// Add a visualizer module to an instrument's effect chain.
     /// The VisualizationBuffer is shared between engine and GUI via Arc.
+    /// - `instrument_id: Some(id)` - Add to a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     AddVisualizer {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
         visualizer_type: VisualizerType,
         buffer: std::sync::Arc<crate::visualizers::VisualizationBuffer>,
     },
 
-    /// Remove a visualizer module.
+    /// Remove a visualizer module from an instrument's effect chain.
+    /// - `instrument_id: Some(id)` - Remove from a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     RemoveVisualizer {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
     },
 
-    /// Add a pre-created effect instance to the effect chain (real-time safe).
+    /// Add a pre-created effect instance to an instrument's effect chain (real-time safe).
     /// The effect is created in the GUI thread and sent via this command.
+    /// - `instrument_id: Some(id)` - Add to a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     AddEffectInstance {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
         effect: Box<dyn crate::modules::AudioEffect>,
     },
-    
-    /// Remove an effect from the effect chain.
+
+    /// Remove an effect from an instrument's effect chain.
+    /// - `instrument_id: Some(id)` - Remove from a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     RemoveEffect {
+        instrument_id: Option<InstrumentId>,
         id: ModuleId,
     },
-    
+
     /// Set an effect parameter using type-safe API.
     /// The Param contains both the parameter type and its value.
+    /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     SetEffectParameter {
+        instrument_id: Option<InstrumentId>,
         effect_type: EffectType,
         param: Param,
     },
-    
+
     /// Enable or disable an effect.
+    /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
+    /// - `instrument_id: None` - (Reserved for future global master bus)
     SetEffectEnabled {
+        instrument_id: Option<InstrumentId>,
         effect_type: EffectType,
         enabled: bool,
     },
@@ -755,32 +773,42 @@ impl std::fmt::Debug for EngineCommand {
                     .field("bypass", bypass)
                     .finish()
             }
-            Self::AddVisualizer { id, visualizer_type, .. } => {
+            Self::AddVisualizer { instrument_id, id, visualizer_type, .. } => {
                 f.debug_struct("AddVisualizer")
+                    .field("instrument_id", instrument_id)
                     .field("id", id)
                     .field("visualizer_type", visualizer_type)
                     .finish()
             }
-            Self::RemoveVisualizer { id } => {
-                f.debug_struct("RemoveVisualizer").field("id", id).finish()
+            Self::RemoveVisualizer { instrument_id, id } => {
+                f.debug_struct("RemoveVisualizer")
+                    .field("instrument_id", instrument_id)
+                    .field("id", id)
+                    .finish()
             }
-            Self::AddEffectInstance { id, .. } => {
+            Self::AddEffectInstance { instrument_id, id, .. } => {
                 f.debug_struct("AddEffectInstance")
+                    .field("instrument_id", instrument_id)
                     .field("id", id)
                     .field("effect", &"<dyn AudioEffect>")
                     .finish()
             }
-            Self::RemoveEffect { id } => {
-                f.debug_struct("RemoveEffect").field("id", id).finish()
+            Self::RemoveEffect { instrument_id, id } => {
+                f.debug_struct("RemoveEffect")
+                    .field("instrument_id", instrument_id)
+                    .field("id", id)
+                    .finish()
             }
-            Self::SetEffectParameter { effect_type, param } => {
+            Self::SetEffectParameter { instrument_id, effect_type, param } => {
                 f.debug_struct("SetEffectParameter")
+                    .field("instrument_id", instrument_id)
                     .field("effect_type", effect_type)
                     .field("param", param)
                     .finish()
             }
-            Self::SetEffectEnabled { effect_type, enabled } => {
+            Self::SetEffectEnabled { instrument_id, effect_type, enabled } => {
                 f.debug_struct("SetEffectEnabled")
+                    .field("instrument_id", instrument_id)
                     .field("effect_type", effect_type)
                     .field("enabled", enabled)
                     .finish()

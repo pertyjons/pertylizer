@@ -538,9 +538,10 @@ impl eframe::App for SynthApp {
 
                 match category {
                     Some(ModuleCategory::Effect) => {
-                        // Effect module - use SetEffectParameter
+                        // Effect module - use SetEffectParameter (targets active instrument)
                         if let Some(effect_type) = patch_bridge::get_effect_type_from_module(patch_editor, module_id) {
                             self.handle.send(EngineCommand::SetEffectParameter {
+                                instrument_id: Some(active_id),
                                 effect_type,
                                 param,
                             });
@@ -584,11 +585,17 @@ impl eframe::App for SynthApp {
                 // Send appropriate remove command to engine based on category
                 match category {
                     Some(ModuleCategory::Visualizer) => {
-                        self.handle.send(EngineCommand::RemoveVisualizer { id: module_id });
+                        self.handle.send(EngineCommand::RemoveVisualizer {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                        });
                         self.handle.remove_visualization_buffer(module_id);
                     }
                     Some(ModuleCategory::Effect) => {
-                        self.handle.send(EngineCommand::RemoveEffect { id: module_id });
+                        self.handle.send(EngineCommand::RemoveEffect {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                        });
                     }
                     Some(ModuleCategory::Oscillator) |
                     Some(ModuleCategory::Filter) |
@@ -778,8 +785,9 @@ impl SynthApp {
         // Effects are added to the active instrument's patch editor for visual display
         self.active_patch_editor().add_module(next_id, descriptor);
 
-        // Send pre-created effect to engine (effects are global on MasterBus)
+        // Send pre-created effect to active instrument's effect chain
         self.handle.send(EngineCommand::AddEffectInstance {
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             effect,
         });
@@ -807,8 +815,9 @@ impl SynthApp {
             VisualizerType::LevelMeter => crate::engine::commands::VisualizerType::LevelMeter,
         };
 
-        // Send command to engine with the shared Arc buffer
+        // Send command to active instrument's effect chain
         self.handle.send(EngineCommand::AddVisualizer {
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             visualizer_type: engine_viz_type,
             buffer,
@@ -1034,10 +1043,16 @@ impl SynthApp {
                 let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
                 match category {
                     Some(ModuleCategory::Effect) => {
-                        self.handle.send_blocking(EngineCommand::RemoveEffect { id: module_id });
+                        self.handle.send_blocking(EngineCommand::RemoveEffect {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                        });
                     }
                     Some(ModuleCategory::Visualizer) => {
-                        self.handle.send_blocking(EngineCommand::RemoveVisualizer { id: module_id });
+                        self.handle.send_blocking(EngineCommand::RemoveVisualizer {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                        });
                         self.handle.remove_visualization_buffer(module_id);
                     }
                     _ => {

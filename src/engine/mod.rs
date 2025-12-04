@@ -11,7 +11,7 @@
 //! - Transactional command batching
 
 pub mod commands;
-pub mod master_bus;
+pub mod effect_chain;
 pub mod graph;
 pub mod metering;
 pub mod params;

@@ -1,5 +1,66 @@
 # Version History
 
+## [0.32.20] - 2024
+
+### Refactored - Per-Instrument Effects (Phase 3.5)
+
+Moved the effect system from global `MasterBus` to per-instrument `EffectChain`. Each instrument now owns its own insert effects, solving collision issues when loading patches.
+
+**Problem Fixed:**
+- Loading "Spacey Bass" into Instrument 2 would add Reverb globally, affecting all instruments.
+
+**Changes:**
+
+**File Rename:**
+| Old | New |
+|-----|-----|
+| `src/engine/master_bus.rs` | `src/engine/effect_chain.rs` |
+| `MasterBus` struct | `EffectChain` struct |
+
+**Instrument (src/engine/instrument.rs):**
+- Added `effect_chain: EffectChain` field
+- Added `effect_buffer: AudioBuffer` for interleaved stereo effect processing
+- Added `effect_chain()` and `effect_chain_mut()` accessor methods
+- Updated `process()` to:
+  1. Sum voices to `voice_left`/`voice_right`
+  2. Interleave into `effect_buffer`
+  3. Process through `effect_chain`
+  4. Apply volume/pan and mix to output
+
+**Updated Commands (src/engine/commands.rs):**
+Added `instrument_id: Option<InstrumentId>` to:
+| Command | Purpose |
+|---------|---------|
+| `AddEffectInstance` | Add effect to specific instrument's chain |
+| `RemoveEffect` | Remove from specific instrument's chain |
+| `SetEffectParameter` | Target specific instrument's effects |
+| `SetEffectEnabled` | Enable/disable effect on specific instrument |
+| `AddVisualizer` | Add visualizer to specific instrument |
+| `RemoveVisualizer` | Remove visualizer from specific instrument |
+
+**SynthEngine (src/engine/synth_engine.rs):**
+- Removed `master_bus` field
+- Removed `process_effects()` method (effects now processed inside `Instrument::process`)
+- Updated all command handlers to route to appropriate instrument's effect chain
+- Updated helper methods `find_effect_by_type` and `find_effect_by_id` to take `instrument_id`
+
+**GUI (src/gui/egui_backend.rs, src/gui/patch_bridge.rs):**
+- `add_effect_module()` now passes `Some(self.active_instrument_id)`
+- `add_visualizer_module()` now passes `Some(self.active_instrument_id)`
+- All effect/visualizer removal commands pass `Some(active_id)`
+- Effect parameter handlers pass `Some(active_id)`
+- `load_patch()` passes `Some(instrument_id)` for all effect operations
+
+**Verification:**
+- ✅ `src/engine/master_bus.rs` does not exist
+- ✅ Instrument has an EffectChain and processes it before mixing to output
+- ✅ Loading a patch affects only that instrument's effects
+- ✅ Oscilloscope works when connected to active instrument
+- ✅ Code compiles without references to old master_bus
+- ✅ All 256 unit tests pass
+
+---
+
 ## [0.32.19] - 2024
 
 ### Refactored - Per-Instrument PatchEditor (Phase 4)

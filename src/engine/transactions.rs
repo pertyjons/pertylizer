@@ -456,20 +456,28 @@ impl Clone for EngineCommand {
                     bypass: *bypass,
                 }
             }
-            EngineCommand::RemoveVisualizer { id } => {
-                EngineCommand::RemoveVisualizer { id: *id }
+            EngineCommand::RemoveVisualizer { instrument_id, id } => {
+                EngineCommand::RemoveVisualizer {
+                    instrument_id: *instrument_id,
+                    id: *id,
+                }
             }
-            EngineCommand::RemoveEffect { id } => {
-                EngineCommand::RemoveEffect { id: *id }
+            EngineCommand::RemoveEffect { instrument_id, id } => {
+                EngineCommand::RemoveEffect {
+                    instrument_id: *instrument_id,
+                    id: *id,
+                }
             }
-            EngineCommand::SetEffectParameter { effect_type, param } => {
+            EngineCommand::SetEffectParameter { instrument_id, effect_type, param } => {
                 EngineCommand::SetEffectParameter {
+                    instrument_id: *instrument_id,
                     effect_type: *effect_type,
                     param: *param,
                 }
             }
-            EngineCommand::SetEffectEnabled { effect_type, enabled } => {
+            EngineCommand::SetEffectEnabled { instrument_id, effect_type, enabled } => {
                 EngineCommand::SetEffectEnabled {
+                    instrument_id: *instrument_id,
                     effect_type: *effect_type,
                     enabled: *enabled,
                 }

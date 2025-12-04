@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::engine::effect_chain::EffectChain;
 use crate::engine::graph::ModuleGraph;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
@@ -156,6 +157,7 @@ const MAX_BUFFER_SIZE: usize = 4096;
 /// play different sounds simultaneously. Each instrument has:
 /// - Its own voice graph (module structure for this instrument's sound)
 /// - Its own voice allocator (polyphony, mono, legato modes)
+/// - Its own effect chain (insert effects processed before mixing to output)
 /// - Volume and pan controls
 /// - MIDI channel assignment
 /// - Internal audio buffers for voice processing
@@ -171,6 +173,9 @@ pub struct Instrument {
     voice_graph: ModuleGraph,
     /// Voice allocator for this instrument.
     allocator: VoiceAllocator,
+    /// Per-instrument effect chain (insert effects).
+    /// Processes audio after voice summing, before mixing to main output.
+    effect_chain: EffectChain,
     /// Output volume.
     volume: Gain,
     /// Stereo pan position.
@@ -181,6 +186,8 @@ pub struct Instrument {
     voice_left: AudioBuffer,
     /// Right channel buffer for voice summing.
     voice_right: AudioBuffer,
+    /// Interleaved stereo buffer for effect processing.
+    effect_buffer: AudioBuffer,
     /// Default velocity-to-amplitude sensitivity for new voices.
     velocity_amp_sensitivity: NormalizedValue,
     /// Default velocity-to-filter sensitivity for new voices.
@@ -191,6 +198,7 @@ impl Instrument {
     /// Create a new instrument with the given ID and name.
     ///
     /// The voice_graph starts empty - populate it via engine commands or patch loading.
+    /// The effect_chain starts empty - effects are added dynamically.
     pub fn new(id: InstrumentId, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -198,11 +206,13 @@ impl Instrument {
             midi_channel: MidiChannel::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(AllocatorConfig::default()),
+            effect_chain: EffectChain::new(),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
+            effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
             velocity_amp_sensitivity: NormalizedValue::MAX,       // Full dynamic range
             velocity_filter_sensitivity: NormalizedValue::CENTER, // 50% filter sensitivity
         }
@@ -211,6 +221,7 @@ impl Instrument {
     /// Create a new instrument with a custom allocator configuration.
     ///
     /// The voice_graph starts empty - populate it via engine commands or patch loading.
+    /// The effect_chain starts empty - effects are added dynamically.
     pub fn with_config(id: InstrumentId, name: impl Into<String>, config: AllocatorConfig) -> Self {
         Self {
             id,
@@ -218,11 +229,13 @@ impl Instrument {
             midi_channel: MidiChannel::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(config),
+            effect_chain: EffectChain::new(),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
+            effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
             velocity_amp_sensitivity: NormalizedValue::MAX,
             velocity_filter_sensitivity: NormalizedValue::CENTER,
         }
@@ -280,6 +293,18 @@ impl Instrument {
     #[inline]
     pub fn voice_graph_mut(&mut self) -> &mut ModuleGraph {
         &mut self.voice_graph
+    }
+
+    /// Get the effect chain.
+    #[inline]
+    pub fn effect_chain(&self) -> &EffectChain {
+        &self.effect_chain
+    }
+
+    /// Get mutable access to the effect chain.
+    #[inline]
+    pub fn effect_chain_mut(&mut self) -> &mut EffectChain {
+        &mut self.effect_chain
     }
 
     /// Rebuild all voices from this instrument's voice graph.
@@ -409,8 +434,10 @@ impl Instrument {
     ///
     /// This method:
     /// 1. Processes each active voice through its signal chain
-    /// 2. Applies instrument volume and pan
-    /// 3. Mixes the result into the stereo output buffer
+    /// 2. Sums voice output into stereo buffers
+    /// 3. Interleaves into effect_buffer and processes through effect_chain
+    /// 4. Applies instrument volume and pan
+    /// 5. Mixes the result into the stereo output buffer
     ///
     /// # Arguments
     /// * `output` - Stereo interleaved output buffer to mix into (samples * 2)
@@ -429,13 +456,17 @@ impl Instrument {
         // Ensure internal buffers are sized correctly
         self.voice_left.resize(samples);
         self.voice_right.resize(samples);
+        self.effect_buffer.resize(samples * 2); // Interleaved stereo
 
-        // Get instrument.s stereo gain (includes volume and pan)
-        let (left_gain, right_gain) = self.stereo_gain();
-        let left_gain = left_gain.as_f32();
-        let right_gain = right_gain.as_f32();
+        // Clear instrument buffers for accumulation
+        self.voice_left.clear();
+        self.voice_right.clear();
 
-        // Process each voice in this instrument
+        // Temporary buffers for individual voice processing
+        let mut temp_left = AudioBuffer::new(samples);
+        let mut temp_right = AudioBuffer::new(samples);
+
+        // Process each voice in this instrument and sum into voice_left/voice_right
         for voice in self.allocator.voices_mut() {
             if !voice.is_active() {
                 continue;
@@ -456,12 +487,12 @@ impl Instrument {
                 }
             }
 
-            // Clear voice output buffers
-            self.voice_left.clear();
-            self.voice_right.clear();
+            // Clear temp buffers for this voice
+            temp_left.clear();
+            temp_right.clear();
 
             // Process the voice signal chain
-            voice.process_audio(&mut self.voice_left, &mut self.voice_right, context);
+            voice.process_audio(&mut temp_left, &mut temp_right, context);
 
             // Apply stealing fade-out if needed
             if voice.state == VoiceState::Stealing {
@@ -472,21 +503,41 @@ impl Instrument {
                     } else {
                         0.0
                     };
-                    self.voice_left[i] *= fade;
-                    self.voice_right[i] *= fade;
+                    temp_left[i] *= fade;
+                    temp_right[i] *= fade;
                 }
                 voice.steal_fade_counter = voice.steal_fade_counter.saturating_sub(samples);
             }
 
-            // Mix stereo output into main buffer with instrument volume/pan
+            // Sum into instrument buffers
             for i in 0..samples {
-                output[i * 2] += self.voice_left[i] * left_gain;
-                output[i * 2 + 1] += self.voice_right[i] * right_gain;
+                self.voice_left[i] += temp_left[i];
+                self.voice_right[i] += temp_right[i];
             }
         }
 
         // Advance allocator time
         self.allocator.advance_time(samples as u64);
+
+        // Interleave voice_left/voice_right into effect_buffer (L, R, L, R, ...)
+        for i in 0..samples {
+            self.effect_buffer[i * 2] = self.voice_left[i];
+            self.effect_buffer[i * 2 + 1] = self.voice_right[i];
+        }
+
+        // Process through effect chain (modifies effect_buffer in place)
+        self.effect_chain.process(&mut self.effect_buffer, context);
+
+        // Get instrument's stereo gain (includes volume and pan)
+        let (left_gain, right_gain) = self.stereo_gain();
+        let left_gain = left_gain.as_f32();
+        let right_gain = right_gain.as_f32();
+
+        // Mix processed effect_buffer into main output with volume/pan
+        for i in 0..samples {
+            output[i * 2] += self.effect_buffer[i * 2] * left_gain;
+            output[i * 2 + 1] += self.effect_buffer[i * 2 + 1] * right_gain;
+        }
 
         active_count
     }

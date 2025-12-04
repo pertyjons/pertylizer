@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
 use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
-use crate::engine::master_bus::{MasterBus, EffectSlot};
+use crate::engine::effect_chain::EffectSlot;
 use crate::engine::graph::ModuleGraph;
 use crate::engine::metering::MeteringSystem;
 use crate::engine::params::{
@@ -210,12 +210,19 @@ impl EngineHandle {
     }
 
     /// Set an effect parameter using typed API.
+    ///
+    /// # Arguments
+    /// * `instrument_id` - Target instrument's effect chain (None for future global master bus)
+    /// * `effect_type` - The type of effect to modify
+    /// * `param` - The parameter to set
     pub fn set_effect_parameter(
         &mut self,
+        instrument_id: Option<InstrumentId>,
         effect_type: crate::engine::commands::EffectType,
         param: crate::engine::typed_params::Param,
     ) -> bool {
         self.send(EngineCommand::SetEffectParameter {
+            instrument_id,
             effect_type,
             param,
         })
@@ -298,9 +305,6 @@ pub struct SynthEngine {
     /// Whether to use the global module graph for processing.
     use_modular_routing: bool,
 
-    // === Effect chain ===
-    master_bus: MasterBus,
-
     // === Audio state ===
     sample_rate: f32,
     master_volume: f32,
@@ -373,7 +377,6 @@ impl SynthEngine {
             next_instrument_id: 1, // 0 is used by default instrument
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
-            master_bus: MasterBus::new(),
             sample_rate: 48000.0,
             master_volume: 1.0,
             voice_buffer: AudioBuffer::new(256),
@@ -397,9 +400,11 @@ impl SynthEngine {
         (engine, handle)
     }
 
-    /// Find an effect slot by its module type.
-    fn find_effect_by_type(&mut self, module_type: ModuleType) -> Option<&mut EffectSlot> {
-        self.master_bus.find_effect_by_type(module_type)
+    /// Find an effect slot by its module type in a specific instrument's effect chain.
+    fn find_effect_by_type(&mut self, instrument_id: InstrumentId, module_type: ModuleType) -> Option<&mut EffectSlot> {
+        self.instruments.iter_mut()
+            .find(|i| i.id() == instrument_id)
+            .and_then(|inst| inst.effect_chain_mut().find_effect_by_type(module_type))
     }
 
     /// Check if a module type belongs to the voice signal chain (polyphonic).
@@ -432,9 +437,11 @@ impl SynthEngine {
         }
     }
 
-    /// Find an effect slot by its module ID.
-    fn find_effect_by_id(&mut self, module_id: ModuleId) -> Option<&mut EffectSlot> {
-        self.master_bus.find_effect_by_id(module_id)
+    /// Find an effect slot by its module ID in a specific instrument's effect chain.
+    fn find_effect_by_id(&mut self, instrument_id: InstrumentId, module_id: ModuleId) -> Option<&mut EffectSlot> {
+        self.instruments.iter_mut()
+            .find(|i| i.id() == instrument_id)
+            .and_then(|inst| inst.effect_chain_mut().find_effect_by_id(module_id))
     }
 
     /// Populate a voice graph with the default signal chain.
@@ -742,11 +749,11 @@ impl SynthEngine {
             }
 
             EngineCommand::Reset => {
-                // Panic all instruments
+                // Panic all instruments and reset their effect chains
                 for instrument in &mut self.instruments {
                     instrument.panic();
+                    instrument.effect_chain_mut().reset();
                 }
-                self.master_bus.reset();
             }
 
             EngineCommand::ClearAllModules => {
@@ -757,39 +764,59 @@ impl SynthEngine {
                     instrument.set_enabled(false);
                     // Clear each instrument's voice graph
                     instrument.voice_graph_mut().clear();
+                    // Clear each instrument's effect chain
+                    instrument.effect_chain_mut().clear();
                     // Rebuild voices with the cleared graph
                     instrument.rebuild_voices();
                 }
-                self.master_bus.clear();
                 self.module_graph.clear();
                 self.use_modular_routing = false;
             }
 
             EngineCommand::SetBypass { module, bypass } => {
-                // Use the module_type directly from ModuleId
-                if let Some(slot) = self.find_effect_by_type(module.module_type) {
-                    slot.enabled = !bypass;
-                }
-            }
-            
-            EngineCommand::SetEffectParameter { effect_type, param } => {
-                // Convert EffectType to ModuleType and find the effect
-                let mt = effect_type.to_module_type();
-                if let Some(slot) = self.find_effect_by_type(mt) {
-                    // Use typed API
-                    slot.effect.set_param(param);
-                    slot.enabled = true;
-                }
-            }
-            
-            EngineCommand::SetEffectEnabled { effect_type, enabled } => {
-                let mt = effect_type.to_module_type();
-                if let Some(slot) = self.find_effect_by_type(mt) {
-                    slot.enabled = enabled;
+                // SetBypass doesn't have instrument_id - apply to first instrument that has the effect
+                // TODO: Consider adding instrument_id to SetBypass in the future
+                for instrument in &mut self.instruments {
+                    if let Some(slot) = instrument.effect_chain_mut().find_effect_by_type(module.module_type) {
+                        slot.enabled = !bypass;
+                        break;
+                    }
                 }
             }
 
-            EngineCommand::AddVisualizer { id, visualizer_type, buffer } => {
+            EngineCommand::SetEffectParameter { instrument_id, effect_type, param } => {
+                // Convert EffectType to ModuleType and find the effect
+                let mt = effect_type.to_module_type();
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                            slot.effect.set_param(param);
+                            slot.enabled = true;
+                        }
+                    }
+                    None => {
+                        // No instrument specified - log warning (global master bus not implemented yet)
+                        eprintln!("SetEffectParameter: instrument_id is None, ignoring");
+                    }
+                }
+            }
+
+            EngineCommand::SetEffectEnabled { instrument_id, effect_type, enabled } => {
+                let mt = effect_type.to_module_type();
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                            slot.enabled = enabled;
+                        }
+                    }
+                    None => {
+                        // No instrument specified - log warning
+                        eprintln!("SetEffectEnabled: instrument_id is None, ignoring");
+                    }
+                }
+            }
+
+            EngineCommand::AddVisualizer { instrument_id, id, visualizer_type, buffer } => {
                 use crate::engine::commands::VisualizerType;
                 use crate::modules::AudioEffect;
 
@@ -798,19 +825,55 @@ impl SynthEngine {
                     VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
                 };
 
-                self.master_bus.add_visualizer(id, visualizer, buffer);
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.effect_chain_mut().add_visualizer(id, visualizer, buffer);
+                        }
+                    }
+                    None => {
+                        eprintln!("AddVisualizer: instrument_id is None, ignoring");
+                    }
+                }
             }
 
-            EngineCommand::RemoveVisualizer { id } => {
-                self.master_bus.remove_visualizer(id);
+            EngineCommand::RemoveVisualizer { instrument_id, id } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.effect_chain_mut().remove_visualizer(id);
+                        }
+                    }
+                    None => {
+                        eprintln!("RemoveVisualizer: instrument_id is None, ignoring");
+                    }
+                }
             }
 
-            EngineCommand::AddEffectInstance { id, effect } => {
-                self.master_bus.add_effect(id, effect, self.sample_rate);
+            EngineCommand::AddEffectInstance { instrument_id, id, effect } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.effect_chain_mut().add_effect(id, effect, self.sample_rate);
+                        }
+                    }
+                    None => {
+                        eprintln!("AddEffectInstance: instrument_id is None, ignoring");
+                    }
+                }
             }
 
-            EngineCommand::RemoveEffect { id } => {
-                self.master_bus.remove_effect(id);
+            EngineCommand::RemoveEffect { instrument_id, id } => {
+                match instrument_id {
+                    Some(inst_id) => {
+                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                            instrument.effect_chain_mut().remove_effect(id);
+                        }
+                    }
+                    None => {
+                        eprintln!("RemoveEffect: instrument_id is None, ignoring");
+                    }
+                }
             }
 
             // === Modular routing commands ===
@@ -988,11 +1051,6 @@ impl SynthEngine {
         }
     }
 
-    /// Process the effect chain.
-    fn process_effects(&mut self, context: &ProcessContext) {
-        self.master_bus.process(&mut self.mix_buffer, context);
-    }
-
     /// Update metering.
     fn update_meters(&mut self, output: &[f32]) {
         self.metering.update(output, &self.state, &mut self.event_producer);
@@ -1057,13 +1115,11 @@ impl AudioProcessor for SynthEngine {
         };
 
         // Process voices (built-in voice template)
+        // Effects are now processed per-instrument inside Instrument::process
         self.process_voices(&process_context);
 
         // Process modular graph (user-added modules)
         self.process_module_graph(&process_context);
-
-        // Process effects
-        self.process_effects(&process_context);
 
         // Copy to output with master volume
         let channels = context.channels as usize;

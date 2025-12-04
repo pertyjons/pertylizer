@@ -1,10 +1,10 @@
-//! Effect chain processing for the synthesizer engine.
+//! Effect chain processing for per-instrument insert effects.
 //!
-//! Manages effects and visualizers in a processing chain.
+//! Each instrument owns its own EffectChain for independent effect processing.
+//! This enables loading patches that only affect that instrument's sound.
 
 use std::sync::Arc;
 
-use crate::effects::{Chorus, Delay, Distortion, Reverb};
 use crate::engine::commands::ModuleId;
 use crate::engine::params::ModuleType;
 use crate::modules::{AudioBuffer, AudioEffect, ProcessContext};
@@ -34,59 +34,29 @@ pub struct VisualizerSlot {
     pub enabled: bool,
 }
 
-/// Effect chain that manages effects and visualizers.
-pub struct MasterBus {
+/// Per-instrument effect chain that manages insert effects and visualizers.
+///
+/// Each instrument has its own EffectChain, enabling independent effect
+/// processing. This ensures that loading a patch only affects that
+/// instrument's sound, solving collision issues.
+pub struct EffectChain {
     /// Effect slots
     effects: Vec<EffectSlot>,
     /// Visualizer slots
     visualizers: Vec<VisualizerSlot>,
     /// Working buffer for effect processing
-    effect_buffer: AudioBuffer,
+    working_buffer: AudioBuffer,
 }
 
-impl MasterBus {
-    /// Create a new effect chain with default effects.
+impl EffectChain {
+    /// Create a new empty effect chain.
+    ///
+    /// Effects are added dynamically when loading patches or via GUI.
     pub fn new() -> Self {
-        let effects = vec![
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Chorus, 1),
-                effect: Box::new(Chorus::new()),
-                module_type: ModuleType::Chorus,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Delay, 1),
-                effect: Box::new(Delay::new()),
-                module_type: ModuleType::Delay,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Reverb, 1),
-                effect: Box::new(Reverb::new()),
-                module_type: ModuleType::Reverb,
-                enabled: false,
-            },
-            EffectSlot {
-                module_id: ModuleId::new(ModuleType::Distortion, 1),
-                effect: Box::new(Distortion::new()),
-                module_type: ModuleType::Distortion,
-                enabled: false,
-            },
-        ];
-
-        Self {
-            effects,
-            visualizers: Vec::new(),
-            effect_buffer: AudioBuffer::new(512),
-        }
-    }
-
-    /// Create an empty effect chain.
-    pub fn empty() -> Self {
         Self {
             effects: Vec::new(),
             visualizers: Vec::new(),
-            effect_buffer: AudioBuffer::new(512),
+            working_buffer: AudioBuffer::new(512),
         }
     }
 
@@ -164,16 +134,16 @@ impl MasterBus {
     ///
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
     pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext) {
-        self.effect_buffer.resize(context.samples * 2);
+        self.working_buffer.resize(context.samples * 2);
 
         for slot in &mut self.effects {
             if slot.enabled {
-                // Copy mix to effect buffer
-                self.effect_buffer.copy_from(mix_buffer);
+                // Copy mix to working buffer
+                self.working_buffer.copy_from(mix_buffer);
 
                 // Process effect (in-place)
                 slot.effect.process(
-                    self.effect_buffer.as_slice(),
+                    self.working_buffer.as_slice(),
                     mix_buffer.as_mut_slice(),
                     context,
                 );
@@ -199,7 +169,7 @@ impl MasterBus {
     }
 }
 
-impl Default for MasterBus {
+impl Default for EffectChain {
     fn default() -> Self {
         Self::new()
     }

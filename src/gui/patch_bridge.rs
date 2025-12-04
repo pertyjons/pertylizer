@@ -34,7 +34,7 @@ use crate::patch::{Patch, ModuleType as PatchModuleType, ModuleState, Connection
 /// - Applying parameters
 /// - Establishing connections
 ///
-/// Note: Effects are global (on MasterBus) and use instrument_id: None.
+/// Note: Effects are per-instrument (on EffectChain) - each instrument has its own effects.
 pub fn load_patch(
     patch: &Patch,
     patch_editor: &mut PatchEditor,
@@ -51,10 +51,18 @@ pub fn load_patch(
         let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
         match category {
             Some(crate::modules::ModuleCategory::Effect) => {
-                handle.send_blocking(EngineCommand::RemoveEffect { id: module_id });
+                // Effects are now per-instrument - remove from this instrument's effect chain
+                handle.send_blocking(EngineCommand::RemoveEffect {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                });
             }
             Some(crate::modules::ModuleCategory::Visualizer) => {
-                handle.send_blocking(EngineCommand::RemoveVisualizer { id: module_id });
+                // Visualizers are now per-instrument - remove from this instrument's effect chain
+                handle.send_blocking(EngineCommand::RemoveVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                });
                 handle.remove_visualization_buffer(module_id);
             }
             _ => {
@@ -257,8 +265,9 @@ fn load_module(
             let e = Delay::new();
             let descriptor = e.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            // Effects are global (on MasterBus), no instrument_id needed
+            // Effects are per-instrument - add to this instrument's effect chain
             handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 effect: Box::new(e),
             });
@@ -270,6 +279,7 @@ fn load_module(
             let descriptor = e.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 effect: Box::new(e),
             });
@@ -281,6 +291,7 @@ fn load_module(
             let descriptor = e.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 effect: Box::new(e),
             });
@@ -292,6 +303,7 @@ fn load_module(
             let descriptor = e.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 effect: Box::new(e),
             });
@@ -306,7 +318,9 @@ fn load_module(
             let buffer = Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
             handle.add_visualization_buffer(module_id, buffer.clone());
 
+            // Visualizers are per-instrument - add to this instrument's effect chain
             handle.send(EngineCommand::AddVisualizer {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 visualizer_type: crate::engine::commands::VisualizerType::Oscilloscope,
                 buffer,
@@ -320,7 +334,9 @@ fn load_module(
             let buffer = Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
             handle.add_visualization_buffer(module_id, buffer.clone());
 
+            // Visualizers are per-instrument - add to this instrument's effect chain
             handle.send(EngineCommand::AddVisualizer {
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 visualizer_type: crate::engine::commands::VisualizerType::LevelMeter,
                 buffer,
@@ -369,7 +385,9 @@ pub fn apply_module_parameters(
             let param = param_desc.id.with_f32(f32_value);
 
             if let Some(et) = effect_type {
+                // Effects are per-instrument - send to this instrument's effect chain
                 handle.send(EngineCommand::SetEffectParameter {
+                    instrument_id: Some(instrument_id),
                     effect_type: et,
                     param,
                 });
