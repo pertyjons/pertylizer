@@ -35,6 +35,7 @@ mod normalized;
 mod samples;
 mod pitch;
 mod audio;
+mod interned;
 
 pub use frequency::*;
 pub use time::*;
@@ -43,6 +44,7 @@ pub use normalized::*;
 pub use samples::*;
 pub use pitch::*;
 pub use audio::*;
+pub use interned::PortName;
 
 /// Trait for types that can be clamped to a valid range.
 pub trait Clampable: Sized {

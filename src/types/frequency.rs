@@ -37,6 +37,44 @@ impl Hertz {
     /// Maximum audible frequency.
     pub const MAX_AUDIBLE: Self = Self(20000.0);
 
+    // === Musical note frequencies ===
+
+    /// C0 (lowest piano note).
+    pub const C0: Self = Self(16.352);
+    /// C1.
+    pub const C1: Self = Self(32.703);
+    /// C2.
+    pub const C2: Self = Self(65.406);
+    /// C3.
+    pub const C3: Self = Self(130.813);
+    /// C5.
+    pub const C5: Self = Self(523.251);
+    /// C6.
+    pub const C6: Self = Self(1046.502);
+    /// C7.
+    pub const C7: Self = Self(2093.005);
+    /// C8 (highest piano note).
+    pub const C8: Self = Self(4186.009);
+
+    // === Range constants ===
+
+    /// Minimum LFO frequency.
+    pub const MIN_LFO: Self = Self(0.01);
+    /// Maximum LFO frequency.
+    pub const MAX_LFO: Self = Self(50.0);
+    /// Minimum filter cutoff.
+    pub const MIN_FILTER: Self = Self(20.0);
+    /// Maximum filter cutoff (Nyquist for 44.1kHz).
+    pub const MAX_FILTER: Self = Self(20000.0);
+    /// Sub-bass upper limit.
+    pub const SUB_BASS: Self = Self(60.0);
+    /// Bass upper limit.
+    pub const BASS: Self = Self(250.0);
+    /// Midrange upper limit.
+    pub const MID: Self = Self(4000.0);
+    /// Presence upper limit.
+    pub const PRESENCE: Self = Self(6000.0);
+
     /// Get the raw value in Hz.
     #[inline]
     pub const fn as_f32(self) -> f32 {
@@ -122,6 +160,60 @@ impl Hertz {
     pub fn to_exp_coeff(self, sample_rate: SampleRate) -> f32 {
         (-TAU * self.0 / sample_rate.0).exp()
     }
+
+    /// Clamp to LFO range.
+    #[inline]
+    pub fn clamp_lfo(self) -> Self {
+        Self(self.0.clamp(Self::MIN_LFO.0, Self::MAX_LFO.0))
+    }
+
+    /// Clamp to filter range.
+    #[inline]
+    pub fn clamp_filter(self) -> Self {
+        Self(self.0.clamp(Self::MIN_FILTER.0, Self::MAX_FILTER.0))
+    }
+
+    /// Check if frequency is in audible range.
+    #[inline]
+    pub fn is_audible(self) -> bool {
+        self.0 >= 20.0 && self.0 <= 20000.0
+    }
+
+    /// Get the frequency band this falls into.
+    pub fn band(&self) -> FrequencyBand {
+        if self.0 < 60.0 {
+            FrequencyBand::SubBass
+        } else if self.0 < 250.0 {
+            FrequencyBand::Bass
+        } else if self.0 < 4000.0 {
+            FrequencyBand::Mid
+        } else if self.0 < 6000.0 {
+            FrequencyBand::Presence
+        } else {
+            FrequencyBand::Brilliance
+        }
+    }
+
+    /// Calculate detune in cents between two frequencies.
+    #[inline]
+    pub fn cents_between(self, other: Self) -> f32 {
+        1200.0 * (other.0 / self.0).log2()
+    }
+}
+
+/// Frequency bands for EQ and analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrequencyBand {
+    /// Sub-bass (< 60 Hz).
+    SubBass,
+    /// Bass (60-250 Hz).
+    Bass,
+    /// Midrange (250-4000 Hz).
+    Mid,
+    /// Presence (4000-6000 Hz).
+    Presence,
+    /// Brilliance (> 6000 Hz).
+    Brilliance,
 }
 
 impl Clampable for Hertz {

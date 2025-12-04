@@ -11,6 +11,7 @@
 //! - Compressor (dynamics processor)
 //! - EQ (3-band parametric equalizer)
 
+pub mod chorus;
 pub mod compressor;
 pub mod delay;
 pub mod distortion;
@@ -19,9 +20,10 @@ pub mod flanger;
 pub mod phaser;
 pub mod reverb;
 
+pub use chorus::Chorus;
 pub use compressor::Compressor;
 pub use delay::Delay;
-pub use distortion::{Chorus, Distortion, DistortionType};
+pub use distortion::{Distortion, DistortionType};
 pub use eq::Eq;
 pub use flanger::Flanger;
 pub use phaser::Phaser;

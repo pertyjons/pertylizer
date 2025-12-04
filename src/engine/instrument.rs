@@ -130,6 +130,54 @@ impl MidiChannel {
     pub const fn is_omni(self) -> bool {
         self.0 == 255
     }
+
+    /// All 16 standard MIDI channels.
+    pub const ALL: [Self; 16] = [
+        Self(0), Self(1), Self(2), Self(3),
+        Self(4), Self(5), Self(6), Self(7),
+        Self(8), Self(9), Self(10), Self(11),
+        Self(12), Self(13), Self(14), Self(15),
+    ];
+
+    /// Iterator over all 16 channels.
+    pub fn iter() -> impl Iterator<Item = Self> {
+        Self::ALL.into_iter()
+    }
+
+    /// Get the next channel (wraps from 16 to 1).
+    /// Returns self if OMNI.
+    #[inline]
+    pub fn next(self) -> Self {
+        if self.is_omni() {
+            self
+        } else {
+            Self((self.0 + 1) % 16)
+        }
+    }
+
+    /// Get the previous channel (wraps from 1 to 16).
+    /// Returns self if OMNI.
+    #[inline]
+    pub fn prev(self) -> Self {
+        if self.is_omni() {
+            self
+        } else {
+            Self((self.0 + 15) % 16)
+        }
+    }
+
+    /// Check if this is the drums channel (channel 10 in GM).
+    #[inline]
+    pub const fn is_drums(self) -> bool {
+        self.0 == 9
+    }
+
+    /// Get channel by number (1-16), returning None for invalid.
+    /// Alias for from_one_indexed for clarity.
+    #[inline]
+    pub const fn channel(num: u8) -> Option<Self> {
+        Self::from_one_indexed(num)
+    }
 }
 
 impl fmt::Display for MidiChannel {

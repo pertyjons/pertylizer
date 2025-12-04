@@ -367,6 +367,68 @@ impl BeatDivision {
         Self(self.0.clamp(0.125, 16.0))
     }
 
+    /// Multiply the division (e.g., 1/4 * 2 = 1/2 note).
+    #[inline]
+    pub fn multiply(self, factor: f32) -> Self {
+        Self(self.0 * factor)
+    }
+
+    /// Divide the division (e.g., 1/4 / 2 = 1/8 note).
+    #[inline]
+    pub fn divide(self, divisor: f32) -> Self {
+        if divisor != 0.0 {
+            Self(self.0 / divisor)
+        } else {
+            self
+        }
+    }
+
+    /// Double the note value (e.g., 1/8 → 1/4).
+    #[inline]
+    pub fn double(self) -> Self {
+        Self(self.0 * 2.0)
+    }
+
+    /// Halve the note value (e.g., 1/4 → 1/8).
+    #[inline]
+    pub fn halve(self) -> Self {
+        Self(self.0 / 2.0)
+    }
+
+    /// Convert to frequency (Hz) at a given tempo.
+    #[inline]
+    pub fn to_frequency(self, tempo: Bpm) -> super::Hertz {
+        let duration = self.to_duration(tempo);
+        duration.to_frequency()
+    }
+
+    /// Create from a frequency at a given tempo.
+    #[inline]
+    pub fn from_frequency(freq: super::Hertz, tempo: Bpm) -> Self {
+        let beat_duration = tempo.beat_duration();
+        let period = freq.period();
+        Self(period.as_f32() / beat_duration.as_f32())
+    }
+
+    /// Check if this is a standard note division.
+    pub fn is_standard(&self) -> bool {
+        Self::ALL_COMMON.iter().any(|d| (d.0 - self.0).abs() < 0.01)
+    }
+
+    /// Get the nearest standard division.
+    pub fn nearest_standard(self) -> Self {
+        Self::ALL_COMMON
+            .iter()
+            .min_by(|a, b| {
+                (a.0 - self.0)
+                    .abs()
+                    .partial_cmp(&(b.0 - self.0).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .copied()
+            .unwrap_or(self)
+    }
+
     /// Get the note name for display.
     pub fn name(&self) -> &'static str {
         match self.0 {
@@ -421,6 +483,22 @@ impl std::fmt::Display for BeatDivision {
     }
 }
 
+impl std::ops::Mul<f32> for BeatDivision {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        Self(self.0 * rhs)
+    }
+}
+
+impl std::ops::Div<f32> for BeatDivision {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self {
+        self.divide(rhs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +542,58 @@ mod tests {
 
         let s3 = Seconds::new(2.5);
         assert!(s3.to_string().contains("s"));
+    }
+
+    #[test]
+    fn test_beat_division_double_halve() {
+        let eighth = BeatDivision::EIGHTH;
+        let quarter = eighth.double();
+        assert!((quarter.0 - 1.0).abs() < 0.001);
+
+        let sixteenth = eighth.halve();
+        assert!((sixteenth.0 - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_beat_division_multiply_divide() {
+        let quarter = BeatDivision::QUARTER;
+        let half = quarter.multiply(2.0);
+        assert!((half.0 - 2.0).abs() < 0.001);
+
+        let eighth = quarter.divide(2.0);
+        assert!((eighth.0 - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_beat_division_to_frequency() {
+        let quarter = BeatDivision::QUARTER;
+        let tempo = Bpm::new(120.0); // 2 beats per second
+        let freq = quarter.to_frequency(tempo);
+        // At 120 BPM, quarter note = 0.5s, so frequency = 2 Hz
+        assert!((freq.0 - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_beat_division_is_standard() {
+        assert!(BeatDivision::QUARTER.is_standard());
+        assert!(BeatDivision::EIGHTH.is_standard());
+        assert!(!BeatDivision::new(0.33).is_standard());
+    }
+
+    #[test]
+    fn test_beat_division_nearest_standard() {
+        let custom = BeatDivision::new(0.52);
+        let nearest = custom.nearest_standard();
+        assert!((nearest.0 - 0.5).abs() < 0.001); // Should be EIGHTH
+    }
+
+    #[test]
+    fn test_beat_division_arithmetic() {
+        let quarter = BeatDivision::QUARTER;
+        let half = quarter * 2.0;
+        assert!((half.0 - 2.0).abs() < 0.001);
+
+        let eighth = quarter / 2.0;
+        assert!((eighth.0 - 0.5).abs() < 0.001);
     }
 }

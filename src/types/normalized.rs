@@ -102,6 +102,75 @@ impl NormalizedValue {
     pub fn curve(self, exponent: f32) -> Self {
         Self::new(self.0.powf(exponent))
     }
+
+    /// Apply exponential curve for audio-like response.
+    ///
+    /// curve = 2.0 gives a nice fader-like response.
+    /// curve = 0.5 gives inverse (more sensitive at top).
+    #[inline]
+    pub fn audio_curve(self, curve: f32) -> Self {
+        Self::new(self.0.powf(curve))
+    }
+
+    /// Convert to decibel gain using square law.
+    ///
+    /// 0.0 → -∞ dB (mute)
+    /// 0.5 → -6 dB
+    /// 1.0 → 0 dB
+    #[inline]
+    pub fn to_db_gain(self) -> super::Gain {
+        if self.0 <= 0.0 {
+            super::Gain::MUTE
+        } else {
+            super::Gain::new(self.0 * self.0)
+        }
+    }
+
+    /// Convert to decibel value.
+    #[inline]
+    pub fn to_db(self) -> super::Decibels {
+        self.to_db_gain().to_db()
+    }
+
+    /// Quantize to discrete steps.
+    ///
+    /// Useful for stepped controls like waveform selection.
+    #[inline]
+    pub fn quantize(self, steps: u32) -> Self {
+        if steps == 0 {
+            return self;
+        }
+        let step_size = 1.0 / steps as f32;
+        Self::new((self.0 / step_size).round() * step_size)
+    }
+
+    /// Get which step this value falls into (0-indexed).
+    #[inline]
+    pub fn to_step(self, steps: u32) -> u32 {
+        ((self.0 * steps as f32) as u32).min(steps.saturating_sub(1))
+    }
+
+    /// Create from a step index.
+    #[inline]
+    pub fn from_step(step: u32, steps: u32) -> Self {
+        if steps == 0 {
+            return Self::MIN;
+        }
+        Self::new(step as f32 / (steps - 1).max(1) as f32)
+    }
+
+    /// Dead zone around center (for joysticks, etc).
+    #[inline]
+    pub fn dead_zone(self, zone: f32) -> Self {
+        let centered = self.0 - 0.5;
+        if centered.abs() < zone {
+            Self::CENTER
+        } else {
+            let sign = centered.signum();
+            let adjusted = (centered.abs() - zone) / (0.5 - zone);
+            Self::new(0.5 + sign * adjusted * 0.5)
+        }
+    }
 }
 
 impl Default for NormalizedValue {

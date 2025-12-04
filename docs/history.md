@@ -1,5 +1,89 @@
 # Version History
 
+## [0.33.0] - 2024
+
+### Added - Type System Extensions
+
+Utökade typbiblioteket med nya hjälpfunktioner för DSP och ljudbearbetning.
+
+**PortName Interning (src/types/interned.rs)**
+- Nytt: `PortName` typ för string interning
+- Zero-allocation portnamnshantering
+- Pre-internerade vanliga portnamn: `in`, `out`, `freq`, `gate`, etc.
+
+**FilterState Extensions**
+| Metod | Beskrivning |
+|-------|-------------|
+| `one_pole_hp()` | High-pass one-pole filter |
+| `dc_blocker()` | DC-offset borttagning |
+| `slew_limit()` | Begränsar hur snabbt output kan ändras |
+| `leaky_integrate()` | Leaky integrator för envelope followers |
+| `soft_saturate()` | Mjuk knee saturation |
+
+**Hertz Extensions**
+| Tillägg | Beskrivning |
+|---------|-------------|
+| `C0`-`C8` | Musikaliska notfrekvenser |
+| `MIN_LFO`, `MAX_LFO` | LFO range konstanter |
+| `MIN_FILTER`, `MAX_FILTER` | Filter range konstanter |
+| `clamp_lfo()` | Clamp till LFO range |
+| `clamp_filter()` | Clamp till filter range |
+| `is_audible()` | Kontrollera om frekvens är hörbar |
+| `band()` | Få frekvensband (SubBass, Bass, Mid, etc.) |
+| `cents_between()` | Beräkna detune i cents |
+| `FrequencyBand` enum | Frekvensbandskategorier |
+
+**NormalizedValue Extensions**
+| Metod | Beskrivning |
+|-------|-------------|
+| `audio_curve()` | Exponentiell kurva för fader-liknande respons |
+| `to_db_gain()` | Konvertera till gain med square law |
+| `to_db()` | Konvertera till decibel |
+| `quantize()` | Kvantisera till diskreta steg |
+| `to_step()` | Få vilket steg värdet faller på |
+| `from_step()` | Skapa från stegindex |
+| `dead_zone()` | Dead zone runt center |
+
+**MidiChannel Extensions**
+| Tillägg | Beskrivning |
+|---------|-------------|
+| `ALL` | Alla 16 MIDI-kanaler som array |
+| `iter()` | Iterator över alla kanaler |
+| `next()` | Nästa kanal (wraps 16→1) |
+| `prev()` | Föregående kanal (wraps 1→16) |
+| `is_drums()` | Kontrollera om det är drums-kanal (10) |
+| `channel()` | Alias för `from_one_indexed()` |
+
+**BeatDivision Extensions**
+| Metod | Beskrivning |
+|-------|-------------|
+| `multiply()` | Multiplicera division |
+| `divide()` | Dela division |
+| `double()` | Dubbla notvärdet |
+| `halve()` | Halvera notvärdet |
+| `to_frequency()` | Konvertera till frekvens |
+| `from_frequency()` | Skapa från frekvens |
+| `is_standard()` | Kontrollera om standard division |
+| `nearest_standard()` | Få närmaste standard division |
+| `Mul<f32>`, `Div<f32>` | Aritmetiska operationer |
+
+### Changed - Code Organization
+
+**Chorus Refactor**
+- Flyttade `Chorus` från `src/effects/distortion.rs` till egen fil `src/effects/chorus.rs`
+- Renare separation av effektmoduler
+
+**Tempo Type Consolidation**
+- Borttagen: Duplicerad `Tempo` typ i `src/types/audio.rs`
+- Tillagd: Deprecation alias `pub type Tempo = Bpm`
+- Använd `Bpm` från `src/types/time.rs` istället
+
+### Tests
+- 275 enhetstester passerar
+- Nya tester för alla utökade typer
+
+---
+
 ## [0.32.25] - 2024
 
 ### Fixed - Instrument Channel Isolation (OMNI Bug)

@@ -2,71 +2,13 @@
 
 use std::ops::{Add, Sub};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use super::Decibels;
 
-/// Tempo in beats per minute (BPM).
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
-#[repr(transparent)]
-pub struct Tempo(pub f32);
-
-impl Tempo {
-    /// Create a new tempo value.
-    #[inline]
-    pub const fn new(bpm: f32) -> Self {
-        Self(bpm)
-    }
-
-    /// Standard tempo (120 BPM).
-    pub const DEFAULT: Self = Self(120.0);
-
-    /// Get the raw BPM value.
-    #[inline]
-    pub const fn as_f32(self) -> f32 {
-        self.0
-    }
-
-    /// Convert to beats per second.
-    #[inline]
-    pub fn beats_per_second(self) -> f32 {
-        self.0 / 60.0
-    }
-
-    /// Get the duration of one beat in seconds.
-    #[inline]
-    pub fn beat_duration(self) -> super::Seconds {
-        if self.0 > 0.0 {
-            super::Seconds::new(60.0 / self.0)
-        } else {
-            super::Seconds::new(f32::INFINITY)
-        }
-    }
-
-    /// Clamp to a reasonable range (20-300 BPM).
-    #[inline]
-    pub fn clamp_reasonable(self) -> Self {
-        Self(self.0.clamp(20.0, 300.0))
-    }
-}
-
-impl From<f32> for Tempo {
-    fn from(bpm: f32) -> Self {
-        Self(bpm)
-    }
-}
-
-impl From<Tempo> for f32 {
-    fn from(tempo: Tempo) -> Self {
-        tempo.0
-    }
-}
-
-impl std::fmt::Display for Tempo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.1} BPM", self.0)
-    }
-}
+/// Deprecated: Use Bpm instead.
+#[deprecated(since = "0.33.0", note = "Use Bpm instead")]
+pub type Tempo = super::Bpm;
 
 /// Buffer index for delay lines and circular buffers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -272,6 +214,71 @@ impl FilterState {
         self.0 = output;
         output
     }
+
+    /// High-pass one-pole filter.
+    ///
+    /// Returns the high-frequency content by subtracting lowpass from input.
+    #[inline]
+    pub fn one_pole_hp(&mut self, input: f32, coeff: f32) -> f32 {
+        input - self.one_pole(input, coeff)
+    }
+
+    /// DC blocking filter.
+    ///
+    /// Removes DC offset from signal using a one-pole highpass.
+    /// Typical coeff: 0.995 for 48kHz (approximately 10Hz cutoff)
+    #[inline]
+    pub fn dc_blocker(&mut self, input: f32, coeff: f32) -> f32 {
+        let hp = input - self.0;
+        self.0 = input * (1.0 - coeff) + self.0 * coeff;
+        hp
+    }
+
+    /// Slew rate limiter.
+    ///
+    /// Limits how fast the output can change, useful for smoothing
+    /// sudden parameter changes.
+    ///
+    /// # Arguments
+    /// * `input` - Target value
+    /// * `rise_rate` - Maximum increase per sample
+    /// * `fall_rate` - Maximum decrease per sample
+    #[inline]
+    pub fn slew_limit(&mut self, input: f32, rise_rate: f32, fall_rate: f32) -> f32 {
+        let delta = input - self.0;
+        if delta > rise_rate {
+            self.0 += rise_rate;
+        } else if delta < -fall_rate {
+            self.0 -= fall_rate;
+        } else {
+            self.0 = input;
+        }
+        self.0
+    }
+
+    /// Leaky integrator (accumulator with decay).
+    ///
+    /// Useful for envelope followers and RMS calculation.
+    #[inline]
+    pub fn leaky_integrate(&mut self, input: f32, attack: f32, release: f32) -> f32 {
+        let coeff = if input > self.0 { attack } else { release };
+        self.0 = input + (self.0 - input) * coeff;
+        self.0
+    }
+
+    /// Soft knee saturation.
+    ///
+    /// Applies gentle saturation to prevent harsh clipping.
+    #[inline]
+    pub fn soft_saturate(value: f32, threshold: f32) -> f32 {
+        if value.abs() < threshold {
+            value
+        } else {
+            let sign = value.signum();
+            let x = (value.abs() - threshold) / (1.0 - threshold);
+            sign * (threshold + (1.0 - threshold) * x / (1.0 + x))
+        }
+    }
 }
 
 impl From<f32> for FilterState {
@@ -440,9 +447,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tempo() {
-        let tempo = Tempo::new(120.0);
-        assert!((tempo.beats_per_second() - 2.0).abs() < 0.001);
+    fn test_bpm() {
+        use super::super::Bpm;
+        let tempo = Bpm::new(120.0);
+        // At 120 BPM, beat duration = 60/120 = 0.5s
         assert!((tempo.beat_duration().as_f32() - 0.5).abs() < 0.001);
     }
 
@@ -474,5 +482,34 @@ mod tests {
         assert!((amp.as_f32() - 0.5).abs() < 0.001);
         amp.update_peak(-0.8);
         assert!((amp.as_f32() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_dc_blocker() {
+        let mut state = FilterState::ZERO;
+        // DC offset should be removed over time
+        let mut output = 0.0;
+        for _ in 0..1000 {
+            output = state.dc_blocker(1.0, 0.995);
+        }
+        assert!(output.abs() < 0.1);
+    }
+
+    #[test]
+    fn test_slew_limit() {
+        let mut state = FilterState::new(0.0);
+        let result = state.slew_limit(1.0, 0.1, 0.1);
+        assert!((result - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_soft_saturate() {
+        // Below threshold - linear
+        let v1 = FilterState::soft_saturate(0.5, 0.8);
+        assert!((v1 - 0.5).abs() < 0.001);
+
+        // Above threshold - saturated
+        let v2 = FilterState::soft_saturate(1.5, 0.8);
+        assert!(v2 < 1.5 && v2 > 0.8);
     }
 }
