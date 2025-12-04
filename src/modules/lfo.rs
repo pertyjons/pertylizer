@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{LfoParam, LfoWaveform, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BeatDivision, Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, SampleRate};
 
 /// LFO output mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,7 +248,7 @@ impl PolyModule for Lfo {
         self.sh_value = 0.0;
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

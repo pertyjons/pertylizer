@@ -7,7 +7,7 @@
 use crate::engine::{EngineHandle, ModuleId};
 use crate::engine::typed_params::Param;
 use crate::modules::{ModuleDescriptor, ParameterDescriptor, WidgetHint};
-use crate::types::{Gain, NormalizedValue};
+use crate::types::{Gain, MidiNote, NormalizedValue};
 
 // ============================================================================
 // UI Events
@@ -17,9 +17,9 @@ use crate::types::{Gain, NormalizedValue};
 #[derive(Debug, Clone)]
 pub enum UiEvent {
     /// Trigger a note on.
-    NoteOn { note: u8, velocity: NormalizedValue },
+    NoteOn { note: MidiNote, velocity: NormalizedValue },
     /// Trigger a note off.
-    NoteOff { note: u8 },
+    NoteOff { note: MidiNote },
     /// All notes off.
     AllNotesOff,
     /// Change a parameter value.
@@ -127,12 +127,12 @@ impl UiState {
     }
 
     /// Send a note on event.
-    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue) {
+    pub fn note_on(&mut self, note: MidiNote, velocity: NormalizedValue) {
         self.handle.note_on(note, velocity);
     }
 
     /// Send a note off event.
-    pub fn note_off(&mut self, note: u8) {
+    pub fn note_off(&mut self, note: MidiNote) {
         self.handle.note_off(note);
     }
 

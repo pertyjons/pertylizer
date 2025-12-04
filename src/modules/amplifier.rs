@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, Gain, SampleRate};
+use crate::types::{BipolarValue, Gain, MidiNote, SampleRate};
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
@@ -169,7 +169,7 @@ impl PolyModule for Amplifier {
         self.output_right.clear();
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -322,7 +322,7 @@ impl PolyModule for Mixer {
         self.output_buffer.clear();
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

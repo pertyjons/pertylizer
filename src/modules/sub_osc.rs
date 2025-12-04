@@ -14,7 +14,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{ModuleType, Param, SubOscParam, SubOscOctave, SubOscWaveform};
 use crate::modules::core::*;
-use crate::types::{Gain, Hertz, Phase, SampleRate};
+use crate::types::{Gain, Hertz, MidiNote, Phase, SampleRate};
 
 /// Sub-oscillator for bass reinforcement.
 #[derive(Clone)]
@@ -182,8 +182,8 @@ impl PolyModule for SubOscillator {
         self.phase = Phase::ZERO;
     }
 
-    fn note_on(&mut self, note: u8, _velocity: f32) {
-        self.base_frequency = Hertz::from_midi(note);
+    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+        self.base_frequency = note.to_frequency();
         // Reset phase on note for consistent attack
         self.phase = Phase::ZERO;
     }

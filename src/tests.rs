@@ -11,6 +11,7 @@
 mod audio_safety {
     use crate::modules::{Oscillator, Filter, Envelope, AudioBuffer, ProcessContext, PolyModule, AudioEffect};
     use crate::effects::{Delay, Reverb, Chorus, Distortion};
+    use crate::types::MidiNote;
     use std::collections::HashMap;
 
     fn make_context(samples: usize) -> ProcessContext {
@@ -103,7 +104,7 @@ mod audio_safety {
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
         // Trigger note on
-        env.note_on(60, 1.0);
+        env.note_on(MidiNote::C4, 1.0);
         
         for _ in 0..50 {
             env.process(&inputs, &mut outputs, &context);
@@ -296,6 +297,7 @@ mod parameter_handling {
 #[cfg(test)]
 mod voice_allocation {
     use crate::engine::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy};
+    use crate::types::MidiNote;
 
     #[test]
     fn test_polyphonic_allocation() {
@@ -306,9 +308,9 @@ mod voice_allocation {
         };
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
-        allocator.note_on(67, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.note_on(MidiNote::new(67), 0.8);
 
         assert_eq!(allocator.active_voice_count(), 3);
     }
@@ -323,10 +325,10 @@ mod voice_allocation {
         };
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
         // This should steal the oldest voice
-        allocator.note_on(67, 0.8);
+        allocator.note_on(MidiNote::new(67), 0.8);
 
         assert_eq!(allocator.active_voice_count(), 2);
     }
@@ -340,9 +342,9 @@ mod voice_allocation {
         };
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
-        allocator.note_on(67, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.note_on(MidiNote::new(67), 0.8);
 
         // Mono mode should only have one active voice
         assert_eq!(allocator.active_voice_count(), 1);
@@ -353,10 +355,10 @@ mod voice_allocation {
         let config = AllocatorConfig::default();
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
         assert_eq!(allocator.active_voice_count(), 1);
 
-        allocator.note_off(60);
+        allocator.note_off(MidiNote::C4);
         // Voice should still be active during release
         // (actual check depends on implementation)
     }
@@ -366,9 +368,9 @@ mod voice_allocation {
         let config = AllocatorConfig::default();
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
-        allocator.note_on(67, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.note_on(MidiNote::new(67), 0.8);
 
         allocator.all_notes_off();
 
@@ -380,8 +382,8 @@ mod voice_allocation {
         let config = AllocatorConfig::default();
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
 
         allocator.panic();
 
@@ -536,8 +538,8 @@ mod engine_integration {
     fn test_engine_note_on_off() {
         let (_engine, mut handle) = SynthEngine::new();
 
-        handle.note_on(60, crate::types::NormalizedValue::new(0.8));
-        handle.note_off(60);
+        handle.note_on(crate::types::MidiNote::C4, crate::types::NormalizedValue::new(0.8));
+        handle.note_off(crate::types::MidiNote::C4);
         // Commands are queued, processing happens in audio thread
     }
 
@@ -549,7 +551,7 @@ mod engine_integration {
         let info = make_stream_info();
         engine.on_stream_start(&info);
 
-        handle.note_on(60, crate::types::NormalizedValue::new(0.8));
+        handle.note_on(crate::types::MidiNote::C4, crate::types::NormalizedValue::new(0.8));
 
         // Process some audio
         let mut output = vec![0.0f32; 512];

@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::engine::ModuleId;
 use crate::engine::typed_params::{ModuleType, Param};
 use crate::modules::core::*;
+use crate::types::MidiNote;
 
 /// A connection between two ports.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -342,7 +343,7 @@ impl ModuleGraph {
     }
 
     /// Trigger note on for all modules.
-    pub fn note_on(&mut self, note: u8, velocity: f32) {
+    pub fn note_on(&mut self, note: MidiNote, velocity: f32) {
         for node in self.nodes.values_mut() {
             node.module.note_on(note, velocity);
         }

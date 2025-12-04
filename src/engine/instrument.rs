@@ -20,7 +20,7 @@ use crate::engine::graph::ModuleGraph;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Gain, NormalizedValue};
+use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, SampleCount};
 
 /// Unique identifier for an instrument.
 ///
@@ -408,7 +408,7 @@ impl Instrument {
     /// Handle a note on event.
     ///
     /// Returns the voice ID if a voice was allocated.
-    pub fn note_on(&mut self, note: u8, velocity: f32) -> Option<u32> {
+    pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
         if !self.enabled {
             return None;
         }
@@ -416,7 +416,7 @@ impl Instrument {
     }
 
     /// Handle a note off event.
-    pub fn note_off(&mut self, note: u8) {
+    pub fn note_off(&mut self, note: MidiNote) {
         self.allocator.note_off(note);
     }
 
@@ -477,7 +477,7 @@ impl Instrument {
             // Update glide and increment age
             let delta_time = samples as f32 / context.sample_rate;
             voice.glide.update(delta_time);
-            voice.age += samples as u64;
+            voice.age = voice.age + SampleCount::new(samples);
 
             // Handle stealing fade-out completion
             if let VoiceState::Stealing { fade_counter, .. } = voice.state {
@@ -526,7 +526,7 @@ impl Instrument {
         }
 
         // Advance allocator time
-        self.allocator.advance_time(samples as u64);
+        self.allocator.advance_time(SampleCount::new(samples));
 
         // Interleave voice_left/voice_right into effect_buffer (L, R, L, R, ...)
         for i in 0..samples {
@@ -653,12 +653,12 @@ mod tests {
         let mut instrument = Instrument::new(InstrumentId::new(1), "Synth");
 
         // Note on should allocate a voice
-        let voice_id = instrument.note_on(60, 0.8);
+        let voice_id = instrument.note_on(MidiNote::C4, 0.8);
         assert!(voice_id.is_some());
         assert_eq!(instrument.active_voice_count(), 1);
 
         // Note off should release
-        instrument.note_off(60);
+        instrument.note_off(MidiNote::C4);
         // Voice should be releasing (still "active" in allocator terms until envelope finishes)
     }
 

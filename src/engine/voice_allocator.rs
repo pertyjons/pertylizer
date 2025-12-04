@@ -6,7 +6,7 @@
 //! - Glide/portamento support
 
 use crate::engine::voice::{Voice, VoiceState};
-use crate::types::{Cents, NormalizedValue, Seconds};
+use crate::types::{Cents, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds};
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,11 +84,11 @@ pub struct VoiceAllocator {
     /// All available voices.
     voices: Vec<Voice>,
     /// Currently held notes (for legato/mono) - (note, velocity).
-    held_notes: Vec<(u8, NormalizedValue)>,
-    /// Current time counter.
-    time: u64,
+    held_notes: Vec<(MidiNote, NormalizedValue)>,
+    /// Current time counter (type-safe sample position).
+    time: SamplePosition,
     /// Last played note (for glide).
-    last_note: Option<u8>,
+    last_note: Option<MidiNote>,
 }
 
 impl VoiceAllocator {
@@ -102,7 +102,7 @@ impl VoiceAllocator {
             config,
             voices,
             held_notes: Vec::new(),
-            time: 0,
+            time: SamplePosition::ZERO,
             last_note: None,
         }
     }
@@ -121,7 +121,7 @@ impl VoiceAllocator {
             config,
             voices,
             held_notes: Vec::new(),
-            time: 0,
+            time: SamplePosition::ZERO,
             last_note: None,
         }
     }
@@ -139,7 +139,7 @@ impl VoiceAllocator {
             config,
             voices,
             held_notes: Vec::new(),
-            time: 0,
+            time: SamplePosition::ZERO,
             last_note: None,
         }
     }
@@ -200,7 +200,7 @@ impl VoiceAllocator {
 
     /// Handle note on event.
     /// Accepts f32 velocity for backward compatibility (converted internally).
-    pub fn note_on(&mut self, note: u8, velocity: f32) -> Option<u32> {
+    pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
         // Track held notes with type-safe velocity
         let velocity_norm = NormalizedValue::new(velocity);
         self.held_notes.retain(|(n, _)| *n != note);
@@ -215,7 +215,7 @@ impl VoiceAllocator {
     }
 
     /// Handle note off event.
-    pub fn note_off(&mut self, note: u8) {
+    pub fn note_off(&mut self, note: MidiNote) {
         // Remove from held notes
         self.held_notes.retain(|(n, _)| *n != note);
 
@@ -285,12 +285,12 @@ impl VoiceAllocator {
     }
 
     /// Advance time (call once per audio block).
-    pub fn advance_time(&mut self, samples: u64) {
-        self.time += samples;
+    pub fn advance_time(&mut self, samples: SampleCount) {
+        self.time = self.time + samples;
     }
 
     /// Allocate voice for polyphonic mode.
-    fn allocate_poly(&mut self, note: u8, velocity: NormalizedValue) -> Option<u32> {
+    fn allocate_poly(&mut self, note: MidiNote, velocity: NormalizedValue) -> Option<u32> {
         // First, try to find an idle voice
         if let Some(voice) = self.voices.iter_mut().find(|v| v.is_available()) {
             voice.note_on(note, velocity, self.time);
@@ -323,7 +323,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for mono/legato mode.
-    fn allocate_mono(&mut self, note: u8, velocity: NormalizedValue, retrigger: bool) -> Option<u32> {
+    fn allocate_mono(&mut self, note: MidiNote, velocity: NormalizedValue, retrigger: bool) -> Option<u32> {
         // Find active voice index or use first
         let voice_idx = self.voices.iter()
             .position(|v| v.is_active())
@@ -351,7 +351,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate all voices for unison mode.
-    fn allocate_unison(&mut self, note: u8, velocity: NormalizedValue) -> Option<u32> {
+    fn allocate_unison(&mut self, note: MidiNote, velocity: NormalizedValue) -> Option<u32> {
         let num_voices = self.voices.len();
         let detune_per_voice = self.config.unison_detune / num_voices as f32;
 
@@ -438,7 +438,7 @@ impl VoiceAllocator {
     }
 
     /// Get the priority note based on configuration.
-    fn get_priority_note(&self) -> Option<&(u8, NormalizedValue)> {
+    fn get_priority_note(&self) -> Option<&(MidiNote, NormalizedValue)> {
         if self.held_notes.is_empty() {
             return None;
         }
@@ -477,14 +477,14 @@ mod tests {
 
         // Allocate 4 notes
         for note in 60..64 {
-            let id = allocator.note_on(note, 0.8);
+            let id = allocator.note_on(MidiNote::new(note), 0.8);
             assert!(id.is_some());
         }
 
         assert_eq!(allocator.active_voice_count(), 4);
 
         // Release one
-        allocator.note_off(60);
+        allocator.note_off(MidiNote::C4);
 
         // Should have one releasing
         let releasing = allocator
@@ -504,15 +504,15 @@ mod tests {
         };
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(60, 0.8);
-        allocator.note_on(64, 0.8);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::new(64), 0.8);
 
         // Only one voice should be active
         assert_eq!(allocator.active_voice_count(), 1);
 
         // And it should be playing the latest note
         let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
-        assert_eq!(active.note(), Some(64));
+        assert_eq!(active.note(), Some(MidiNote::new(64)));
     }
 
     #[test]
@@ -526,13 +526,13 @@ mod tests {
         let mut allocator = VoiceAllocator::new(config);
 
         // Fill all voices
-        allocator.note_on(60, 0.8);
-        allocator.advance_time(100);
-        allocator.note_on(64, 0.8);
-        allocator.advance_time(100);
+        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.advance_time(SampleCount::new(100));
+        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.advance_time(SampleCount::new(100));
 
         // Third note should steal oldest
-        let id = allocator.note_on(67, 0.8);
+        let id = allocator.note_on(MidiNote::new(67), 0.8);
         assert!(id.is_some());
 
         // Voice 0 (oldest) should now be playing note 67

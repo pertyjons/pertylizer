@@ -5,7 +5,7 @@ use crate::modules::{
     Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{BipolarValue, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate};
+use crate::types::{BipolarValue, BufferIndex, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay time in milliseconds.
 const MAX_DELAY_MS: f32 = 20.0;
@@ -22,7 +22,7 @@ pub struct Flanger {
     // Delay buffers (stereo)
     buffer_l: Vec<f32>,
     buffer_r: Vec<f32>,
-    write_pos: usize,
+    write_pos: BufferIndex,
 
     // LFO state
     lfo_phase: Phase,
@@ -45,7 +45,7 @@ impl Flanger {
             mix: NormalizedValue::CENTER,
             buffer_l: vec![0.0; 4800], // Will be resized
             buffer_r: vec![0.0; 4800],
-            write_pos: 0,
+            write_pos: BufferIndex::ZERO,
             lfo_phase: Phase::ZERO,
             feedback_l: 0.0,
             feedback_r: 0.0,
@@ -58,15 +58,15 @@ impl Flanger {
         if self.buffer_l.len() != size {
             self.buffer_l.resize(size, 0.0);
             self.buffer_r.resize(size, 0.0);
-            self.write_pos = 0;
+            self.write_pos = BufferIndex::ZERO;
         }
     }
 
     /// Read from delay buffer with linear interpolation.
     #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: usize, delay_samples: f32) -> f32 {
+    fn read_interpolated(buffer: &[f32], write_pos: BufferIndex, delay_samples: f32) -> f32 {
         let len = buffer.len();
-        let read_pos = (write_pos as f32 - delay_samples).rem_euclid(len as f32);
+        let read_pos = (write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
         let idx0 = read_pos as usize % len;
         let idx1 = (idx0 + 1) % len;
         let frac = read_pos - read_pos.floor();
@@ -188,8 +188,9 @@ impl AudioEffect for Flanger {
 
             // Write input + feedback to delay buffer
             let feedback = self.feedback.as_f32();
-            self.buffer_l[self.write_pos] = in_l + self.feedback_l * feedback;
-            self.buffer_r[self.write_pos] = in_r + self.feedback_r * feedback;
+            let write_idx = self.write_pos.as_usize();
+            self.buffer_l[write_idx] = in_l + self.feedback_l * feedback;
+            self.buffer_r[write_idx] = in_r + self.feedback_r * feedback;
 
             // Read from delay with interpolation
             let wet_l = Self::read_interpolated(&self.buffer_l, self.write_pos, delay_samples);
@@ -200,7 +201,7 @@ impl AudioEffect for Flanger {
             self.feedback_r = wet_r;
 
             // Advance write position
-            self.write_pos = (self.write_pos + 1) % self.buffer_l.len();
+            self.write_pos = self.write_pos.advance(self.buffer_l.len());
 
             // Mix dry/wet
             let mix = self.mix.as_f32();
@@ -216,7 +217,7 @@ impl AudioEffect for Flanger {
     fn reset(&mut self) {
         self.buffer_l.fill(0.0);
         self.buffer_r.fill(0.0);
-        self.write_pos = 0;
+        self.write_pos = BufferIndex::ZERO;
         self.feedback_l = 0.0;
         self.feedback_r = 0.0;
         self.lfo_phase = Phase::ZERO;

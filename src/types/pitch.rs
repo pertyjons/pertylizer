@@ -371,11 +371,25 @@ impl MidiNote {
         Self(note)
     }
 
-    /// Middle C (C4).
+    // === Standard note constants ===
+
+    /// Lowest note on 88-key piano (A0, MIDI 21)
+    pub const A0: Self = Self(21);
+
+    /// Middle C (C4, MIDI 60)
     pub const C4: Self = Self(60);
 
-    /// Concert pitch A (A4).
+    /// Concert pitch A (A4, MIDI 69, 440Hz)
     pub const A4: Self = Self(69);
+
+    /// Highest note on 88-key piano (C8, MIDI 108)
+    pub const C8: Self = Self(108);
+
+    /// Lowest MIDI note
+    pub const MIN: Self = Self(0);
+
+    /// Highest MIDI note
+    pub const MAX: Self = Self(127);
 
     /// Get the raw value.
     #[inline]

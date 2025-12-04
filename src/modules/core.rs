@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
 use crate::engine::typed_params::{Param, ModuleType as TypedModuleType};
+use crate::types::MidiNote;
 
 // ============================================================================
 // Buffer types
@@ -719,7 +720,7 @@ pub trait PolyModule: Describable + Send {
     fn reset(&mut self);
 
     /// Trigger note on.
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
 
     /// Trigger note off.
     fn note_off(&mut self) {}

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{InstrumentId, TrackId};
+use crate::types::NormalizedValue;
 
 /// A sequencer track in the song.
 /// Named SequencerTrack to distinguish from future AudioTrack.
@@ -14,10 +15,10 @@ pub struct SequencerTrack {
     pub name: String,
     /// Instrument this track controls (None = MIDI out or none).
     pub instrument: Option<InstrumentId>,
-    /// Volume (0.0 - 1.0).
-    pub volume: f32,
-    /// Panning (0.0 = left, 0.5 = center, 1.0 = right).
-    pub pan: f32,
+    /// Volume (type-safe normalized 0.0-1.0).
+    pub volume: NormalizedValue,
+    /// Panning (type-safe: 0.0 = left, 0.5 = center, 1.0 = right).
+    pub pan: NormalizedValue,
     /// Muted state.
     pub mute: bool,
     /// Solo state.
@@ -33,8 +34,8 @@ impl SequencerTrack {
             id,
             name: name.into(),
             instrument: None,
-            volume: 1.0,
-            pan: 0.5,
+            volume: NormalizedValue::MAX,
+            pan: NormalizedValue::CENTER,
             mute: false,
             solo: false,
             color: TrackColor::default(),
@@ -48,14 +49,14 @@ impl SequencerTrack {
     }
 
     /// Set the volume (builder pattern).
-    pub fn with_volume(mut self, volume: f32) -> Self {
-        self.volume = volume.clamp(0.0, 1.0);
+    pub fn with_volume(mut self, volume: NormalizedValue) -> Self {
+        self.volume = volume;
         self
     }
 
     /// Set the panning (builder pattern).
-    pub fn with_pan(mut self, pan: f32) -> Self {
-        self.pan = pan.clamp(0.0, 1.0);
+    pub fn with_pan(mut self, pan: NormalizedValue) -> Self {
+        self.pan = pan;
         self
     }
 
@@ -152,8 +153,8 @@ mod tests {
     fn test_track_creation() {
         let track = SequencerTrack::new(TrackId(0), "Lead");
         assert_eq!(track.name, "Lead");
-        assert_eq!(track.volume, 1.0);
-        assert_eq!(track.pan, 0.5);
+        assert_eq!(track.volume, NormalizedValue::MAX);
+        assert_eq!(track.pan, NormalizedValue::CENTER);
         assert!(!track.mute);
         assert!(!track.solo);
     }
@@ -162,12 +163,12 @@ mod tests {
     fn test_track_builder() {
         let track = SequencerTrack::new(TrackId(0), "Bass")
             .with_instrument(InstrumentId(1))
-            .with_volume(0.8)
-            .with_pan(0.3);
+            .with_volume(NormalizedValue::new(0.8))
+            .with_pan(NormalizedValue::new(0.3));
 
         assert_eq!(track.instrument, Some(InstrumentId(1)));
-        assert_eq!(track.volume, 0.8);
-        assert_eq!(track.pan, 0.3);
+        assert_eq!(track.volume, NormalizedValue::new(0.8));
+        assert_eq!(track.pan, NormalizedValue::new(0.3));
     }
 
     #[test]

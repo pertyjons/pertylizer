@@ -6,19 +6,22 @@
 use std::collections::HashMap;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use crate::gui::widgets::colors;
+use crate::types::MidiNote;
 
 /// MIDI note number for A0 (lowest note on 88-key piano)
-pub const PIANO_LOW_NOTE: u8 = 21;
+pub const PIANO_LOW_NOTE: u8 = MidiNote::A0.as_u8();
 /// MIDI note number for C8 (highest note on 88-key piano)
-pub const PIANO_HIGH_NOTE: u8 = 108;
+pub const PIANO_HIGH_NOTE: u8 = MidiNote::C8.as_u8();
 /// Total number of keys on the piano
 pub const TOTAL_KEYS: u8 = PIANO_HIGH_NOTE - PIANO_LOW_NOTE + 1;
 
 /// Result of keyboard interaction
 #[derive(Debug, Clone)]
 pub struct KeyboardEvent {
-    pub note_on: Option<u8>,
-    pub note_off: Vec<u8>,
+    /// Note that was pressed (MidiNote for type safety)
+    pub note_on: Option<MidiNote>,
+    /// Notes that were released
+    pub note_off: Vec<MidiNote>,
     pub octave_change: i32,
 }
 
@@ -34,7 +37,8 @@ impl Default for KeyboardEvent {
 
 /// Piano keyboard widget with 88 keys
 pub struct PianoKeyboard {
-    /// Currently pressed keys (MIDI note -> velocity 0.0-1.0)
+    /// Currently pressed keys (raw MIDI note -> velocity 0.0-1.0)
+    /// Uses u8 internally for efficient HashMap operations
     pressed_keys: HashMap<u8, f32>,
     /// Keys pressed by mouse (need to track separately for release)
     mouse_pressed_keys: HashMap<u8, bool>,
@@ -66,23 +70,23 @@ impl PianoKeyboard {
     }
 
     /// Mark a note as pressed with velocity (for visual feedback)
-    pub fn set_note_on(&mut self, note: u8, velocity: f32) {
-        self.pressed_keys.insert(note, velocity.clamp(0.0, 1.0));
+    pub fn set_note_on(&mut self, note: MidiNote, velocity: f32) {
+        self.pressed_keys.insert(note.as_u8(), velocity.clamp(0.0, 1.0));
     }
 
     /// Mark a note as released
-    pub fn set_note_off(&mut self, note: u8) {
-        self.pressed_keys.remove(&note);
+    pub fn set_note_off(&mut self, note: MidiNote) {
+        self.pressed_keys.remove(&note.as_u8());
     }
 
     /// Check if a note is pressed
-    pub fn is_note_pressed(&self, note: u8) -> bool {
-        self.pressed_keys.contains_key(&note)
+    pub fn is_note_pressed(&self, note: MidiNote) -> bool {
+        self.pressed_keys.contains_key(&note.as_u8())
     }
 
     /// Get the velocity of a pressed note (0.0 if not pressed)
-    pub fn get_velocity(&self, note: u8) -> f32 {
-        self.pressed_keys.get(&note).copied().unwrap_or(0.0)
+    pub fn get_velocity(&self, note: MidiNote) -> f32 {
+        self.pressed_keys.get(&note.as_u8()).copied().unwrap_or(0.0)
     }
 
     /// Clear all pressed notes
@@ -364,7 +368,7 @@ impl PianoKeyboard {
                 // New note pressed (use default velocity 0.8 for mouse clicks)
                 self.mouse_pressed_keys.insert(note, true);
                 self.pressed_keys.insert(note, 0.8);
-                event.note_on = Some(note);
+                event.note_on = Some(MidiNote::new(note));
             }
         }
 
@@ -372,7 +376,7 @@ impl PianoKeyboard {
         if inner_response.drag_stopped() || (!inner_response.hovered() && inner_response.clicked_elsewhere()) {
             for (&note, &pressed) in self.mouse_pressed_keys.iter() {
                 if pressed {
-                    event.note_off.push(note);
+                    event.note_off.push(MidiNote::new(note));
                 }
             }
             // Clear mouse pressed state but keep the visual pressed state
@@ -384,7 +388,7 @@ impl PianoKeyboard {
             // Mouse button released while still over keyboard
             for (&note, &pressed) in self.mouse_pressed_keys.iter() {
                 if pressed {
-                    event.note_off.push(note);
+                    event.note_off.push(MidiNote::new(note));
                 }
             }
             for pressed in self.mouse_pressed_keys.values_mut() {

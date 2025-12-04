@@ -11,7 +11,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BufferIndex, FrameCount, Gain, Hertz, NormalizedValue, Phase, SampleRate};
+use crate::types::{BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate};
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -77,8 +77,8 @@ impl MathOscillator {
     }
 
     /// Set frequency from MIDI note.
-    pub fn set_note(&mut self, note: u8) {
-        self.frequency = Hertz::from_midi(note);
+    pub fn set_note(&mut self, note: MidiNote) {
+        self.frequency = note.to_frequency();
     }
 
     /// Generate white noise sample using fastrand (thread-local, lock-free).
@@ -564,7 +564,7 @@ impl PolyModule for MathOscillator {
         self.burst_remaining = FrameCount::ZERO;
     }
 
-    fn note_on(&mut self, note: u8, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
         self.set_note(note);
         self.reset_state();
 
@@ -634,10 +634,10 @@ mod tests {
     #[test]
     fn test_note_to_frequency() {
         let mut osc = MathOscillator::new();
-        osc.set_note(69); // A4
+        osc.set_note(MidiNote::A4); // A4
         assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
 
-        osc.set_note(60); // C4
+        osc.set_note(MidiNote::C4); // C4
         assert!((osc.frequency.as_f32() - 261.63).abs() < 1.0);
     }
 }

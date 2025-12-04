@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use super::instrument::{MidiChannel, InstrumentId, Instrument};
 use super::typed_params::{ModuleType, Param};
-use crate::types::{BipolarValue, Bpm, Gain, NormalizedValue, Seconds};
+use crate::types::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds};
 
 /// Unique identifier for a module instance.
 ///
@@ -273,7 +273,7 @@ pub enum EngineCommand {
     // === Note control ===
     /// Start a note with type-safe velocity.
     NoteOn {
-        note: u8,
+        note: MidiNote,
         /// Velocity as normalized value [0.0, 1.0].
         velocity: NormalizedValue,
         channel: MidiChannel,
@@ -281,7 +281,7 @@ pub enum EngineCommand {
 
     /// Stop a note.
     NoteOff {
-        note: u8,
+        note: MidiNote,
         channel: MidiChannel,
     },
 
@@ -310,7 +310,7 @@ pub enum EngineCommand {
 
     /// Per-note aftertouch (polyphonic aftertouch) - type-safe normalized value.
     PolyAftertouch {
-        note: u8,
+        note: MidiNote,
         value: NormalizedValue,
         channel: MidiChannel,
     },
@@ -611,8 +611,8 @@ pub enum EngineEvent {
     /// the source (MIDI, sequencer, or UI). Use this to update the GUI
     /// keyboard to show which notes the engine is actually playing.
     NoteTriggered {
-        /// MIDI note number (0-127).
-        note: u8,
+        /// MIDI note number.
+        note: MidiNote,
         /// Velocity as normalized value (0.0-1.0).
         velocity: f32,
         /// MIDI channel the note was triggered on.
@@ -625,8 +625,8 @@ pub enum EngineEvent {
     /// The note may still be audible during the release, but the key should
     /// no longer appear "pressed" in the GUI.
     NoteReleased {
-        /// MIDI note number (0-127).
-        note: u8,
+        /// MIDI note number.
+        note: MidiNote,
         /// MIDI channel the note was released on.
         channel: MidiChannel,
     },

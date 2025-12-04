@@ -177,6 +177,13 @@ impl AddAssign for Duration {
     }
 }
 
+impl std::ops::Mul<u32> for Duration {
+    type Output = Self;
+    fn mul(self, rhs: u32) -> Self::Output {
+        Duration(self.0 * rhs)
+    }
+}
+
 impl SubAssign for Duration {
     fn sub_assign(&mut self, rhs: Self) {
         self.0 = self.0.saturating_sub(rhs.0);

@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 use crate::engine::graph::ModuleGraph;
 use crate::engine::typed_params::{ModuleType, Param, OscillatorParam};
 use crate::modules::core::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Cents, Hertz, NormalizedValue, Seconds, Semitones};
+use crate::types::{BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds, Semitones};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -51,22 +51,22 @@ pub enum VoiceState {
 
     /// Voice is actively playing a note.
     Active {
-        /// MIDI note number (0-127)
-        note: u8,
+        /// MIDI note number
+        note: MidiNote,
         /// Note velocity (type-safe normalized value 0.0-1.0)
         velocity: NormalizedValue,
-        /// When this voice was triggered (in samples, for voice stealing priority)
-        start_time: u64,
+        /// When this voice was triggered (type-safe sample position)
+        start_time: SamplePosition,
     },
 
     /// Voice is in release phase (note off received, envelope releasing).
     Releasing {
         /// MIDI note number (kept for potential re-trigger or display)
-        note: u8,
+        note: MidiNote,
         /// Original velocity (kept for release velocity calculations)
         velocity: NormalizedValue,
-        /// Original start time
-        start_time: u64,
+        /// Original start time (type-safe sample position)
+        start_time: SamplePosition,
     },
 
     /// Voice was stolen and is fading out quickly.
@@ -99,7 +99,7 @@ impl VoiceState {
 
     /// Get the note if the voice is playing (Active or Releasing).
     #[inline]
-    pub fn note(&self) -> Option<u8> {
+    pub fn note(&self) -> Option<MidiNote> {
         match self {
             Self::Active { note, .. } | Self::Releasing { note, .. } => Some(*note),
             _ => None,
@@ -117,7 +117,7 @@ impl VoiceState {
 
     /// Get the start time if the voice is playing.
     #[inline]
-    pub fn start_time(&self) -> Option<u64> {
+    pub fn start_time(&self) -> Option<SamplePosition> {
         match self {
             Self::Active { start_time, .. } | Self::Releasing { start_time, .. } => {
                 Some(*start_time)
@@ -266,7 +266,7 @@ pub struct Voice {
 
     /// Age in samples since note-on (for voice stealing priority).
     /// Incremented each process() call when voice is active.
-    pub age: u64,
+    pub age: SampleCount,
 
     // === Macro controllers (type-safe) ===
     /// Pitch bend amount (-1.0 to +1.0, type-safe).
@@ -307,7 +307,7 @@ impl Voice {
         Self {
             id,
             state: VoiceState::Idle,
-            age: 0,
+            age: SampleCount::ZERO,
             // Macro controllers default to neutral positions
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
@@ -335,7 +335,7 @@ impl Voice {
         Self {
             id,
             state: VoiceState::Idle,
-            age: 0,
+            age: SampleCount::ZERO,
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
@@ -393,12 +393,12 @@ impl Voice {
     /// Convert MIDI note to frequency (A4 = 440 Hz).
     /// Uses a pre-computed lookup table to avoid expensive powf() calls.
     #[inline]
-    fn note_to_freq(note: u8) -> f32 {
-        NOTE_FREQ_TABLE[note as usize]
+    fn note_to_freq(note: MidiNote) -> f32 {
+        NOTE_FREQ_TABLE[note.as_u8() as usize]
     }
 
     /// Trigger note on with type-safe velocity.
-    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue, time: u64) {
+    pub fn note_on(&mut self, note: MidiNote, velocity: NormalizedValue, time: SamplePosition) {
         let target_freq = Self::note_to_freq(note);
 
         // Start glide from current position if we have a glide time and were already active
@@ -419,7 +419,7 @@ impl Voice {
             velocity,
             start_time: time,
         };
-        self.age = 0;
+        self.age = SampleCount::ZERO;
 
         // Notify all modules in the graph
         self.graph.note_on(note, velocity.as_f32());
@@ -428,7 +428,7 @@ impl Voice {
     /// Change pitch without retriggering (for legato mode).
     ///
     /// Updates the note in the current state if active.
-    pub fn glide_to_note(&mut self, new_note: u8) {
+    pub fn glide_to_note(&mut self, new_note: MidiNote) {
         let target_freq = Self::note_to_freq(new_note);
 
         // Update glide target
@@ -491,7 +491,7 @@ impl Voice {
 
     /// Get the note this voice is playing, if any.
     #[inline]
-    pub fn note(&self) -> Option<u8> {
+    pub fn note(&self) -> Option<MidiNote> {
         self.state.note()
     }
 
@@ -504,7 +504,7 @@ impl Voice {
     /// Reset the voice to idle state.
     pub fn reset(&mut self) {
         self.state = VoiceState::Idle;
-        self.age = 0;
+        self.age = SampleCount::ZERO;
         self.glide = GlideState::default();
         // Note: We don't reset macro controllers here since they are channel-wide,
         // not per-voice. They persist across notes.
@@ -604,7 +604,7 @@ impl Voice {
         Self {
             id: self.id,
             state: VoiceState::Idle,
-            age: 0,
+            age: SampleCount::ZERO,
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
@@ -672,15 +672,15 @@ mod tests {
     #[test]
     fn test_note_to_freq() {
         // A4 should be 440 Hz
-        let freq = Voice::note_to_freq(69);
+        let freq = Voice::note_to_freq(MidiNote::A4);
         assert!((freq - 440.0).abs() < 0.01);
 
         // A5 should be 880 Hz (one octave up)
-        let freq = Voice::note_to_freq(81);
+        let freq = Voice::note_to_freq(MidiNote::new(81));
         assert!((freq - 880.0).abs() < 0.01);
 
         // A3 should be 220 Hz (one octave down)
-        let freq = Voice::note_to_freq(57);
+        let freq = Voice::note_to_freq(MidiNote::new(57));
         assert!((freq - 220.0).abs() < 0.01);
     }
 

@@ -10,7 +10,7 @@ use crate::engine::typed_params::{
     DistortionMode, DistortionParam, ModuleType, Param,
 };
 use crate::modules::core::*;
-use crate::types::{Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
+use crate::types::{BufferIndex, Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
 
 // Type alias for local use
 pub type DistortionType = DistortionMode;
@@ -248,7 +248,7 @@ pub struct Chorus {
 
     // Delay buffer
     buffer: Vec<f32>,
-    write_pos: usize,
+    write_pos: BufferIndex,
 
     // LFO state (per voice)
     lfo_phases: [Phase; 4],
@@ -267,7 +267,7 @@ impl Chorus {
             mix: NormalizedValue::CENTER,
             voices: VoiceCount::DUAL,
             buffer: vec![0.0; 48000], // Will be resized
-            write_pos: 0,
+            write_pos: BufferIndex::ZERO,
             lfo_phases: [
                 Phase::new(0.0),
                 Phase::new(0.25),
@@ -282,14 +282,14 @@ impl Chorus {
         let size = (Self::MAX_DELAY_MS / 1000.0 * self.sample_rate.as_f32()) as usize;
         if self.buffer.len() != size {
             self.buffer.resize(size, 0.0);
-            self.write_pos = 0;
+            self.write_pos = BufferIndex::ZERO;
         }
     }
 
     #[inline]
     fn read_interpolated(&self, delay_samples: f32) -> f32 {
         let len = self.buffer.len();
-        let read_pos = (self.write_pos as f32 - delay_samples).rem_euclid(len as f32);
+        let read_pos = (self.write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
         let idx0 = (read_pos as usize) % len;  // Ensure within bounds
         let idx1 = (idx0 + 1) % len;
         let frac = read_pos - read_pos.floor();
@@ -364,7 +364,7 @@ impl AudioEffect for Chorus {
             let dry = input[i];
 
             // Write to delay buffer
-            self.buffer[self.write_pos] = dry;
+            self.buffer[self.write_pos.as_usize()] = dry;
 
             // Sum chorus voices
             let mut wet = 0.0f32;
@@ -383,7 +383,7 @@ impl AudioEffect for Chorus {
             wet /= voice_count as f32;
 
             // Advance write position
-            self.write_pos = (self.write_pos + 1) % self.buffer.len();
+            self.write_pos = self.write_pos.advance(self.buffer.len());
 
             let mix = self.mix.as_f32();
             output[i] = dry * (1.0 - mix) + wet * mix;
@@ -392,7 +392,7 @@ impl AudioEffect for Chorus {
 
     fn reset(&mut self) {
         self.buffer.fill(0.0);
-        self.write_pos = 0;
+        self.write_pos = BufferIndex::ZERO;
     }
 
     fn set_mix(&mut self, mix: f32) {

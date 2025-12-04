@@ -1,5 +1,57 @@
 # Version History
 
+## [0.32.22] - 2024
+
+### Refactored - Total Type Hardening
+
+Omfattande refaktorering för att eliminera primitiva typer i domänlogik. Följer Rusts "New Type Idiom" för maximal typsäkerhet.
+
+**Phase 1: MidiNote för PolyModule och EngineCommand**
+
+| Fil | Ändring |
+|-----|---------|
+| `src/modules/core.rs` | `PolyModule::note_on(MidiNote, f32)` istället för `u8` |
+| `src/engine/commands.rs` | `NoteOn`, `NoteOff`, `PolyAftertouch` använder `MidiNote` |
+| `src/engine/commands.rs` | `NoteTriggered`, `NoteReleased` events använder `MidiNote` |
+| `src/io/midi.rs` | Parsar raw MIDI bytes till `MidiNote` omedelbart |
+| `src/types/pitch.rs` | Nya konstanter: `MidiNote::A0`, `C4`, `A4`, `C8`, `MIN`, `MAX` |
+
+**Phase 2: Voice och VoiceAllocator med SamplePosition/SampleCount**
+
+| Typ | Före → Efter |
+|-----|--------------|
+| `VoiceState.start_time` | `u64` → `SamplePosition` |
+| `Voice.age` | `u64` → `SampleCount` |
+| `VoiceAllocator.time` | `u64` → `SamplePosition` |
+| `advance_time()` | `u64` → `SampleCount` |
+
+**Phase 3: Effects med BufferIndex**
+
+Uppdaterade `Flanger` och `Chorus` att använda `BufferIndex` för delay buffer-hantering:
+- `write_pos: usize` → `write_pos: BufferIndex`
+- Använder `BufferIndex::advance(buffer_size)` för wrap-around
+- `Delay` använde redan `BufferIndex`
+
+**Phase 4: Sequencer med NormalizedValue**
+
+| Fält | Före → Efter |
+|------|--------------|
+| `SequencerTrack.volume` | `f32` → `NormalizedValue` |
+| `SequencerTrack.pan` | `f32` → `NormalizedValue` |
+
+**Övrigt:**
+- Lade till `Mul<u32>` för `Duration` (doctest fix)
+- Uppdaterade alla tester att använda typade värden
+
+**Verification:**
+- ✅ u8 endast för raw MIDI bytes eller loop-index, aldrig för "Pitch"
+- ✅ u64 endast för serialiserings-ID:n, aldrig för "Time"
+- ✅ f32 endast i DSP-kod inuti `process()`, aldrig för parametrar
+- ✅ Alla 260 enhetstester passerar
+- ✅ Kod kompilerar utan varningar
+
+---
+
 ## [0.32.21] - 2024
 
 ### Refactored - Type Safety and Enums

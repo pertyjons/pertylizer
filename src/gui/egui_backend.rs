@@ -26,7 +26,7 @@ use crate::gui::patch_editor::{PatchEditor, ModulePalette, PaletteSelection, Eff
 use crate::gui::patch_bridge;
 use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
 use crate::engine::instrument::{InstrumentId, MidiChannel};
-use crate::types::NormalizedValue;
+use crate::types::{MidiNote, NormalizedValue};
 use crate::modules::{
     Describable, ModuleCategory,
     Oscillator, MathOscillator, SubOscillator, NoiseGenerator,
@@ -305,7 +305,7 @@ impl eframe::App for SynthApp {
                 }
                 EngineEvent::NoteReleased { note, .. } => {
                     self.keyboard.set_note_off(note);
-                    self.pressed_keys.remove(&note);
+                    self.pressed_keys.remove(&note.as_u8());
                 }
                 EngineEvent::AllNotesReleased => {
                     self.keyboard.clear_pressed();
@@ -939,13 +939,13 @@ impl SynthApp {
                 let note = note_i32 as u8;
 
                 if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
-                    self.handle.note_on_channel(note, NormalizedValue::new(0.8), active_channel);
+                    self.handle.note_on_channel(MidiNote::new(note), NormalizedValue::new(0.8), active_channel);
                     self.pressed_keys.insert(note, true);
                     // Visual feedback will come from NoteTriggered engine event
                 }
 
                 if input.key_released(*key) {
-                    self.handle.note_off_channel(note, active_channel);
+                    self.handle.note_off_channel(MidiNote::new(note), active_channel);
                     self.pressed_keys.insert(note, false);
                     // Visual feedback will come from NoteReleased event from engine
                 }

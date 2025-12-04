@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{EnvelopeParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, NormalizedValue, SampleRate, Seconds};
+use crate::types::{BipolarValue, MidiNote, NormalizedValue, SampleRate, Seconds};
 
 /// Envelope stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -359,7 +359,7 @@ impl PolyModule for Envelope {
         self.level = NormalizedValue::MIN;
     }
 
-    fn note_on(&mut self, _note: u8, velocity: f32) {
+    fn note_on(&mut self, _note: MidiNote, velocity: f32) {
         self.trigger(velocity);
     }
 

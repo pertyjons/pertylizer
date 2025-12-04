@@ -25,7 +25,7 @@ use crate::engine::sequencer_engine::SequencerEngine;
 use crate::engine::state::EngineState;
 use crate::engine::instrument::{MidiChannel, InstrumentId, Instrument};
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use crate::types::{Gain, NormalizedValue, SampleCount, Seconds};
+use crate::types::{Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
     Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
     PolyModule as PolyModuleTrait,
@@ -163,7 +163,7 @@ impl EngineHandle {
     }
 
     /// Send a note on event to the default channel.
-    pub fn note_on(&mut self, note: u8, velocity: NormalizedValue) -> bool {
+    pub fn note_on(&mut self, note: MidiNote, velocity: NormalizedValue) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
@@ -172,7 +172,7 @@ impl EngineHandle {
     }
 
     /// Send a note off event to the default channel.
-    pub fn note_off(&mut self, note: u8) -> bool {
+    pub fn note_off(&mut self, note: MidiNote) -> bool {
         self.send(EngineCommand::NoteOff {
             note,
             channel: super::instrument::MidiChannel::CH1,
@@ -180,7 +180,7 @@ impl EngineHandle {
     }
 
     /// Send a note on event to a specific channel.
-    pub fn note_on_channel(&mut self, note: u8, velocity: NormalizedValue, channel: super::instrument::MidiChannel) -> bool {
+    pub fn note_on_channel(&mut self, note: MidiNote, velocity: NormalizedValue, channel: super::instrument::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
@@ -189,7 +189,7 @@ impl EngineHandle {
     }
 
     /// Send a note off event to a specific channel.
-    pub fn note_off_channel(&mut self, note: u8, channel: super::instrument::MidiChannel) -> bool {
+    pub fn note_off_channel(&mut self, note: MidiNote, channel: super::instrument::MidiChannel) -> bool {
         self.send(EngineCommand::NoteOff { note, channel })
     }
 
@@ -1059,7 +1059,7 @@ impl AudioProcessor for SynthEngine {
         for event in sequencer_events {
             match event {
                 crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, instrument, .. } => {
-                    let note = pitch.as_midi();
+                    let note = MidiNote::new(pitch.as_midi());
                     let vel = velocity.as_f32();
                     let instrument_index = instrument.0 as usize;
 
@@ -1072,7 +1072,7 @@ impl AudioProcessor for SynthEngine {
                     }
                 }
                 crate::sequencer::SequencerEvent::NoteOff { pitch, instrument, .. } => {
-                    let note = pitch.as_midi();
+                    let note = MidiNote::new(pitch.as_midi());
                     let instrument_index = instrument.0 as usize;
 
                     // Trigger note off on the matching instrument
@@ -1179,9 +1179,9 @@ mod tests {
         let (mut engine, mut handle) = SynthEngine::with_config(config);
 
         // Send multiple notes
-        handle.note_on(60, NormalizedValue::new(0.8));
-        handle.note_on(64, NormalizedValue::new(0.8));
-        handle.note_on(67, NormalizedValue::new(0.8));
+        handle.note_on(MidiNote::C4, NormalizedValue::new(0.8));
+        handle.note_on(MidiNote::new(64), NormalizedValue::new(0.8));
+        handle.note_on(MidiNote::new(67), NormalizedValue::new(0.8));
 
         // Process commands
         engine.process_commands();
@@ -1214,13 +1214,13 @@ mod tests {
         );
 
         // Send note on channel 1 - should be received
-        handle.note_on_channel(60, NormalizedValue::new(0.8), crate::engine::instrument::MidiChannel::CH1);
+        handle.note_on_channel(MidiNote::C4, NormalizedValue::new(0.8), crate::engine::instrument::MidiChannel::CH1);
         engine.process_commands();
         assert_eq!(engine.instruments[0].active_voice_count(), 1);
 
         // Send note on channel 2 - should NOT be received
         let ch2 = crate::engine::instrument::MidiChannel::from_one_indexed(2).unwrap();
-        handle.note_on_channel(64, NormalizedValue::new(0.8), ch2);
+        handle.note_on_channel(MidiNote::new(64), NormalizedValue::new(0.8), ch2);
         engine.process_commands();
         assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
     }

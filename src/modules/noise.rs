@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{ModuleType, NoiseParam, NoiseType, Param};
 use crate::modules::core::*;
-use crate::types::{Gain, SampleRate};
+use crate::types::{Gain, MidiNote, SampleRate};
 
 /// Advanced noise generator with spectral coloring.
 #[derive(Clone)]
@@ -251,7 +251,7 @@ impl PolyModule for NoiseGenerator {
         self.violet_prev = [0.0; 2];
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {
         // Reset state on note for consistent attack
         self.reset();
     }

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{Amplitude, BipolarValue, Decibels, Gain};
+use crate::types::{Amplitude, BipolarValue, Decibels, Gain, MidiNote};
 
 /// Stereo output module - the final destination in the audio graph.
 ///
@@ -340,7 +340,7 @@ impl PolyModule for StereoOutput {
         self.output_buffer.clear();
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

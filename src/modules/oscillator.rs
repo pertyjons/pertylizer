@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{Param, OscillatorParam, FmMode, ModuleType};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents, Gain, Phase, NormalizedValue, SampleRate, Semitones};
+use crate::types::{Hertz, Cents, Gain, MidiNote, Phase, NormalizedValue, SampleRate, Semitones};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -118,8 +118,8 @@ impl Oscillator {
     }
 
     /// Set frequency from MIDI note.
-    pub fn set_note(&mut self, note: u8) {
-        self.frequency = Hertz::from_midi(note);
+    pub fn set_note(&mut self, note: MidiNote) {
+        self.frequency = note.to_frequency();
     }
 
     /// Set frequency using the type-safe Hertz type.
@@ -313,7 +313,7 @@ impl PolyModule for Oscillator {
         self.phase = Phase::ZERO;
     }
 
-    fn note_on(&mut self, note: u8, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
         self.set_note(note);
     }
 
@@ -342,10 +342,10 @@ mod tests {
     #[test]
     fn test_note_to_frequency() {
         let mut osc = Oscillator::new();
-        osc.set_note(69); // A4
+        osc.set_note(MidiNote::A4); // A4
         assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
 
-        osc.set_note(60); // C4
+        osc.set_note(MidiNote::C4); // C4
         assert!((osc.frequency.as_f32() - 261.63).abs() < 1.0);
     }
 

@@ -25,7 +25,7 @@ use midir::{Ignore, MidiInput, MidiInputConnection};
 use crate::engine::commands::EngineCommand;
 use crate::engine::instrument::MidiChannel;
 use crate::engine::CommandSender;
-use crate::types::{BipolarValue, NormalizedValue};
+use crate::types::{BipolarValue, MidiNote, NormalizedValue};
 
 /// MIDI message status bytes (high nibble).
 mod status {
@@ -62,7 +62,7 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
 
     match message_type {
         status::NOTE_ON if bytes.len() >= 3 => {
-            let note = bytes[1] & 0x7F;
+            let note = MidiNote::new(bytes[1] & 0x7F);
             let velocity_raw = bytes[2] & 0x7F;
 
             // CRITICAL: NoteOn with velocity 0 is actually NoteOff
@@ -80,13 +80,13 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
         }
 
         status::NOTE_OFF if bytes.len() >= 3 => {
-            let note = bytes[1] & 0x7F;
+            let note = MidiNote::new(bytes[1] & 0x7F);
             // Release velocity is ignored (bytes[2])
             Some(EngineCommand::NoteOff { note, channel })
         }
 
         status::POLY_AFTERTOUCH if bytes.len() >= 3 => {
-            let note = bytes[1] & 0x7F;
+            let note = MidiNote::new(bytes[1] & 0x7F);
             let pressure = bytes[2] & 0x7F;
             let value = NormalizedValue::new(pressure as f32 / 127.0);
             Some(EngineCommand::PolyAftertouch {
@@ -312,7 +312,7 @@ mod tests {
                 velocity,
                 channel,
             } => {
-                assert_eq!(note, 60);
+                assert_eq!(note, MidiNote::C4);
                 assert!((velocity.as_f32() - 100.0 / 127.0).abs() < 0.01);
                 assert_eq!(channel.as_zero_indexed(), 0);
             }
@@ -328,7 +328,7 @@ mod tests {
 
         match cmd {
             EngineCommand::NoteOff { note, channel } => {
-                assert_eq!(note, 64);
+                assert_eq!(note, MidiNote::new(64));
                 assert_eq!(channel.as_zero_indexed(), 0);
             }
             _ => panic!("Expected NoteOff for velocity 0"),
@@ -343,7 +343,7 @@ mod tests {
 
         match cmd {
             EngineCommand::NoteOff { note, channel } => {
-                assert_eq!(note, 72);
+                assert_eq!(note, MidiNote::new(72));
                 assert_eq!(channel.as_zero_indexed(), 1);
             }
             _ => panic!("Expected NoteOff"),
@@ -434,7 +434,7 @@ mod tests {
                 value,
                 channel,
             } => {
-                assert_eq!(note, 60);
+                assert_eq!(note, MidiNote::C4);
                 assert!((value.as_f32() - 80.0 / 127.0).abs() < 0.01);
                 assert_eq!(channel.as_zero_indexed(), 0);
             }

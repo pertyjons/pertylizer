@@ -253,8 +253,8 @@ impl PolyModule for Filter {
         self.ic2eq = 0.0;
     }
 
-    fn note_on(&mut self, note: u8, _velocity: f32) {
-        self.base_note = MidiNote::new(note);
+    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+        self.base_note = note;
     }
 
     fn note_off(&mut self) {}
@@ -459,7 +459,7 @@ impl PolyModule for LadderFilter {
         self.delay = [0.0; 4];
     }
 
-    fn note_on(&mut self, _note: u8, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
     fn note_off(&mut self) {}
 
     fn set_sample_rate(&mut self, sample_rate: f32) {
