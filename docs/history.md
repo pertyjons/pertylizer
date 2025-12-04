@@ -1,5 +1,43 @@
 # Version History
 
+## [0.32.19] - 2024
+
+### Refactored - Per-Instrument PatchEditor (Phase 4)
+
+Completed the GUI separation so each instrument owns its own visual `PatchEditor`. Switching instruments now correctly shows only that instrument's modules.
+
+**Bug Fixed:**
+- Single View State: Previously, switching instruments did not change the main patch view. Modules from Instrument 1 were visible/editable when Instrument 2 was active.
+
+**Changes:**
+
+**PatchEditor (patch_editor.rs):**
+- Added `#[derive(Clone)]` to enable state management
+
+**InstrumentUiState (instrument_rack.rs):**
+- Added `pub patch_editor: PatchEditor` field
+- Each instrument now owns its own visual module graph
+
+**Patch Loading (patch_bridge.rs):**
+- Updated `load_patch()` signature to accept `instrument_id: InstrumentId`
+- Removed destructive `ClearAllModules` command (preserves multi-timbral setups)
+- Per-instrument clearing: only removes modules from the target instrument
+- All `AddModuleInstance`, `Connect`, `SetVoiceParameter` commands now use the passed `instrument_id`
+
+**SynthApp (egui_backend.rs):**
+- Removed standalone `patch_editor` field
+- Added `active_patch_editor()` and `active_patch_editor_ref()` helper methods
+- All module operations now use `self.active_instrument_id` instead of hardcoded `InstrumentId::FIRST`
+- Patch loading/reset now targets the active instrument only
+
+**Verification:**
+- ✅ Switching instruments changes the main view
+- ✅ Adding a module to "Instrument 2" does not show in "Instrument 1"
+- ✅ Loading a patch only affects the selected instrument
+- ✅ Cables are scoped to modules within the same instrument
+
+---
+
 ## [0.32.18] - 2024
 
 ### Refactored - Per-Instrument Voice Architecture (Phase 3)

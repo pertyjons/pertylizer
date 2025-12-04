@@ -26,13 +26,15 @@ use crate::effects::{Chorus, Delay, Distortion, Reverb};
 use crate::visualizers::{Oscilloscope, LevelMeter};
 use crate::patch::{Patch, ModuleType as PatchModuleType, ModuleState, ConnectionState, ParamValue};
 
-/// Load a patch into the rack view and send commands to the engine.
+/// Load a patch into a specific instrument's rack view and send commands to the engine.
 ///
 /// This function handles all the logic for:
-/// - Clearing existing state
+/// - Clearing existing state for the target instrument only
 /// - Creating module instances
 /// - Applying parameters
 /// - Establishing connections
+///
+/// Note: Effects are global (on MasterBus) and use instrument_id: None.
 pub fn load_patch(
     patch: &Patch,
     patch_editor: &mut PatchEditor,
@@ -40,17 +42,37 @@ pub fn load_patch(
     handle: &mut EngineHandle,
     keyboard: &mut PianoKeyboard,
     glide_time: &mut f32,
+    instrument_id: InstrumentId,
 ) {
-    // Clear existing modules and connections
+    // Clear only the target instrument's modules (not destructive for multi-timbral)
+    // First remove all modules from the engine for this instrument
+    for module_id in patch_editor.module_ids() {
+        // Check if this is an effect or visualizer (global) vs instrument module
+        let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
+        match category {
+            Some(crate::modules::ModuleCategory::Effect) => {
+                handle.send_blocking(EngineCommand::RemoveEffect { id: module_id });
+            }
+            Some(crate::modules::ModuleCategory::Visualizer) => {
+                handle.send_blocking(EngineCommand::RemoveVisualizer { id: module_id });
+                handle.remove_visualization_buffer(module_id);
+            }
+            _ => {
+                handle.send_blocking(EngineCommand::RemoveModule {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                });
+            }
+        }
+    }
+
+    // Clear GUI state
     patch_editor.clear();
     instance_counters.clear();
 
-    // Clear engine state - blocking to ensure it completes before adding new modules
-    handle.send_blocking(EngineCommand::ClearAllModules);
-
     // Add modules from patch
     for module_state in &patch.modules {
-        load_module(module_state, patch_editor, instance_counters, handle);
+        load_module(module_state, patch_editor, instance_counters, handle, instrument_id);
     }
 
     // Add connections to both patch_editor and engine
@@ -65,8 +87,9 @@ pub fn load_patch(
             patch_editor.add_connection(connection);
 
             // Send connection to engine - blocking to ensure all connections are established
+            // Use the target instrument_id for instrument-level connections
             handle.send_blocking(EngineCommand::Connect {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 from: PortId {
                     module: from_id,
                     port: conn.from.1.clone(),
@@ -89,9 +112,9 @@ pub fn load_patch(
         crate::types::Seconds::new(patch.settings.glide_time)
     ));
 
-    // Re-enable first instrument after loading (ClearAllModules disables all instruments)
+    // Ensure the target instrument is enabled after loading
     handle.send_blocking(EngineCommand::SetInstrumentEnabled {
-        instrument_id: InstrumentId::FIRST,
+        instrument_id,
         enabled: true,
     });
 }
@@ -102,6 +125,7 @@ fn load_module(
     patch_editor: &mut PatchEditor,
     instance_counters: &mut HashMap<ModuleType, u16>,
     handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
 ) {
     // Parse module ID from patch file (e.g., "osc-1" -> ModuleId)
     let module_id: ModuleId = match module_state.id.parse() {
@@ -124,121 +148,122 @@ fn load_module(
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::MathOscillator => {
             let m = MathOscillator::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::SubOscillator => {
             let m = SubOscillator::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Noise => {
             let m = NoiseGenerator::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Filter => {
             let m = Filter::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Envelope => {
             let m = Envelope::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Lfo => {
             let m = Lfo::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Amplifier => {
             let m = Amplifier::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Mixer => {
             let m = Mixer::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::StereoOutput => {
             let m = StereoOutput::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(InstrumentId::FIRST),
+                instrument_id: Some(instrument_id),
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle);
+            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
         }
         PatchModuleType::Delay => {
             let e = Delay::new();
             let descriptor = e.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            // Effects are global (on MasterBus), no instrument_id needed
             handle.send(EngineCommand::AddEffectInstance {
                 id: module_id,
                 effect: Box::new(e),
             });
             apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Delay), patch_editor, handle);
+                Some(EffectType::Delay), patch_editor, handle, instrument_id);
         }
         PatchModuleType::Reverb => {
             let e = Reverb::new();
@@ -249,7 +274,7 @@ fn load_module(
                 effect: Box::new(e),
             });
             apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Reverb), patch_editor, handle);
+                Some(EffectType::Reverb), patch_editor, handle, instrument_id);
         }
         PatchModuleType::Distortion => {
             let e = Distortion::new();
@@ -260,7 +285,7 @@ fn load_module(
                 effect: Box::new(e),
             });
             apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Distortion), patch_editor, handle);
+                Some(EffectType::Distortion), patch_editor, handle, instrument_id);
         }
         PatchModuleType::Chorus => {
             let e = Chorus::new();
@@ -271,7 +296,7 @@ fn load_module(
                 effect: Box::new(e),
             });
             apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Chorus), patch_editor, handle);
+                Some(EffectType::Chorus), patch_editor, handle, instrument_id);
         }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
@@ -312,6 +337,7 @@ pub fn apply_module_parameters(
     effect_type: Option<EffectType>,
     patch_editor: &mut PatchEditor,
     handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
 ) {
     for (param_name, value) in parameters {
         // Find the parameter descriptor by name
@@ -349,7 +375,7 @@ pub fn apply_module_parameters(
                 });
             } else if let Some(voice_module) = get_voice_module_for_param(module_id, &param) {
                 handle.send(EngineCommand::SetVoiceParameter {
-                    instrument_id: InstrumentId::FIRST,
+                    instrument_id,
                     target: voice_module,
                     param,
                 });

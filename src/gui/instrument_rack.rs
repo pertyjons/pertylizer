@@ -11,6 +11,7 @@ use crate::engine::{
     instrument::{InstrumentId, MidiChannel, Instrument},
 };
 use crate::types::{Gain, BipolarValue};
+use super::patch_editor::PatchEditor;
 use super::widgets::{Knob, colors};
 use super::theme::theme;
 
@@ -18,7 +19,8 @@ use super::theme::theme;
 ///
 /// This mirrors the engine's Instrument state for display purposes.
 /// Updates are sent to the engine via EngineCommands when values change.
-#[derive(Debug, Clone)]
+/// Each instrument owns its own PatchEditor for independent visual graphs.
+#[derive(Clone)]
 pub struct InstrumentUiState {
     /// Unique identifier matching the engine's InstrumentId.
     pub id: InstrumentId,
@@ -34,6 +36,8 @@ pub struct InstrumentUiState {
     pub muted: bool,
     /// Stored volume when muted (to restore on unmute).
     stored_volume: Gain,
+    /// The patch editor for this instrument's visual module graph.
+    pub patch_editor: PatchEditor,
 }
 
 impl Default for InstrumentUiState {
@@ -46,6 +50,7 @@ impl Default for InstrumentUiState {
             pan: BipolarValue::CENTER,
             muted: false,
             stored_volume: Gain::UNITY,
+            patch_editor: PatchEditor::new(),
         }
     }
 }
@@ -61,6 +66,7 @@ impl InstrumentUiState {
             pan: BipolarValue::CENTER,
             muted: false,
             stored_volume: Gain::UNITY,
+            patch_editor: PatchEditor::new(),
         }
     }
 

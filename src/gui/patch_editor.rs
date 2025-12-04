@@ -43,6 +43,7 @@ pub struct PendingConnection {
 }
 
 /// The main rack view state.
+#[derive(Clone)]
 pub struct PatchEditor {
     /// All module panels.
     panels: HashMap<ModuleId, ModulePanelState>,

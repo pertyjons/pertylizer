@@ -167,9 +167,6 @@ struct SynthApp {
     // MIDI input handler
     midi_handler: MidiHandler,
 
-    // Rack view state
-    patch_editor: PatchEditor,
-
     // Module ID generation - track instance counts per module type
     instance_counters: HashMap<TypedModuleType, u16>,
 
@@ -216,35 +213,38 @@ impl SynthApp {
         //
         // This guarantees GUI and Engine have exactly the same state.
 
-        let mut patch_editor = PatchEditor::new();
         let mut instance_counters = HashMap::new();
         let mut keyboard = PianoKeyboard::new();
         let mut glide_time = 0.0;
 
-        // Create and load the startup patch - this synchronizes GUI and Engine
+        // Initialize instruments with a default instrument that matches the engine's default
+        // The engine starts with one instrument on CH1 (InstrumentId::FIRST)
+        // Each instrument owns its own PatchEditor for independent visual graphs.
+        let mut default_instrument = InstrumentUiState::default();
+        let active_instrument_id = InstrumentId::FIRST;
+        let next_instrument_id = 1; // Start at 1 since FIRST (0) is already used
+
+        // Create and load the startup patch into the default instrument
         // Uses send_blocking to ensure commands aren't dropped during startup
         let startup_patch = crate::patches::patch_spacey_bass();
         let patch_name = startup_patch.name.clone();
 
         patch_bridge::load_patch(
             &startup_patch,
-            &mut patch_editor,
+            &mut default_instrument.patch_editor,
             &mut instance_counters,
             &mut handle,
             &mut keyboard,
             &mut glide_time,
+            active_instrument_id,
         );
+
+        let instruments = vec![default_instrument];
 
         // Initialize MIDI input (connects to first available port)
         // The MidiHandler gets a clone of the command sender, so both GUI and MIDI
         // can send commands to the engine.
         let midi_handler = MidiHandler::new(handle.command_sender());
-
-        // Initialize instruments with a default instrument that matches the engine's default
-        // The engine starts with one instrument on CH1 (InstrumentId::FIRST)
-        let instruments = vec![InstrumentUiState::default()];
-        let active_instrument_id = InstrumentId::FIRST;
-        let next_instrument_id = 1; // Start at 1 since FIRST (0) is already used
 
         Self {
             handle,
@@ -252,7 +252,6 @@ impl SynthApp {
             config,
             latency,
             midi_handler,
-            patch_editor,
             instance_counters,
             keyboard,
             pressed_keys: HashMap::new(),
@@ -272,6 +271,22 @@ impl SynthApp {
         let counter = self.instance_counters.entry(module_type).or_insert(0);
         *counter += 1;
         ModuleId::new(module_type, *counter)
+    }
+
+    /// Get the active instrument's patch editor.
+    fn active_patch_editor(&mut self) -> &mut PatchEditor {
+        self.instruments.iter_mut()
+            .find(|i| i.id == self.active_instrument_id)
+            .map(|i| &mut i.patch_editor)
+            .expect("Active instrument not found")
+    }
+
+    /// Get the active instrument's patch editor (immutable).
+    fn active_patch_editor_ref(&self) -> &PatchEditor {
+        self.instruments.iter()
+            .find(|i| i.id == self.active_instrument_id)
+            .map(|i| &i.patch_editor)
+            .expect("Active instrument not found")
     }
 }
 
@@ -466,9 +481,9 @@ impl eframe::App for SynthApp {
 
                 ui.separator();
 
-                // Connection info
-                let conn_count = self.patch_editor.connections().len();
-                let module_count = self.patch_editor.module_ids().len();
+                // Connection info (from active instrument's patch editor)
+                let conn_count = self.active_patch_editor_ref().connections().len();
+                let module_count = self.active_patch_editor_ref().module_ids().len();
                 ui.label(RichText::new(format!("Modules: {} | Connections: {}", module_count, conn_count))
                     .color(colors::TEXT_DIM));
             });
@@ -502,20 +517,29 @@ impl eframe::App for SynthApp {
                 self.draw_meters(ui);
             });
 
-        // Main content
+        // Main content - show the active instrument's patch editor
+        // Get active instrument id for engine commands
+        let active_id = self.active_instrument_id;
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            let result = self.patch_editor.show(ui, &self.handle);
-            
+            // Get the active instrument's patch editor
+            let patch_editor = self.instruments.iter_mut()
+                .find(|i| i.id == active_id)
+                .map(|i| &mut i.patch_editor)
+                .expect("Active instrument not found");
+
+            let result = patch_editor.show(ui, &self.handle);
+
             // Handle parameter changes - send Param directly (carries its own value)
             for (module_id, param) in result.param_changes {
                 // Check module category
-                let category = self.patch_editor.module_descriptor(module_id)
+                let category = patch_editor.module_descriptor(module_id)
                     .map(|d| d.category);
 
                 match category {
                     Some(ModuleCategory::Effect) => {
                         // Effect module - use SetEffectParameter
-                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(&self.patch_editor, module_id) {
+                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(patch_editor, module_id) {
                             self.handle.send(EngineCommand::SetEffectParameter {
                                 effect_type,
                                 param,
@@ -529,9 +553,9 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Amplifier) |
                     Some(ModuleCategory::Mixer) |
                     Some(ModuleCategory::Output) => {
-                        // Voice/modular module - send to default instrument's voice graph
+                        // Voice/modular module - send to active instrument's voice graph
                         self.handle.send(EngineCommand::SetModuleParameter {
-                            instrument_id: Some(InstrumentId::FIRST),
+                            instrument_id: Some(active_id),
                             module_id,
                             param: param.clone(),
                         });
@@ -539,7 +563,7 @@ impl eframe::App for SynthApp {
                         // Also send to voice modules for real-time voice param updates
                         if let Some(voice_module) = patch_bridge::get_voice_module_for_param(module_id, &param) {
                             self.handle.send(EngineCommand::SetVoiceParameter {
-                                instrument_id: InstrumentId::FIRST,
+                                instrument_id: active_id,
                                 target: voice_module,
                                 param,
                             });
@@ -548,15 +572,15 @@ impl eframe::App for SynthApp {
                     _ => {}
                 }
             }
-            
+
             // Handle module removal
             for module_id in result.modules_to_remove {
                 // Get module descriptor to determine type
-                let category = self.patch_editor.module_descriptor(module_id)
+                let category = patch_editor.module_descriptor(module_id)
                     .map(|d| d.category);
-                
-                self.patch_editor.remove_module(module_id);
-                
+
+                patch_editor.remove_module(module_id);
+
                 // Send appropriate remove command to engine based on category
                 match category {
                     Some(ModuleCategory::Visualizer) => {
@@ -573,23 +597,23 @@ impl eframe::App for SynthApp {
                     Some(ModuleCategory::Amplifier) |
                     Some(ModuleCategory::Mixer) |
                     Some(ModuleCategory::Output) => {
-                        // Remove from default instrument's voice graph
+                        // Remove from active instrument's voice graph
                         self.handle.send(EngineCommand::RemoveModule {
-                            instrument_id: Some(InstrumentId::FIRST),
+                            instrument_id: Some(active_id),
                             id: module_id,
                         });
                     }
                     _ => {}
                 }
             }
-            
+
             // Handle new connections - now synced with engine
             for connection in result.connections_to_add {
-                self.patch_editor.add_connection(connection.clone());
+                patch_editor.add_connection(connection.clone());
 
-                // Send Connect command to engine (default instrument's voice graph)
+                // Send Connect command to engine (active instrument's voice graph)
                 self.handle.send(EngineCommand::Connect {
-                    instrument_id: Some(InstrumentId::FIRST),
+                    instrument_id: Some(active_id),
                     from: PortId::new(connection.from_module, connection.from_port.clone()),
                     to: PortId::new(connection.to_module, connection.to_port.clone()),
                 });
@@ -610,7 +634,7 @@ impl eframe::App for SynthApp {
 
 impl SynthApp {
     /// Add a new module of the given category.
-    /// 
+    ///
     /// Creates the module in the GUI thread and sends it via AddModuleInstance
     /// for real-time safe addition to the audio engine.
     fn add_module_of_category(&mut self, category: ModuleCategory) {
@@ -650,11 +674,11 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.patch_editor.add_module(next_id, descriptor);
+        self.active_patch_editor().add_module(next_id, descriptor);
 
-        // Send pre-created module to engine (default instrument's voice graph)
+        // Send pre-created module to engine (active instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(InstrumentId::FIRST),
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module,
         });
@@ -666,10 +690,10 @@ impl SynthApp {
         let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MathOscillator);
-        self.patch_editor.add_module(next_id, descriptor);
+        self.active_patch_editor().add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(InstrumentId::FIRST),
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module,
         });
@@ -681,10 +705,10 @@ impl SynthApp {
         let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::SubOscillator);
-        self.patch_editor.add_module(next_id, descriptor);
+        self.active_patch_editor().add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(InstrumentId::FIRST),
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module,
         });
@@ -696,10 +720,10 @@ impl SynthApp {
         let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::Noise);
-        self.patch_editor.add_module(next_id, descriptor);
+        self.active_patch_editor().add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(InstrumentId::FIRST),
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module,
         });
@@ -751,15 +775,16 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.patch_editor.add_module(next_id, descriptor);
-        
-        // Send pre-created effect to engine (real-time safe - just moves a pointer)
+        // Effects are added to the active instrument's patch editor for visual display
+        self.active_patch_editor().add_module(next_id, descriptor);
+
+        // Send pre-created effect to engine (effects are global on MasterBus)
         self.handle.send(EngineCommand::AddEffectInstance {
             id: next_id,
             effect,
         });
     }
-    
+
     fn add_visualizer_module(&mut self, viz_type: VisualizerType) {
         let (descriptor, module_type) = match viz_type {
             VisualizerType::Oscilloscope => (Oscilloscope::new().descriptor(), TypedModuleType::Oscilloscope),
@@ -767,7 +792,8 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.patch_editor.add_module(next_id, descriptor);
+        // Visualizers are added to the active instrument's patch editor for visual display
+        self.active_patch_editor().add_module(next_id, descriptor);
 
         // Create shared visualization buffer wrapped in Arc
         let buffer = std::sync::Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
@@ -793,11 +819,11 @@ impl SynthApp {
         let output = StereoOutput::new();
         let descriptor = output.descriptor();
         let next_id = self.next_module_id(TypedModuleType::StereoOutput);
-        self.patch_editor.add_module(next_id, descriptor);
+        self.active_patch_editor().add_module(next_id, descriptor);
 
-        // Send pre-created module to engine (default instrument's voice graph)
+        // Send pre-created module to engine (active instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(InstrumentId::FIRST),
+            instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module: Box::new(output),
         });
@@ -967,41 +993,76 @@ impl SynthApp {
         show_status_toast(ctx, &mut self.dialog_state);
     }
     
-    /// Load a patch into the rack view.
+    /// Load a patch into the active instrument's rack view.
     fn load_patch_data(&mut self, patch: &Patch) {
         // Clear visualization buffers (not handled by patch_bridge)
         self.handle.visualization_buffers.clear();
 
         // Delegate to patch_bridge for the main loading logic
+        // Load into the active instrument's patch editor
+        let active_id = self.active_instrument_id;
+        let patch_editor = self.instruments.iter_mut()
+            .find(|i| i.id == active_id)
+            .map(|i| &mut i.patch_editor)
+            .expect("Active instrument not found");
+
         patch_bridge::load_patch(
             patch,
-            &mut self.patch_editor,
+            patch_editor,
             &mut self.instance_counters,
             &mut self.handle,
             &mut self.keyboard,
             &mut self.glide_time,
+            active_id,
         );
     }
 
-    /// Reset to a new empty patch.
+    /// Reset the active instrument to a new empty patch.
     /// Clears all modules and adds a default StereoOutput for immediate sound.
     fn reset_to_new_patch(&mut self) {
-        // 1. Clear GUI state
-        self.patch_editor.clear();
+        // 1. Clear active instrument's GUI state
+        let active_id = self.active_instrument_id;
+
+        // Clear all modules from the active instrument in the engine
+        {
+            let patch_editor = self.instruments.iter()
+                .find(|i| i.id == active_id)
+                .map(|i| &i.patch_editor)
+                .expect("Active instrument not found");
+
+            for module_id in patch_editor.module_ids() {
+                let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
+                match category {
+                    Some(ModuleCategory::Effect) => {
+                        self.handle.send_blocking(EngineCommand::RemoveEffect { id: module_id });
+                    }
+                    Some(ModuleCategory::Visualizer) => {
+                        self.handle.send_blocking(EngineCommand::RemoveVisualizer { id: module_id });
+                        self.handle.remove_visualization_buffer(module_id);
+                    }
+                    _ => {
+                        self.handle.send_blocking(EngineCommand::RemoveModule {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Clear the patch editor GUI state
+        self.active_patch_editor().clear();
         self.instance_counters.clear();
         self.handle.visualization_buffers.clear();
 
-        // 2. Send clear command to engine (blocking to ensure it completes)
-        self.handle.send_blocking(EngineCommand::ClearAllModules);
-
-        // 3. Reset keyboard state
+        // 2. Reset keyboard state
         self.keyboard = PianoKeyboard::new();
         self.glide_time = 0.0;
 
-        // 4. Add default StereoOutput so user gets sound immediately
+        // 3. Add default StereoOutput so user gets sound immediately
         self.add_stereo_output_module();
 
-        // 5. Update patch name
+        // 4. Update patch name
         self.current_patch_name = "New Patch".to_string();
     }
 
@@ -1009,7 +1070,7 @@ impl SynthApp {
     fn create_patch_from_rack(&self) -> Option<Patch> {
         patch_bridge::create_patch_from_rack(
             &self.dialog_state.patch_save_name,
-            &self.patch_editor,
+            self.active_patch_editor_ref(),
             &self.keyboard,
             &self.handle,
             self.glide_time,
