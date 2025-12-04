@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
+use thiserror::Error;
 
 use crate::engine::ModuleId;
 use crate::engine::graph::Connection;
@@ -264,24 +265,15 @@ impl Patch {
 }
 
 /// Errors that can occur when loading/saving patches.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum PatchError {
+    #[error("IO error: {0}")]
     Io(String),
+    #[error("Parse error: {0}")]
     Parse(String),
+    #[error("Serialize error: {0}")]
     Serialize(String),
 }
-
-impl std::fmt::Display for PatchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "IO error: {}", e),
-            Self::Parse(e) => write!(f, "Parse error: {}", e),
-            Self::Serialize(e) => write!(f, "Serialize error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for PatchError {}
 
 // ============================================================================
 // MODULE BUILDER

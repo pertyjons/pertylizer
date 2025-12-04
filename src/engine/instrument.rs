@@ -360,15 +360,10 @@ impl Instrument {
     /// Uses the voice_graph as a template to rebuild all voice allocator
     /// voices. Call this after modifying the voice_graph.
     pub fn rebuild_voices(&mut self) {
-        // Safety: We need to borrow voice_graph immutably and allocator mutably.
-        // This is safe because they are independent fields.
-        // We use a raw pointer to work around the borrow checker.
-        let graph_ptr = &self.voice_graph as *const ModuleGraph;
-        // SAFETY: The pointer is valid for the duration of rebuild_from_graph,
-        // and voice_graph is not mutated during the call.
-        unsafe {
-            self.allocator.rebuild_from_graph(&*graph_ptr);
-        }
+        // Clone the graph structure to avoid borrow checker issues
+        // (we need &voice_graph and &mut allocator simultaneously)
+        let graph_clone = self.voice_graph.clone_structure();
+        self.allocator.rebuild_from_graph(&graph_clone);
     }
 
     /// Get the volume.

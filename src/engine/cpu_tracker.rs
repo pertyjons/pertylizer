@@ -49,8 +49,6 @@ struct ModuleTracker {
     block_count: u32,
     /// Peak time in current window.
     peak_time: Duration,
-    /// Start time of current measurement window.
-    window_start: Instant,
     /// Current stats.
     stats: ModuleCpuStats,
     /// Smoothing factor for exponential moving average.
@@ -63,7 +61,6 @@ impl ModuleTracker {
             accumulated_time: Duration::ZERO,
             block_count: 0,
             peak_time: Duration::ZERO,
-            window_start: Instant::now(),
             stats: ModuleCpuStats::default(),
             smoothing: 0.1, // 10% new, 90% old
         }

@@ -30,6 +30,7 @@ impl Amplifier {
     }
 
     #[inline]
+    #[allow(dead_code)] // Useful helper for future stereo panning
     fn pan_coefficients(&self) -> (Gain, Gain) {
         Gain::from_pan(self.pan)
     }

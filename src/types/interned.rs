@@ -12,8 +12,9 @@ static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| {
 });
 
 struct InternPool {
-    strings: Vec<Box<str>>,
-    lookup: HashMap<Box<str>, u32>,
+    // Store leaked 'static strings - safe because we never deallocate them
+    strings: Vec<&'static str>,
+    lookup: HashMap<&'static str, u32>,
 }
 
 impl InternPool {
@@ -49,14 +50,16 @@ impl InternPool {
             return id;
         }
         let id = self.strings.len() as u32;
-        let boxed: Box<str> = s.into();
-        self.lookup.insert(boxed.clone(), id);
-        self.strings.push(boxed);
+        // Leak the boxed string to get a 'static reference.
+        // This is intentional for string interning - strings are never freed.
+        let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
+        self.lookup.insert(leaked, id);
+        self.strings.push(leaked);
         id
     }
 
-    fn get(&self, id: u32) -> Option<&str> {
-        self.strings.get(id as usize).map(|s| &**s)
+    fn get(&self, id: u32) -> Option<&'static str> {
+        self.strings.get(id as usize).copied()
     }
 }
 
@@ -73,12 +76,10 @@ impl PortName {
 
     /// Get the string representation.
     pub fn as_str(&self) -> &'static str {
-        // SAFETY: Strings are never removed from the pool
         INTERN_POOL
             .read()
             .unwrap()
             .get(self.0)
-            .map(|s| unsafe { std::mem::transmute::<&str, &'static str>(s) })
             .unwrap_or("")
     }
 }

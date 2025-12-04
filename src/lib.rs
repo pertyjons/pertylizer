@@ -74,9 +74,8 @@
 //! - Improved pattern matching
 //! - Enhanced error handling
 
-// Temporarily allow missing docs and dead code during development
+// Temporarily allow missing docs during development
 #![allow(missing_docs)]
-#![allow(dead_code)]
 #![warn(clippy::all)]
 #![allow(clippy::module_inception)]
 

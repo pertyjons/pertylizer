@@ -46,24 +46,28 @@ impl NormalizedValue {
 
     /// Get the raw value.
     #[inline]
+    #[must_use]
     pub const fn as_f32(self) -> f32 {
         self.0
     }
 
     /// Scale to a range [min, max].
     #[inline]
+    #[must_use]
     pub fn scale(self, min: f32, max: f32) -> f32 {
         min + self.0 * (max - min)
     }
 
     /// Scale logarithmically (useful for frequencies).
     #[inline]
+    #[must_use]
     pub fn scale_log(self, min: f32, max: f32) -> f32 {
         min * (max / min).powf(self.0)
     }
 
     /// Create from a value in range [min, max].
     #[inline]
+    #[must_use]
     pub fn from_range(value: f32, min: f32, max: f32) -> Self {
         if max > min {
             Self::new((value - min) / (max - min))
@@ -74,24 +78,28 @@ impl NormalizedValue {
 
     /// Convert to bipolar range [-1, 1].
     #[inline]
+    #[must_use]
     pub fn to_bipolar(self) -> BipolarValue {
         BipolarValue::new(self.0 * 2.0 - 1.0)
     }
 
     /// Invert (1 - value).
     #[inline]
+    #[must_use]
     pub fn invert(self) -> Self {
         Self(1.0 - self.0)
     }
 
     /// Linear interpolation to another value.
     #[inline]
+    #[must_use]
     pub fn lerp(self, other: Self, t: f32) -> Self {
         Self::new(self.0 + (other.0 - self.0) * t)
     }
 
     /// Smooth step (S-curve).
     #[inline]
+    #[must_use]
     pub fn smoothstep(self) -> Self {
         let t = self.0;
         Self(t * t * (3.0 - 2.0 * t))
@@ -99,6 +107,7 @@ impl NormalizedValue {
 
     /// Apply a curve (power function).
     #[inline]
+    #[must_use]
     pub fn curve(self, exponent: f32) -> Self {
         Self::new(self.0.powf(exponent))
     }
@@ -108,6 +117,7 @@ impl NormalizedValue {
     /// curve = 2.0 gives a nice fader-like response.
     /// curve = 0.5 gives inverse (more sensitive at top).
     #[inline]
+    #[must_use]
     pub fn audio_curve(self, curve: f32) -> Self {
         Self::new(self.0.powf(curve))
     }
@@ -118,6 +128,7 @@ impl NormalizedValue {
     /// 0.5 → -6 dB
     /// 1.0 → 0 dB
     #[inline]
+    #[must_use]
     pub fn to_db_gain(self) -> super::Gain {
         if self.0 <= 0.0 {
             super::Gain::MUTE
@@ -128,6 +139,7 @@ impl NormalizedValue {
 
     /// Convert to decibel value.
     #[inline]
+    #[must_use]
     pub fn to_db(self) -> super::Decibels {
         self.to_db_gain().to_db()
     }
@@ -136,6 +148,7 @@ impl NormalizedValue {
     ///
     /// Useful for stepped controls like waveform selection.
     #[inline]
+    #[must_use]
     pub fn quantize(self, steps: u32) -> Self {
         if steps == 0 {
             return self;
@@ -146,12 +159,14 @@ impl NormalizedValue {
 
     /// Get which step this value falls into (0-indexed).
     #[inline]
+    #[must_use]
     pub fn to_step(self, steps: u32) -> u32 {
         ((self.0 * steps as f32) as u32).min(steps.saturating_sub(1))
     }
 
     /// Create from a step index.
     #[inline]
+    #[must_use]
     pub fn from_step(step: u32, steps: u32) -> Self {
         if steps == 0 {
             return Self::MIN;
@@ -161,6 +176,7 @@ impl NormalizedValue {
 
     /// Dead zone around center (for joysticks, etc).
     #[inline]
+    #[must_use]
     pub fn dead_zone(self, zone: f32) -> Self {
         let centered = self.0 - 0.5;
         if centered.abs() < zone {
@@ -265,6 +281,7 @@ impl BipolarValue {
 
     /// Get the raw value.
     #[inline]
+    #[must_use]
     pub const fn as_f32(self) -> f32 {
         self.0
     }
@@ -274,42 +291,49 @@ impl BipolarValue {
     /// At  0: center
     /// At +1: center + amount
     #[inline]
+    #[must_use]
     pub fn scale(self, center: f32, amount: f32) -> f32 {
         center + self.0 * amount
     }
 
     /// Convert to unipolar range [0, 1].
     #[inline]
+    #[must_use]
     pub fn to_unipolar(self) -> NormalizedValue {
         NormalizedValue::new((self.0 + 1.0) * 0.5)
     }
 
     /// Get the absolute value.
     #[inline]
+    #[must_use]
     pub fn abs(self) -> NormalizedValue {
         NormalizedValue::new(self.0.abs())
     }
 
     /// Invert (negate).
     #[inline]
+    #[must_use]
     pub fn invert(self) -> Self {
         Self(-self.0)
     }
 
     /// Linear interpolation.
     #[inline]
+    #[must_use]
     pub fn lerp(self, other: Self, t: f32) -> Self {
         Self::new(self.0 + (other.0 - self.0) * t)
     }
 
     /// Rectify (full-wave: absolute value).
     #[inline]
+    #[must_use]
     pub fn rectify_full(self) -> NormalizedValue {
         NormalizedValue::new(self.0.abs())
     }
 
     /// Rectify (half-wave: only positive).
     #[inline]
+    #[must_use]
     pub fn rectify_half(self) -> NormalizedValue {
         NormalizedValue::new(self.0.max(0.0))
     }

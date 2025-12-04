@@ -43,9 +43,6 @@ const EVENT_BUFFER_SIZE: usize = 256;
 /// Size of the return channel for modules that need to be dropped on main thread.
 const RETURN_BUFFER_SIZE: usize = 256;
 
-/// Maximum buffer size we support.
-const MAX_BUFFER_SIZE: usize = 4096;
-
 /// Items returned from audio thread for main thread cleanup.
 /// This prevents memory deallocation from happening on the audio thread.
 pub enum DroppedItem {
@@ -55,16 +52,10 @@ pub enum DroppedItem {
     Instrument(Box<Instrument>),
 }
 
-// SAFETY: PolyModule trait requires Send, and Instrument is Send
-unsafe impl Send for DroppedItem {}
-
 /// Wrapper for modules returned from audio thread for deferred cleanup.
 /// This allows dropping to happen on the main thread to avoid
 /// deallocations on the real-time audio thread.
 pub struct DroppedModule(pub Box<dyn PolyModuleTrait>);
-
-// SAFETY: PolyModule trait requires Send
-unsafe impl Send for DroppedModule {}
 
 /// A clonable sender for engine commands.
 ///
@@ -296,8 +287,6 @@ pub struct SynthEngine {
     // === Instrument management (multitimbral) ===
     /// All synthesizer instruments (each with its own voice graph and allocator).
     instruments: Vec<Box<Instrument>>,
-    /// Counter for generating unique instrument IDs.
-    next_instrument_id: u64,
 
     // === Global module graph ===
     /// The global module graph for modular routing.
@@ -311,8 +300,6 @@ pub struct SynthEngine {
     master_volume: f32,
 
     // === Buffers ===
-    /// Temporary buffer for voice processing (used by module graph).
-    voice_buffer: AudioBuffer,
     /// Main stereo mix buffer (interleaved L/R).
     mix_buffer: AudioBuffer,
     /// Output buffer for the global module graph.
@@ -377,12 +364,10 @@ impl SynthEngine {
             instrument_return_producer,
             state: Arc::clone(&state),
             instruments: vec![Box::new(default_instrument)],
-            next_instrument_id: 1, // 0 is used by default instrument
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             sample_rate: 48000.0,
             master_volume: 1.0,
-            voice_buffer: AudioBuffer::new(256),
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(256),
             metering: MeteringSystem::new(48000.0),
@@ -415,6 +400,7 @@ impl SynthEngine {
     ///
     /// Each instrument uses its own voice_graph as the template.
     /// Call this after bulk operations that affect all instruments.
+    #[allow(dead_code)] // Useful for future bulk operations
     fn rebuild_all_instrument_voices(&mut self) {
         self.instruments
             .iter_mut()
@@ -422,6 +408,7 @@ impl SynthEngine {
     }
 
     /// Find an effect slot by its module ID in a specific instrument's effect chain.
+    #[allow(dead_code)] // Useful for targeted effect updates
     fn find_effect_by_id(&mut self, instrument_id: InstrumentId, module_id: ModuleId) -> Option<&mut EffectSlot> {
         self.instruments.iter_mut()
             .find(|i| i.id() == instrument_id)

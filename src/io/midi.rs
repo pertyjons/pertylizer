@@ -21,6 +21,7 @@
 use std::io::Write;
 
 use midir::{Ignore, MidiInput, MidiInputConnection};
+use thiserror::Error;
 
 use crate::engine::commands::EngineCommand;
 use crate::engine::instrument::MidiChannel;
@@ -138,6 +139,7 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
 /// Sender trait for MIDI commands.
 ///
 /// This abstraction allows testing without a real CommandSender.
+#[allow(dead_code)] // Designed for test mocking
 pub trait MidiCommandSender: Send + 'static {
     fn send(&self, command: EngineCommand) -> bool;
 }
@@ -271,30 +273,21 @@ impl MidiHandler {
 }
 
 /// MIDI-related errors.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum MidiError {
     /// Failed to initialize MIDI subsystem.
-    Init(midir::InitError),
+    #[error("MIDI init error: {0}")]
+    Init(#[from] midir::InitError),
     /// No MIDI ports available.
+    #[error("No MIDI input ports available")]
     NoPortsAvailable,
     /// Requested port not found.
+    #[error("MIDI port not found")]
     PortNotFound,
     /// Failed to connect to port.
+    #[error("MIDI connect error: {0}")]
     Connect(midir::ConnectError<MidiInput>),
 }
-
-impl std::fmt::Display for MidiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MidiError::Init(e) => write!(f, "MIDI init error: {}", e),
-            MidiError::NoPortsAvailable => write!(f, "No MIDI input ports available"),
-            MidiError::PortNotFound => write!(f, "MIDI port not found"),
-            MidiError::Connect(e) => write!(f, "MIDI connect error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for MidiError {}
 
 #[cfg(test)]
 mod tests {

@@ -161,7 +161,6 @@ fn setup_custom_style(ctx: &egui::Context) {
 struct SynthApp {
     handle: EngineHandle,
     host: Option<Box<dyn AudioHostTrait>>,
-    config: SynthGuiConfig,
     latency: std::time::Duration,
 
     // MIDI input handler
@@ -176,7 +175,6 @@ struct SynthApp {
 
     // Dialog state (centralized in dialogs module)
     dialog_state: DialogState,
-    show_add_module: bool,
 
     // Patch state
     current_patch_name: String,
@@ -195,7 +193,7 @@ impl SynthApp {
     fn new(
         mut handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
-        config: SynthGuiConfig,
+        _config: SynthGuiConfig, // Used only for initial setup, not stored
         latency: std::time::Duration,
     ) -> Self {
         // IMPORTANT: We use a startup patch instead of manually building GUI state.
@@ -249,14 +247,12 @@ impl SynthApp {
         Self {
             handle,
             host: Some(host),
-            config,
             latency,
             midi_handler,
             instance_counters,
             keyboard,
             pressed_keys: HashMap::new(),
             dialog_state: DialogState::new(),
-            show_add_module: false,
             current_patch_name: patch_name,
             current_patch_path: None,
             glide_time,

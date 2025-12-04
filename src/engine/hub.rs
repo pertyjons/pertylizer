@@ -11,6 +11,7 @@ use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
+use thiserror::Error;
 
 use super::commands::{EngineCommand, ModuleId};
 use super::event_priority::{EventPriority, TimestampedEvent};
@@ -483,33 +484,24 @@ impl ClientHandle {
 }
 
 /// Errors from hub operations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum HubError {
     /// Client not found.
+    #[error("Client not found")]
     ClientNotFound,
     /// Client is disconnected.
+    #[error("Client disconnected")]
     ClientDisconnected,
     /// Permission denied for this operation.
+    #[error("Permission denied")]
     PermissionDenied,
     /// Another client has exclusive control.
+    #[error("Another client has exclusive control")]
     ExclusiveControlActive,
     /// Command buffer is full.
+    #[error("Command buffer full")]
     CommandBufferFull,
 }
-
-impl std::fmt::Display for HubError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HubError::ClientNotFound => write!(f, "Client not found"),
-            HubError::ClientDisconnected => write!(f, "Client disconnected"),
-            HubError::PermissionDenied => write!(f, "Permission denied"),
-            HubError::ExclusiveControlActive => write!(f, "Another client has exclusive control"),
-            HubError::CommandBufferFull => write!(f, "Command buffer full"),
-        }
-    }
-}
-
-impl std::error::Error for HubError {}
 
 #[cfg(test)]
 mod tests {

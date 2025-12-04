@@ -1,5 +1,48 @@
 # Version History
 
+## [0.33.2] - 2024
+
+### Refactored - Rust Best Practices Implementation
+
+Implementerade prioriterade best practices från `docs/RUST_BEST_PRACTICES.md`.
+
+**P1: #[must_use] attribut**
+- Lade till `#[must_use]` på transformationsmetoder i `normalized.rs` och `frequency.rs`
+- Förhindrar buggar där returvärden ignoreras av misstag
+
+**P3: Tog bort global #![allow(dead_code)]**
+- Tog bort global allow från `lib.rs`
+- Identifierade och åtgärdade 9 dead code warnings:
+  - Borttaget: `MAX_BUFFER_SIZE`, `next_instrument_id`, `voice_buffer` (synth_engine)
+  - Borttaget: `left_buffer`, `right_buffer` (voice.rs)
+  - Borttaget: `window_start` (cpu_tracker.rs)
+  - Borttaget: `config`, `show_add_module` (SynthApp)
+  - Behållet med lokal `#[allow(dead_code)]`: framtida helper-metoder
+
+**P4: thiserror konsekvent**
+
+| Typ | Fil | Ändring |
+|-----|-----|---------|
+| `PatchError` | `patch.rs` | Konverterad till thiserror |
+| `MidiError` | `io/midi.rs` | Konverterad till thiserror |
+| `HubError` | `engine/hub.rs` | Konverterad till thiserror |
+
+**P5: Eliminerade unsafe kod**
+
+Reducerade från 5 till 1 unsafe block:
+
+| Unsafe | Åtgärd |
+|--------|--------|
+| `rebuild_voices()` | Ersatt med graph clone |
+| String interning transmute | Ersatt med `Box::leak` vid intern-tid |
+| `unsafe impl Send` (DroppedItem/DroppedModule) | Borttaget - trait bounds räcker |
+| `unsafe impl Send` (CpalStream) | Behållet - krävs för audio backend |
+
+**P6: Debug traits**
+- Lade till manuell `Debug` impl för `GraphNode` (innehåller `dyn PolyModule`)
+
+---
+
 ## [0.33.1] - 2024
 
 ### Refactored - Idiomatic Iterator Conversions

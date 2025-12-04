@@ -77,18 +77,21 @@ impl Hertz {
 
     /// Get the raw value in Hz.
     #[inline]
+    #[must_use]
     pub const fn as_f32(self) -> f32 {
         self.0
     }
 
     /// Get angular frequency (ω = 2πf).
     #[inline]
+    #[must_use]
     pub fn angular(self) -> f32 {
         self.0 * TAU
     }
 
     /// Calculate phase increment per sample.
     #[inline]
+    #[must_use]
     pub fn phase_increment(self, sample_rate: SampleRate) -> f32 {
         self.0 / sample_rate.0
     }
@@ -97,36 +100,42 @@ impl Hertz {
     ///
     /// Uses standard 12-TET tuning with A4 = 440 Hz.
     #[inline]
+    #[must_use]
     pub fn from_midi(note: u8) -> Self {
         Self(440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0))
     }
 
     /// Convert to approximate MIDI note number.
     #[inline]
+    #[must_use]
     pub fn to_midi(self) -> f32 {
         69.0 + 12.0 * (self.0 / 440.0).log2()
     }
 
     /// Transpose by semitones.
     #[inline]
+    #[must_use]
     pub fn transpose(self, semitones: f32) -> Self {
         Self(self.0 * (semitones / 12.0).exp2())
     }
 
     /// Transpose by octaves.
     #[inline]
+    #[must_use]
     pub fn octave(self, octaves: i32) -> Self {
         Self(self.0 * 2.0f32.powi(octaves))
     }
 
     /// Clamp to audible range.
     #[inline]
+    #[must_use]
     pub fn clamp_audible(self) -> Self {
         Self(self.0.clamp(20.0, 20000.0))
     }
 
     /// Clamp to a maximum (typically Nyquist).
     #[inline]
+    #[must_use]
     pub fn clamp_max(self, max: Hertz) -> Self {
         Self(self.0.clamp(0.0, max.0))
     }
@@ -135,6 +144,7 @@ impl Hertz {
     ///
     /// Useful for delay lines and oscillator period calculations.
     #[inline]
+    #[must_use]
     pub fn period_samples(self, sample_rate: SampleRate) -> f32 {
         if self.0 > 0.0 {
             sample_rate.0 / self.0
@@ -148,6 +158,7 @@ impl Hertz {
     /// Returns `tan(π * freq / sample_rate)`, used in bilinear transform
     /// for converting analog filter designs to digital.
     #[inline]
+    #[must_use]
     pub fn to_tan_coeff(self, sample_rate: SampleRate) -> f32 {
         (std::f32::consts::PI * self.0 / sample_rate.0).tan()
     }
@@ -157,29 +168,34 @@ impl Hertz {
     /// Returns `exp(-2π * freq / sample_rate)`, used for one-pole
     /// lowpass filters where the frequency represents the cutoff.
     #[inline]
+    #[must_use]
     pub fn to_exp_coeff(self, sample_rate: SampleRate) -> f32 {
         (-TAU * self.0 / sample_rate.0).exp()
     }
 
     /// Clamp to LFO range.
     #[inline]
+    #[must_use]
     pub fn clamp_lfo(self) -> Self {
         Self(self.0.clamp(Self::MIN_LFO.0, Self::MAX_LFO.0))
     }
 
     /// Clamp to filter range.
     #[inline]
+    #[must_use]
     pub fn clamp_filter(self) -> Self {
         Self(self.0.clamp(Self::MIN_FILTER.0, Self::MAX_FILTER.0))
     }
 
     /// Check if frequency is in audible range.
     #[inline]
+    #[must_use]
     pub fn is_audible(self) -> bool {
         self.0 >= 20.0 && self.0 <= 20000.0
     }
 
     /// Get the frequency band this falls into.
+    #[must_use]
     pub fn band(&self) -> FrequencyBand {
         if self.0 < 60.0 {
             FrequencyBand::SubBass
@@ -196,6 +212,7 @@ impl Hertz {
 
     /// Calculate detune in cents between two frequencies.
     #[inline]
+    #[must_use]
     pub fn cents_between(self, other: Self) -> f32 {
         1200.0 * (other.0 / self.0).log2()
     }

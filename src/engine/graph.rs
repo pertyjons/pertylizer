@@ -52,6 +52,15 @@ struct GraphNode {
     outputs: HashMap<String, AudioBuffer>,
 }
 
+impl std::fmt::Debug for GraphNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphNode")
+            .field("descriptor", &self.descriptor)
+            .field("outputs", &self.outputs.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
 /// The module graph for a voice or effect chain.
 pub struct ModuleGraph {
     /// All modules in the graph.

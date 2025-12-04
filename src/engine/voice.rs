@@ -290,9 +290,6 @@ pub struct Voice {
     /// Priority: StereoOutput > Amplifier > Mixer
     output_module_id: Option<crate::engine::ModuleId>,
 
-    /// Pre-allocated stereo output buffers.
-    left_buffer: AudioBuffer,
-    right_buffer: AudioBuffer,
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
 }
@@ -314,8 +311,6 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: None,
-            left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
-            right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
@@ -341,8 +336,6 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: output_id,
-            left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
-            right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
@@ -610,8 +603,6 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: self.glide_time,
             output_module_id: output_id,
-            left_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
-            right_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }

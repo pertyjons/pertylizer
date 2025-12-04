@@ -7,6 +7,7 @@ use super::colors;
 /// A port widget for connections.
 pub struct Port {
     port_type: PortType,
+    #[allow(dead_code)] // Semantic field for future connection logic
     direction: PortDirection,
     connected: bool,
     label: String,
