@@ -39,7 +39,8 @@
       "Bash(python3:*)",
       "Bash(timeout 5 cargo run:*)",
       "Bash(timeout 3 cargo run:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(perl:*)"
     ],
     "deny": [],
     "ask": []

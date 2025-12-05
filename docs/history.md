@@ -1,5 +1,46 @@
 # Version History
 
+## [0.33.8] - 2024
+
+### Added - Master FX Parameters & Resizable Sidebar
+
+Fullständig implementation av Master FX-parametrar med kompakta sliders, resizable sidopanel och horisontella output-meters.
+
+**GUI-förbättringar:**
+
+| Komponent | Förändring |
+|-----------|------------|
+| Sidepanel | Resizable (140-300px) med `egui::SidePanel::resizable(true)` |
+| Output meters | Horisontell layout istället för vertikal, kompaktare design |
+| Master FX | Fullständiga parameterkontroller för alla 8 effekttyper |
+
+**Nya parametrar per effekt:**
+
+| Effekt | Parametrar |
+|--------|------------|
+| Compressor | Threshold, Ratio, Attack, Release, Makeup, Mix |
+| EQ | Low, Mid, High (gain), Mix |
+| Reverb | Size, Damping, Width, Mix |
+| Delay | Time, Feedback, Mix |
+| Chorus | Rate, Depth, Mix |
+| Phaser | Rate, Depth, Feedback, Mix |
+| Flanger | Rate, Depth, Feedback, Mix |
+| Distortion | Drive, Tone, Mix |
+
+**Tekniska detaljer:**
+
+- `MasterEffectParams` enum med per-effekt parametervärden
+- `draw_effect_params()` funktion (900+ rader) för kompakt slider-UI
+- `draw_meter_horizontal()` ny funktion för horisontella meters
+- Parametrar skickas via `SetEffectParameter` kommando till engine
+
+**Resultat:**
+- `cargo build --release`: Passerar
+- `cargo clippy`: Passerar
+- `cargo test`: 277/277 passerar
+
+---
+
 ## [0.33.7] - 2024
 
 ### Added - Master FX Sidebar UI
