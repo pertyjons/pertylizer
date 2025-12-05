@@ -1,6 +1,7 @@
 //! Benchmarks for audio processing performance.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn benchmark_placeholder(c: &mut Criterion) {
     c.bench_function("placeholder", |b| {

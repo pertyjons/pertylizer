@@ -302,13 +302,14 @@ impl Pattern {
         target: super::automation::AutomationTarget,
     ) -> &mut AutomationLane {
         let pos = self.automation.iter().position(|l| l.target == target);
-        match pos {
-            Some(idx) => &mut self.automation[idx],
+        let idx = match pos {
+            Some(idx) => idx,
             None => {
                 self.automation.push(AutomationLane::new(target.clone()));
-                self.automation.last_mut().unwrap()
+                self.automation.len() - 1
             }
-        }
+        };
+        &mut self.automation[idx]
     }
 
     /// Get automation lane for a target.
@@ -388,6 +389,7 @@ impl Pattern {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::sequencer::ids::NoteId;

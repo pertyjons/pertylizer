@@ -128,7 +128,7 @@ impl AutomationLane {
         }
         if idx >= self.points.len() {
             // After last point - return last value
-            return Some(self.points.last().unwrap().value);
+            return self.points.last().map(|p| p.value);
         }
 
         let before = &self.points[idx - 1];
@@ -207,6 +207,7 @@ pub enum GlobalParam {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

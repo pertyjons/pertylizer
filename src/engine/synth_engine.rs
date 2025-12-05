@@ -1319,6 +1319,7 @@ impl AudioProcessor for SynthEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::engine::voice_allocator::AllocationMode;

@@ -120,24 +120,14 @@ impl ModuleVisualState {
 
         // Update port states
         for (port_name, &count) in &snapshot.input_connection_counts {
-            self.port_states
-                .entry(port_name.clone())
-                .or_default()
-                .connected = count > 0;
-            self.port_states
-                .get_mut(port_name)
-                .unwrap()
-                .connection_count = count;
+            let state = self.port_states.entry(port_name.clone()).or_default();
+            state.connected = count > 0;
+            state.connection_count = count;
         }
         for (port_name, &count) in &snapshot.output_connection_counts {
-            self.port_states
-                .entry(port_name.clone())
-                .or_default()
-                .connected = count > 0;
-            self.port_states
-                .get_mut(port_name)
-                .unwrap()
-                .connection_count = count;
+            let state = self.port_states.entry(port_name.clone()).or_default();
+            state.connected = count > 0;
+            state.connection_count = count;
         }
 
         // Update output levels in port states

@@ -275,6 +275,10 @@ impl SynthApp {
     }
 
     /// Get the active instrument's patch editor.
+    ///
+    /// # Panics
+    /// Panics if active_instrument_id doesn't match any instrument (programming error).
+    #[allow(clippy::expect_used)]
     fn active_patch_editor(&mut self) -> &mut PatchEditor {
         self.instruments
             .iter_mut()
@@ -284,6 +288,10 @@ impl SynthApp {
     }
 
     /// Get the active instrument's patch editor (immutable).
+    ///
+    /// # Panics
+    /// Panics if active_instrument_id doesn't match any instrument (programming error).
+    #[allow(clippy::expect_used)]
     fn active_patch_editor_ref(&self) -> &PatchEditor {
         self.instruments
             .iter()
@@ -553,6 +561,7 @@ impl eframe::App for SynthApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Get the active instrument's patch editor
+            #[allow(clippy::expect_used)]
             let patch_editor = self
                 .instruments
                 .iter_mut()
@@ -1114,6 +1123,7 @@ impl SynthApp {
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
         let active_id = self.active_instrument_id;
+        #[allow(clippy::expect_used)]
         let patch_editor = self
             .instruments
             .iter_mut()
@@ -1140,6 +1150,7 @@ impl SynthApp {
 
         // Clear all modules from the active instrument in the engine
         {
+            #[allow(clippy::expect_used)]
             let patch_editor = self
                 .instruments
                 .iter()

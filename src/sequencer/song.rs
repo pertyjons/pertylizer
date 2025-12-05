@@ -444,6 +444,7 @@ impl Default for Song {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

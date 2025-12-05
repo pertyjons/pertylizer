@@ -121,7 +121,9 @@ impl AudioStream for NullStream {
         let output_latency = self.info.output_latency;
 
         // Take ownership of processor for the thread
-        let mut processor = self.processor.take().unwrap();
+        let Some(mut processor) = self.processor.take() else {
+            return Err(AudioError::StreamNotRunning);
+        };
 
         let handle = thread::spawn(move || {
             let mut buffer = vec![0.0f32; buffer_size * channels];

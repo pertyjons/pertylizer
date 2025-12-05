@@ -220,9 +220,8 @@ impl<'a> ParameterWidget<'a> {
     pub fn denormalize(&self, normalized: f32) -> f32 {
         let clamped = normalized.clamp(0.0, 1.0);
 
-        if self.descriptor.choices.is_some() {
+        if let Some(choices) = &self.descriptor.choices {
             // For choice parameters, return as index
-            let choices = self.descriptor.choices.as_ref().unwrap();
             let index = (clamped * (choices.len() - 1) as f32).round() as usize;
             index.min(choices.len() - 1) as f32
         } else {

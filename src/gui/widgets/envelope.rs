@@ -212,9 +212,9 @@ impl<'a> EnvelopeEditor<'a> {
 
             let nearest = distances
                 .iter()
-                .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-                .unwrap()
-                .1;
+                .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(_, idx)| *idx)
+                .unwrap_or(0);
 
             match nearest {
                 0 => {

@@ -7,6 +7,8 @@
 //! - Voice allocation: polyphony, stealing, mono/legato modes
 //! - Graph processing: connections, topological sort, cycle detection
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod audio_safety {
     use crate::effects::{Chorus, Delay, Distortion, Reverb};

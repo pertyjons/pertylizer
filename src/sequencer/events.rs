@@ -116,6 +116,7 @@ impl EventSorting for Vec<SequencerEvent> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

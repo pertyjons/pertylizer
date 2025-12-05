@@ -180,6 +180,8 @@ impl AudioHost {
         stream.start()?;
 
         self.active_stream = Some(stream);
+        // Safe: we just set active_stream to Some above
+        #[allow(clippy::unwrap_used)]
         Ok(self.active_stream.as_ref().unwrap().info())
     }
 

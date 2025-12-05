@@ -67,12 +67,20 @@ pub struct PortName(u32);
 
 impl PortName {
     /// Intern a string, returning a PortName that can be copied freely.
+    ///
+    /// # Panics
+    /// Panics if the intern pool lock is poisoned.
+    #[allow(clippy::unwrap_used)]
     pub fn intern(s: &str) -> Self {
         let id = INTERN_POOL.write().unwrap().intern(s);
         Self(id)
     }
 
     /// Get the string representation.
+    ///
+    /// # Panics
+    /// Panics if the intern pool lock is poisoned.
+    #[allow(clippy::unwrap_used)]
     pub fn as_str(&self) -> &'static str {
         INTERN_POOL.read().unwrap().get(self.0).unwrap_or("")
     }

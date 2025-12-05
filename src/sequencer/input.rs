@@ -443,6 +443,7 @@ impl Default for InputMultiplexer {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
