@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.33.3"
+version = "0.33.4"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"
@@ -50,8 +50,8 @@ eframe = { version = "0.33", optional = true, default-features = false, features
 egui = { version = "0.33", optional = true }
 
 [dev-dependencies]
-criterion = "0.7"
-tempfile = "3.20"
+criterion = "0.8"
+tempfile = "3.23"
 
 [[bench]]
 name = "audio_processing"

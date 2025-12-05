@@ -30,7 +30,11 @@
       "Bash(cargo clippy:*)",
       "Bash(RUSTFLAGS=\"-D warnings\" cargo build:*)",
       "Bash(cargo fmt:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(tee:*)",
+      "Bash(mv:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo outdated:*)"
     ],
     "deny": [],
     "ask": []

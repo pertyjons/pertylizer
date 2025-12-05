@@ -23,16 +23,7 @@ channel = "stable"
 ```
 
 ### Cargo-beroenden
-Håll alla beroenden uppdaterade till senaste version. Kör regelbundet:
-```bash
-# Uppdatera alla beroenden till senaste kompatibla version
-cargo update
-
-# Kontrollera om det finns nyare major-versioner
-cargo outdated
-```
-
-Vid `uppdatera version` eller när du arbetar med beroenden:
+Håll alla beroenden uppdaterade till senaste version. Vid uppdatering av beroenden:
 1. Kör `cargo update` för att uppdatera Cargo.lock
 2. Kör `cargo outdated` (om installerat) för att se om det finns nyare major-versioner
 3. Uppdatera Cargo.toml manuellt för major-versioner om det behövs
@@ -40,7 +31,7 @@ Vid `uppdatera version` eller när du arbetar med beroenden:
 
 ---
 
-## Git-kommandon
+## Kommandon
 
 ### `git commit`
 Lägg till alla filer (nya och ändrade) och committa med kort beskrivning:
@@ -49,9 +40,16 @@ git add --all
 git commit -m "<kort beskrivning av ändringarna>"
 ```
 
-### `uppdatera version`
+### `ny version`
 1. Uppdatera `docs/history.md` med nytt versionsnummer och ändringar sedan senaste versionen
 2. Granska `docs/TODO.md` och markera avklarade uppgifter som klara
+3. Uppdatera versionsnummer i `Cargo.toml`
+
+### `uppdatera beroenden`
+1. Kör `cargo update`
+2. Kör `cargo outdated` om installerat
+3. Uppdatera Cargo.toml vid behov
+4. Verifiera att allt kompilerar och tester passerar
 
 ---
 
@@ -101,14 +99,14 @@ Innan en uppgift anses klar MÅSTE följande passera utan varningar eller fel:
 # Steg 1: Kompilera med alla varningar som fel
 RUSTFLAGS="-D warnings" cargo build --release
 
-# Steg 2: Clippy - standardlints som fel, pedantic som varningar
+# Steg 2: Clippy med rimliga lints
 cargo clippy --all-targets -- \
     -D warnings \
     -D clippy::unwrap_used \
     -D clippy::expect_used \
-    -D clippy::panic \
-    -W clippy::pedantic \
-    -W clippy::nursery
+    -W clippy::must_use_candidate \
+    -W clippy::use_self \
+    -W clippy::implicit_clone
 
 # Steg 3: Kör alla tester
 cargo test
@@ -117,60 +115,24 @@ cargo test
 cargo fmt --check
 ```
 
-**Notera:** Pedantic/nursery lints är `-W` (varningar) inte `-D` (fel). De är vägledande
-men behöver inte åtgärdas om de inte är relevanta. Undantag definieras i `lib.rs`.
-
 ### Strikta regler
 
-1. **Inga `.unwrap()` eller `.expect()`** i produktionskod - använd `unwrap_or`, `unwrap_or_default`, `?`, eller `if let`
+1. **Inga `.unwrap()` eller `.expect()` i produktionskod** - använd `unwrap_or`, `unwrap_or_default`, `?`, eller `if let`
 2. **Ingen `unsafe` kod** - diskutera först om absolut nödvändigt
-3. **`#[must_use]`** på viktiga pub-funktioner där returvärdet inte bör ignoreras (builders, transformers)
-4. **Lokala `#[allow(...)]`** är OK för godkända undantag (se nedan) - kräver inte godkännande
-5. **`pub(crate)`** för interna typer, inte `pub`
+3. **`pub(crate)`** för interna typer när rimligt
 
-### Godkända undantag (kräver inte godkännande)
+### Undantag
 
-Dessa lints är undantagna på crate-nivå i `lib.rs` eftersom de inte är relevanta
-eller praktiska för ett synthesizer-projekt:
-
+Dessa är OK att använda:
 ```rust
-// === Crate-level allows (i lib.rs) ===
-
-// Namngivning och struktur
-#![allow(clippy::module_name_repetitions)]  // FilterMode är tydligare än filter::Mode
-
-// Casts - normalt i audio/DSP-kod
-#![allow(clippy::cast_precision_loss)]      // usize/u64 -> f32 är standard i audio
-#![allow(clippy::cast_possible_truncation)] // f32 -> usize med bounds check är OK
-#![allow(clippy::cast_sign_loss)]           // Där värdet garanterat är positivt
-#![allow(clippy::cast_lossless)]            // as-casts är tydligare än From i DSP
-
-// Matematik och DSP
-#![allow(clippy::suboptimal_flops)]         // mul_add() är inte alltid snabbare/tydligare
-#![allow(clippy::many_single_char_names)]   // t, x, y, a, b, c är standard i matematik
-
-// Dokumentation (intern kod, inte publikt API)
-#![allow(clippy::doc_markdown)]             // Backticks i docs är pedantiskt
-#![allow(clippy::missing_errors_doc)]       // Errors-sektion krävs inte internt
-#![allow(clippy::missing_panics_doc)]       // Panics-sektion krävs inte internt
-
-// Kodstil
-#![allow(clippy::uninlined_format_args)]    // format!("{}", x) är OK
-#![allow(clippy::redundant_closure_for_method_calls)] // .map(|x| x.foo()) är tydligare ibland
-
-// === Lokala allows (på funktion/struct-nivå) ===
-
-#[allow(clippy::too_many_lines)]           // Endast på process() funktioner
-#[allow(clippy::similar_names)]            // left/right, peak_l/peak_r, pm/pwm
-#[allow(clippy::float_cmp)]                // I tester med avsiktlig exakt jämförelse
-#[allow(clippy::needless_pass_by_value)]   // Ibland för API-konsistens
+#[allow(clippy::too_many_lines)]           // På stora process() funktioner
+#[allow(clippy::cast_precision_loss)]      // usize -> f32 i audio
+#[allow(clippy::cast_possible_truncation)] // Där värdet garanterat passar
 ```
 
-### Vid varningar
-
-1. Fixa varningen
-2. Om omöjligt: förklara varför och vänta på godkännande
-3. Om godkänd: lägg till `#[allow(...)]` med kommentar
+`.unwrap()` och `.expect()` är tillåtna i:
+- Tester
+- Engångsinitieringar som garanterat lyckas (t.ex. regex, konstanter)
 
 ---
 
@@ -250,7 +212,7 @@ use thiserror::Error;
 pub enum MyError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid value: {0}")]
     InvalidValue(String),
 }

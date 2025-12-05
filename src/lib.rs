@@ -1,10 +1,7 @@
 // Crate-level clippy allows for synth-appropriate exceptions.
-// See CLAUDE.md "Godkända undantag" for rationale.
-
-// Pedantic lints som är för strikta för detta projekt
+// Pedantic lints - aktiverade där de ger värde
 #![allow(clippy::must_use_candidate)] // Inte alla getters behöver #[must_use]
 #![allow(clippy::missing_const_for_fn)] // const fn överallt är onödigt
-#![allow(clippy::module_name_repetitions)] // FilterMode är tydligare än filter::Mode
 #![allow(clippy::similar_names)] // peak_l/peak_r, left/right är OK
 #![allow(clippy::too_many_lines)] // process() funktioner kan vara långa
 #![allow(clippy::unnecessary_wraps)] // Option/Result för API-konsistens
@@ -15,16 +12,18 @@
 #![allow(clippy::cast_possible_truncation)] // f32 -> usize med bounds check är OK
 #![allow(clippy::cast_sign_loss)] // Där värdet garanterat är positivt
 #![allow(clippy::cast_lossless)] // as-casts är tydligare än From i DSP
+#![allow(clippy::cast_possible_wrap)] // i32 -> usize där värdet är känt
 
 // Matematik och DSP
 #![allow(clippy::suboptimal_flops)] // mul_add() är inte alltid snabbare/tydligare
-#![allow(clippy::many_single_char_names)] // t, x, y, a, b, c är standard i matematik
 #![allow(clippy::float_cmp)] // Exakta jämförelser i tester och constants
+#![allow(clippy::imprecise_flops)] // hypot() är inte alltid tillgänglig/snabbare
 
 // Dokumentation (intern kod, inte publikt API)
 #![allow(clippy::doc_markdown)] // Backticks i docs är pedantiskt
 #![allow(clippy::missing_errors_doc)] // Errors-sektion krävs inte internt
 #![allow(clippy::missing_panics_doc)] // Panics-sektion krävs inte internt
+#![allow(clippy::missing_fields_in_debug)] // Manuell Debug utan alla fält är OK
 
 // Kodstil
 #![allow(clippy::uninlined_format_args)] // format!("{}", x) är OK
@@ -41,11 +40,8 @@
 #![allow(clippy::explicit_iter_loop)] // for x in vec.iter() är OK
 #![allow(clippy::return_self_not_must_use)] // Builders utan #[must_use] är OK
 #![allow(clippy::assigning_clones)] // clone_into() är inte alltid tydligare
-#![allow(clippy::manual_let_else)] // if let + return är ibland tydligare
-#![allow(clippy::match_wildcard_for_single_variants)] // _ för framtida varianter
 #![allow(clippy::single_match_else)] // match med else är tydligare ibland
 #![allow(clippy::while_float)] // Loopar med float-villkor är OK i DSP
-#![allow(clippy::iter_without_into_iter)] // Iterator impl utan IntoIterator är OK
 #![allow(clippy::trivially_copy_pass_by_ref)] // &self för Copy-typer är OK för konsistens
 #![allow(clippy::significant_drop_in_scrutinee)] // Drop-varningar i match är pedantiskt
 #![allow(clippy::significant_drop_tightening)] // Drop-ordning är sällan kritisk
@@ -55,40 +51,16 @@
 #![allow(clippy::redundant_clone)] // Ibland för tydlighet
 #![allow(clippy::manual_midpoint)] // (a + b) / 2 är tydligare än midpoint()
 #![allow(clippy::single_char_pattern)] // .split(",") vs .split(',') - stilfråga
-#![allow(clippy::manual_inspect)] // .map(|x| { ...; x }) är OK
-#![allow(clippy::unnecessary_struct_initialization)] // Struct { ..default } är tydligare
-#![allow(clippy::cognitive_complexity)] // Komplexa funktioner är OK i DSP
-#![allow(clippy::fn_params_excessive_bools)] // Flera bool-parametrar är OK ibland
 #![allow(clippy::struct_excessive_bools)] // Flera bool-fält är OK ibland
-#![allow(clippy::iter_on_single_items)] // [x].iter() är OK
-#![allow(clippy::iter_on_empty_collections)] // [].iter() är OK
-#![allow(clippy::type_repetition_in_bounds)] // where T: A, T: B är tydligare ibland
-#![allow(clippy::cast_possible_wrap)] // i32 -> usize där värdet är känt
 #![allow(clippy::cloned_instead_of_copied)] // .cloned() för framtida ändring
 #![allow(clippy::needless_collect)] // collect() innan iteration är ibland tydligare
-#![allow(clippy::ptr_arg)] // &Vec är OK för API-konsistens
-#![allow(clippy::manual_non_exhaustive)] // #[non_exhaustive] behövs inte alltid
-#![allow(clippy::imprecise_flops)] // hypot() är inte alltid tillgänglig/snabbare
-#![allow(clippy::explicit_deref_methods)] // .deref() är tydligare ibland
-#![allow(clippy::match_bool)] // match bool är tydligare än if/else ibland
-#![allow(clippy::needless_for_each)] // for_each är tydligare ibland
 #![allow(clippy::if_not_else)] // if !cond { } else { } är OK
-#![allow(clippy::range_plus_one)] // 0..n+1 är tydligare än 0..=n ibland
-#![allow(clippy::comparison_to_empty)] // x.is_empty() vs x == "" är stilfråga
-#![allow(clippy::missing_fields_in_debug)] // Manuell Debug utan alla fält är OK
-#![allow(clippy::mut_mut)] // &mut &mut T är OK ibland
-#![allow(clippy::indexing_slicing)] // match på vec[i] är OK
-#![allow(clippy::used_underscore_binding)] // _unused som sedan används är OK
-#![allow(clippy::iter_nth)] // .iter().nth(n) är tydligare än .get(n) ibland
-#![allow(clippy::extra_unused_lifetimes)] // Extra lifetimes för framtida utökning
-#![allow(clippy::let_underscore_untyped)] // let _ = expr; utan typ är OK
-#![allow(clippy::box_collection)] // Box<Vec<T>> kan vara avsiktligt
-#![allow(clippy::needless_lifetimes)] // Explicita lifetimes för tydlighet
 #![allow(clippy::elidable_lifetime_names)] // Namngivna lifetimes som kan elideras
 #![allow(clippy::set_contains_or_insert)] // HashSet contains + insert är OK
 #![allow(clippy::implicit_hasher)] // HashMap<K,V> utan S parameter är OK
 #![allow(clippy::ignored_unit_patterns)] // _ för () är OK
 #![allow(clippy::needless_pass_by_ref_mut)] // &mut för framtida användning
+#![allow(clippy::redundant_else)] // else efter return/break är ibland tydligare
 
 //! Modular Synthesizer
 //!
@@ -169,9 +141,7 @@
 // Temporarily allow missing docs during development
 #![allow(missing_docs)]
 #![warn(clippy::all)]
-#![allow(clippy::module_inception)]
-
-// Pedantic/nursery lints som behöver vara efter warn(clippy::all)
+// Lints från clippy::all som behöver undantas
 #![allow(clippy::vec_box)] // Vec<Box<T>> för trait objects
 #![allow(clippy::needless_range_loop)] // for i in 0..len { arr[i] }
 #![allow(clippy::should_implement_trait)] // next() utan Iterator

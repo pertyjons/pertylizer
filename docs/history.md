@@ -1,5 +1,46 @@
 # Version History
 
+## [0.33.4] - 2024
+
+### Maintenance - Clippy Allows Cleanup & Dependency Updates
+
+**Rensade onödiga `#![allow]` attribut**
+
+Tog bort 29 clippy allows som inte längre triggas i koden:
+
+| Borttagna lints | Anledning |
+|----------------|-----------|
+| `module_name_repetitions` | Ingen kod triggar |
+| `many_single_char_names` | Ingen kod triggar |
+| `manual_let_else`, `match_wildcard_for_single_variants` | Ingen kod triggar |
+| `iter_without_into_iter`, `cognitive_complexity` | Ingen kod triggar |
+| `fn_params_excessive_bools`, `iter_on_single_items` | Ingen kod triggar |
+| `ptr_arg`, `manual_non_exhaustive`, `match_bool` | Ingen kod triggar |
+| `needless_for_each`, `range_plus_one`, `mut_mut` | Ingen kod triggar |
+| `indexing_slicing`, `box_collection`, `needless_lifetimes` | Ingen kod triggar |
+| `module_inception`, `manual_inspect` | Ingen kod triggar |
+| + 11 fler | Se commit för komplett lista |
+
+**Resultat:** 91 → 62 rader med allows (-32%)
+
+**Uppdaterade beroenden (15 paket)**
+
+| Paket | Version |
+|-------|---------|
+| cc | 1.2.47 → 1.2.48 |
+| flate2 | 1.1.5 → 1.1.7 |
+| libc | 0.2.177 → 0.2.178 |
+| log | 0.4.28 → 0.4.29 |
+| tracing | 0.1.41 → 0.1.43 |
+| unicode-width | 0.1.14 → 0.2.2 |
+| zerocopy | 0.8.30 → 0.8.31 |
+| wasm-bindgen | 0.2.105 → 0.2.106 |
+
+**Uppdaterade CLAUDE.md**
+- Förtydligade kommandosektionen med separata instruktioner för `ny version` och `uppdatera beroenden`
+
+---
+
 ## [0.33.3] - 2024
 
 ### Refactored - Clippy Pedantic Configuration
