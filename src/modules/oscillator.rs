@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use crate::engine::typed_params::{Param, OscillatorParam, FmMode, ModuleType};
+use crate::engine::typed_params::{FmMode, ModuleType, OscillatorParam, Param};
 use crate::modules::core::*;
-use crate::types::{Hertz, Cents, Gain, MidiNote, Phase, NormalizedValue, SampleRate, Semitones};
+use crate::types::{Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Semitones};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -75,7 +75,12 @@ impl Oscillator {
 
     /// Generate a single sample with optional frequency and phase modulation.
     #[inline]
-    fn generate_sample(&mut self, freq_mod: f32, phase_mod: f32, effective_pulse_width: NormalizedValue) -> f32 {
+    fn generate_sample(
+        &mut self,
+        freq_mod: f32,
+        phase_mod: f32,
+        effective_pulse_width: NormalizedValue,
+    ) -> f32 {
         let base_freq = self.actual_frequency();
         let freq = match self.fm_mode {
             FmMode::Exponential => {
@@ -209,7 +214,9 @@ impl Describable for Oscillator {
                 .description("FM input mode: Exponential (1V/oct) or Linear (Hz)")
                 .widget(WidgetHint::Dropdown),
             )
-            .port(PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"))
+            .port(
+                PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
+            )
             .port(PortDescriptor::control_input("pm", "PM").description("Phase modulation input"))
             .port(PortDescriptor::control_input("pwm", "PWM").description("Pulse width modulation"))
             .port(PortDescriptor::gate_input("sync", "Sync").description("Hard sync input"))
@@ -229,6 +236,8 @@ impl PolyModule for Oscillator {
 
         let fm_input = inputs.get("fm");
         let pm_input = inputs.get("pm");
+        #[allow(clippy::similar_names)]
+        // pm = phase mod, pwm = pulse width mod - different concepts
         let pwm_input = inputs.get("pwm");
         let sync_input = inputs.get("sync");
 
@@ -264,10 +273,14 @@ impl PolyModule for Oscillator {
         if let Param::Oscillator(osc_param) = param {
             match osc_param {
                 OscillatorParam::Waveform(w) => self.waveform = w,
-                OscillatorParam::Frequency(f) => self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0)),
+                OscillatorParam::Frequency(f) => {
+                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0))
+                }
                 OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
                 OscillatorParam::Octave(o) => self.octave = o,
-                OscillatorParam::PulseWidth(pw) => self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99)),
+                OscillatorParam::PulseWidth(pw) => {
+                    self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99))
+                }
                 OscillatorParam::Level(l) => self.level = l,
                 OscillatorParam::Phase(p) => self.phase_offset = p,
                 OscillatorParam::FmMode(m) => self.fm_mode = m,

@@ -74,14 +74,30 @@ impl EnvelopeParam {
     }
 
     /// Default templates
-    pub fn attack_default() -> Self { Self::Attack(Seconds::new(0.01)) }
-    pub fn decay_default() -> Self { Self::Decay(Seconds::new(0.1)) }
-    pub fn sustain_default() -> Self { Self::Sustain(NormalizedValue::new(0.7)) }
-    pub fn release_default() -> Self { Self::Release(Seconds::new(0.3)) }
-    pub fn attack_curve_default() -> Self { Self::AttackCurve(BipolarValue::new(0.0)) }
-    pub fn decay_curve_default() -> Self { Self::DecayCurve(BipolarValue::new(0.0)) }
-    pub fn release_curve_default() -> Self { Self::ReleaseCurve(BipolarValue::new(0.0)) }
-    pub fn velocity_sensitivity_default() -> Self { Self::VelocitySensitivity(NormalizedValue::new(0.5)) }
+    pub fn attack_default() -> Self {
+        Self::Attack(Seconds::new(0.01))
+    }
+    pub fn decay_default() -> Self {
+        Self::Decay(Seconds::new(0.1))
+    }
+    pub fn sustain_default() -> Self {
+        Self::Sustain(NormalizedValue::new(0.7))
+    }
+    pub fn release_default() -> Self {
+        Self::Release(Seconds::new(0.3))
+    }
+    pub fn attack_curve_default() -> Self {
+        Self::AttackCurve(BipolarValue::new(0.0))
+    }
+    pub fn decay_curve_default() -> Self {
+        Self::DecayCurve(BipolarValue::new(0.0))
+    }
+    pub fn release_curve_default() -> Self {
+        Self::ReleaseCurve(BipolarValue::new(0.0))
+    }
+    pub fn velocity_sensitivity_default() -> Self {
+        Self::VelocitySensitivity(NormalizedValue::new(0.5))
+    }
 }
 
 impl Default for EnvelopeParam {

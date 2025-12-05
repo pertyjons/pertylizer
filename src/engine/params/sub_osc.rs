@@ -98,10 +98,16 @@ impl SubOscOctave {
     pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|o| crate::modules::core::ChoiceOption::new(
-                if *o == Self::MinusOne { "minus1" } else { "minus2" },
-                o.name()
-            ))
+            .map(|o| {
+                crate::modules::core::ChoiceOption::new(
+                    if *o == Self::MinusOne {
+                        "minus1"
+                    } else {
+                        "minus2"
+                    },
+                    o.name(),
+                )
+            })
             .collect()
     }
 }
@@ -148,20 +154,26 @@ impl SubOscParam {
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Waveform(_) => Self::Waveform(
-                SubOscWaveform::from_index(value as usize).unwrap_or_default()
-            ),
-            Self::Octave(_) => Self::Octave(
-                SubOscOctave::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Waveform(_) => {
+                Self::Waveform(SubOscWaveform::from_index(value as usize).unwrap_or_default())
+            }
+            Self::Octave(_) => {
+                Self::Octave(SubOscOctave::from_index(value as usize).unwrap_or_default())
+            }
             Self::Level(_) => Self::Level(Gain::new(value)),
         }
     }
 
     /// Default templates
-    pub fn waveform_default() -> Self { Self::Waveform(SubOscWaveform::default()) }
-    pub fn octave_default() -> Self { Self::Octave(SubOscOctave::default()) }
-    pub fn level_default() -> Self { Self::Level(Gain::new(0.5)) }
+    pub fn waveform_default() -> Self {
+        Self::Waveform(SubOscWaveform::default())
+    }
+    pub fn octave_default() -> Self {
+        Self::Octave(SubOscOctave::default())
+    }
+    pub fn level_default() -> Self {
+        Self::Level(Gain::new(0.5))
+    }
 }
 
 impl Default for SubOscParam {

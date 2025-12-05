@@ -128,11 +128,12 @@ impl VoiceAllocator {
 
     /// Create with a ModuleGraph template.
     /// Each voice will receive a cloned copy of the graph.
-    pub fn with_graph_template(config: AllocatorConfig, graph_template: &crate::engine::graph::ModuleGraph) -> Self {
+    pub fn with_graph_template(
+        config: AllocatorConfig,
+        graph_template: &crate::engine::graph::ModuleGraph,
+    ) -> Self {
         let voices = (0..config.max_voices)
-            .map(|i| {
-                Voice::from_graph(i as u32, graph_template.clone_structure())
-            })
+            .map(|i| Voice::from_graph(i as u32, graph_template.clone_structure()))
             .collect();
 
         Self {
@@ -224,10 +225,12 @@ impl VoiceAllocator {
                 // Release all voices playing this note
                 for voice in &mut self.voices {
                     // Use pattern matching on VoiceState::Active to check note
-                    if let VoiceState::Active { note: voice_note, .. } = voice.state {
-                        if voice_note == note {
-                            voice.note_off();
-                        }
+                    if let VoiceState::Active {
+                        note: voice_note, ..
+                    } = voice.state
+                        && voice_note == note
+                    {
+                        voice.note_off();
                     }
                 }
             }
@@ -299,11 +302,11 @@ impl VoiceAllocator {
         }
 
         // Try to reuse a voice playing the same note
-        if self.config.stealing == StealingStrategy::SameNote {
-            if let Some(voice) = self.voices.iter_mut().find(|v| v.note() == Some(note)) {
-                voice.note_on(note, velocity, self.time);
-                return Some(voice.id);
-            }
+        if self.config.stealing == StealingStrategy::SameNote
+            && let Some(voice) = self.voices.iter_mut().find(|v| v.note() == Some(note))
+        {
+            voice.note_on(note, velocity, self.time);
+            return Some(voice.id);
         }
 
         // Need to steal a voice
@@ -323,11 +326,14 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for mono/legato mode.
-    fn allocate_mono(&mut self, note: MidiNote, velocity: NormalizedValue, retrigger: bool) -> Option<u32> {
+    fn allocate_mono(
+        &mut self,
+        note: MidiNote,
+        velocity: NormalizedValue,
+        retrigger: bool,
+    ) -> Option<u32> {
         // Find active voice index or use first
-        let voice_idx = self.voices.iter()
-            .position(|v| v.is_active())
-            .unwrap_or(0);
+        let voice_idx = self.voices.iter().position(|v| v.is_active()).unwrap_or(0);
 
         if voice_idx >= self.voices.len() {
             return None;
@@ -359,9 +365,9 @@ impl VoiceAllocator {
             // Apply detune spread: voices spread evenly around center pitch
             // e.g. with 4 voices and 10 cents total: -7.5, -2.5, +2.5, +7.5
             let detune = detune_per_voice * (i as f32 - (num_voices as f32 - 1.0) / 2.0);
-            
+
             self.voices[i].note_on(note, velocity, self.time);
-            
+
             // Apply detune to oscillators
             self.voices[i].set_oscillator_detune(detune);
         }
@@ -374,15 +380,14 @@ impl VoiceAllocator {
     fn find_voice_to_steal(&self) -> Option<usize> {
         match self.config.stealing {
             StealingStrategy::None => None,
-            
-            StealingStrategy::Oldest => {
-                self.voices
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, v)| v.age)
-                    .map(|(i, _)| i)
-            }
-            
+
+            StealingStrategy::Oldest => self
+                .voices
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, v)| v.age)
+                .map(|(i, _)| i),
+
             StealingStrategy::Quietest => {
                 // For now, use oldest releasing voice, then oldest active
                 self.voices
@@ -416,7 +421,7 @@ impl VoiceAllocator {
                     })
                     .map(|(i, _)| i)
             }
-            
+
             StealingStrategy::SameNote => {
                 // Handled separately in allocate_poly
                 self.find_voice_to_steal_with_strategy(StealingStrategy::Oldest)
@@ -426,13 +431,12 @@ impl VoiceAllocator {
 
     fn find_voice_to_steal_with_strategy(&self, strategy: StealingStrategy) -> Option<usize> {
         match strategy {
-            StealingStrategy::Oldest => {
-                self.voices
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, v)| v.age)
-                    .map(|(i, _)| i)
-            }
+            StealingStrategy::Oldest => self
+                .voices
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, v)| v.age)
+                .map(|(i, _)| i),
             _ => None,
         }
     }

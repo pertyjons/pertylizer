@@ -6,9 +6,7 @@
 //! - Tone filter
 //! - Mix control
 
-use crate::engine::typed_params::{
-    DistortionMode, DistortionParam, ModuleType, Param,
-};
+use crate::engine::typed_params::{DistortionMode, DistortionParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{Hertz, NormalizedValue, SampleRate};
 
@@ -22,7 +20,7 @@ pub struct Distortion {
     drive: NormalizedValue,
     tone: NormalizedValue,
     mix: NormalizedValue,
-    bit_depth: f32,  // For bitcrush (1-16) - not a normalized value
+    bit_depth: f32, // For bitcrush (1-16) - not a normalized value
 
     // Filter state
     filter_state: f32,
@@ -125,7 +123,10 @@ impl Describable for Distortion {
             .tag("overdrive")
             .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
-            .port(PortDescriptor::control_input("drive_cv", "Drive CV").description("Drive modulation"))
+            .port(
+                PortDescriptor::control_input("drive_cv", "Drive CV")
+                    .description("Drive modulation"),
+            )
             .parameter(
                 ParameterDescriptor::choice(
                     Param::Distortion(DistortionParam::Mode(DistortionMode::SoftClip)),

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use super::instrument::{MidiChannel, InstrumentId, Instrument};
+use super::instrument::{Instrument, InstrumentId, MidiChannel};
 use super::typed_params::{ModuleType, Param};
 use crate::types::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds};
 
@@ -28,11 +28,17 @@ pub struct ModuleId {
 
 impl ModuleId {
     /// Master output module ID.
-    pub const MASTER: Self = Self { module_type: ModuleType::Mixer, instance: 0 };
+    pub const MASTER: Self = Self {
+        module_type: ModuleType::Mixer,
+        instance: 0,
+    };
 
     /// Create a new module ID.
     pub fn new(module_type: ModuleType, instance: u16) -> Self {
-        Self { module_type, instance }
+        Self {
+            module_type,
+            instance,
+        }
     }
 
     /// Create from legacy u32 format (for backwards compatibility).
@@ -77,24 +83,32 @@ impl FromStr for ModuleId {
 
         let module_type = ModuleType::from_prefix(parts[0])
             .ok_or_else(|| format!("Unknown module type prefix: {}", parts[0]))?;
-        let instance = parts[1].parse::<u16>()
+        let instance = parts[1]
+            .parse::<u16>()
             .map_err(|_| format!("Invalid instance number: {}", parts[1]))?;
 
-        Ok(Self { module_type, instance })
+        Ok(Self {
+            module_type,
+            instance,
+        })
     }
 }
 
 // Custom serialization as string "osc-1"
 impl Serialize for ModuleId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         serializer.serialize_str(&self.to_string())
     }
 }
 
 impl<'de> Deserialize<'de> for ModuleId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         let s = String::deserialize(deserializer)?;
 
         // Try new format first "osc-1"
@@ -114,7 +128,7 @@ impl<'de> Deserialize<'de> for ModuleId {
 
 /// Identifies a module within a voice.
 /// Used for type-safe parameter routing without magic numbers.
-/// 
+///
 /// Each variant has a unique numeric ID and descriptive string name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PolyModule {
@@ -132,14 +146,14 @@ impl PolyModule {
     /// Get the module info: (module_type, instance, internal_name)
     pub const fn info(&self) -> (ModuleType, u16, &'static str) {
         match self {
-            Self::Oscillator1    => (ModuleType::Oscillator, 1, "osc1"),
-            Self::Oscillator2    => (ModuleType::Oscillator, 2, "osc2"),
-            Self::Filter         => (ModuleType::Filter, 1, "filter"),
-            Self::AmpEnvelope    => (ModuleType::Envelope, 1, "amp_env"),
+            Self::Oscillator1 => (ModuleType::Oscillator, 1, "osc1"),
+            Self::Oscillator2 => (ModuleType::Oscillator, 2, "osc2"),
+            Self::Filter => (ModuleType::Filter, 1, "filter"),
+            Self::AmpEnvelope => (ModuleType::Envelope, 1, "amp_env"),
             Self::FilterEnvelope => (ModuleType::Envelope, 2, "filter_env"),
-            Self::Lfo            => (ModuleType::Lfo, 1, "lfo"),
-            Self::Amplifier      => (ModuleType::Amplifier, 1, "amp"),
-            Self::Mixer          => (ModuleType::Mixer, 1, "mixer"),
+            Self::Lfo => (ModuleType::Lfo, 1, "lfo"),
+            Self::Amplifier => (ModuleType::Amplifier, 1, "amp"),
+            Self::Mixer => (ModuleType::Mixer, 1, "mixer"),
         }
     }
 
@@ -156,14 +170,17 @@ impl PolyModule {
     /// Get the GUI ModuleId for this voice module.
     pub const fn module_id(&self) -> ModuleId {
         let (module_type, instance, _) = self.info();
-        ModuleId { module_type, instance }
+        ModuleId {
+            module_type,
+            instance,
+        }
     }
 
     /// Try to get PolyModule from a ModuleId.
     pub fn from_module_id(id: ModuleId) -> Option<Self> {
         Self::ALL.iter().find(|v| v.module_id() == id).copied()
     }
-    
+
     /// All voice modules.
     pub const ALL: &'static [PolyModule] = &[
         Self::Oscillator1,
@@ -185,7 +202,7 @@ impl ModuleTypeId {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
-    
+
     /// Well-known module type IDs.
     pub const OSCILLATOR: &'static str = "oscillator";
     pub const FILTER: &'static str = "filter";
@@ -197,11 +214,11 @@ impl ModuleTypeId {
     pub const REVERB: &'static str = "reverb";
     pub const CHORUS: &'static str = "chorus";
     pub const DISTORTION: &'static str = "distortion";
-    
+
     /// Create a module instance from this type ID.
     pub fn create_module(&self) -> Option<Box<dyn crate::modules::PolyModule>> {
-        use crate::modules::{Oscillator, Filter, Envelope, Lfo, Amplifier, Mixer};
-        
+        use crate::modules::{Amplifier, Envelope, Filter, Lfo, Mixer, Oscillator};
+
         match self.0.as_str() {
             Self::OSCILLATOR => Some(Box::new(Oscillator::new())),
             Self::FILTER => Some(Box::new(Filter::new())),
@@ -243,14 +260,10 @@ impl PortId {
 pub enum EngineCommand {
     // === Instrument management ===
     /// Add a new instrument (pre-created in GUI thread for real-time safety).
-    AddInstrument {
-        instrument: Box<Instrument>,
-    },
+    AddInstrument { instrument: Box<Instrument> },
 
     /// Remove an instrument by ID.
-    RemoveInstrument {
-        instrument_id: InstrumentId,
-    },
+    RemoveInstrument { instrument_id: InstrumentId },
 
     /// Set a parameter on a specific instrument.
     SetInstrumentParameter {
@@ -409,10 +422,7 @@ pub enum EngineCommand {
     SetGlideTime(Seconds),
 
     /// Bypass a module.
-    SetBypass {
-        module: ModuleId,
-        bypass: bool,
-    },
+    SetBypass { module: ModuleId, bypass: bool },
 
     // === Visualizer control ===
     /// Add a visualizer module to an instrument's effect chain.
@@ -509,7 +519,7 @@ impl EffectType {
             _ => None,
         }
     }
-    
+
     /// Convert from patch::ModuleType if it's an effect.
     pub fn from_patch_module_type(mt: crate::patch::ModuleType) -> Option<Self> {
         use crate::patch::ModuleType as PMT;
@@ -521,7 +531,7 @@ impl EffectType {
             _ => None,
         }
     }
-    
+
     /// Convert to typed_params::ModuleType.
     pub fn to_module_type(self) -> super::typed_params::ModuleType {
         use super::typed_params::ModuleType as MT;
@@ -566,26 +576,17 @@ pub enum InstrumentParam {
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
     /// Peak meter update.
-    PeakMeter {
-        left: f32,
-        right: f32,
-    },
+    PeakMeter { left: f32, right: f32 },
 
     /// RMS meter update.
-    RmsMeter {
-        left: f32,
-        right: f32,
-    },
+    RmsMeter { left: f32, right: f32 },
 
     /// Voice activity.
     VoiceCount(u32),
 
     /// Module parameter changed (echo back).
     /// The Param contains both the parameter type and its value.
-    ParameterChanged {
-        module: ModuleId,
-        param: Param,
-    },
+    ParameterChanged { module: ModuleId, param: Param },
 
     /// CPU usage.
     CpuUsage(f32),
@@ -643,88 +644,104 @@ impl std::fmt::Debug for EngineCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             // Instrument commands
-            Self::AddInstrument { instrument } => {
-                f.debug_struct("AddInstrument")
-                    .field("instrument_id", &instrument.id())
-                    .field("name", &instrument.name())
-                    .finish()
-            }
-            Self::RemoveInstrument { instrument_id } => {
-                f.debug_struct("RemoveInstrument").field("instrument_id", instrument_id).finish()
-            }
-            Self::SetInstrumentParameter { instrument_id, param } => {
-                f.debug_struct("SetInstrumentParameter")
-                    .field("instrument_id", instrument_id)
-                    .field("param", param)
-                    .finish()
-            }
-            Self::SetInstrumentMidiChannel { instrument_id, channel } => {
-                f.debug_struct("SetInstrumentMidiChannel")
-                    .field("instrument_id", instrument_id)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::SetInstrumentEnabled { instrument_id, enabled } => {
-                f.debug_struct("SetInstrumentEnabled")
-                    .field("instrument_id", instrument_id)
-                    .field("enabled", enabled)
-                    .finish()
-            }
+            Self::AddInstrument { instrument } => f
+                .debug_struct("AddInstrument")
+                .field("instrument_id", &instrument.id())
+                .field("name", &instrument.name())
+                .finish(),
+            Self::RemoveInstrument { instrument_id } => f
+                .debug_struct("RemoveInstrument")
+                .field("instrument_id", instrument_id)
+                .finish(),
+            Self::SetInstrumentParameter {
+                instrument_id,
+                param,
+            } => f
+                .debug_struct("SetInstrumentParameter")
+                .field("instrument_id", instrument_id)
+                .field("param", param)
+                .finish(),
+            Self::SetInstrumentMidiChannel {
+                instrument_id,
+                channel,
+            } => f
+                .debug_struct("SetInstrumentMidiChannel")
+                .field("instrument_id", instrument_id)
+                .field("channel", channel)
+                .finish(),
+            Self::SetInstrumentEnabled {
+                instrument_id,
+                enabled,
+            } => f
+                .debug_struct("SetInstrumentEnabled")
+                .field("instrument_id", instrument_id)
+                .field("enabled", enabled)
+                .finish(),
             // Note commands
-            Self::NoteOn { note, velocity, channel } => {
-                f.debug_struct("NoteOn")
-                    .field("note", note)
-                    .field("velocity", velocity)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::NoteOff { note, channel } => {
-                f.debug_struct("NoteOff")
-                    .field("note", note)
-                    .field("channel", channel)
-                    .finish()
-            }
+            Self::NoteOn {
+                note,
+                velocity,
+                channel,
+            } => f
+                .debug_struct("NoteOn")
+                .field("note", note)
+                .field("velocity", velocity)
+                .field("channel", channel)
+                .finish(),
+            Self::NoteOff { note, channel } => f
+                .debug_struct("NoteOff")
+                .field("note", note)
+                .field("channel", channel)
+                .finish(),
             Self::AllNotesOff => write!(f, "AllNotesOff"),
-            Self::PitchBend { value, channel } => {
-                f.debug_struct("PitchBend")
-                    .field("value", value)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::ModWheel { value, channel } => {
-                f.debug_struct("ModWheel")
-                    .field("value", value)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::Aftertouch { value, channel } => {
-                f.debug_struct("Aftertouch")
-                    .field("value", value)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::PolyAftertouch { note, value, channel } => {
-                f.debug_struct("PolyAftertouch")
-                    .field("note", note)
-                    .field("value", value)
-                    .field("channel", channel)
-                    .finish()
-            }
-            Self::SetVoiceParameter { instrument_id, target, param } => {
-                f.debug_struct("SetVoiceParameter")
-                    .field("instrument_id", instrument_id)
-                    .field("target", target)
-                    .field("param", param)
-                    .finish()
-            }
-            Self::SetModuleParameter { instrument_id, module_id, param } => {
-                f.debug_struct("SetModuleParameter")
-                    .field("instrument_id", instrument_id)
-                    .field("module_id", module_id)
-                    .field("param", param)
-                    .finish()
-            }
-            Self::AddModuleInstance { instrument_id, id, .. } => {
+            Self::PitchBend { value, channel } => f
+                .debug_struct("PitchBend")
+                .field("value", value)
+                .field("channel", channel)
+                .finish(),
+            Self::ModWheel { value, channel } => f
+                .debug_struct("ModWheel")
+                .field("value", value)
+                .field("channel", channel)
+                .finish(),
+            Self::Aftertouch { value, channel } => f
+                .debug_struct("Aftertouch")
+                .field("value", value)
+                .field("channel", channel)
+                .finish(),
+            Self::PolyAftertouch {
+                note,
+                value,
+                channel,
+            } => f
+                .debug_struct("PolyAftertouch")
+                .field("note", note)
+                .field("value", value)
+                .field("channel", channel)
+                .finish(),
+            Self::SetVoiceParameter {
+                instrument_id,
+                target,
+                param,
+            } => f
+                .debug_struct("SetVoiceParameter")
+                .field("instrument_id", instrument_id)
+                .field("target", target)
+                .field("param", param)
+                .finish(),
+            Self::SetModuleParameter {
+                instrument_id,
+                module_id,
+                param,
+            } => f
+                .debug_struct("SetModuleParameter")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
+                .field("param", param)
+                .finish(),
+            Self::AddModuleInstance {
+                instrument_id, id, ..
+            } => {
                 // Can't debug the module itself, just show the ID
                 f.debug_struct("AddModuleInstance")
                     .field("instrument_id", instrument_id)
@@ -732,32 +749,39 @@ impl std::fmt::Debug for EngineCommand {
                     .field("module", &"<dyn PolyModule>")
                     .finish()
             }
-            Self::RemoveModule { instrument_id, id } => {
-                f.debug_struct("RemoveModule")
-                    .field("instrument_id", instrument_id)
-                    .field("id", id)
-                    .finish()
-            }
-            Self::Connect { instrument_id, from, to } => {
-                f.debug_struct("Connect")
-                    .field("instrument_id", instrument_id)
-                    .field("from", from)
-                    .field("to", to)
-                    .finish()
-            }
-            Self::Disconnect { instrument_id, from, to } => {
-                f.debug_struct("Disconnect")
-                    .field("instrument_id", instrument_id)
-                    .field("from", from)
-                    .field("to", to)
-                    .finish()
-            }
-            Self::DisconnectAll { instrument_id, module } => {
-                f.debug_struct("DisconnectAll")
-                    .field("instrument_id", instrument_id)
-                    .field("module", module)
-                    .finish()
-            }
+            Self::RemoveModule { instrument_id, id } => f
+                .debug_struct("RemoveModule")
+                .field("instrument_id", instrument_id)
+                .field("id", id)
+                .finish(),
+            Self::Connect {
+                instrument_id,
+                from,
+                to,
+            } => f
+                .debug_struct("Connect")
+                .field("instrument_id", instrument_id)
+                .field("from", from)
+                .field("to", to)
+                .finish(),
+            Self::Disconnect {
+                instrument_id,
+                from,
+                to,
+            } => f
+                .debug_struct("Disconnect")
+                .field("instrument_id", instrument_id)
+                .field("from", from)
+                .field("to", to)
+                .finish(),
+            Self::DisconnectAll {
+                instrument_id,
+                module,
+            } => f
+                .debug_struct("DisconnectAll")
+                .field("instrument_id", instrument_id)
+                .field("module", module)
+                .finish(),
             Self::SetTempo(t) => write!(f, "SetTempo({t})"),
             Self::Play => write!(f, "Play"),
             Self::Stop => write!(f, "Stop"),
@@ -767,52 +791,60 @@ impl std::fmt::Debug for EngineCommand {
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),
             Self::SetGlideTime(t) => write!(f, "SetGlideTime({t})"),
-            Self::SetBypass { module, bypass } => {
-                f.debug_struct("SetBypass")
-                    .field("module", module)
-                    .field("bypass", bypass)
-                    .finish()
-            }
-            Self::AddVisualizer { instrument_id, id, visualizer_type, .. } => {
-                f.debug_struct("AddVisualizer")
-                    .field("instrument_id", instrument_id)
-                    .field("id", id)
-                    .field("visualizer_type", visualizer_type)
-                    .finish()
-            }
-            Self::RemoveVisualizer { instrument_id, id } => {
-                f.debug_struct("RemoveVisualizer")
-                    .field("instrument_id", instrument_id)
-                    .field("id", id)
-                    .finish()
-            }
-            Self::AddEffectInstance { instrument_id, id, .. } => {
-                f.debug_struct("AddEffectInstance")
-                    .field("instrument_id", instrument_id)
-                    .field("id", id)
-                    .field("effect", &"<dyn AudioEffect>")
-                    .finish()
-            }
-            Self::RemoveEffect { instrument_id, id } => {
-                f.debug_struct("RemoveEffect")
-                    .field("instrument_id", instrument_id)
-                    .field("id", id)
-                    .finish()
-            }
-            Self::SetEffectParameter { instrument_id, effect_type, param } => {
-                f.debug_struct("SetEffectParameter")
-                    .field("instrument_id", instrument_id)
-                    .field("effect_type", effect_type)
-                    .field("param", param)
-                    .finish()
-            }
-            Self::SetEffectEnabled { instrument_id, effect_type, enabled } => {
-                f.debug_struct("SetEffectEnabled")
-                    .field("instrument_id", instrument_id)
-                    .field("effect_type", effect_type)
-                    .field("enabled", enabled)
-                    .finish()
-            }
+            Self::SetBypass { module, bypass } => f
+                .debug_struct("SetBypass")
+                .field("module", module)
+                .field("bypass", bypass)
+                .finish(),
+            Self::AddVisualizer {
+                instrument_id,
+                id,
+                visualizer_type,
+                ..
+            } => f
+                .debug_struct("AddVisualizer")
+                .field("instrument_id", instrument_id)
+                .field("id", id)
+                .field("visualizer_type", visualizer_type)
+                .finish(),
+            Self::RemoveVisualizer { instrument_id, id } => f
+                .debug_struct("RemoveVisualizer")
+                .field("instrument_id", instrument_id)
+                .field("id", id)
+                .finish(),
+            Self::AddEffectInstance {
+                instrument_id, id, ..
+            } => f
+                .debug_struct("AddEffectInstance")
+                .field("instrument_id", instrument_id)
+                .field("id", id)
+                .field("effect", &"<dyn AudioEffect>")
+                .finish(),
+            Self::RemoveEffect { instrument_id, id } => f
+                .debug_struct("RemoveEffect")
+                .field("instrument_id", instrument_id)
+                .field("id", id)
+                .finish(),
+            Self::SetEffectParameter {
+                instrument_id,
+                effect_type,
+                param,
+            } => f
+                .debug_struct("SetEffectParameter")
+                .field("instrument_id", instrument_id)
+                .field("effect_type", effect_type)
+                .field("param", param)
+                .finish(),
+            Self::SetEffectEnabled {
+                instrument_id,
+                effect_type,
+                enabled,
+            } => f
+                .debug_struct("SetEffectEnabled")
+                .field("instrument_id", instrument_id)
+                .field("effect_type", effect_type)
+                .field("enabled", enabled)
+                .finish(),
         }
     }
 }

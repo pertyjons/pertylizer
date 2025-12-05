@@ -496,11 +496,7 @@ impl Phase {
     /// Returns 1.0 when phase < width, -1.0 otherwise.
     #[inline]
     pub fn pulse(self, width: NormalizedValue) -> f32 {
-        if self.0 < width.0 {
-            1.0
-        } else {
-            -1.0
-        }
+        if self.0 < width.0 { 1.0 } else { -1.0 }
     }
 
     /// Calculate the shortest distance between two phases.

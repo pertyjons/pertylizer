@@ -1,13 +1,15 @@
 //! Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 
-use crate::patch::{Patch, ModuleBuilder, ModuleType};
+use crate::patch::{ModuleBuilder, ModuleType, Patch};
 
 /// Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 pub fn patch_chaos_drone() -> Patch {
     let mut patch = Patch::new("Chaos Drone");
     patch.author = Some("Modular Synth".to_string());
-    patch.description = Some("Evolving chaotic textures using the Lorenz strange attractor.".to_string());
-    patch.notes = Some(r#"
+    patch.description =
+        Some("Evolving chaotic textures using the Lorenz strange attractor.".to_string());
+    patch.notes = Some(
+        r"
 SIGNAL FLOW:
 The Math Oscillator uses the Lorenz chaos algorithm to create unpredictable,
 evolving waveforms. The Lorenz attractor is a famous mathematical system
@@ -27,70 +29,94 @@ over time, creating organic variation in the texture.
 
 TRY: Play sustained notes and let the chaos evolve. Each note will sound
 different due to the chaotic nature of the algorithm.
-"#.to_string());
-    patch.tags = vec!["math".into(), "chaos".into(), "drone".into(), "experimental".into(), "ambient".into()];
+"
+        .to_string(),
+    );
+    patch.tags = vec![
+        "math".into(),
+        "chaos".into(),
+        "drone".into(),
+        "experimental".into(),
+        "ambient".into(),
+    ];
 
     // Math Oscillator - Lorenz chaos (mth-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::MathOscillator)
-        .position(50.0, 50.0)
-        .algorithm("lorenz")
-        .param_f("param_a", 0.5)
-        .param_f("param_b", 0.7)
-        .param_f("param_c", 0.5)
-        .param_f("level", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::MathOscillator)
+            .position(50.0, 50.0)
+            .algorithm("lorenz")
+            .param_f("param_a", 0.5)
+            .param_f("param_b", 0.7)
+            .param_f("param_c", 0.5)
+            .param_f("level", 0.8)
+            .build(),
+    );
 
     // Filter - Smooth out harsh chaos (flt-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
-        .position(250.0, 50.0)
-        .filter_mode("lowpass")
-        .param_f("cutoff", 2000.0)
-        .param_f("resonance", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Filter)
+            .position(250.0, 50.0)
+            .filter_mode("lowpass")
+            .param_f("cutoff", 2000.0)
+            .param_f("resonance", 0.3)
+            .build(),
+    );
 
     // Amp Envelope - Long pad envelope (env-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
-        .position(50.0, 300.0)
-        .param_f("attack", 2.0)
-        .param_f("decay", 0.5)
-        .param_f("sustain", 0.7)
-        .param_f("release", 4.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .position(50.0, 300.0)
+            .param_f("attack", 2.0)
+            .param_f("decay", 0.5)
+            .param_f("sustain", 0.7)
+            .param_f("release", 4.0)
+            .build(),
+    );
 
     // LFO - Modulate chaos speed (lfo-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
-        .position(250.0, 300.0)
-        .waveform("sine")
-        .param_f("rate", 0.05)
-        .param_f("depth", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Lfo)
+            .position(250.0, 300.0)
+            .waveform("sine")
+            .param_f("rate", 0.05)
+            .param_f("depth", 0.3)
+            .build(),
+    );
 
     // Amplifier (amp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
-        .position(450.0, 50.0)
-        .param_f("level", 0.6)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .position(450.0, 50.0)
+            .param_f("level", 0.6)
+            .build(),
+    );
 
     // Reverb - Spacious (rev-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Reverb)
-        .position(650.0, 50.0)
-        .param_f("room_size", 0.9)
-        .param_f("damping", 0.3)
-        .param_f("mix", 0.5)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Reverb)
+            .position(650.0, 50.0)
+            .param_f("room_size", 0.9)
+            .param_f("damping", 0.3)
+            .param_f("mix", 0.5)
+            .build(),
+    );
 
     // Oscilloscope - Waveform visualization (scp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
-        .position(850.0, 50.0)
-        .param_f("time", 1.0)
-        .param_f("gain", 1.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+            .position(850.0, 50.0)
+            .param_f("time", 1.0)
+            .param_f("gain", 1.0)
+            .build(),
+    );
 
     // Stereo Output (out-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
-        .position(1050.0, 50.0)
-        .param_f("master", 0.7)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .position(1050.0, 50.0)
+            .param_f("master", 0.7)
+            .build(),
+    );
 
     // Connections
     patch.add_connection("mth-1", "out", "flt-1", "in");

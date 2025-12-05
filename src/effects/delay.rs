@@ -99,12 +99,7 @@ impl Delay {
 
     /// One-pole lowpass for feedback damping.
     #[inline]
-    fn lowpass(
-        input: f32,
-        state: &mut FilterState,
-        cutoff: Hertz,
-        sample_rate: SampleRate,
-    ) -> f32 {
+    fn lowpass(input: f32, state: &mut FilterState, cutoff: Hertz, sample_rate: SampleRate) -> f32 {
         let coef = cutoff.to_exp_coeff(sample_rate);
         state.one_pole(input, coef)
     }
@@ -234,10 +229,18 @@ impl AudioEffect for Delay {
                 Self::read_interpolated(&self.buffer_right, self.write_pos, delay_samples_right);
 
             // Apply feedback filtering
-            let fb_l =
-                Self::lowpass(delayed_l, &mut self.filter_left, self.high_cut, self.sample_rate);
-            let fb_r =
-                Self::lowpass(delayed_r, &mut self.filter_right, self.high_cut, self.sample_rate);
+            let fb_l = Self::lowpass(
+                delayed_l,
+                &mut self.filter_left,
+                self.high_cut,
+                self.sample_rate,
+            );
+            let fb_r = Self::lowpass(
+                delayed_r,
+                &mut self.filter_right,
+                self.high_cut,
+                self.sample_rate,
+            );
 
             // Calculate feedback signal based on mode
             let (write_l, write_r) = match self.mode {

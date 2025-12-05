@@ -2,8 +2,8 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
-use crate::modules::core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
 use super::{colors, theme};
+use crate::modules::core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
 
 /// A rotary knob widget.
 pub struct Knob<'a> {
@@ -85,7 +85,11 @@ impl<'a> Knob<'a> {
     pub fn show(self, ui: &mut Ui) -> Response {
         let t = theme();
         let padding = 6.0;
-        let label_height = if self.label.is_empty() { 0.0 } else { t.sizes.knob_label_height };
+        let label_height = if self.label.is_empty() {
+            0.0
+        } else {
+            t.sizes.knob_label_height
+        };
 
         // Total widget size includes padding and label
         let widget_width = self.size + padding * 2.0;
@@ -108,16 +112,25 @@ impl<'a> Knob<'a> {
         if response.dragged() {
             let delta = -response.drag_delta().y;
             let sensitivity = 0.005;
-            let normalized = self.response_curve.normalize(*self.value, self.min, self.max);
+            let normalized = self
+                .response_curve
+                .normalize(*self.value, self.min, self.max);
             let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
-            *self.value = self.response_curve.denormalize(new_normalized, self.min, self.max);
+            *self.value = self
+                .response_curve
+                .denormalize(new_normalized, self.min, self.max);
         }
 
         let painter = ui.painter();
 
         // Draw frame around entire widget
         painter.rect_filled(rect, 4.0, colors::BG_DARK);
-        painter.rect_stroke(rect, 4.0, Stroke::new(1.0, colors::BG_WIDGET), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, colors::BG_WIDGET),
+            egui::StrokeKind::Inside,
+        );
 
         // Draw knob circle
         let center = knob_rect.center();
@@ -128,7 +141,9 @@ impl<'a> Knob<'a> {
         painter.circle_stroke(center, radius, Stroke::new(1.5, colors::BG_PANEL));
 
         // Value arc
-        let normalized = self.response_curve.normalize(*self.value, self.min, self.max);
+        let normalized = self
+            .response_curve
+            .normalize(*self.value, self.min, self.max);
         let start_angle = std::f32::consts::PI * 0.75;
         let end_angle = std::f32::consts::PI * 2.25;
         let value_angle = start_angle + normalized * (end_angle - start_angle);
@@ -152,7 +167,8 @@ impl<'a> Knob<'a> {
 
         // Indicator dot at the edge
         let indicator_radius = radius - 8.0;
-        let indicator_pos = center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
+        let indicator_pos =
+            center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
         painter.circle_filled(indicator_pos, 3.0, colors::TEXT_PRIMARY);
 
         // Value text in center of knob

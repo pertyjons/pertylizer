@@ -6,8 +6,8 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig as CpalStreamConfig};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::audio::traits::{AudioBackend, AudioProcessor, AudioStream};
@@ -27,11 +27,7 @@ impl CpalBackend {
     }
 
     /// Create a CPAL backend with a specific host.
-    #[cfg(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "linux",
-    ))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux",))]
     pub fn with_host_id(host_id: cpal::HostId) -> AudioResult<Self> {
         let host = cpal::host_from_id(host_id)
             .map_err(|e| AudioError::BackendError(format!("Failed to get host: {e}")))?;
@@ -48,7 +44,12 @@ impl CpalBackend {
             if let Ok(configs) = device.supported_output_configs() {
                 let configs: Vec<_> = configs.collect();
                 if configs.is_empty() {
-                    (ChannelCount::Stereo, vec![SampleRate::default()], BufferSize::SMALL, BufferSize::VERY_LARGE)
+                    (
+                        ChannelCount::Stereo,
+                        vec![SampleRate::default()],
+                        BufferSize::SMALL,
+                        BufferSize::VERY_LARGE,
+                    )
                 } else {
                     let channels = ChannelCount::from(configs[0].channels());
                     let rates: Vec<SampleRate> = configs
@@ -64,13 +65,22 @@ impl CpalBackend {
                         .collect();
                     (
                         channels,
-                        if rates.is_empty() { vec![SampleRate::default()] } else { rates },
+                        if rates.is_empty() {
+                            vec![SampleRate::default()]
+                        } else {
+                            rates
+                        },
                         BufferSize::SMALL,
                         BufferSize::VERY_LARGE,
                     )
                 }
             } else {
-                (ChannelCount::Stereo, vec![SampleRate::default()], BufferSize::SMALL, BufferSize::VERY_LARGE)
+                (
+                    ChannelCount::Stereo,
+                    vec![SampleRate::default()],
+                    BufferSize::SMALL,
+                    BufferSize::VERY_LARGE,
+                )
             };
 
         // Get supported input configs
@@ -103,10 +113,10 @@ impl CpalBackend {
             .map_err(|e| AudioError::BackendError(format!("Failed to enumerate devices: {e}")))?;
 
         for device in devices {
-            if let Ok(name) = device.name() {
-                if name == device_id {
-                    return Ok(device);
-                }
+            if let Ok(name) = device.name()
+                && name == device_id
+            {
+                return Ok(device);
             }
         }
 

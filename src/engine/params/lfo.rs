@@ -117,18 +117,30 @@ impl LfoParam {
             Self::Rate(hz) => hz.as_f32(),
             Self::Depth(d) => d.as_f32(),
             Self::Phase(p) => p.as_f32(),
-            Self::TempoSync(b) => if *b { 1.0 } else { 0.0 },
+            Self::TempoSync(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             Self::SyncDivision(d) => d.as_f32(),
-            Self::Retrigger(b) => if *b { 1.0 } else { 0.0 },
+            Self::Retrigger(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Waveform(_) => Self::Waveform(
-                LfoWaveform::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Waveform(_) => {
+                Self::Waveform(LfoWaveform::from_index(value as usize).unwrap_or_default())
+            }
             Self::Rate(_) => Self::Rate(Hertz::new(value)),
             Self::Depth(_) => Self::Depth(NormalizedValue::new(value)),
             Self::Phase(_) => Self::Phase(Phase::new(value)),
@@ -139,13 +151,27 @@ impl LfoParam {
     }
 
     /// Default templates
-    pub fn waveform_default() -> Self { Self::Waveform(LfoWaveform::default()) }
-    pub fn rate_default() -> Self { Self::Rate(Hertz::new(1.0)) }
-    pub fn depth_default() -> Self { Self::Depth(NormalizedValue::new(1.0)) }
-    pub fn phase_default() -> Self { Self::Phase(Phase::ZERO) }
-    pub fn tempo_sync_default() -> Self { Self::TempoSync(false) }
-    pub fn sync_division_default() -> Self { Self::SyncDivision(BeatDivision::QUARTER) }
-    pub fn retrigger_default() -> Self { Self::Retrigger(false) }
+    pub fn waveform_default() -> Self {
+        Self::Waveform(LfoWaveform::default())
+    }
+    pub fn rate_default() -> Self {
+        Self::Rate(Hertz::new(1.0))
+    }
+    pub fn depth_default() -> Self {
+        Self::Depth(NormalizedValue::new(1.0))
+    }
+    pub fn phase_default() -> Self {
+        Self::Phase(Phase::ZERO)
+    }
+    pub fn tempo_sync_default() -> Self {
+        Self::TempoSync(false)
+    }
+    pub fn sync_division_default() -> Self {
+        Self::SyncDivision(BeatDivision::QUARTER)
+    }
+    pub fn retrigger_default() -> Self {
+        Self::Retrigger(false)
+    }
 }
 
 impl Default for LfoParam {

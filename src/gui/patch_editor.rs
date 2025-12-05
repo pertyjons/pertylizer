@@ -2,20 +2,20 @@
 //!
 //! This module handles the canvas where modules are placed,
 //! connections are drawn, and modules can be added/removed.
-//! 
+//!
 //! Modules are rendered as draggable, resizable windows with z-order support.
 //! Cables are rendered in a foreground layer so they appear above modules.
 
-use std::collections::{HashMap, HashSet, VecDeque};
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::engine::{EngineHandle, ModuleId};
-use crate::engine::typed_params::Param;
 use crate::engine::graph::Connection;
+use crate::engine::typed_params::Param;
+use crate::engine::{EngineHandle, ModuleId};
 use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
-use super::module_panel::{category_color, ModulePanelState, PortPosition};
-use super::widgets::{colors, draw_cable, theme, PortDirection, PortType};
+use super::module_panel::{ModulePanelState, PortPosition, category_color};
+use super::widgets::{PortDirection, PortType, colors, draw_cable, theme};
 
 /// Module connectivity status for visualization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -141,10 +141,17 @@ impl PatchEditor {
     }
 
     /// Get module data for saving.
-    pub fn get_module_data(&self, id: ModuleId) -> Option<(ModuleDescriptor, Pos2, HashMap<String, f32>)> {
+    pub fn get_module_data(
+        &self,
+        id: ModuleId,
+    ) -> Option<(ModuleDescriptor, Pos2, HashMap<String, f32>)> {
         let descriptor = self.descriptors.get(&id)?;
         let panel = self.panels.get(&id)?;
-        Some((descriptor.clone(), panel.position, panel.param_values.clone()))
+        Some((
+            descriptor.clone(),
+            panel.position,
+            panel.param_values.clone(),
+        ))
     }
 
     /// Remove a module from the rack.
@@ -278,7 +285,11 @@ impl PatchEditor {
         }
 
         // Return with positions
-        order.into_iter().enumerate().map(|(pos, id)| (id, pos)).collect()
+        order
+            .into_iter()
+            .enumerate()
+            .map(|(pos, id)| (id, pos))
+            .collect()
     }
 
     /// Get connected ports for a module.
@@ -339,9 +350,8 @@ impl PatchEditor {
             .collect();
 
         // Calculate processing order for display
-        let processing_order: HashMap<ModuleId, usize> = self.calculate_processing_order()
-            .into_iter()
-            .collect();
+        let processing_order: HashMap<ModuleId, usize> =
+            self.calculate_processing_order().into_iter().collect();
         let total_modules = module_ids.len();
 
         // Track which module to bring to front
@@ -350,13 +360,16 @@ impl PatchEditor {
         // Draw modules as windows (in z-order)
         for module_id in &module_ids {
             let module_id = *module_id;
-            let connected_ports = connected_ports_map.get(&module_id).cloned().unwrap_or_default();
-            
+            let connected_ports = connected_ports_map
+                .get(&module_id)
+                .cloned()
+                .unwrap_or_default();
+
             let descriptor = match self.descriptors.get(&module_id) {
                 Some(d) => d.clone(),
                 None => continue,
             };
-            
+
             // Get panel position before mutable borrow
             let panel_position = match self.panels.get(&module_id) {
                 Some(s) => s.position,
@@ -384,9 +397,19 @@ impl PatchEditor {
             let frame = egui::Frame::window(&ui.ctx().style())
                 .stroke(egui::Stroke::new(
                     if is_selected { 2.0 } else { 1.0 },
-                    if is_selected { dimmed_accent } else { dimmed_accent.gamma_multiply(0.5) }
+                    if is_selected {
+                        dimmed_accent
+                    } else {
+                        dimmed_accent.gamma_multiply(0.5)
+                    },
                 ))
-                .fill(ui.ctx().style().visuals.window_fill().gamma_multiply(opacity));
+                .fill(
+                    ui.ctx()
+                        .style()
+                        .visuals
+                        .window_fill()
+                        .gamma_multiply(opacity),
+                );
 
             let window = egui::Window::new(&descriptor.name)
                 .id(window_id)
@@ -413,48 +436,64 @@ impl PatchEditor {
                     // Processing order number
                     if let Some(pos) = proc_position {
                         let order_text = format!("#{}", pos + 1);
-                        ui.label(egui::RichText::new(order_text)
-                            .small()
-                            .color(colors::TEXT_DIM))
-                            .on_hover_text(format!("Processing order: {} of {}", pos + 1, total_modules));
+                        ui.label(
+                            egui::RichText::new(order_text)
+                                .small()
+                                .color(colors::TEXT_DIM),
+                        )
+                        .on_hover_text(format!(
+                            "Processing order: {} of {}",
+                            pos + 1,
+                            total_modules
+                        ));
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Connectivity status indicator
                         match connectivity_status {
                             ModuleConnectivity::Connected => {
-                                ui.label(egui::RichText::new("●")
-                                    .small()
-                                    .color(Color32::from_rgb(100, 200, 100)))
-                                    .on_hover_text("Connected to output");
+                                ui.label(
+                                    egui::RichText::new("●")
+                                        .small()
+                                        .color(Color32::from_rgb(100, 200, 100)),
+                                )
+                                .on_hover_text("Connected to output");
                             }
                             ModuleConnectivity::Orphaned => {
-                                ui.label(egui::RichText::new("○")
-                                    .small()
-                                    .color(Color32::from_rgb(200, 200, 100)))
-                                    .on_hover_text("Has connections but not routed to output");
+                                ui.label(
+                                    egui::RichText::new("○")
+                                        .small()
+                                        .color(Color32::from_rgb(200, 200, 100)),
+                                )
+                                .on_hover_text("Has connections but not routed to output");
                             }
                             ModuleConnectivity::Disconnected => {
-                                ui.label(egui::RichText::new("○")
-                                    .small()
-                                    .color(Color32::from_rgb(100, 100, 100)))
-                                    .on_hover_text("No connections");
+                                ui.label(
+                                    egui::RichText::new("○")
+                                        .small()
+                                        .color(Color32::from_rgb(100, 100, 100)),
+                                )
+                                .on_hover_text("No connections");
                             }
                         }
 
                         // Source indicator (no inputs)
                         if is_source {
-                            ui.label(egui::RichText::new("▶")
-                                .small()
-                                .color(Color32::from_rgb(100, 200, 100)))
-                                .on_hover_text("Source: No incoming connections");
+                            ui.label(
+                                egui::RichText::new("▶")
+                                    .small()
+                                    .color(Color32::from_rgb(100, 200, 100)),
+                            )
+                            .on_hover_text("Source: No incoming connections");
                         }
                         // Sink indicator (no outputs)
                         if is_sink {
-                            ui.label(egui::RichText::new("■")
-                                .small()
-                                .color(Color32::from_rgb(200, 100, 100)))
-                                .on_hover_text("Sink: No outgoing connections");
+                            ui.label(
+                                egui::RichText::new("■")
+                                    .small()
+                                    .color(Color32::from_rgb(200, 100, 100)),
+                            )
+                            .on_hover_text("Sink: No outgoing connections");
                         }
                     });
                 });
@@ -463,14 +502,20 @@ impl PatchEditor {
 
                 // Draw ports section
                 self.draw_ports_section(ui, module_id, &descriptor, &connected_ports);
-                
+
                 ui.separator();
 
                 // Draw parameters - need to get panel_state here
                 if let Some(panel_state) = self.panels.get_mut(&module_id) {
                     // Get visualization buffer for this module if it exists
                     let vis_buffer = handle.get_visualization_buffer(module_id);
-                    let panel_result = draw_module_panel_params(ui, panel_state, &descriptor, accent_color, vis_buffer);
+                    let panel_result = draw_module_panel_params(
+                        ui,
+                        panel_state,
+                        &descriptor,
+                        accent_color,
+                        vis_buffer,
+                    );
 
                     // Collect parameter changes
                     for param in panel_result.param_changes {
@@ -482,12 +527,12 @@ impl PatchEditor {
             // Handle window interaction
             if let Some(inner_response) = window_response {
                 // Update position from window
-                if let Some(new_pos) = ui.ctx().memory(|mem| {
-                    mem.area_rect(window_id).map(|r| r.min)
-                }) {
-                    if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                        panel_state.position = new_pos - self.canvas_offset;
-                    }
+                if let Some(new_pos) = ui
+                    .ctx()
+                    .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
+                    && let Some(panel_state) = self.panels.get_mut(&module_id)
+                {
+                    panel_state.position = new_pos - self.canvas_offset;
                 }
 
                 // Bring to front on click
@@ -529,8 +574,10 @@ impl PatchEditor {
                 PortType::Gate => colors::CABLE_GATE,
                 PortType::Midi => colors::PORT_MIDI,
             };
-            
-            let painter = ui.ctx().layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
+
+            let painter = ui
+                .ctx()
+                .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
             draw_cable(&painter, pending.from_position, pending.current_pos, color);
         }
 
@@ -540,8 +587,7 @@ impl PatchEditor {
         }
 
         // Cancel pending connection with escape (not right click - that's for cable removal now)
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) 
-        {
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
         }
 
@@ -561,16 +607,25 @@ impl PatchEditor {
         ui.horizontal(|ui| {
             // Input ports
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("IN").size(theme().fonts.size_small).color(colors::TEXT_DIM));
-                for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Input) {
+                ui.label(
+                    egui::RichText::new("IN")
+                        .size(theme().fonts.size_small)
+                        .color(colors::TEXT_DIM),
+                );
+                for port in descriptor
+                    .ports
+                    .iter()
+                    .filter(|p| p.direction == CorePortDirection::Input)
+                {
                     let port_type = convert_port_type(port.port_type);
                     let is_connected = connected_ports.contains(&port.name);
-                    
+
                     ui.horizontal(|ui| {
-                        let (response, center) = super::widgets::Port::new(port_type, PortDirection::Input)
-                            .connected(is_connected)
-                            .show(ui);
-                        
+                        let (response, center) =
+                            super::widgets::Port::new(port_type, PortDirection::Input)
+                                .connected(is_connected)
+                                .show(ui);
+
                         // Store port position (screen coordinates)
                         self.port_positions.insert(
                             (module_id, port.name.clone()),
@@ -582,9 +637,13 @@ impl PatchEditor {
                                 direction: PortDirection::Input,
                             },
                         );
-                        
-                        ui.label(egui::RichText::new(&port.label).size(theme().fonts.size_small).color(colors::TEXT_SECONDARY));
-                        
+
+                        ui.label(
+                            egui::RichText::new(&port.label)
+                                .size(theme().fonts.size_small)
+                                .color(colors::TEXT_SECONDARY),
+                        );
+
                         if response.hovered() && !port.description.is_empty() {
                             response.on_hover_text(&port.description);
                         }
@@ -597,18 +656,31 @@ impl PatchEditor {
             // Output ports
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("OUT").size(theme().fonts.size_small).color(colors::TEXT_DIM));
-                    for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Output) {
+                    ui.label(
+                        egui::RichText::new("OUT")
+                            .size(theme().fonts.size_small)
+                            .color(colors::TEXT_DIM),
+                    );
+                    for port in descriptor
+                        .ports
+                        .iter()
+                        .filter(|p| p.direction == CorePortDirection::Output)
+                    {
                         let port_type = convert_port_type(port.port_type);
                         let is_connected = connected_ports.contains(&port.name);
-                        
+
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&port.label).size(theme().fonts.size_small).color(colors::TEXT_SECONDARY));
-                            
-                            let (response, center) = super::widgets::Port::new(port_type, PortDirection::Output)
-                                .connected(is_connected)
-                                .show(ui);
-                            
+                            ui.label(
+                                egui::RichText::new(&port.label)
+                                    .size(theme().fonts.size_small)
+                                    .color(colors::TEXT_SECONDARY),
+                            );
+
+                            let (response, center) =
+                                super::widgets::Port::new(port_type, PortDirection::Output)
+                                    .connected(is_connected)
+                                    .show(ui);
+
                             self.port_positions.insert(
                                 (module_id, port.name.clone()),
                                 PortPosition {
@@ -619,7 +691,7 @@ impl PatchEditor {
                                     direction: PortDirection::Output,
                                 },
                             );
-                            
+
                             if response.hovered() && !port.description.is_empty() {
                                 response.on_hover_text(&port.description);
                             }
@@ -632,7 +704,7 @@ impl PatchEditor {
 
     fn draw_grid(&self, ui: &mut Ui, rect: Rect) {
         let painter = ui.painter();
-        
+
         // Background
         painter.rect_filled(rect, 0.0, colors::BG_DARK);
 
@@ -667,9 +739,11 @@ impl PatchEditor {
     /// Draw connections in a foreground layer so they appear above modules.
     /// Returns connections that should be removed (right-clicked).
     fn draw_connections_foreground(&self, ui: &Ui) -> Vec<Connection> {
-        let painter = ui.ctx().layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
+        let painter = ui
+            .ctx()
+            .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
         let mut to_remove = Vec::new();
-        
+
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
         let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
@@ -689,9 +763,9 @@ impl PatchEditor {
                 };
 
                 // Check if mouse is near this cable
-                let is_hovered = pointer_pos.map(|p| {
-                    point_near_bezier(p, from_pos.position, to_pos.position, 8.0)
-                }).unwrap_or(false);
+                let is_hovered = pointer_pos
+                    .map(|p| point_near_bezier(p, from_pos.position, to_pos.position, 8.0))
+                    .unwrap_or(false);
 
                 // Draw cable with highlight if hovered
                 let draw_color = if is_hovered {
@@ -699,9 +773,9 @@ impl PatchEditor {
                 } else {
                     color
                 };
-                
+
                 draw_cable(&painter, from_pos.position, to_pos.position, draw_color);
-                
+
                 // Draw thicker outline when hovered for better visibility
                 if is_hovered {
                     // Show tooltip
@@ -715,7 +789,7 @@ impl PatchEditor {
                             Color32::WHITE,
                         );
                     }
-                    
+
                     // Remove on right click
                     if right_clicked {
                         to_remove.push(connection.clone());
@@ -723,7 +797,7 @@ impl PatchEditor {
                 }
             }
         }
-        
+
         to_remove
     }
 
@@ -734,52 +808,52 @@ impl PatchEditor {
         for ((module_id, port_name), port_pos) in &self.port_positions {
             let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
 
-            if let Some(pos) = pointer_pos {
-                if port_rect.contains(pos) {
-                    // Check for click
-                    if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                        if let Some(ref pending) = self.pending_connection {
-                            // Complete connection
-                            if self.can_connect(pending, port_pos) {
-                                let connection = if pending.from_direction == PortDirection::Output {
-                                    Connection::new(
-                                        pending.from_module,
-                                        pending.from_port.clone(),
-                                        *module_id,
-                                        port_name.clone(),
-                                    )
-                                } else {
-                                    Connection::new(
-                                        *module_id,
-                                        port_name.clone(),
-                                        pending.from_module,
-                                        pending.from_port.clone(),
-                                    )
-                                };
-                                result.connections_to_add.push(connection);
-                            }
-                            self.pending_connection = None;
-                        } else {
-                            // Start new connection
-                            self.pending_connection = Some(PendingConnection {
-                                from_module: *module_id,
-                                from_port: port_name.clone(),
-                                from_position: port_pos.position,
-                                from_type: port_pos.port_type,
-                                from_direction: port_pos.direction,
-                                current_pos: pos,
-                            });
+            if let Some(pos) = pointer_pos
+                && port_rect.contains(pos)
+            {
+                // Check for click
+                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                    if let Some(ref pending) = self.pending_connection {
+                        // Complete connection
+                        if self.can_connect(pending, port_pos) {
+                            let connection = if pending.from_direction == PortDirection::Output {
+                                Connection::new(
+                                    pending.from_module,
+                                    pending.from_port.clone(),
+                                    *module_id,
+                                    port_name.clone(),
+                                )
+                            } else {
+                                Connection::new(
+                                    *module_id,
+                                    port_name.clone(),
+                                    pending.from_module,
+                                    pending.from_port.clone(),
+                                )
+                            };
+                            result.connections_to_add.push(connection);
                         }
+                        self.pending_connection = None;
+                    } else {
+                        // Start new connection
+                        self.pending_connection = Some(PendingConnection {
+                            from_module: *module_id,
+                            from_port: port_name.clone(),
+                            from_position: port_pos.position,
+                            from_type: port_pos.port_type,
+                            from_direction: port_pos.direction,
+                            current_pos: pos,
+                        });
                     }
                 }
             }
         }
 
         // Update pending connection position
-        if let Some(ref mut pending) = self.pending_connection {
-            if let Some(pos) = pointer_pos {
-                pending.current_pos = pos;
-            }
+        if let Some(ref mut pending) = self.pending_connection
+            && let Some(pos) = pointer_pos
+        {
+            pending.current_pos = pos;
         }
     }
 
@@ -818,7 +892,7 @@ impl PatchEditor {
     pub fn module_ids(&self) -> Vec<ModuleId> {
         self.panels.keys().copied().collect()
     }
-    
+
     /// Get a module's descriptor.
     pub fn module_descriptor(&self, id: ModuleId) -> Option<&ModuleDescriptor> {
         self.descriptors.get(&id)
@@ -831,9 +905,12 @@ impl PatchEditor {
         self.connectivity.clear();
 
         // Find all output modules (sinks that produce audio)
-        let output_modules: Vec<ModuleId> = self.panels.keys()
+        let output_modules: Vec<ModuleId> = self
+            .panels
+            .keys()
             .filter(|&&id| {
-                self.descriptors.get(&id)
+                self.descriptors
+                    .get(&id)
                     .map(|d| d.category == ModuleCategory::Output)
                     .unwrap_or(false)
             })
@@ -873,7 +950,9 @@ impl PatchEditor {
 
         // Determine connectivity status for each module
         for &id in self.panels.keys() {
-            let has_any_connection = self.connections.iter()
+            let has_any_connection = self
+                .connections
+                .iter()
                 .any(|c| c.from_module == id || c.to_module == id);
 
             let status = if connected.contains(&id) {
@@ -890,7 +969,10 @@ impl PatchEditor {
 
     /// Get connectivity status for a module.
     pub fn get_connectivity(&self, id: ModuleId) -> ModuleConnectivity {
-        self.connectivity.get(&id).copied().unwrap_or(ModuleConnectivity::Disconnected)
+        self.connectivity
+            .get(&id)
+            .copied()
+            .unwrap_or(ModuleConnectivity::Disconnected)
     }
 }
 
@@ -933,8 +1015,7 @@ fn draw_visualizer_display(
     // Check which type of visualizer based on module type id
     if descriptor.type_id.0 == "oscilloscope" {
         // Get gain from params by name
-        let gain = state.param_values.get("Gain")
-            .copied().unwrap_or(1.0);
+        let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
 
         // Get samples from visualization buffer if available
         let samples = if let Some(buffer) = vis_buffer {
@@ -960,18 +1041,14 @@ fn draw_visualizer_display(
         let width = ui.available_width().clamp(120.0, 300.0);
         let height = (width * 0.5).clamp(60.0, 120.0);
 
-        super::widgets::draw_oscilloscope(
-            ui,
-            &samples,
-            width,
-            height,
-            gain,
-            colors::ACCENT_CYAN,
-        );
+        super::widgets::draw_oscilloscope(ui, &samples, width, height, gain, colors::ACCENT_CYAN);
 
         if vis_buffer.is_none() {
-            ui.label(egui::RichText::new("No signal")
-                .small().color(colors::TEXT_DIM));
+            ui.label(
+                egui::RichText::new("No signal")
+                    .small()
+                    .color(colors::TEXT_DIM),
+            );
         }
     } else if descriptor.type_id.0 == "level_meter" {
         // Get levels from visualization buffer if available
@@ -988,19 +1065,14 @@ fn draw_visualizer_display(
         let width = ui.available_width().clamp(60.0, 120.0);
         let height = (width * 1.5).clamp(80.0, 150.0);
 
-        super::widgets::draw_stereo_meter(
-            ui,
-            peak_l,
-            peak_r,
-            rms_l,
-            rms_r,
-            width,
-            height,
-        );
+        super::widgets::draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, width, height);
 
         if vis_buffer.is_none() {
-            ui.label(egui::RichText::new("No signal")
-                .small().color(colors::TEXT_DIM));
+            ui.label(
+                egui::RichText::new("No signal")
+                    .small()
+                    .color(colors::TEXT_DIM),
+            );
         }
     }
 }
@@ -1013,8 +1085,8 @@ fn draw_module_panel_params(
     accent_color: Color32,
     vis_buffer: Option<&crate::visualizers::VisualizationBuffer>,
 ) -> PanelParamsResult {
-    use crate::modules::core::WidgetHint;
     use super::widgets::{Knob, WaveformSelector};
+    use crate::modules::core::WidgetHint;
 
     let mut param_changes = Vec::new();
 
@@ -1026,57 +1098,94 @@ fn draw_module_panel_params(
     }
 
     // Group parameters by widget hint
-    let waveform_params: Vec<_> = descriptor.parameters.iter()
+    let waveform_params: Vec<_> = descriptor
+        .parameters
+        .iter()
         .filter(|p| matches!(p.widget_hint, WidgetHint::WaveformSelector))
         .collect();
 
-    let knob_params: Vec<_> = descriptor.parameters.iter()
-        .filter(|p| matches!(p.widget_hint, WidgetHint::Knob | WidgetHint::FrequencySlider))
+    let knob_params: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.widget_hint,
+                WidgetHint::Knob | WidgetHint::FrequencySlider
+            )
+        })
         .collect();
 
-    let slider_params: Vec<_> = descriptor.parameters.iter()
+    let slider_params: Vec<_> = descriptor
+        .parameters
+        .iter()
         .filter(|p| matches!(p.widget_hint, WidgetHint::Slider | WidgetHint::TimeSlider))
         .collect();
 
-    let dropdown_params: Vec<_> = descriptor.parameters.iter()
+    let dropdown_params: Vec<_> = descriptor
+        .parameters
+        .iter()
         .filter(|p| matches!(p.widget_hint, WidgetHint::Dropdown))
         .collect();
 
-    let toggle_params: Vec<_> = descriptor.parameters.iter()
+    let toggle_params: Vec<_> = descriptor
+        .parameters
+        .iter()
         .filter(|p| matches!(p.widget_hint, WidgetHint::Toggle))
         .collect();
 
     // Draw waveform selectors first (most prominent)
     for param in &waveform_params {
         if let Some(ref choices) = param.choices {
-            let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
+            let current = state
+                .param_values
+                .get(&param.name)
+                .copied()
+                .unwrap_or(param.default);
             let mut selected = current.round() as usize;
 
-            ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+            ui.label(
+                egui::RichText::new(&param.name)
+                    .size(theme().fonts.size_normal)
+                    .color(colors::TEXT_SECONDARY),
+            );
 
             if WaveformSelector::new(&mut selected)
                 .accent_color(accent_color)
                 .show(ui)
             {
-                state.param_values.insert(param.name.clone(), selected as f32);
+                state
+                    .param_values
+                    .insert(param.name.clone(), selected as f32);
                 // Create new param with the selected value
                 param_changes.push(param.id.with_f32(selected as f32));
             }
 
             // Show selected name
             if let Some(choice) = choices.get(selected) {
-                ui.label(egui::RichText::new(&choice.name).size(theme().fonts.size_small).color(colors::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new(&choice.name)
+                        .size(theme().fonts.size_small)
+                        .color(colors::TEXT_DIM),
+                );
             }
         }
     }
 
     // Draw sliders (for ADSR etc)
     for param in &slider_params {
-        let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
+        let current = state
+            .param_values
+            .get(&param.name)
+            .copied()
+            .unwrap_or(param.default);
         let mut value = current;
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+            ui.label(
+                egui::RichText::new(&param.name)
+                    .size(theme().fonts.size_normal)
+                    .color(colors::TEXT_SECONDARY),
+            );
             ui.add_space(4.0);
 
             // Use logarithmic slider for time parameters
@@ -1118,12 +1227,23 @@ fn draw_module_panel_params(
     // Draw dropdowns (for non-waveform choices)
     for param in &dropdown_params {
         if let Some(ref choices) = param.choices {
-            let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
+            let current = state
+                .param_values
+                .get(&param.name)
+                .copied()
+                .unwrap_or(param.default);
             let mut selected = current.round() as usize;
 
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
-                let text = choices.get(selected).map(|c| c.name.clone()).unwrap_or_else(|| "?".into());
+                ui.label(
+                    egui::RichText::new(&param.name)
+                        .size(theme().fonts.size_normal)
+                        .color(colors::TEXT_SECONDARY),
+                );
+                let text = choices
+                    .get(selected)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| "?".into());
                 egui::ComboBox::from_id_salt(format!("{}-{}", descriptor.type_id.0, param.name))
                     .selected_text(text)
                     .show_ui(ui, |ui| {
@@ -1136,7 +1256,9 @@ fn draw_module_panel_params(
             });
 
             if selected as f32 != current.round() {
-                state.param_values.insert(param.name.clone(), selected as f32);
+                state
+                    .param_values
+                    .insert(param.name.clone(), selected as f32);
                 // Create new param with the selected value
                 param_changes.push(param.id.with_f32(selected as f32));
             }
@@ -1147,7 +1269,11 @@ fn draw_module_panel_params(
     if !toggle_params.is_empty() {
         ui.horizontal(|ui| {
             for param in &toggle_params {
-                let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
+                let current = state
+                    .param_values
+                    .get(&param.name)
+                    .copied()
+                    .unwrap_or(param.default);
                 let mut checked = current > 0.5;
                 if ui.checkbox(&mut checked, &param.name).changed() {
                     let new_val = if checked { 1.0 } else { 0.0 };
@@ -1165,7 +1291,11 @@ fn draw_module_panel_params(
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for param in &knob_params {
                 ui.vertical(|ui| {
-                    let current = state.param_values.get(&param.name).copied().unwrap_or(param.default);
+                    let current = state
+                        .param_values
+                        .get(&param.name)
+                        .copied()
+                        .unwrap_or(param.default);
                     let mut value = current;
 
                     Knob::new(&mut value, param.min, param.max)
@@ -1264,48 +1394,45 @@ impl ModulePalette {
                     selected = Some(PaletteSelection::Category(category));
                 }
             }
-            
+
             // Effect submenu
             let effect_color = category_color(ModuleCategory::Effect);
-            ui.menu_button(
-                egui::RichText::new("✨ Effect").color(effect_color),
-                |ui| {
-                    if ui.button("🔁 Delay").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Delay));
-                        ui.close();
-                    }
-                    if ui.button("🌊 Reverb").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Reverb));
-                        ui.close();
-                    }
-                    if ui.button("🔥 Distortion").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Distortion));
-                        ui.close();
-                    }
-                    if ui.button("🎭 Chorus").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Chorus));
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("🌀 Flanger").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Flanger));
-                        ui.close();
-                    }
-                    if ui.button("🔄 Phaser").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Phaser));
-                        ui.close();
-                    }
-                    if ui.button("📊 Compressor").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Compressor));
-                        ui.close();
-                    }
-                    if ui.button("🎛 EQ").clicked() {
-                        selected = Some(PaletteSelection::Effect(EffectType::Eq));
-                        ui.close();
-                    }
-                },
-            );
-            
+            ui.menu_button(egui::RichText::new("✨ Effect").color(effect_color), |ui| {
+                if ui.button("🔁 Delay").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Delay));
+                    ui.close();
+                }
+                if ui.button("🌊 Reverb").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Reverb));
+                    ui.close();
+                }
+                if ui.button("🔥 Distortion").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Distortion));
+                    ui.close();
+                }
+                if ui.button("🎭 Chorus").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Chorus));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("🌀 Flanger").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Flanger));
+                    ui.close();
+                }
+                if ui.button("🔄 Phaser").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Phaser));
+                    ui.close();
+                }
+                if ui.button("📊 Compressor").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Compressor));
+                    ui.close();
+                }
+                if ui.button("🎛 EQ").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Eq));
+                    ui.close();
+                }
+            });
+
             // Visualizer submenu
             let viz_color = category_color(ModuleCategory::Visualizer);
             ui.menu_button(
@@ -1324,9 +1451,8 @@ impl ModulePalette {
 
             // Stereo Output button
             let output_color = category_color(ModuleCategory::Output);
-            let output_button = egui::Button::new(
-                egui::RichText::new("🔈 Output").color(output_color),
-            );
+            let output_button =
+                egui::Button::new(egui::RichText::new("🔈 Output").color(output_color));
             if ui.add(output_button).clicked() {
                 selected = Some(PaletteSelection::StereoOutput);
             }
@@ -1352,7 +1478,7 @@ fn point_near_bezier(point: Pos2, from: Pos2, to: Pos2, threshold: f32) -> bool 
     let control_offset = (to.x - from.x).abs() * 0.5;
     let ctrl1 = Pos2::new(from.x + control_offset, from.y);
     let ctrl2 = Pos2::new(to.x - control_offset, to.y);
-    
+
     // Sample points along the bezier curve and check distance
     let segments = 20;
     for i in 0..=segments {
@@ -1362,10 +1488,10 @@ fn point_near_bezier(point: Pos2, from: Pos2, to: Pos2, threshold: f32) -> bool 
         let mt = 1.0 - t;
         let mt2 = mt * mt;
         let mt3 = mt2 * mt;
-        
+
         let x = mt3 * from.x + 3.0 * mt2 * t * ctrl1.x + 3.0 * mt * t2 * ctrl2.x + t3 * to.x;
         let y = mt3 * from.y + 3.0 * mt2 * t * ctrl1.y + 3.0 * mt * t2 * ctrl2.y + t3 * to.y;
-        
+
         let dist = ((point.x - x).powi(2) + (point.y - y).powi(2)).sqrt();
         if dist < threshold {
             return true;

@@ -78,7 +78,11 @@ impl Port {
 
         // Highlight on hover
         if response.hovered() {
-            painter.circle_stroke(center, radius + 2.0, Stroke::new(1.0, self.color().gamma_multiply(0.5)));
+            painter.circle_stroke(
+                center,
+                radius + 2.0,
+                Stroke::new(1.0, self.color().gamma_multiply(0.5)),
+            );
         }
 
         (response, center)

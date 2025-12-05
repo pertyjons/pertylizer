@@ -108,10 +108,10 @@ pub struct AudioHost {
 pub trait AudioHostTrait: Send {
     /// Get the backend name.
     fn backend_name(&self) -> &str;
-    
+
     /// Get all available devices.
     fn devices(&self) -> AudioResult<Vec<DeviceInfo>>;
-    
+
     /// Start an output stream.
     fn start_output(
         &mut self,
@@ -119,13 +119,13 @@ pub trait AudioHostTrait: Send {
         config: &StreamConfig,
         processor: Box<dyn AudioProcessor>,
     ) -> AudioResult<StreamInfo>;
-    
+
     /// Stop the current stream.
     fn stop(&mut self) -> AudioResult<()>;
-    
+
     /// Check if a stream is currently running.
     fn is_running(&self) -> bool;
-    
+
     /// Get the current latency, if a stream is active.
     fn latency(&self) -> Option<std::time::Duration>;
 }
@@ -174,9 +174,9 @@ impl AudioHost {
         }
 
         // Create and start new stream
-        let mut stream = self
-            .backend
-            .create_output_stream(device_id, config, Box::new(processor))?;
+        let mut stream =
+            self.backend
+                .create_output_stream(device_id, config, Box::new(processor))?;
         stream.start()?;
 
         self.active_stream = Some(stream);
@@ -193,9 +193,7 @@ impl AudioHost {
 
     /// Check if a stream is currently running.
     pub fn is_running(&self) -> bool {
-        self.active_stream
-            .as_ref()
-            .is_some_and(|s| s.is_running())
+        self.active_stream.as_ref().is_some_and(|s| s.is_running())
     }
 
     /// Get the current stream info, if a stream is active.
@@ -218,11 +216,11 @@ impl AudioHostTrait for AudioHost {
     fn backend_name(&self) -> &str {
         self.backend.name()
     }
-    
+
     fn devices(&self) -> AudioResult<Vec<DeviceInfo>> {
         self.backend.devices()
     }
-    
+
     fn start_output(
         &mut self,
         device_id: Option<&str>,
@@ -244,20 +242,18 @@ impl AudioHostTrait for AudioHost {
         self.active_stream = Some(stream);
         Ok(info)
     }
-    
+
     fn stop(&mut self) -> AudioResult<()> {
         if let Some(ref mut stream) = self.active_stream {
             stream.stop()?;
         }
         Ok(())
     }
-    
+
     fn is_running(&self) -> bool {
-        self.active_stream
-            .as_ref()
-            .is_some_and(|s| s.is_running())
+        self.active_stream.as_ref().is_some_and(|s| s.is_running())
     }
-    
+
     fn latency(&self) -> Option<std::time::Duration> {
         self.active_stream.as_ref().map(|s| s.latency())
     }

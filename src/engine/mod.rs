@@ -13,9 +13,9 @@
 pub mod commands;
 pub mod effect_chain;
 pub mod graph;
+pub mod instrument;
 pub mod metering;
 pub mod params;
-pub mod instrument;
 pub mod sequencer_engine;
 pub mod state;
 pub mod synth_engine;
@@ -35,54 +35,78 @@ pub mod transactions;
 pub mod visual_state;
 
 pub use commands::{
-    ModuleId, PolyModule, ModuleTypeId, PortId, EngineCommand, VisualizerType, EffectType,
-    InstrumentParam, EngineEvent,
+    EffectType, EngineCommand, EngineEvent, InstrumentParam, ModuleId, ModuleTypeId, PolyModule,
+    PortId, VisualizerType,
 };
+pub use graph::{Connection, GraphError, ModuleGraph};
+pub use instrument::{Instrument, InstrumentId, MidiChannel};
+pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use state::*;
-pub use synth_engine::{SynthEngine, EngineHandle, CommandSender};
-pub use sequencer_engine::{SequencerEngine, PlayState};
+pub use synth_engine::{CommandSender, EngineHandle, SynthEngine};
 pub use voice::{Voice, VoiceState};
-pub use voice_allocator::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy, NotePriority};
-pub use graph::{ModuleGraph, Connection, GraphError};
-pub use instrument::{InstrumentId, MidiChannel, Instrument};
+pub use voice_allocator::{
+    AllocationMode, AllocatorConfig, NotePriority, StealingStrategy, VoiceAllocator,
+};
 
 // Re-export typed parameter system
 pub use params::{
-    ModuleType, Param, Port,
-    // Module-specific params
-    OscillatorParam, MathOscillatorParam, FilterParam, EnvelopeParam, LfoParam,
-    AmplifierParam, MixerParam, DelayParam, ReverbParam,
-    DistortionParam, ChorusParam, PhaserParam, FlangerParam, CompressorParam, EqParam,
-    SamplePlayerParam, GranularParam, OscilloscopeParam, LevelMeterParam,
-    SubOscParam, NoiseParam,
-    // Type-safe enums
-    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
-    FmMode, NoiseType, SubOscWaveform, SubOscOctave,
+    AmplifierParam,
     // Ports
-    AudioPort, ControlPort,
+    AudioPort,
+    ChorusParam,
+    CompressorParam,
+    ControlPort,
+    DelayMode,
+    DelayParam,
+    DistortionMode,
+    DistortionParam,
+    EnvelopeParam,
+    EqParam,
+    FilterMode,
+    FilterParam,
+    FlangerParam,
+    FmMode,
+    GranularParam,
+    LevelMeterParam,
+    LfoParam,
+    LfoWaveform,
+    LoopMode,
+    MathAlgo,
+    MathOscillatorParam,
+    MixerParam,
+    ModuleType,
+    NoiseParam,
+    NoiseType,
+    // Module-specific params
+    OscillatorParam,
+    OscilloscopeParam,
+    Param,
+    PhaserParam,
+    Port,
+    ReverbParam,
+    SamplePlayerParam,
+    SubOscOctave,
+    SubOscParam,
+    SubOscWaveform,
+    // Type-safe enums
+    Waveform,
 };
 
 // Re-export GUI-Engine communication types
 pub use connectivity::{
-    ModuleConnectivityStatus, VoiceStealReason, ModuleErrorKind, ModuleError, PortVisualState,
+    ModuleConnectivityStatus, ModuleError, ModuleErrorKind, PortVisualState, VoiceStealReason,
 };
+pub use cpu_tracker::{ModuleCpuStats, ModuleCpuTracker, ModuleTiming, TimingBuffer};
 pub use event_priority::{
-    EventPriority, TimestampedEvent, PrioritizedEventProducer, PrioritizedEventConsumer,
+    EventPriority, PrioritizedEventConsumer, PrioritizedEventProducer, TimestampedEvent,
     prioritized_event_channel,
 };
+pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
 pub use shared_state::{
-    AtomicF32, MeterState, TransportState, ModuleStateSnapshot, ConnectionSnapshot,
-    SharedGraphState, SharedEngineState,
-};
-pub use visual_state::{
-    ModuleStyle, ModuleVisualState, Point, CableVisualState, MiniMeter,
-};
-pub use cpu_tracker::{
-    ModuleCpuStats, ModuleCpuTracker, ModuleTiming, TimingBuffer,
-};
-pub use hub::{
-    ClientId, ClientType, ClientPermissions, EngineHub, ClientHandle, HubError,
+    AtomicF32, ConnectionSnapshot, MeterState, ModuleStateSnapshot, SharedEngineState,
+    SharedGraphState, TransportState,
 };
 pub use transactions::{
-    TransactionId, TransactionalCommand, CommandBatch, BatchBuilder, BatchResult,
+    BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,
 };
+pub use visual_state::{CableVisualState, MiniMeter, ModuleStyle, ModuleVisualState, Point};

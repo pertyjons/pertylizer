@@ -97,14 +97,46 @@ pub struct TrackColor {
 }
 
 impl TrackColor {
-    pub const RED: TrackColor = TrackColor { r: 255, g: 100, b: 100 };
-    pub const GREEN: TrackColor = TrackColor { r: 100, g: 255, b: 100 };
-    pub const BLUE: TrackColor = TrackColor { r: 100, g: 100, b: 255 };
-    pub const YELLOW: TrackColor = TrackColor { r: 255, g: 255, b: 100 };
-    pub const CYAN: TrackColor = TrackColor { r: 100, g: 255, b: 255 };
-    pub const MAGENTA: TrackColor = TrackColor { r: 255, g: 100, b: 255 };
-    pub const ORANGE: TrackColor = TrackColor { r: 255, g: 180, b: 100 };
-    pub const PURPLE: TrackColor = TrackColor { r: 180, g: 100, b: 255 };
+    pub const RED: TrackColor = TrackColor {
+        r: 255,
+        g: 100,
+        b: 100,
+    };
+    pub const GREEN: TrackColor = TrackColor {
+        r: 100,
+        g: 255,
+        b: 100,
+    };
+    pub const BLUE: TrackColor = TrackColor {
+        r: 100,
+        g: 100,
+        b: 255,
+    };
+    pub const YELLOW: TrackColor = TrackColor {
+        r: 255,
+        g: 255,
+        b: 100,
+    };
+    pub const CYAN: TrackColor = TrackColor {
+        r: 100,
+        g: 255,
+        b: 255,
+    };
+    pub const MAGENTA: TrackColor = TrackColor {
+        r: 255,
+        g: 100,
+        b: 255,
+    };
+    pub const ORANGE: TrackColor = TrackColor {
+        r: 255,
+        g: 180,
+        b: 100,
+    };
+    pub const PURPLE: TrackColor = TrackColor {
+        r: 180,
+        g: 100,
+        b: 255,
+    };
 
     pub fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }

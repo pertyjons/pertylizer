@@ -98,8 +98,7 @@ impl ModuleVisualState {
 
         // Lerp current opacity toward target
         let lerp_speed = 5.0;
-        self.opacity_current +=
-            (self.opacity_target - self.opacity_current) * lerp_speed * dt;
+        self.opacity_current += (self.opacity_target - self.opacity_current) * lerp_speed * dt;
 
         // Glow for live modules
         if snapshot.connectivity == ModuleConnectivityStatus::Connected {

@@ -2,10 +2,12 @@
 
 use crate::engine::typed_params::{FlangerParam, ModuleType, Param};
 use crate::modules::{
-    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
-use crate::types::{BipolarValue, BufferIndex, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate};
+use crate::types::{
+    BipolarValue, BufferIndex, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate,
+};
 
 /// Maximum delay time in milliseconds.
 const MAX_DELAY_MS: f32 = 20.0;
@@ -16,7 +18,7 @@ pub struct Flanger {
     rate: Hertz,
     depth: NormalizedValue,
     feedback: BipolarValue,
-    delay_base: Milliseconds,  // Base delay time (type-safe)
+    delay_base: Milliseconds, // Base delay time (type-safe)
     mix: NormalizedValue,
 
     // Delay buffers (stereo)
@@ -165,7 +167,11 @@ impl AudioEffect for Flanger {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
             let in_r = if idx_r < input.len() {
                 input[idx_r]
             } else {

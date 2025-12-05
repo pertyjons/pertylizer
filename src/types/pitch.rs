@@ -267,7 +267,9 @@ impl std::fmt::Display for Semitones {
 /// Octave offset.
 ///
 /// 1 octave = 12 semitones = 1200 cents
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct Octaves(pub i32);
@@ -411,7 +413,9 @@ impl MidiNote {
 
     /// Get the note name (e.g., "C4", "F#5").
     pub fn name(&self) -> String {
-        let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        let note_names = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
         let note = self.0 as usize;
         let name = note_names[note % 12];
         let octave = (note / 12) as i32 - 1;

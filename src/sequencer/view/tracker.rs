@@ -23,7 +23,9 @@ impl TrackerNoteDisplay {
             return "===".to_string();
         }
 
-        let note_names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+        let note_names = [
+            "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-",
+        ];
         let note_idx = (self.pitch.as_midi() % 12) as usize;
         let octave = self.pitch.octave();
         format!("{}{}", note_names[note_idx], octave)
@@ -77,7 +79,10 @@ impl TrackerCell {
 
     /// Check if this cell is empty.
     pub fn is_empty(&self) -> bool {
-        self.note.is_none() && self.instrument.is_none() && self.volume.is_none() && self.effects.is_empty()
+        self.note.is_none()
+            && self.instrument.is_none()
+            && self.volume.is_none()
+            && self.effects.is_empty()
     }
 
     /// Format the cell as a tracker string.
@@ -239,7 +244,7 @@ impl TrackerViewConfig {
 
     /// Check if a row should be highlighted.
     pub fn should_highlight(&self, row: u16) -> bool {
-        self.highlight_interval > 0 && row % self.highlight_interval == 0
+        self.highlight_interval > 0 && row.is_multiple_of(self.highlight_interval)
     }
 }
 
@@ -368,11 +373,7 @@ mod tests {
 
     #[test]
     fn test_tracker_cell() {
-        let cell = TrackerCell::with_note(
-            Pitch::new(60).unwrap(),
-            InstrumentId(1),
-            Velocity::MF,
-        );
+        let cell = TrackerCell::with_note(Pitch::new(60).unwrap(), InstrumentId(1), Velocity::MF);
 
         assert!(cell.note.is_some());
         assert_eq!(cell.instrument, Some(InstrumentId(1)));
@@ -386,11 +387,8 @@ mod tests {
     fn test_tracker_row_format() {
         let _config = TrackerViewConfig::default();
         let mut row = TrackerRow::new(16);
-        row.columns[0] = TrackerCell::with_note(
-            Pitch::new(60).unwrap(),
-            InstrumentId(1),
-            Velocity::MF,
-        );
+        row.columns[0] =
+            TrackerCell::with_note(Pitch::new(60).unwrap(), InstrumentId(1), Velocity::MF);
 
         let row_num = row.format_row_number(true);
         assert_eq!(row_num, "10"); // 16 in hex
@@ -465,7 +463,10 @@ mod tests {
 
     #[test]
     fn test_effect_formatting() {
-        assert_eq!(format_effect(&EffectCommand::Arpeggio { x: 3, y: 7 }), "037");
+        assert_eq!(
+            format_effect(&EffectCommand::Arpeggio { x: 3, y: 7 }),
+            "037"
+        );
         assert_eq!(format_effect(&EffectCommand::PortamentoUp(15)), "10F");
         assert_eq!(format_effect(&EffectCommand::SetVolume(64)), "C40");
     }

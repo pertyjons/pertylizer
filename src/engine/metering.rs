@@ -2,8 +2,8 @@
 //!
 //! Provides peak and RMS metering with configurable update intervals.
 
-use std::sync::Arc;
 use ringbuf::traits::Producer;
+use std::sync::Arc;
 
 use crate::engine::commands::EngineEvent;
 use crate::engine::state::EngineState;
@@ -54,7 +54,7 @@ impl MeteringSystem {
         let channels = 2;
 
         for frame in output.chunks(channels) {
-            let left = frame.get(0).copied().unwrap_or(0.0);
+            let left = frame.first().copied().unwrap_or(0.0);
             let right = frame.get(1).copied().unwrap_or(left);
 
             self.peak_left = self.peak_left.max(left.abs());

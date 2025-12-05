@@ -49,10 +49,11 @@ impl Pitch {
         let new_pitch = (self.0 as i16 + semitones as i16).clamp(0, 127) as u8;
         Pitch(new_pitch)
     }
+}
 
-    /// Format as note name with octave (e.g., "C4", "F#3").
-    pub fn to_string(&self) -> String {
-        format!("{}{}", self.note_name().to_string(), self.octave())
+impl std::fmt::Display for Pitch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.note_name(), self.octave())
     }
 }
 
@@ -99,9 +100,15 @@ impl NoteName {
         }
     }
 
-    /// Get the display string (e.g., "C", "C#", "D").
-    pub fn to_string(&self) -> &'static str {
-        match self {
+    /// Check if this is a black key (sharp/flat).
+    pub fn is_black_key(&self) -> bool {
+        matches!(self, Self::Cs | Self::Ds | Self::Fs | Self::Gs | Self::As)
+    }
+}
+
+impl std::fmt::Display for NoteName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             Self::C => "C",
             Self::Cs => "C#",
             Self::D => "D",
@@ -114,12 +121,8 @@ impl NoteName {
             Self::A => "A",
             Self::As => "A#",
             Self::B => "B",
-        }
-    }
-
-    /// Check if this is a black key (sharp/flat).
-    pub fn is_black_key(&self) -> bool {
-        matches!(self, Self::Cs | Self::Ds | Self::Fs | Self::Gs | Self::As)
+        };
+        write!(f, "{s}")
     }
 }
 

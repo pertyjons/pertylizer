@@ -38,10 +38,10 @@ impl DialogState {
 
     /// Clear expired status message.
     pub fn update(&mut self) {
-        if let Some((_, instant)) = &self.status_message {
-            if instant.elapsed().as_secs() >= 3 {
-                self.status_message = None;
-            }
+        if let Some((_, instant)) = &self.status_message
+            && instant.elapsed().as_secs() >= 3
+        {
+            self.status_message = None;
         }
     }
 }
@@ -51,7 +51,7 @@ pub enum LoadPatchResult {
     /// No action taken.
     None,
     /// User selected a built-in patch to load.
-    LoadBuiltin(Patch),
+    LoadBuiltin(Box<Patch>),
     /// User cancelled.
     Cancelled,
 }
@@ -156,7 +156,7 @@ pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatch
                     for patch in example_patches() {
                         ui.horizontal(|ui| {
                             if ui.button(&patch.name).clicked() {
-                                result = LoadPatchResult::LoadBuiltin(patch.clone());
+                                result = LoadPatchResult::LoadBuiltin(Box::new(patch.clone()));
                                 *open = false;
                             }
                             if let Some(ref desc) = patch.description {
@@ -206,7 +206,10 @@ pub fn show_save_patch_dialog(
             ui.add_space(16.0);
             ui.horizontal(|ui| {
                 let can_save = !patch_name.trim().is_empty();
-                if ui.add_enabled(can_save, egui::Button::new("Save")).clicked() {
+                if ui
+                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .clicked()
+                {
                     result = SavePatchResult::Save(patch_name.clone());
                     *open = false;
                 }

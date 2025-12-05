@@ -1,13 +1,14 @@
 //! Spacey Bass - Classic subtractive bass with detuned oscillators.
 
-use crate::patch::{Patch, ModuleBuilder, ModuleType};
+use crate::patch::{ModuleBuilder, ModuleType, Patch};
 
 /// Spacey Bass - Classic subtractive bass with two detuned oscillators.
 pub fn patch_spacey_bass() -> Patch {
     let mut patch = Patch::new("Spacey Bass");
     patch.author = Some("Modular Synth".to_string());
     patch.description = Some("Classic subtractive bass with two detuned oscillators.".to_string());
-    patch.notes = Some(r#"
+    patch.notes = Some(
+        r#"
 SIGNAL FLOW:
 Two sawtooth oscillators create a thick, detuned sound. The second oscillator is
 slightly detuned (+7 cents) to create movement and width in the sound.
@@ -28,68 +29,86 @@ ENVELOPE DESIGN:
 
 TRY: Works great for bass lines and pads. Experiment with filter cutoff
 and resonance for different tonal characters.
-"#.to_string());
+"#
+        .to_string(),
+    );
     patch.tags = vec!["bass".into(), "subtractive".into(), "default".into()];
 
     // Oscillator 1 - Sawtooth, main sound (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
-        .position(50.0, 50.0)
-        .waveform("sawtooth")
-        .param_f("level", 0.6)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .position(50.0, 50.0)
+            .waveform("sawtooth")
+            .param_f("level", 0.6)
+            .build(),
+    );
 
     // Oscillator 2 - Sawtooth, detuned for thickness (osc-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
-        .position(50.0, 150.0)
-        .waveform("sawtooth")
-        .param_f("level", 0.5)
-        .param_f("detune", 7.0)  // +7 cents for thickness
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Oscillator)
+            .position(50.0, 150.0)
+            .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .param_f("detune", 7.0) // +7 cents for thickness
+            .build(),
+    );
 
     // Filter - Low pass with moderate resonance (flt-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
-        .position(250.0, 50.0)
-        .filter_mode("lowpass")
-        .param_f("cutoff", 400.0)
-        .param_f("resonance", 0.4)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Filter)
+            .position(250.0, 50.0)
+            .filter_mode("lowpass")
+            .param_f("cutoff", 400.0)
+            .param_f("resonance", 0.4)
+            .build(),
+    );
 
     // Amp Envelope - Punchy bass envelope (env-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
-        .position(50.0, 300.0)
-        .param_f("attack", 0.005)
-        .param_f("decay", 0.2)
-        .param_f("sustain", 0.6)
-        .param_f("release", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .position(50.0, 300.0)
+            .param_f("attack", 0.005)
+            .param_f("decay", 0.2)
+            .param_f("sustain", 0.6)
+            .param_f("release", 0.3)
+            .build(),
+    );
 
     // Filter Envelope - Opens filter on attack (env-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
-        .position(250.0, 300.0)
-        .param_f("attack", 0.001)
-        .param_f("decay", 0.3)
-        .param_f("sustain", 0.2)
-        .param_f("release", 0.4)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Envelope)
+            .position(250.0, 300.0)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.3)
+            .param_f("sustain", 0.2)
+            .param_f("release", 0.4)
+            .build(),
+    );
 
     // LFO - Slow sine for movement (lfo-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
-        .position(450.0, 300.0)
-        .param_f("rate", 0.3)
-        .param_f("depth", 0.25)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Lfo)
+            .position(450.0, 300.0)
+            .param_f("rate", 0.3)
+            .param_f("depth", 0.25)
+            .build(),
+    );
 
     // Amplifier (amp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
-        .position(450.0, 50.0)
-        .param_f("level", 0.7)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .position(450.0, 50.0)
+            .param_f("level", 0.7)
+            .build(),
+    );
 
     // Stereo Output - Final destination (out-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
-        .position(650.0, 50.0)
-        .param_f("master", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .position(650.0, 50.0)
+            .param_f("master", 0.8)
+            .build(),
+    );
 
     // Connections
     // Osc1 -> Filter, Osc2 -> Filter (both mixed into filter)

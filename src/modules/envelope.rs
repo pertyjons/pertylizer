@@ -343,7 +343,9 @@ impl PolyModule for Envelope {
             Param::Envelope(EnvelopeParam::Decay(self.decay)),
             Param::Envelope(EnvelopeParam::Sustain(self.sustain)),
             Param::Envelope(EnvelopeParam::Release(self.release)),
-            Param::Envelope(EnvelopeParam::VelocitySensitivity(self.velocity_sensitivity)),
+            Param::Envelope(EnvelopeParam::VelocitySensitivity(
+                self.velocity_sensitivity,
+            )),
             Param::Envelope(EnvelopeParam::AttackCurve(self.attack_curve)),
             Param::Envelope(EnvelopeParam::DecayCurve(self.decay_curve)),
             Param::Envelope(EnvelopeParam::ReleaseCurve(self.release_curve)),

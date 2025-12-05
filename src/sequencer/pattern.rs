@@ -197,7 +197,7 @@ impl Pattern {
     ) -> impl Iterator<Item = &Note> {
         self.notes
             .iter()
-            .filter(move |n| n.start < end && n.end().map_or(true, |e| e > start))
+            .filter(move |n| n.start < end && n.end().is_none_or(|e| e > start))
     }
 
     /// Get notes starting at a specific row.
@@ -222,10 +222,8 @@ impl Pattern {
             let old_id = note.id;
             note.start = new_start;
             note.id = old_id; // Preserve ID
-            self.notes.insert(
-                self.notes.partition_point(|n| n.start <= new_start),
-                note,
-            );
+            self.notes
+                .insert(self.notes.partition_point(|n| n.start <= new_start), note);
             // Decrement counter since we reused the ID
             self.next_note_id -= 1;
             true
@@ -267,7 +265,9 @@ impl Pattern {
     pub fn quantize_notes_with_strength(&mut self, strength: f32) {
         let strength = strength.clamp(0.0, 1.0);
         for note in &mut self.notes {
-            note.start = self.row_resolution.quantize_with_strength(note.start, strength);
+            note.start = self
+                .row_resolution
+                .quantize_with_strength(note.start, strength);
         }
         self.notes.sort_by_key(|n| n.start);
     }
@@ -297,7 +297,10 @@ impl Pattern {
     // === Automation ===
 
     /// Add or get an automation lane for a target.
-    pub fn get_or_create_automation(&mut self, target: super::automation::AutomationTarget) -> &mut AutomationLane {
+    pub fn get_or_create_automation(
+        &mut self,
+        target: super::automation::AutomationTarget,
+    ) -> &mut AutomationLane {
         let pos = self.automation.iter().position(|l| l.target == target);
         match pos {
             Some(idx) => &mut self.automation[idx],
@@ -309,7 +312,10 @@ impl Pattern {
     }
 
     /// Get automation lane for a target.
-    pub fn automation_lane(&self, target: &super::automation::AutomationTarget) -> Option<&AutomationLane> {
+    pub fn automation_lane(
+        &self,
+        target: &super::automation::AutomationTarget,
+    ) -> Option<&AutomationLane> {
         self.automation.iter().find(|l| &l.target == target)
     }
 
@@ -338,15 +344,15 @@ impl Pattern {
         } else {
             PatternTick(0)
         };
-        let local_end = PatternTick(
-            ((range_end.0.saturating_sub(pattern_start.0)) as u32).min(self.length.0),
-        );
+        let local_end =
+            PatternTick(((range_end.0.saturating_sub(pattern_start.0)) as u32).min(self.length.0));
 
         for note in &self.notes {
             let instrument = instrument_override.unwrap_or(note.instrument);
 
             // Transpose pitch
-            let transposed_midi = (note.pitch.as_midi() as i16 + transpose as i16).clamp(0, 127) as u8;
+            let transposed_midi =
+                (note.pitch.as_midi() as i16 + transpose as i16).clamp(0, 127) as u8;
             let transposed_pitch = Pitch::new(transposed_midi).unwrap_or(note.pitch);
 
             // NoteOn
@@ -362,15 +368,16 @@ impl Pattern {
             }
 
             // NoteOff
-            if let Some(end) = note.end() {
-                if end > local_start && end <= local_end {
-                    let absolute_tick = Tick(pattern_start.0 + end.0 as u64);
-                    events.push(SequencerEvent::NoteOff {
-                        tick: absolute_tick,
-                        pitch: transposed_pitch,
-                        instrument,
-                    });
-                }
+            if let Some(end) = note.end()
+                && end > local_start
+                && end <= local_end
+            {
+                let absolute_tick = Tick(pattern_start.0 + end.0 as u64);
+                events.push(SequencerEvent::NoteOff {
+                    tick: absolute_tick,
+                    pitch: transposed_pitch,
+                    instrument,
+                });
             }
         }
 
@@ -415,9 +422,24 @@ mod tests {
     fn test_notes_stay_sorted() {
         let mut pattern = test_pattern();
 
-        pattern.add_note(PatternTick(480), Pitch::new(60).unwrap(), Velocity::MF, InstrumentId(0));
-        pattern.add_note(PatternTick(0), Pitch::new(62).unwrap(), Velocity::MF, InstrumentId(0));
-        pattern.add_note(PatternTick(240), Pitch::new(64).unwrap(), Velocity::MF, InstrumentId(0));
+        pattern.add_note(
+            PatternTick(480),
+            Pitch::new(60).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        );
+        pattern.add_note(
+            PatternTick(0),
+            Pitch::new(62).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        );
+        pattern.add_note(
+            PatternTick(240),
+            Pitch::new(64).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        );
 
         let ticks: Vec<_> = pattern.notes().iter().map(|n| n.start.0).collect();
         assert_eq!(ticks, vec![0, 240, 480]);
@@ -491,33 +513,66 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)] // note1/note2/note3 and pattern/pattern2 are intentional
     fn test_notes_in_range() {
         let mut pattern = test_pattern();
 
         // Add notes with explicit durations so they have defined end times
-        let note1 = Note::new(NoteId(0), PatternTick(100), Pitch::new(60).unwrap(), Velocity::MF, InstrumentId(0))
-            .with_duration(Duration(40)); // Ends at 140, before range
-        let note2 = Note::new(NoteId(1), PatternTick(200), Pitch::new(62).unwrap(), Velocity::MF, InstrumentId(0))
-            .with_duration(Duration(40)); // Starts at 200, within range
-        let note3 = Note::new(NoteId(2), PatternTick(300), Pitch::new(64).unwrap(), Velocity::MF, InstrumentId(0))
-            .with_duration(Duration(40)); // Starts at 300, after range
+        let note1 = Note::new(
+            NoteId(0),
+            PatternTick(100),
+            Pitch::new(60).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        )
+        .with_duration(Duration(40)); // Ends at 140, before range
+        let note2 = Note::new(
+            NoteId(1),
+            PatternTick(200),
+            Pitch::new(62).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        )
+        .with_duration(Duration(40)); // Starts at 200, within range
+        let note3 = Note::new(
+            NoteId(2),
+            PatternTick(300),
+            Pitch::new(64).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        )
+        .with_duration(Duration(40)); // Starts at 300, after range
 
         pattern.insert_note(note1);
         pattern.insert_note(note2);
         pattern.insert_note(note3);
 
         // Range 150-250 should only include note2 (starts at 200)
-        let notes: Vec<_> = pattern.notes_in_range(PatternTick(150), PatternTick(250)).collect();
+        let notes: Vec<_> = pattern
+            .notes_in_range(PatternTick(150), PatternTick(250))
+            .collect();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].start.0, 200);
 
         // Test notes without duration (tracker-style, plays until next note off)
         let mut pattern2 = test_pattern();
-        pattern2.add_note(PatternTick(100), Pitch::new(60).unwrap(), Velocity::MF, InstrumentId(0));
-        pattern2.add_note(PatternTick(200), Pitch::new(62).unwrap(), Velocity::MF, InstrumentId(0));
+        pattern2.add_note(
+            PatternTick(100),
+            Pitch::new(60).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        );
+        pattern2.add_note(
+            PatternTick(200),
+            Pitch::new(62).unwrap(),
+            Velocity::MF,
+            InstrumentId(0),
+        );
 
         // Notes without duration overlap with any range after their start
-        let notes: Vec<_> = pattern2.notes_in_range(PatternTick(150), PatternTick(250)).collect();
+        let notes: Vec<_> = pattern2
+            .notes_in_range(PatternTick(150), PatternTick(250))
+            .collect();
         assert_eq!(notes.len(), 2); // Both notes overlap: first has no end, second starts in range
     }
 

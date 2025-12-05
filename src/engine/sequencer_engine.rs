@@ -14,9 +14,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::sequencer::{
-    InstrumentId, Pitch, SequencerEvent, Song, Tick, TICKS_PER_QUARTER,
-};
+use crate::sequencer::{InstrumentId, Pitch, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
 use crate::types::{SampleCount, SampleRate};
 
 /// Playback state of the sequencer.
@@ -89,10 +87,7 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let cached_tempo = song
-            .read()
-            .map(|s| s.default_tempo)
-            .unwrap_or(120.0);
+        let cached_tempo = song.read().map(|s| s.default_tempo).unwrap_or(120.0);
 
         Self {
             song,
@@ -270,9 +265,9 @@ impl SequencerEngine {
                     let transposed_pitch = note.pitch.transpose(placement.transpose);
 
                     // Calculate end tick if duration is known
-                    let end_tick = note.duration.map(|d| {
-                        Tick(placement.start.0 + note.start.0 as u64 + d.0 as u64)
-                    });
+                    let end_tick = note
+                        .duration
+                        .map(|d| Tick(placement.start.0 + note.start.0 as u64 + d.0 as u64));
 
                     notes.push((
                         transposed_pitch,
@@ -457,7 +452,11 @@ mod tests {
 
         // Should have at least one NoteOn event
         let note_ons: Vec<_> = events.iter().filter(|e| e.is_note_on()).collect();
-        assert!(!note_ons.is_empty(), "Expected NoteOn events, got {:?}", events);
+        assert!(
+            !note_ons.is_empty(),
+            "Expected NoteOn events, got {:?}",
+            events
+        );
     }
 
     #[test]

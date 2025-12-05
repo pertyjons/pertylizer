@@ -28,23 +28,23 @@
 mod macros;
 
 // Load modules in dependency order (time first, then frequency which depends on it)
-mod time;
-mod frequency;
 mod amplitude;
-mod normalized;
-mod samples;
-mod pitch;
 mod audio;
+mod frequency;
 mod interned;
+mod normalized;
+mod pitch;
+mod samples;
+mod time;
 
-pub use frequency::*;
-pub use time::*;
 pub use amplitude::*;
-pub use normalized::*;
-pub use samples::*;
-pub use pitch::*;
 pub use audio::*;
+pub use frequency::*;
 pub use interned::PortName;
+pub use normalized::*;
+pub use pitch::*;
+pub use samples::*;
+pub use time::*;
 
 /// Trait for types that can be clamped to a valid range.
 pub trait Clampable: Sized {

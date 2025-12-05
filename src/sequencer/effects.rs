@@ -171,11 +171,17 @@ impl EffectWaveform {
         match self {
             Self::Sine => (phase * std::f32::consts::TAU).sin(),
             Self::Ramp => 2.0 * phase - 1.0,
-            Self::Square => if phase < 0.5 { 1.0 } else { -1.0 },
+            Self::Square => {
+                if phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             Self::Random => {
                 // Simple hash-based random
                 let seed = (phase * 1000.0) as u32;
-                let hash = seed.wrapping_mul(2654435761);
+                let hash = seed.wrapping_mul(2_654_435_761);
                 (hash as f32 / u32::MAX as f32) * 2.0 - 1.0
             }
         }

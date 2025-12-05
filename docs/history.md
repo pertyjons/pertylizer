@@ -1,5 +1,35 @@
 # Version History
 
+## [0.33.3] - 2024
+
+### Refactored - Clippy Pedantic Configuration
+
+Konfigurerade clippy pedantic/nursery lints för synth-lämpliga undantag.
+
+**Crate-level allows i `src/lib.rs` (~70 lints)**
+
+| Kategori | Exempel på tillåtna lints |
+|----------|---------------------------|
+| Audio/DSP casts | `cast_precision_loss`, `cast_possible_truncation`, `cast_sign_loss` |
+| Matematik | `many_single_char_names`, `float_cmp`, `approx_constant`, `suboptimal_flops` |
+| Stereonamn | `similar_names` (peak_l/peak_r, left/right) |
+| Komplexitet | `too_many_lines`, `cognitive_complexity` |
+| Kodstil | `uninlined_format_args`, `manual_range_contains`, `option_if_let_else` |
+
+**Viktiga fixar:**
+- Flyttade kritiska allows efter `#![warn(clippy::all)]` för korrekt ordning
+- Korrigerade lint-namn:
+  - `elidable_lifetime_names` (inte `needless_lifetimes`)
+  - `set_contains_or_insert` (inte `hashset_insert_after_contains`)
+  - `ignored_unit_patterns` (inte `match_unit_value`)
+  - `indexing_slicing` ersätter borttagna `match_on_vec_items`
+
+**Resultat:**
+- Alla pedantic/nursery lints: ✅ Korrekt konfigurerade
+- Kvarvarande fel: 128 st `unwrap`/`expect`/`panic` (behålls som fel enligt CLAUDE.md)
+
+---
+
 ## [0.33.2] - 2024
 
 ### Refactored - Rust Best Practices Implementation

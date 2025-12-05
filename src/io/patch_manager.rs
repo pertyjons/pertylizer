@@ -45,8 +45,9 @@ impl PatchManager {
     pub fn with_directory(patches_dir: PathBuf) -> Result<Self, PatchError> {
         // Create directory if it doesn't exist
         if !patches_dir.exists() {
-            fs::create_dir_all(&patches_dir)
-                .map_err(|e| PatchError::Io(format!("Failed to create patches directory: {}", e)))?;
+            fs::create_dir_all(&patches_dir).map_err(|e| {
+                PatchError::Io(format!("Failed to create patches directory: {}", e))
+            })?;
         }
 
         Ok(Self { patches_dir })
@@ -77,21 +78,19 @@ impl PatchManager {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
-                if let Ok(info) = self.get_patch_info(&path) {
-                    patches.push(info);
-                }
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Ok(info) = self.get_patch_info(&path)
+            {
+                patches.push(info);
             }
         }
 
         // Sort by modification time (newest first)
-        patches.sort_by(|a, b| {
-            match (&b.modified, &a.modified) {
-                (Some(b_time), Some(a_time)) => b_time.cmp(a_time),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.name.cmp(&b.name),
-            }
+        patches.sort_by(|a, b| match (&b.modified, &a.modified) {
+            (Some(b_time), Some(a_time)) => b_time.cmp(a_time),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name),
         });
 
         Ok(patches)
@@ -121,7 +120,8 @@ impl PatchManager {
     fn extract_patch_metadata(content: &str, path: &Path) -> (String, Option<String>) {
         // Try quick JSON value extraction
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
-            let name = value.get("name")
+            let name = value
+                .get("name")
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| {
@@ -131,14 +131,16 @@ impl PatchManager {
                         .unwrap_or_else(|| "Unknown".to_string())
                 });
 
-            let description = value.get("description")
+            let description = value
+                .get("description")
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
             (name, description)
         } else {
             // Parse failed, use filename
-            let name = path.file_stem()
+            let name = path
+                .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
             (name, None)
@@ -153,6 +155,7 @@ impl PatchManager {
     }
 
     /// Save a patch to the patches directory.
+    #[allow(clippy::similar_names)] // filename vs file - different concepts
     pub fn save_patch(&self, patch: &Patch) -> Result<PathBuf, PatchError> {
         let filename = Self::sanitize_filename(&patch.name);
         let path = self.patches_dir.join(format!("{}.json", filename));
@@ -185,7 +188,13 @@ impl PatchManager {
     fn sanitize_filename(name: &str) -> String {
         name.to_lowercase()
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect()
     }
 }
@@ -216,7 +225,10 @@ mod tests {
     #[test]
     fn test_sanitize_filename() {
         assert_eq!(PatchManager::sanitize_filename("My Patch!"), "my_patch_");
-        assert_eq!(PatchManager::sanitize_filename("test-patch_1"), "test-patch_1");
+        assert_eq!(
+            PatchManager::sanitize_filename("test-patch_1"),
+            "test-patch_1"
+        );
         assert_eq!(PatchManager::sanitize_filename("Спейс"), "_____");
     }
 

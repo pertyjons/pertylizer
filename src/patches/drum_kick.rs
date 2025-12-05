@@ -1,13 +1,14 @@
 //! Kick Drum - Classic electronic kick with punch.
 
-use crate::patch::{Patch, ModuleBuilder, ModuleType};
+use crate::patch::{ModuleBuilder, ModuleType, Patch};
 
 /// Kick Drum - Classic electronic kick with punch.
 pub fn patch_drum_kick() -> Patch {
     let mut patch = Patch::new("Kick Drum");
     patch.author = Some("Modular Synth".to_string());
     patch.description = Some("Punchy electronic kick drum with pitch sweep.".to_string());
-    patch.notes = Some(r#"
+    patch.notes = Some(
+        r#"
 SIGNAL FLOW:
 The kick uses a sine wave oscillator for its pure, subby fundamental.
 Electronic kicks are characterized by a pitch sweep - the tone starts
@@ -31,66 +32,87 @@ CHARACTERISTICS:
 
 TRY: Play single hits. Adjust the pitch envelope decay for different
 kick characters. Works well in the lowest octave.
-"#.to_string());
-    patch.tags = vec!["drum".into(), "kick".into(), "percussion".into(), "808".into()];
+"#
+        .to_string(),
+    );
+    patch.tags = vec![
+        "drum".into(),
+        "kick".into(),
+        "percussion".into(),
+        "808".into(),
+    ];
 
     // OSC - Sine for pure sub (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
-        .position(50.0, 50.0)
-        .waveform("sine")
-        .param_f("level", 1.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .position(50.0, 50.0)
+            .waveform("sine")
+            .param_f("level", 1.0)
+            .build(),
+    );
 
     // Pitch Envelope - Fast sweep with punchy curve (env-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
-        .position(50.0, 250.0)
-        .param_f("attack", 0.001)
-        .param_f("decay", 0.05)
-        .param_f("sustain", 0.0)
-        .param_f("release", 0.01)
-        .param_f("attack_curve", -0.8)  // Punchy, fast attack
-        .param_f("decay_curve", -0.6)   // Quick punch decay
-        .param_f("release_curve", -0.5) // Tight release
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .position(50.0, 250.0)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.05)
+            .param_f("sustain", 0.0)
+            .param_f("release", 0.01)
+            .param_f("attack_curve", -0.8) // Punchy, fast attack
+            .param_f("decay_curve", -0.6) // Quick punch decay
+            .param_f("release_curve", -0.5) // Tight release
+            .build(),
+    );
 
     // Amp Envelope with punchy curves (env-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
-        .position(250.0, 250.0)
-        .param_f("attack", 0.001)
-        .param_f("decay", 0.15)
-        .param_f("sustain", 0.0)
-        .param_f("release", 0.05)
-        .param_f("attack_curve", -1.0)  // Instant punch
-        .param_f("decay_curve", -0.7)   // Fast initial drop for punch
-        .param_f("release_curve", -0.5) // Tight cutoff
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Envelope)
+            .position(250.0, 250.0)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.15)
+            .param_f("sustain", 0.0)
+            .param_f("release", 0.05)
+            .param_f("attack_curve", -1.0) // Instant punch
+            .param_f("decay_curve", -0.7) // Fast initial drop for punch
+            .param_f("release_curve", -0.5) // Tight cutoff
+            .build(),
+    );
 
     // Amplifier (amp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
-        .position(250.0, 50.0)
-        .param_f("level", 0.9)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .position(250.0, 50.0)
+            .param_f("level", 0.9)
+            .build(),
+    );
 
     // Soft clip for warmth (dst-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
-        .position(450.0, 50.0)
-        .distortion_mode("soft_clip")
-        .param_f("drive", 0.2)
-        .param_f("mix", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Distortion)
+            .position(450.0, 50.0)
+            .distortion_mode("soft_clip")
+            .param_f("drive", 0.2)
+            .param_f("mix", 0.3)
+            .build(),
+    );
 
     // Oscilloscope - Waveform visualization (scp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
-        .position(650.0, 50.0)
-        .param_f("time", 1.0)
-        .param_f("gain", 1.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+            .position(650.0, 50.0)
+            .param_f("time", 1.0)
+            .param_f("gain", 1.0)
+            .build(),
+    );
 
     // Stereo Output - Final destination (out-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
-        .position(850.0, 50.0)
-        .param_f("master", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .position(850.0, 50.0)
+            .param_f("master", 0.8)
+            .build(),
+    );
 
     // Connections (using string IDs: type-instance)
     patch.add_connection("osc-1", "out", "amp-1", "in");

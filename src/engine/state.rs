@@ -3,8 +3,8 @@
 //! This module provides thread-safe primitives for sharing data
 //! between the real-time audio thread and the UI thread.
 
-use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
 /// Atomic float for thread-safe parameter sharing.
 #[derive(Debug)]

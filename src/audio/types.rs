@@ -79,9 +79,10 @@ impl From<u32> for BufferSize {
 }
 
 /// Number of audio channels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ChannelCount {
     Mono,
+    #[default]
     Stereo,
     Multi(u16),
 }
@@ -94,12 +95,6 @@ impl ChannelCount {
             Self::Stereo => 2,
             Self::Multi(n) => n,
         }
-    }
-}
-
-impl Default for ChannelCount {
-    fn default() -> Self {
-        Self::Stereo
     }
 }
 
@@ -143,21 +138,11 @@ pub struct DeviceInfo {
 }
 
 /// Stream configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamConfig {
     pub sample_rate: SampleRate,
     pub buffer_size: BufferSize,
     pub channels: ChannelCount,
-}
-
-impl Default for StreamConfig {
-    fn default() -> Self {
-        Self {
-            sample_rate: SampleRate::default(),
-            buffer_size: BufferSize::default(),
-            channels: ChannelCount::default(),
-        }
-    }
 }
 
 /// Information about an active audio stream.

@@ -7,9 +7,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 /// Global intern pool for port names.
-static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| {
-    RwLock::new(InternPool::new())
-});
+static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
 
 struct InternPool {
     // Store leaked 'static strings - safe because we never deallocate them
@@ -76,11 +74,7 @@ impl PortName {
 
     /// Get the string representation.
     pub fn as_str(&self) -> &'static str {
-        INTERN_POOL
-            .read()
-            .unwrap()
-            .get(self.0)
-            .unwrap_or("")
+        INTERN_POOL.read().unwrap().get(self.0).unwrap_or("")
     }
 }
 
@@ -105,25 +99,45 @@ impl From<String> for PortName {
 // Common port names as constants (interned at first use)
 impl PortName {
     /// Standard input port.
-    pub fn input() -> Self { Self::intern("in") }
+    pub fn input() -> Self {
+        Self::intern("in")
+    }
     /// Standard output port.
-    pub fn output() -> Self { Self::intern("out") }
+    pub fn output() -> Self {
+        Self::intern("out")
+    }
     /// Left input port.
-    pub fn input_left() -> Self { Self::intern("in_l") }
+    pub fn input_left() -> Self {
+        Self::intern("in_l")
+    }
     /// Right input port.
-    pub fn input_right() -> Self { Self::intern("in_r") }
+    pub fn input_right() -> Self {
+        Self::intern("in_r")
+    }
     /// Left output port.
-    pub fn output_left() -> Self { Self::intern("out_l") }
+    pub fn output_left() -> Self {
+        Self::intern("out_l")
+    }
     /// Right output port.
-    pub fn output_right() -> Self { Self::intern("out_r") }
+    pub fn output_right() -> Self {
+        Self::intern("out_r")
+    }
     /// Frequency port.
-    pub fn freq() -> Self { Self::intern("freq") }
+    pub fn freq() -> Self {
+        Self::intern("freq")
+    }
     /// Frequency CV port.
-    pub fn freq_cv() -> Self { Self::intern("freq_cv") }
+    pub fn freq_cv() -> Self {
+        Self::intern("freq_cv")
+    }
     /// Gate port.
-    pub fn gate() -> Self { Self::intern("gate") }
+    pub fn gate() -> Self {
+        Self::intern("gate")
+    }
     /// Cutoff CV port.
-    pub fn cutoff_cv() -> Self { Self::intern("cutoff_cv") }
+    pub fn cutoff_cv() -> Self {
+        Self::intern("cutoff_cv")
+    }
 }
 
 #[cfg(test)]

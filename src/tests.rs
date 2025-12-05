@@ -9,8 +9,10 @@
 
 #[cfg(test)]
 mod audio_safety {
-    use crate::modules::{Oscillator, Filter, Envelope, AudioBuffer, ProcessContext, PolyModule, AudioEffect};
-    use crate::effects::{Delay, Reverb, Chorus, Distortion};
+    use crate::effects::{Chorus, Delay, Distortion, Reverb};
+    use crate::modules::{
+        AudioBuffer, AudioEffect, Envelope, Filter, Oscillator, PolyModule, ProcessContext,
+    };
     use crate::types::{Bpm, MidiNote, SampleRate};
     use std::collections::HashMap;
 
@@ -46,7 +48,10 @@ mod audio_safety {
         for _ in 0..100 {
             osc.process(&inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
-            assert!(is_valid_audio(out.as_slice()), "Oscillator output contains NaN or Inf");
+            assert!(
+                is_valid_audio(out.as_slice()),
+                "Oscillator output contains NaN or Inf"
+            );
         }
     }
 
@@ -60,29 +65,33 @@ mod audio_safety {
 
         osc.process(&inputs, &mut outputs, &context);
         let out = outputs.get("out").unwrap();
-        
+
         // Oscillator output should be in [-1, 1] range
-        assert!(is_in_range(out.as_slice(), -1.1, 1.1), 
-            "Oscillator output outside expected range");
+        assert!(
+            is_in_range(out.as_slice(), -1.1, 1.1),
+            "Oscillator output outside expected range"
+        );
     }
 
     #[test]
     fn test_filter_no_nan_with_extreme_resonance() {
         let mut filter = Filter::new();
         let context = make_context(256);
-        
+
         // Set extreme resonance
-        use crate::engine::typed_params::{Param, FilterParam};
+        use crate::engine::typed_params::{FilterParam, Param};
         use crate::types::NormalizedValue;
-        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(1.0))));
-        
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+            1.0,
+        ))));
+
         // Create input with impulse
         let mut input_buf = AudioBuffer::new(256);
         input_buf[0] = 1.0;
-        
+
         let mut inputs = HashMap::new();
         inputs.insert("in".to_string(), &input_buf);
-        
+
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
@@ -90,8 +99,10 @@ mod audio_safety {
         for _ in 0..100 {
             filter.process(&inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
-            assert!(is_valid_audio(out.as_slice()), 
-                "Filter output contains NaN or Inf with high resonance");
+            assert!(
+                is_valid_audio(out.as_slice()),
+                "Filter output contains NaN or Inf with high resonance"
+            );
         }
     }
 
@@ -105,21 +116,30 @@ mod audio_safety {
 
         // Trigger note on
         env.note_on(MidiNote::C4, 1.0);
-        
+
         for _ in 0..50 {
             env.process(&inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
-            assert!(is_valid_audio(out.as_slice()), "Envelope output contains NaN or Inf");
-            assert!(is_in_range(out.as_slice(), 0.0, 1.1), "Envelope output outside [0, 1] range");
+            assert!(
+                is_valid_audio(out.as_slice()),
+                "Envelope output contains NaN or Inf"
+            );
+            assert!(
+                is_in_range(out.as_slice(), 0.0, 1.1),
+                "Envelope output outside [0, 1] range"
+            );
         }
 
         // Trigger note off
         env.note_off();
-        
+
         for _ in 0..50 {
             env.process(&inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
-            assert!(is_valid_audio(out.as_slice()), "Envelope output contains NaN or Inf during release");
+            assert!(
+                is_valid_audio(out.as_slice()),
+                "Envelope output contains NaN or Inf during release"
+            );
         }
     }
 
@@ -131,7 +151,7 @@ mod audio_safety {
 
         let mut input = vec![0.0f32; 512];
         let mut output = vec![0.0f32; 512];
-        
+
         // Add impulse
         input[0] = 1.0;
         input[1] = 1.0;
@@ -150,7 +170,7 @@ mod audio_safety {
 
         let mut input = vec![0.0f32; 512];
         let mut output = vec![0.0f32; 512];
-        
+
         // Add impulse
         input[0] = 1.0;
         input[1] = 1.0;
@@ -169,7 +189,7 @@ mod audio_safety {
 
         let mut input = vec![0.0f32; 512];
         let mut output = vec![0.0f32; 512];
-        
+
         input[0] = 1.0;
         input[1] = 1.0;
 
@@ -187,7 +207,7 @@ mod audio_safety {
 
         let mut input = vec![0.0f32; 512];
         let mut output = vec![0.0f32; 512];
-        
+
         // Test with hot input
         for i in 0..256 {
             input[i * 2] = ((i as f32) * 0.1).sin() * 2.0;
@@ -196,15 +216,18 @@ mod audio_safety {
 
         for _ in 0..100 {
             dist.process(&input, &mut output, &context);
-            assert!(is_valid_audio(&output), "Distortion output contains NaN or Inf");
+            assert!(
+                is_valid_audio(&output),
+                "Distortion output contains NaN or Inf"
+            );
         }
     }
 }
 
 #[cfg(test)]
 mod parameter_handling {
-    use crate::engine::typed_params::{Param, OscillatorParam, FilterParam, EnvelopeParam};
-    use crate::modules::{Oscillator, Filter, Envelope, PolyModule};
+    use crate::engine::typed_params::{EnvelopeParam, FilterParam, OscillatorParam, Param};
+    use crate::modules::{Envelope, Filter, Oscillator, PolyModule};
     use crate::types::{Hertz, NormalizedValue, Seconds};
 
     #[test]
@@ -213,13 +236,17 @@ mod parameter_handling {
         let freq_query = Param::Oscillator(OscillatorParam::Frequency(Hertz::new(0.0)));
 
         // Try to set frequency below minimum
-        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(-100.0))));
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(
+            -100.0,
+        ))));
         if let Some(f) = osc.get_param(&freq_query) {
             assert!(f >= 20.0, "Frequency should be clamped to minimum");
         }
 
         // Try to set frequency above maximum
-        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(100000.0))));
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(
+            100_000.0,
+        ))));
         if let Some(f) = osc.get_param(&freq_query) {
             assert!(f <= 20000.0, "Frequency should be clamped to maximum");
         }
@@ -231,12 +258,16 @@ mod parameter_handling {
         let res_query = Param::Filter(FilterParam::Resonance(NormalizedValue::new(0.0)));
 
         // Try extreme values
-        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(10.0))));
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+            10.0,
+        ))));
         if let Some(r) = filter.get_param(&res_query) {
             assert!(r <= 1.0, "Resonance should be clamped to maximum 1.0");
         }
 
-        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(-1.0))));
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+            -1.0,
+        ))));
         if let Some(r) = filter.get_param(&res_query) {
             assert!(r >= 0.0, "Resonance should be clamped to minimum 0.0");
         }
@@ -267,7 +298,9 @@ mod parameter_handling {
         let waveform_query = Param::Oscillator(OscillatorParam::Waveform(Waveform::default()));
 
         // Test waveform setting via typed API
-        osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)));
+        osc.set_param(Param::Oscillator(OscillatorParam::Waveform(
+            Waveform::Square,
+        )));
 
         // Read back the index (waveform is stored as index)
         if let Some(w) = osc.get_param(&waveform_query) {
@@ -296,7 +329,7 @@ mod parameter_handling {
 
 #[cfg(test)]
 mod voice_allocation {
-    use crate::engine::{VoiceAllocator, AllocatorConfig, AllocationMode, StealingStrategy};
+    use crate::engine::{AllocationMode, AllocatorConfig, StealingStrategy, VoiceAllocator};
     use crate::types::MidiNote;
 
     #[test]
@@ -394,16 +427,16 @@ mod voice_allocation {
 
 #[cfg(test)]
 mod module_graph {
-    use crate::engine::{ModuleGraph, GraphError};
-    use crate::modules::{Oscillator, Filter, Amplifier};
+    use crate::engine::{GraphError, ModuleGraph};
+    use crate::modules::{Amplifier, Filter, Oscillator};
 
     #[test]
     fn test_graph_add_module() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
         let filter_id = graph.add_module(Box::new(Filter::new()));
-        
+
         assert!(graph.get_module(osc_id).is_some());
         assert!(graph.get_module(filter_id).is_some());
     }
@@ -411,10 +444,10 @@ mod module_graph {
     #[test]
     fn test_graph_remove_module() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
         assert!(graph.get_module(osc_id).is_some());
-        
+
         graph.remove_module(osc_id);
         assert!(graph.get_module(osc_id).is_none());
     }
@@ -422,10 +455,10 @@ mod module_graph {
     #[test]
     fn test_graph_connection() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
         let filter_id = graph.add_module(Box::new(Filter::new()));
-        
+
         let result = graph.connect(osc_id, "out", filter_id, "in");
         assert!(result.is_ok(), "Connection should succeed");
     }
@@ -433,23 +466,23 @@ mod module_graph {
     #[test]
     fn test_graph_disconnect() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
         let filter_id = graph.add_module(Box::new(Filter::new()));
-        
+
         graph.connect(osc_id, "out", filter_id, "in").unwrap();
         graph.disconnect(osc_id, "out", filter_id, "in");
-        
+
         // Verify disconnected (no direct API, but should not crash)
     }
 
     #[test]
     fn test_graph_invalid_connection() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
         let filter_id = graph.add_module(Box::new(Filter::new()));
-        
+
         // Try to connect non-existent ports
         let result = graph.connect(osc_id, "nonexistent", filter_id, "in");
         assert!(result.is_err(), "Invalid port connection should fail");
@@ -458,41 +491,45 @@ mod module_graph {
     #[test]
     fn test_graph_self_loop_rejected() {
         let mut graph = ModuleGraph::new();
-        
+
         let osc_id = graph.add_module(Box::new(Oscillator::new()));
-        
+
         // Try to connect module to itself
         let result = graph.connect(osc_id, "out", osc_id, "fm");
-        assert!(matches!(result, Err(GraphError::CycleDetected)), 
-            "Self-loop should be rejected as cycle");
+        assert!(
+            matches!(result, Err(GraphError::CycleDetected)),
+            "Self-loop should be rejected as cycle"
+        );
     }
 
     #[test]
     fn test_graph_cycle_detection() {
         let mut graph = ModuleGraph::new();
-        
+
         let a = graph.add_module(Box::new(Oscillator::new()));
         let b = graph.add_module(Box::new(Filter::new()));
         let c = graph.add_module(Box::new(Amplifier::new()));
-        
+
         // Create chain: A -> B -> C
         graph.connect(a, "out", b, "in").unwrap();
         graph.connect(b, "out", c, "in").unwrap();
-        
+
         // Try to create cycle: C -> A (should fail)
         let result = graph.connect(c, "left", a, "fm");
-        assert!(matches!(result, Err(GraphError::CycleDetected)), 
-            "Cycle should be detected and rejected");
+        assert!(
+            matches!(result, Err(GraphError::CycleDetected)),
+            "Cycle should be detected and rejected"
+        );
     }
 
     #[test]
     fn test_graph_no_false_cycle_detection() {
         let mut graph = ModuleGraph::new();
-        
+
         let a = graph.add_module(Box::new(Oscillator::new()));
         let b = graph.add_module(Box::new(Filter::new()));
         let c = graph.add_module(Box::new(Amplifier::new()));
-        
+
         // Create: A -> B, A -> C (fan-out, no cycle)
         graph.connect(a, "out", b, "in").unwrap();
         let result = graph.connect(a, "out", c, "in");
@@ -502,8 +539,10 @@ mod module_graph {
 
 #[cfg(test)]
 mod engine_integration {
+    use crate::audio::{
+        AudioCallbackContext, AudioProcessor, BufferSize, ChannelCount, SampleRate, StreamInfo,
+    };
     use crate::engine::SynthEngine;
-    use crate::audio::{AudioProcessor, AudioCallbackContext, StreamInfo, SampleRate, BufferSize, ChannelCount};
     use std::time::Duration;
 
     fn make_stream_info() -> StreamInfo {
@@ -538,7 +577,10 @@ mod engine_integration {
     fn test_engine_note_on_off() {
         let (_engine, mut handle) = SynthEngine::new();
 
-        handle.note_on(crate::types::MidiNote::C4, crate::types::NormalizedValue::new(0.8));
+        handle.note_on(
+            crate::types::MidiNote::C4,
+            crate::types::NormalizedValue::new(0.8),
+        );
         handle.note_off(crate::types::MidiNote::C4);
         // Commands are queued, processing happens in audio thread
     }
@@ -551,7 +593,10 @@ mod engine_integration {
         let info = make_stream_info();
         engine.on_stream_start(&info);
 
-        handle.note_on(crate::types::MidiNote::C4, crate::types::NormalizedValue::new(0.8));
+        handle.note_on(
+            crate::types::MidiNote::C4,
+            crate::types::NormalizedValue::new(0.8),
+        );
 
         // Process some audio
         let mut output = vec![0.0f32; 512];
@@ -560,11 +605,16 @@ mod engine_integration {
         engine.process(&mut output, &context);
 
         // All samples should be valid
-        assert!(output.iter().all(|&x| x.is_finite()), "Output should not contain NaN or Inf");
+        assert!(
+            output.iter().all(|&x| x.is_finite()),
+            "Output should not contain NaN or Inf"
+        );
 
         // All samples should be in valid range
-        assert!(output.iter().all(|&x| x >= -1.0 && x <= 1.0),
-            "Output should be clamped to [-1, 1]");
+        assert!(
+            output.iter().all(|&x| x >= -1.0 && x <= 1.0),
+            "Output should be clamped to [-1, 1]"
+        );
     }
 
     #[test]
@@ -589,7 +639,7 @@ mod engine_integration {
     fn test_engine_parameter_changes() {
         use crate::engine::commands::PolyModule;
         use crate::engine::instrument::InstrumentId;
-        use crate::engine::typed_params::{Param, OscillatorParam, Waveform};
+        use crate::engine::typed_params::{OscillatorParam, Param, Waveform};
 
         let (_engine, mut handle) = SynthEngine::new();
 

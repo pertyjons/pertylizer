@@ -77,7 +77,7 @@ pub use note::Note;
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
-pub use time::{Duration, PatternTick, Tick, TimeSignature, TICKS_PER_QUARTER};
+pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{SequencerTrack, TrackColor};
 pub use view::tracker::{
     PatternTrackerView, TrackerCell, TrackerNoteDisplay, TrackerRow, TrackerViewConfig,
@@ -94,7 +94,7 @@ pub mod prelude {
     pub use super::pattern::{Pattern, RowResolution};
     pub use super::pitch::{NoteName, Pitch, Velocity};
     pub use super::song::Song;
-    pub use super::time::{Duration, PatternTick, Tick, TimeSignature, TICKS_PER_QUARTER};
+    pub use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
     pub use super::track::SequencerTrack;
     pub use super::view::tracker::{PatternTrackerView, TrackerRow, TrackerViewConfig};
 }

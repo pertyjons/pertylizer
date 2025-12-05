@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run --example midi_test
 
-use std::io::{stdin, stdout, Write};
 use std::error::Error;
+use std::io::{Write, stdin, stdout};
 
 use midir::{Ignore, MidiInput};
 
@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     for (i, port) in ports.iter().enumerate() {
-        let name = midi_in.port_name(port).unwrap_or_else(|_| "Unknown".to_string());
+        let name = midi_in
+            .port_name(port)
+            .unwrap_or_else(|_| "Unknown".to_string());
         println!("  [{}] {}", i, name);
     }
 
@@ -65,17 +67,36 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let channel = status & 0x0F;
 
                 let description = match msg_type {
-                    0x80 => format!("Note Off ch={} note={} vel={}", channel + 1, message.get(1).unwrap_or(&0), message.get(2).unwrap_or(&0)),
+                    0x80 => format!(
+                        "Note Off ch={} note={} vel={}",
+                        channel + 1,
+                        message.get(1).unwrap_or(&0),
+                        message.get(2).unwrap_or(&0)
+                    ),
                     0x90 => {
                         let vel = message.get(2).unwrap_or(&0);
                         if *vel == 0 {
-                            format!("Note Off (vel=0) ch={} note={}", channel + 1, message.get(1).unwrap_or(&0))
+                            format!(
+                                "Note Off (vel=0) ch={} note={}",
+                                channel + 1,
+                                message.get(1).unwrap_or(&0)
+                            )
                         } else {
-                            format!("Note On ch={} note={} vel={}", channel + 1, message.get(1).unwrap_or(&0), vel)
+                            format!(
+                                "Note On ch={} note={} vel={}",
+                                channel + 1,
+                                message.get(1).unwrap_or(&0),
+                                vel
+                            )
                         }
-                    },
+                    }
                     0xA0 => format!("Poly AT ch={}", channel + 1),
-                    0xB0 => format!("CC ch={} cc={} val={}", channel + 1, message.get(1).unwrap_or(&0), message.get(2).unwrap_or(&0)),
+                    0xB0 => format!(
+                        "CC ch={} cc={} val={}",
+                        channel + 1,
+                        message.get(1).unwrap_or(&0),
+                        message.get(2).unwrap_or(&0)
+                    ),
                     0xC0 => format!("Program ch={}", channel + 1),
                     0xD0 => format!("Channel AT ch={}", channel + 1),
                     0xE0 => format!("Pitch Bend ch={}", channel + 1),

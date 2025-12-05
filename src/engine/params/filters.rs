@@ -132,9 +132,7 @@ impl FilterParam {
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Mode(_) => Self::Mode(
-                FilterMode::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Mode(_) => Self::Mode(FilterMode::from_index(value as usize).unwrap_or_default()),
             Self::Cutoff(_) => Self::Cutoff(Hertz::new(value)),
             Self::Resonance(_) => Self::Resonance(NormalizedValue::new(value)),
             Self::KeyTracking(_) => Self::KeyTracking(NormalizedValue::new(value)),
@@ -144,12 +142,24 @@ impl FilterParam {
     }
 
     /// Default templates
-    pub fn mode_default() -> Self { Self::Mode(FilterMode::default()) }
-    pub fn cutoff_default() -> Self { Self::Cutoff(Hertz::new(1000.0)) }
-    pub fn resonance_default() -> Self { Self::Resonance(NormalizedValue::new(0.0)) }
-    pub fn key_tracking_default() -> Self { Self::KeyTracking(NormalizedValue::new(0.0)) }
-    pub fn drive_default() -> Self { Self::Drive(Gain::UNITY) }
-    pub fn env_amount_default() -> Self { Self::EnvAmount(BipolarValue::new(0.0)) }
+    pub fn mode_default() -> Self {
+        Self::Mode(FilterMode::default())
+    }
+    pub fn cutoff_default() -> Self {
+        Self::Cutoff(Hertz::new(1000.0))
+    }
+    pub fn resonance_default() -> Self {
+        Self::Resonance(NormalizedValue::new(0.0))
+    }
+    pub fn key_tracking_default() -> Self {
+        Self::KeyTracking(NormalizedValue::new(0.0))
+    }
+    pub fn drive_default() -> Self {
+        Self::Drive(Gain::UNITY)
+    }
+    pub fn env_amount_default() -> Self {
+        Self::EnvAmount(BipolarValue::new(0.0))
+    }
 }
 
 impl Default for FilterParam {

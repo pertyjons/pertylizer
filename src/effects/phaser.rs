@@ -1,9 +1,9 @@
 //! Phaser effect using cascaded all-pass filters.
 
-use crate::engine::typed_params::{ModuleType, PhaserParam, Param};
+use crate::engine::typed_params::{ModuleType, Param, PhaserParam};
 use crate::modules::{
-    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{BipolarValue, FilterState, Hertz, NormalizedValue, Phase, SampleRate};
 
@@ -174,7 +174,11 @@ impl AudioEffect for Phaser {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
             let in_r = if idx_r < input.len() {
                 input[idx_r]
             } else {

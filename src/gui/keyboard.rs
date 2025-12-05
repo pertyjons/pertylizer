@@ -3,10 +3,10 @@
 //! Provides an 88-key piano keyboard (A0-C8) that can be played with mouse
 //! and shows the currently active octave range for computer keyboard input.
 
-use std::collections::HashMap;
-use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use crate::gui::widgets::colors;
 use crate::types::MidiNote;
+use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use std::collections::HashMap;
 
 /// MIDI note number for A0 (lowest note on 88-key piano)
 pub const PIANO_LOW_NOTE: u8 = MidiNote::A0.as_u8();
@@ -16,23 +16,13 @@ pub const PIANO_HIGH_NOTE: u8 = MidiNote::C8.as_u8();
 pub const TOTAL_KEYS: u8 = PIANO_HIGH_NOTE - PIANO_LOW_NOTE + 1;
 
 /// Result of keyboard interaction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyboardEvent {
     /// Note that was pressed (MidiNote for type safety)
     pub note_on: Option<MidiNote>,
     /// Notes that were released
     pub note_off: Vec<MidiNote>,
     pub octave_change: i32,
-}
-
-impl Default for KeyboardEvent {
-    fn default() -> Self {
-        Self {
-            note_on: None,
-            note_off: Vec::new(),
-            octave_change: 0,
-        }
-    }
 }
 
 /// Piano keyboard widget with 88 keys
@@ -54,7 +44,7 @@ impl PianoKeyboard {
         Self {
             pressed_keys: HashMap::new(),
             mouse_pressed_keys: HashMap::new(),
-            octave_offset: -1, // Start at C3 range
+            octave_offset: -1,    // Start at C3 range
             scroll_offset: 300.0, // Start scrolled to show middle C area
         }
     }
@@ -71,7 +61,8 @@ impl PianoKeyboard {
 
     /// Mark a note as pressed with velocity (for visual feedback)
     pub fn set_note_on(&mut self, note: MidiNote, velocity: f32) {
-        self.pressed_keys.insert(note.as_u8(), velocity.clamp(0.0, 1.0));
+        self.pressed_keys
+            .insert(note.as_u8(), velocity.clamp(0.0, 1.0));
     }
 
     /// Mark a note as released
@@ -123,7 +114,7 @@ impl PianoKeyboard {
     /// Get the octave highlight range (start note, end note) based on octave offset
     fn get_highlight_range(&self) -> (u8, u8) {
         // Computer keyboard maps to 2 octaves starting at base_note
-        let base_note = (48i32 + self.octave_offset * 12).max(0).min(127) as u8;
+        let base_note = (48i32 + self.octave_offset * 12).clamp(0, 127) as u8;
         let end_note = (base_note as u16 + 24).min(127) as u8;
         (base_note, end_note)
     }
@@ -139,7 +130,10 @@ impl PianoKeyboard {
             ui.separator();
 
             // Octave display and controls
-            ui.label(RichText::new(format!("Octave: {:+}", self.octave_offset)).color(colors::TEXT_SECONDARY));
+            ui.label(
+                RichText::new(format!("Octave: {:+}", self.octave_offset))
+                    .color(colors::TEXT_SECONDARY),
+            );
             if ui.small_button("-").clicked() && self.octave_offset > -2 {
                 self.octave_offset -= 1;
                 event.octave_change = -1;
@@ -152,7 +146,11 @@ impl PianoKeyboard {
             ui.separator();
 
             // Scroll to highlight button
-            if ui.small_button("Center").on_hover_text("Scroll to active octave").clicked() {
+            if ui
+                .small_button("Center")
+                .on_hover_text("Scroll to active octave")
+                .clicked()
+            {
                 let (start, _) = self.get_highlight_range();
                 let white_key_width = 24.0;
                 self.scroll_offset = Self::key_x_position(start, white_key_width) - 50.0;
@@ -179,10 +177,8 @@ impl PianoKeyboard {
         let total_keyboard_width = total_white_keys as f32 * white_key_width;
 
         // Allocate space for the keyboard
-        let (outer_rect, _outer_response) = ui.allocate_exact_size(
-            Vec2::new(available.x, keyboard_height),
-            Sense::hover()
-        );
+        let (outer_rect, _outer_response) =
+            ui.allocate_exact_size(Vec2::new(available.x, keyboard_height), Sense::hover());
 
         // Clamp scroll offset
         let max_scroll = (total_keyboard_width - outer_rect.width() + 20.0).max(0.0);
@@ -209,7 +205,11 @@ impl PianoKeyboard {
         // Now get painter after all allocations are done
         let painter = ui.painter();
         painter.rect_filled(outer_rect, 4.0, colors::BG_DARK);
-        painter.with_clip_rect(inner_rect).rect_filled(inner_rect, 2.0, Color32::from_rgb(15, 16, 20));
+        painter.with_clip_rect(inner_rect).rect_filled(
+            inner_rect,
+            2.0,
+            Color32::from_rgb(15, 16, 20),
+        );
 
         // Store which note was clicked this frame
         let mut clicked_note: Option<u8> = None;
@@ -221,16 +221,17 @@ impl PianoKeyboard {
                 continue;
             }
 
-            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset + inner_rect.left();
+            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + inner_rect.left();
             let key_rect = Rect::from_min_size(
                 Pos2::new(key_x, inner_rect.top() + 2.0),
                 Vec2::new(black_key_width, black_key_height),
             );
 
-            if let Some(pos) = hover_pos {
-                if key_rect.contains(pos) {
-                    hovered_black_key = Some(note);
-                }
+            if let Some(pos) = hover_pos
+                && key_rect.contains(pos)
+            {
+                hovered_black_key = Some(note);
             }
         }
 
@@ -240,7 +241,8 @@ impl PianoKeyboard {
                 continue;
             }
 
-            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset + inner_rect.left();
+            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + inner_rect.left();
 
             // Skip keys outside visible area
             if key_x + white_key_width < inner_rect.left() || key_x > inner_rect.right() {
@@ -254,7 +256,9 @@ impl PianoKeyboard {
 
             let velocity = self.pressed_keys.get(&note).copied();
             let is_in_highlight = note >= highlight_start && note < highlight_end;
-            let is_hovered = hover_pos.map(|p| key_rect.contains(p) && hovered_black_key.is_none()).unwrap_or(false);
+            let is_hovered = hover_pos
+                .map(|p| key_rect.contains(p) && hovered_black_key.is_none())
+                .unwrap_or(false);
 
             // Determine fill color (velocity modulates brightness)
             let fill = if let Some(vel) = velocity {
@@ -270,7 +274,9 @@ impl PianoKeyboard {
             };
 
             // Draw the key
-            painter.with_clip_rect(inner_rect).rect_filled(key_rect, 2.0, fill);
+            painter
+                .with_clip_rect(inner_rect)
+                .rect_filled(key_rect, 2.0, fill);
 
             // Draw highlight indicator line at bottom for active octave
             if is_in_highlight {
@@ -278,7 +284,11 @@ impl PianoKeyboard {
                     Pos2::new(key_x, inner_rect.top() + white_key_height - 4.0),
                     Vec2::new(white_key_width - 1.0, 4.0),
                 );
-                painter.with_clip_rect(inner_rect).rect_filled(indicator_rect, 0.0, colors::ACCENT_ORANGE.gamma_multiply(0.7));
+                painter.with_clip_rect(inner_rect).rect_filled(
+                    indicator_rect,
+                    0.0,
+                    colors::ACCENT_ORANGE.gamma_multiply(0.7),
+                );
             }
 
             // Draw key border
@@ -286,7 +296,7 @@ impl PianoKeyboard {
                 key_rect,
                 2.0,
                 Stroke::new(1.0, Color32::from_rgb(150, 150, 155)),
-                egui::StrokeKind::Inside
+                egui::StrokeKind::Inside,
             );
 
             // Draw note name on C keys
@@ -315,7 +325,8 @@ impl PianoKeyboard {
                 continue;
             }
 
-            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset + inner_rect.left();
+            let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + inner_rect.left();
 
             // Skip keys outside visible area
             if key_x + black_key_width < inner_rect.left() || key_x > inner_rect.right() {
@@ -345,7 +356,9 @@ impl PianoKeyboard {
             };
 
             // Draw the key
-            painter.with_clip_rect(inner_rect).rect_filled(key_rect, 2.0, fill);
+            painter
+                .with_clip_rect(inner_rect)
+                .rect_filled(key_rect, 2.0, fill);
 
             // Draw highlight indicator line at bottom for active octave
             if is_in_highlight {
@@ -353,7 +366,11 @@ impl PianoKeyboard {
                     Pos2::new(key_x, inner_rect.top() + black_key_height - 3.0),
                     Vec2::new(black_key_width, 3.0),
                 );
-                painter.with_clip_rect(inner_rect).rect_filled(indicator_rect, 0.0, colors::ACCENT_ORANGE.gamma_multiply(0.7));
+                painter.with_clip_rect(inner_rect).rect_filled(
+                    indicator_rect,
+                    0.0,
+                    colors::ACCENT_ORANGE.gamma_multiply(0.7),
+                );
             }
 
             // Handle click
@@ -363,17 +380,19 @@ impl PianoKeyboard {
         }
 
         // Handle mouse press/release
-        if let Some(note) = clicked_note {
-            if !self.mouse_pressed_keys.get(&note).copied().unwrap_or(false) {
-                // New note pressed (use default velocity 0.8 for mouse clicks)
-                self.mouse_pressed_keys.insert(note, true);
-                self.pressed_keys.insert(note, 0.8);
-                event.note_on = Some(MidiNote::new(note));
-            }
+        if let Some(note) = clicked_note
+            && !self.mouse_pressed_keys.get(&note).copied().unwrap_or(false)
+        {
+            // New note pressed (use default velocity 0.8 for mouse clicks)
+            self.mouse_pressed_keys.insert(note, true);
+            self.pressed_keys.insert(note, 0.8);
+            event.note_on = Some(MidiNote::new(note));
         }
 
         // Release notes when mouse is released or leaves the keyboard
-        if inner_response.drag_stopped() || (!inner_response.hovered() && inner_response.clicked_elsewhere()) {
+        if inner_response.drag_stopped()
+            || (!inner_response.hovered() && inner_response.clicked_elsewhere())
+        {
             for (&note, &pressed) in self.mouse_pressed_keys.iter() {
                 if pressed {
                     event.note_off.push(MidiNote::new(note));

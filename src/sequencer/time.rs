@@ -9,7 +9,9 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 pub const TICKS_PER_QUARTER: u32 = 960;
 
 /// Absolute position on the song timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct Tick(pub u64);
 
 impl Tick {
@@ -47,11 +49,7 @@ impl Tick {
     pub fn from_bar_beat_tick(bar: u32, beat: u32, tick: u32, time_sig: TimeSignature) -> Self {
         let ticks_per_bar = time_sig.ticks_per_bar();
         let ticks_per_beat = TICKS_PER_QUARTER * 4 / time_sig.denominator as u32;
-        Tick(
-            bar as u64 * ticks_per_bar as u64
-                + beat as u64 * ticks_per_beat as u64
-                + tick as u64,
-        )
+        Tick(bar as u64 * ticks_per_bar as u64 + beat as u64 * ticks_per_beat as u64 + tick as u64)
     }
 }
 
@@ -89,7 +87,9 @@ impl Add<Duration> for Tick {
 }
 
 /// Relative position within a pattern (0 = pattern start).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct PatternTick(pub u32);
 
 impl PatternTick {
@@ -130,7 +130,9 @@ impl Add<Duration> for PatternTick {
 }
 
 /// Duration in ticks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct Duration(pub u32);
 
 impl Duration {

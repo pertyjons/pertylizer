@@ -17,9 +17,12 @@
 use std::sync::LazyLock;
 
 use crate::engine::graph::ModuleGraph;
-use crate::engine::typed_params::{ModuleType, Param, OscillatorParam};
+use crate::engine::typed_params::{ModuleType, OscillatorParam, Param};
 use crate::modules::core::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds, Semitones};
+use crate::types::{
+    BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
+    Semitones,
+};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -237,7 +240,7 @@ impl Default for ExpressionSettings {
         Self {
             pitch_bend_range: DEFAULT_PITCH_BEND_RANGE,
             vibrato_depth: DEFAULT_VIBRATO_DEPTH,
-            velocity_to_amp: NormalizedValue::MAX,       // Full velocity sensitivity
+            velocity_to_amp: NormalizedValue::MAX, // Full velocity sensitivity
             velocity_to_filter: NormalizedValue::CENTER, // 50% velocity to filter
         }
     }

@@ -120,8 +120,7 @@ pub struct ModuleCpuTracker {
 impl ModuleCpuTracker {
     /// Create a new CPU tracker.
     pub fn new(block_size: usize, sample_rate: f32) -> Self {
-        let block_duration =
-            Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
+        let block_duration = Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
 
         Self {
             trackers: HashMap::new(),
@@ -228,8 +227,7 @@ impl ModuleCpuTracker {
     pub fn configure(&mut self, block_size: usize, sample_rate: f32) {
         self.block_size = block_size;
         self.sample_rate = sample_rate;
-        self.block_duration =
-            Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
+        self.block_duration = Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
     }
 }
 

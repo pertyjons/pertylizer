@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BeatDivision, BipolarValue, Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, Seconds, VoiceCount};
+use crate::types::{
+    BeatDivision, BipolarValue, Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, Seconds,
+    VoiceCount,
+};
 
 // ============================================================================
 // EFFECT MODE ENUMS
@@ -150,7 +153,13 @@ impl DelayParam {
             Self::Mode(m) => m.index() as f32,
             Self::Time(t) | Self::TimeLeft(t) | Self::TimeRight(t) => t.as_f32(),
             Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.as_f32(),
-            Self::TempoSync(b) => if *b { 1.0 } else { 0.0 },
+            Self::TempoSync(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             Self::SyncDivision(d) => d.as_f32(),
         }
     }
@@ -171,7 +180,9 @@ impl DelayParam {
 }
 
 impl Default for DelayParam {
-    fn default() -> Self { Self::Time(Seconds::new(0.25)) }
+    fn default() -> Self {
+        Self::Time(Seconds::new(0.25))
+    }
 }
 
 // ============================================================================
@@ -222,7 +233,9 @@ impl ReverbParam {
 }
 
 impl Default for ReverbParam {
-    fn default() -> Self { Self::Mix(NormalizedValue::new(0.3)) }
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::new(0.3))
+    }
 }
 
 // ============================================================================
@@ -261,7 +274,9 @@ impl DistortionParam {
 
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Mode(_) => Self::Mode(DistortionMode::from_index(value as usize).unwrap_or_default()),
+            Self::Mode(_) => {
+                Self::Mode(DistortionMode::from_index(value as usize).unwrap_or_default())
+            }
             Self::Drive(_) => Self::Drive(NormalizedValue::new(value)),
             Self::Tone(_) => Self::Tone(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
@@ -270,7 +285,9 @@ impl DistortionParam {
 }
 
 impl Default for DistortionParam {
-    fn default() -> Self { Self::Drive(NormalizedValue::new(0.5)) }
+    fn default() -> Self {
+        Self::Drive(NormalizedValue::new(0.5))
+    }
 }
 
 // ============================================================================
@@ -326,7 +343,9 @@ impl ChorusParam {
 }
 
 impl Default for ChorusParam {
-    fn default() -> Self { Self::Mix(NormalizedValue::new(0.5)) }
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::new(0.5))
+    }
 }
 
 // ============================================================================
@@ -382,7 +401,9 @@ impl PhaserParam {
 }
 
 impl Default for PhaserParam {
-    fn default() -> Self { Self::Mix(NormalizedValue::new(0.5)) }
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::new(0.5))
+    }
 }
 
 // ============================================================================
@@ -435,7 +456,9 @@ impl FlangerParam {
 }
 
 impl Default for FlangerParam {
-    fn default() -> Self { Self::Mix(NormalizedValue::new(0.5)) }
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::new(0.5))
+    }
 }
 
 // ============================================================================
@@ -491,7 +514,9 @@ impl CompressorParam {
 }
 
 impl Default for CompressorParam {
-    fn default() -> Self { Self::Threshold(Decibels::new(-20.0)) }
+    fn default() -> Self {
+        Self::Threshold(Decibels::new(-20.0))
+    }
 }
 
 // ============================================================================
@@ -552,5 +577,7 @@ impl EqParam {
 }
 
 impl Default for EqParam {
-    fn default() -> Self { Self::Mix(NormalizedValue::MAX) }
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::MAX)
+    }
 }

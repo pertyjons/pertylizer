@@ -14,10 +14,10 @@
 //! - Delay Modes: `"mono"`, `"stereo"`, `"ping_pong"`
 //! - Distortion Modes: `"soft_clip"`, `"hard_clip"`, `"tube"`, `"foldback"`, `"bitcrush"`
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
 use crate::engine::ModuleId;
@@ -150,7 +150,6 @@ pub enum ParamValue {
     Choice(String),
 }
 
-
 /// Connection between two modules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionState {
@@ -175,12 +174,7 @@ impl ConnectionState {
     pub fn to_connection(&self) -> Option<Connection> {
         let from_id: ModuleId = self.from.0.parse().ok()?;
         let to_id: ModuleId = self.to.0.parse().ok()?;
-        Some(Connection::new(
-            from_id,
-            &self.from.1,
-            to_id,
-            &self.to.1,
-        ))
+        Some(Connection::new(from_id, &self.from.1, to_id, &self.to.1))
     }
 }
 
@@ -234,20 +228,18 @@ impl Patch {
 
     /// Load a patch from a JSON file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PatchError> {
-        let content = fs::read_to_string(path.as_ref())
-            .map_err(|e| PatchError::Io(e.to_string()))?;
+        let content =
+            fs::read_to_string(path.as_ref()).map_err(|e| PatchError::Io(e.to_string()))?;
 
-        serde_json::from_str(&content)
-            .map_err(|e| PatchError::Parse(e.to_string()))
+        serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))
     }
 
     /// Save the patch to a JSON file.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PatchError> {
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| PatchError::Serialize(e.to_string()))?;
+        let content =
+            serde_json::to_string_pretty(self).map_err(|e| PatchError::Serialize(e.to_string()))?;
 
-        fs::write(path.as_ref(), content)
-            .map_err(|e| PatchError::Io(e.to_string()))
+        fs::write(path.as_ref(), content).map_err(|e| PatchError::Io(e.to_string()))
     }
 
     /// Add a module to the patch.
@@ -306,25 +298,33 @@ impl ModuleBuilder {
 
     /// Set a float parameter.
     pub fn param_f(mut self, name: &str, value: f32) -> Self {
-        self.state.parameters.insert(name.to_string(), ParamValue::Float(value));
+        self.state
+            .parameters
+            .insert(name.to_string(), ParamValue::Float(value));
         self
     }
 
     /// Set an integer parameter.
     pub fn param_i(mut self, name: &str, value: i32) -> Self {
-        self.state.parameters.insert(name.to_string(), ParamValue::Int(value));
+        self.state
+            .parameters
+            .insert(name.to_string(), ParamValue::Int(value));
         self
     }
 
     /// Set a boolean parameter.
     pub fn param_b(mut self, name: &str, value: bool) -> Self {
-        self.state.parameters.insert(name.to_string(), ParamValue::Bool(value));
+        self.state
+            .parameters
+            .insert(name.to_string(), ParamValue::Bool(value));
         self
     }
 
     /// Set a choice/enum parameter (waveform, filter mode, etc.).
     pub fn param_choice(mut self, name: &str, value: &str) -> Self {
-        self.state.parameters.insert(name.to_string(), ParamValue::Choice(value.to_string()));
+        self.state
+            .parameters
+            .insert(name.to_string(), ParamValue::Choice(value.to_string()));
         self
     }
 

@@ -107,10 +107,10 @@ impl EffectChain {
     /// Find an effect slot by its module type.
     pub fn find_effect_by_type(&mut self, module_type: ModuleType) -> Option<&mut EffectSlot> {
         self.slots.iter_mut().find_map(|slot| {
-            if let ChainSlot::Effect(effect_slot) = slot {
-                if effect_slot.module_type == module_type {
-                    return Some(effect_slot);
-                }
+            if let ChainSlot::Effect(effect_slot) = slot
+                && effect_slot.module_type == module_type
+            {
+                return Some(effect_slot);
             }
             None
         })
@@ -119,10 +119,10 @@ impl EffectChain {
     /// Find an effect slot by its module ID.
     pub fn find_effect_by_id(&mut self, module_id: ModuleId) -> Option<&mut EffectSlot> {
         self.slots.iter_mut().find_map(|slot| {
-            if let ChainSlot::Effect(effect_slot) = slot {
-                if effect_slot.module_id == module_id {
-                    return Some(effect_slot);
-                }
+            if let ChainSlot::Effect(effect_slot) = slot
+                && effect_slot.module_id == module_id
+            {
+                return Some(effect_slot);
             }
             None
         })
@@ -143,9 +143,8 @@ impl EffectChain {
 
     /// Remove an effect by ID.
     pub fn remove_effect(&mut self, id: ModuleId) {
-        self.slots.retain(|slot| {
-            !matches!(slot, ChainSlot::Effect(e) if e.module_id == id)
-        });
+        self.slots
+            .retain(|slot| !matches!(slot, ChainSlot::Effect(e) if e.module_id == id));
     }
 
     /// Add a visualizer to the end of the chain.
@@ -165,9 +164,8 @@ impl EffectChain {
 
     /// Remove a visualizer by ID.
     pub fn remove_visualizer(&mut self, id: ModuleId) {
-        self.slots.retain(|slot| {
-            !matches!(slot, ChainSlot::Visualizer(v) if v.module_id == id)
-        });
+        self.slots
+            .retain(|slot| !matches!(slot, ChainSlot::Visualizer(v) if v.module_id == id));
     }
 
     /// Clear all effects and visualizers.
@@ -220,7 +218,9 @@ impl EffectChain {
                     if viz_slot.enabled {
                         // Visualizers capture audio data but don't modify the signal
                         viz_slot.buffer.write_interleaved(mix_buffer.as_slice());
-                        viz_slot.buffer.update_levels_interleaved(mix_buffer.as_slice());
+                        viz_slot
+                            .buffer
+                            .update_levels_interleaved(mix_buffer.as_slice());
                     }
                 }
             }

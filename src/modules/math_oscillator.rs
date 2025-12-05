@@ -11,7 +11,9 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate};
+use crate::types::{
+    BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate,
+};
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -90,6 +92,7 @@ impl MathOscillator {
 
     /// Generate a sample using the current algorithm.
     #[inline]
+    #[allow(clippy::many_single_char_names)] // Mathematical variables: t, a, b, c
     fn generate_sample(&mut self) -> f32 {
         let t = self.phase.as_f32();
         let dt = self.frequency.as_f32() / self.sample_rate.as_f32();
@@ -357,8 +360,7 @@ impl MathOscillator {
 
     /// Trigger a burst for Karplus-Strong.
     fn trigger_burst(&mut self) {
-        let delay_samples =
-            (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
+        let delay_samples = (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
         self.burst_remaining = FrameCount::new(delay_samples.min(MAX_DELAY_SIZE));
         // Clear delay line for clean start
         self.delay_line.fill(0.0);
@@ -448,12 +450,10 @@ impl Describable for MathOscillator {
                 PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
             )
             .port(
-                PortDescriptor::control_input("param_a", "Mod A")
-                    .description("Param A modulation"),
+                PortDescriptor::control_input("param_a", "Mod A").description("Param A modulation"),
             )
             .port(
-                PortDescriptor::control_input("param_b", "Mod B")
-                    .description("Param B modulation"),
+                PortDescriptor::control_input("param_b", "Mod B").description("Param B modulation"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
     }
@@ -488,12 +488,10 @@ impl PolyModule for MathOscillator {
             let base_b = self.var_b;
 
             if let Some(ma) = mod_a {
-                self.var_a =
-                    NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
+                self.var_a = NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
             }
             if let Some(mb) = mod_b {
-                self.var_b =
-                    NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
+                self.var_b = NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
             }
 
             self.output_buffer[i] = self.generate_sample();

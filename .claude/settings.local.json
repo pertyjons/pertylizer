@@ -26,7 +26,11 @@
       "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/amplifier.rs )",
       "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/math_oscillator.rs )",
       "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/filter.rs )",
-      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/noise.rs)"
+      "Bash(/home/per/Dokument/rust-projects/modular-synth/src/modules/noise.rs)",
+      "Bash(cargo clippy:*)",
+      "Bash(RUSTFLAGS=\"-D warnings\" cargo build:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ids::{PatternId, TrackId};
 use super::pattern::Pattern;
-use super::time::{Duration, Tick, TimeSignature, TICKS_PER_QUARTER};
+use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
 
 /// Tempo change event.
@@ -246,10 +246,16 @@ impl Song {
     }
 
     /// Remove a placement at a specific position.
-    pub fn remove_placement(&mut self, pattern_id: PatternId, track_id: TrackId, start: Tick) -> bool {
-        let pos = self.arrangement.iter().position(|p| {
-            p.pattern_id == pattern_id && p.track_id == track_id && p.start == start
-        });
+    pub fn remove_placement(
+        &mut self,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+    ) -> bool {
+        let pos = self
+            .arrangement
+            .iter()
+            .position(|p| p.pattern_id == pattern_id && p.track_id == track_id && p.start == start);
 
         if let Some(idx) = pos {
             self.arrangement.remove(idx);
@@ -265,7 +271,11 @@ impl Song {
     }
 
     /// Get placements in a time range.
-    pub fn placements_in_range(&self, start: Tick, end: Tick) -> impl Iterator<Item = &PatternPlacement> {
+    pub fn placements_in_range(
+        &self,
+        start: Tick,
+        end: Tick,
+    ) -> impl Iterator<Item = &PatternPlacement> {
         self.arrangement.iter().filter(move |p| {
             let pattern_end = self
                 .patterns
@@ -277,8 +287,13 @@ impl Song {
     }
 
     /// Get placements on a specific track.
-    pub fn placements_on_track(&self, track_id: TrackId) -> impl Iterator<Item = &PatternPlacement> {
-        self.arrangement.iter().filter(move |p| p.track_id == track_id)
+    pub fn placements_on_track(
+        &self,
+        track_id: TrackId,
+    ) -> impl Iterator<Item = &PatternPlacement> {
+        self.arrangement
+            .iter()
+            .filter(move |p| p.track_id == track_id)
     }
 
     // === Tempo ===
@@ -326,7 +341,9 @@ impl Song {
             tick,
             signature: sig,
         };
-        let pos = self.time_signature_changes.partition_point(|t| t.tick <= tick);
+        let pos = self
+            .time_signature_changes
+            .partition_point(|t| t.tick <= tick);
         self.time_signature_changes.insert(pos, change);
     }
 
@@ -432,7 +449,9 @@ mod tests {
 
     #[test]
     fn test_song_creation() {
-        let song = Song::new("Test Song").with_author("Test Author").with_tempo(140.0);
+        let song = Song::new("Test Song")
+            .with_author("Test Author")
+            .with_tempo(140.0);
 
         assert_eq!(song.name, "Test Song");
         assert_eq!(song.author, "Test Author");

@@ -162,7 +162,8 @@ mod tests {
             Pitch::new(60).unwrap(),
             Velocity::MF,
             InstrumentId(0),
-        ).with_duration(Duration(200));
+        )
+        .with_duration(Duration(200));
 
         // Not playing before start
         assert!(!late_note.is_playing_at(PatternTick(50)));

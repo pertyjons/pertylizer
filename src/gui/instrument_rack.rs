@@ -3,17 +3,15 @@
 //! Provides a panel for visualizing and controlling instruments (instruments),
 //! including volume, pan, MIDI channel, and mute controls.
 
-use eframe::egui::{self, RichText, Ui};
-use crate::engine::{
-    EngineHandle,
-    EngineCommand,
-    InstrumentParam,
-    instrument::{InstrumentId, MidiChannel, Instrument},
-};
-use crate::types::{Gain, BipolarValue};
 use super::patch_editor::PatchEditor;
-use super::widgets::{Knob, colors};
 use super::theme::theme;
+use super::widgets::{Knob, colors};
+use crate::engine::{
+    EngineCommand, EngineHandle, InstrumentParam,
+    instrument::{Instrument, InstrumentId, MidiChannel},
+};
+use crate::types::{BipolarValue, Gain};
+use eframe::egui::{self, RichText, Ui};
 
 /// GUI state for a single instrument.
 ///
@@ -120,7 +118,11 @@ pub fn show_instrument_rack(
     ui.vertical(|ui| {
         // Header
         ui.horizontal(|ui| {
-            ui.label(RichText::new("INSTRUMENTS").color(colors::TEXT_SECONDARY).size(t.fonts.size_normal));
+            ui.label(
+                RichText::new("INSTRUMENTS")
+                    .color(colors::TEXT_SECONDARY)
+                    .size(t.fonts.size_normal),
+            );
         });
         ui.add_space(4.0);
         ui.separator();
@@ -162,7 +164,7 @@ pub fn show_instrument_rack(
                                 ui.add(
                                     egui::TextEdit::singleline(&mut instruments[idx].name)
                                         .desired_width(80.0)
-                                        .font(egui::FontId::proportional(t.fonts.size_small))
+                                        .font(egui::FontId::proportional(t.fonts.size_small)),
                                 );
 
                                 ui.add_space(4.0);
@@ -175,32 +177,40 @@ pub fn show_instrument_rack(
                                     format!("Ch {}", channel.as_one_indexed())
                                 };
 
-                                egui::ComboBox::from_id_salt(format!("ch_{}", instrument_id.as_u64()))
-                                    .selected_text(RichText::new(&channel_label).size(t.fonts.size_small))
-                                    .width(50.0)
-                                    .show_ui(ui, |ui| {
-                                        // Omni option
-                                        if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
-                                            instruments[idx].channel = MidiChannel::OMNI;
+                                egui::ComboBox::from_id_salt(format!(
+                                    "ch_{}",
+                                    instrument_id.as_u64()
+                                ))
+                                .selected_text(
+                                    RichText::new(&channel_label).size(t.fonts.size_small),
+                                )
+                                .width(50.0)
+                                .show_ui(ui, |ui| {
+                                    // Omni option
+                                    if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
+                                        instruments[idx].channel = MidiChannel::OMNI;
+                                        handle.send(EngineCommand::SetInstrumentMidiChannel {
+                                            instrument_id,
+                                            channel: MidiChannel::OMNI,
+                                        });
+                                    }
+                                    // Channels 1-16
+                                    for ch in 1..=16u8 {
+                                        let midi_ch = MidiChannel::from_one_indexed(ch).unwrap();
+                                        let is_selected =
+                                            !channel.is_omni() && channel.as_one_indexed() == ch;
+                                        if ui
+                                            .selectable_label(is_selected, format!("Ch {}", ch))
+                                            .clicked()
+                                        {
+                                            instruments[idx].channel = midi_ch;
                                             handle.send(EngineCommand::SetInstrumentMidiChannel {
                                                 instrument_id,
-                                                channel: MidiChannel::OMNI,
+                                                channel: midi_ch,
                                             });
                                         }
-                                        // Channels 1-16
-                                        for ch in 1..=16u8 {
-                                            let midi_ch = MidiChannel::from_one_indexed(ch).unwrap();
-                                            let is_selected = !channel.is_omni()
-                                                && channel.as_one_indexed() == ch;
-                                            if ui.selectable_label(is_selected, format!("Ch {}", ch)).clicked() {
-                                                instruments[idx].channel = midi_ch;
-                                                handle.send(EngineCommand::SetInstrumentMidiChannel {
-                                                    instrument_id,
-                                                    channel: midi_ch,
-                                                });
-                                            }
-                                        }
-                                    });
+                                    }
+                                });
 
                                 ui.add_space(4.0);
 
@@ -211,7 +221,11 @@ pub fn show_instrument_rack(
                                     .default(1.0)
                                     .label("Vol")
                                     .size(t.sizes.knob_size_small)
-                                    .accent_color(if muted { colors::TEXT_DIM } else { colors::ACCENT_GREEN })
+                                    .accent_color(if muted {
+                                        colors::TEXT_DIM
+                                    } else {
+                                        colors::ACCENT_GREEN
+                                    })
                                     .show(ui);
 
                                 if vol_response.changed() && !muted {
@@ -243,11 +257,22 @@ pub fn show_instrument_rack(
 
                                 // Mute button
                                 let mute_text = "M";
-                                let mute_color = if muted { colors::ACCENT_RED } else { colors::TEXT_DIM };
-                                if ui.add(
-                                    egui::Button::new(RichText::new(mute_text).color(mute_color).size(t.fonts.size_small))
-                                        .min_size(egui::vec2(24.0, 24.0))
-                                ).clicked() {
+                                let mute_color = if muted {
+                                    colors::ACCENT_RED
+                                } else {
+                                    colors::TEXT_DIM
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(mute_text)
+                                                .color(mute_color)
+                                                .size(t.fonts.size_small),
+                                        )
+                                        .min_size(egui::vec2(24.0, 24.0)),
+                                    )
+                                    .clicked()
+                                {
                                     let new_volume = instruments[idx].toggle_mute();
                                     handle.send(EngineCommand::SetInstrumentParameter {
                                         instrument_id,
@@ -256,13 +281,20 @@ pub fn show_instrument_rack(
                                 }
 
                                 // Remove button (only if more than one instrument)
-                                if can_remove_instrument {
-                                    if ui.add(
-                                        egui::Button::new(RichText::new("×").color(colors::TEXT_DIM).size(t.fonts.size_small))
-                                            .min_size(egui::vec2(20.0, 24.0))
-                                    ).on_hover_text("Remove instrument").clicked() {
-                                        instrument_to_remove = Some(idx);
-                                    }
+                                if can_remove_instrument
+                                    && ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("×")
+                                                    .color(colors::TEXT_DIM)
+                                                    .size(t.fonts.size_small),
+                                            )
+                                            .min_size(egui::vec2(20.0, 24.0)),
+                                        )
+                                        .on_hover_text("Remove instrument")
+                                        .clicked()
+                                {
+                                    instrument_to_remove = Some(idx);
                                 }
                             });
                         });
@@ -290,7 +322,10 @@ pub fn show_instrument_rack(
         ui.add_space(4.0);
 
         // Add new instrument button
-        if ui.button(RichText::new("+ Add Instrument").size(t.fonts.size_small)).clicked() {
+        if ui
+            .button(RichText::new("+ Add Instrument").size(t.fonts.size_small))
+            .clicked()
+        {
             let new_id = InstrumentId::new(*next_instrument_id);
             *next_instrument_id += 1;
 
@@ -298,12 +333,12 @@ pub fn show_instrument_rack(
             let new_name = format!("Instrument {}", instrument_num);
 
             // Assign next available channel
-            let new_channel = MidiChannel::from_one_indexed(instrument_num as u8)
-                .unwrap_or(MidiChannel::CH1);
+            let new_channel =
+                MidiChannel::from_one_indexed(instrument_num as u8).unwrap_or(MidiChannel::CH1);
 
             // Create UI state
-            let new_ui_instrument = InstrumentUiState::new(new_id, &new_name)
-                .with_channel(new_channel);
+            let new_ui_instrument =
+                InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);
 
             // Create engine instrument (Box for real-time safety)
             let mut engine_instrument = Instrument::new(new_id, &new_name);

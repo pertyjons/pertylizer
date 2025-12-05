@@ -10,27 +10,27 @@
 //! - Amplifiers/VCAs (level control)
 //! - Output (final stereo output)
 
-pub mod core;
-pub mod oscillator;
-pub mod math_oscillator;
-pub mod sub_osc;
-pub mod noise;
-pub mod filter;
-pub mod envelope;
-pub mod lfo;
 pub mod amplifier;
+pub mod core;
+pub mod envelope;
+pub mod filter;
+pub mod lfo;
+pub mod math_oscillator;
+pub mod noise;
+pub mod oscillator;
 pub mod output;
+pub mod sub_osc;
 
-pub use core::*;
-pub use oscillator::Oscillator;
-pub use math_oscillator::MathOscillator;
-pub use sub_osc::SubOscillator;
-pub use noise::NoiseGenerator;
-pub use filter::{Filter, LadderFilter};
-pub use envelope::{Envelope, EnvelopeStage};
-pub use lfo::Lfo;
 pub use amplifier::{Amplifier, Mixer};
+pub use core::*;
+pub use envelope::{Envelope, EnvelopeStage};
+pub use filter::{Filter, LadderFilter};
+pub use lfo::Lfo;
+pub use math_oscillator::MathOscillator;
+pub use noise::NoiseGenerator;
+pub use oscillator::Oscillator;
 pub use output::StereoOutput;
+pub use sub_osc::SubOscillator;
 
 // Re-export param types from engine for convenience
-pub use crate::engine::typed_params::{SubOscWaveform, SubOscOctave, NoiseType};
+pub use crate::engine::typed_params::{NoiseType, SubOscOctave, SubOscWaveform};

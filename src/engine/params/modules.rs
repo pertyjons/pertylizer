@@ -97,12 +97,18 @@ impl AmplifierParam {
         }
     }
 
-    pub fn level_default() -> Self { Self::Level(Gain::UNITY) }
-    pub fn pan_default() -> Self { Self::Pan(BipolarValue::CENTER) }
+    pub fn level_default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
+    pub fn pan_default() -> Self {
+        Self::Pan(BipolarValue::CENTER)
+    }
 }
 
 impl Default for AmplifierParam {
-    fn default() -> Self { Self::Level(Gain::UNITY) }
+    fn default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
 }
 
 // ============================================================================
@@ -147,8 +153,18 @@ impl MixerParam {
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Input1(g) | Self::Input2(g) | Self::Input3(g) | Self::Input4(g) | Self::Master(g) => g.as_f32(),
-            Self::Mute(b) | Self::Limit(b) => if *b { 1.0 } else { 0.0 },
+            Self::Input1(g)
+            | Self::Input2(g)
+            | Self::Input3(g)
+            | Self::Input4(g)
+            | Self::Master(g) => g.as_f32(),
+            Self::Mute(b) | Self::Limit(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -166,7 +182,9 @@ impl MixerParam {
 }
 
 impl Default for MixerParam {
-    fn default() -> Self { Self::Master(Gain::UNITY) }
+    fn default() -> Self {
+        Self::Master(Gain::UNITY)
+    }
 }
 
 // ============================================================================
@@ -211,7 +229,11 @@ impl SamplePlayerParam {
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Speed(v) | Self::Start(v) | Self::End(v) | Self::LoopStart(v) | Self::LoopEnd(v) => v.as_f32(),
+            Self::Speed(v)
+            | Self::Start(v)
+            | Self::End(v)
+            | Self::LoopStart(v)
+            | Self::LoopEnd(v) => v.as_f32(),
             Self::LoopMode(m) => m.index() as f32,
             Self::Level(g) => g.as_f32(),
         }
@@ -222,7 +244,9 @@ impl SamplePlayerParam {
             Self::Speed(_) => Self::Speed(NormalizedValue::new(value)),
             Self::Start(_) => Self::Start(NormalizedValue::new(value)),
             Self::End(_) => Self::End(NormalizedValue::new(value)),
-            Self::LoopMode(_) => Self::LoopMode(LoopMode::from_index(value as usize).unwrap_or_default()),
+            Self::LoopMode(_) => {
+                Self::LoopMode(LoopMode::from_index(value as usize).unwrap_or_default())
+            }
             Self::LoopStart(_) => Self::LoopStart(NormalizedValue::new(value)),
             Self::LoopEnd(_) => Self::LoopEnd(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
@@ -231,7 +255,9 @@ impl SamplePlayerParam {
 }
 
 impl Default for SamplePlayerParam {
-    fn default() -> Self { Self::Level(Gain::UNITY) }
+    fn default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
 }
 
 // ============================================================================
@@ -282,7 +308,12 @@ impl GranularParam {
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Position(v) | Self::PositionSpread(v) | Self::Density(v) | Self::PitchSpread(v) | Self::Shape(v) | Self::Spread(v) => v.as_f32(),
+            Self::Position(v)
+            | Self::PositionSpread(v)
+            | Self::Density(v)
+            | Self::PitchSpread(v)
+            | Self::Shape(v)
+            | Self::Spread(v) => v.as_f32(),
             Self::GrainSize(ms) => ms.as_f32(),
             Self::Pitch(s) => s.as_f32(),
             Self::Level(g) => g.as_f32(),
@@ -305,7 +336,9 @@ impl GranularParam {
 }
 
 impl Default for GranularParam {
-    fn default() -> Self { Self::Level(Gain::UNITY) }
+    fn default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
 }
 
 // ============================================================================
@@ -344,7 +377,13 @@ impl OscilloscopeParam {
             Self::Time(t) => t.as_f32(),
             Self::Gain(g) => g.as_f32(),
             Self::Trigger(v) => v.as_f32(),
-            Self::Frozen(b) => if *b { 1.0 } else { 0.0 },
+            Self::Frozen(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -359,7 +398,9 @@ impl OscilloscopeParam {
 }
 
 impl Default for OscilloscopeParam {
-    fn default() -> Self { Self::Time(Seconds::new(0.01)) }
+    fn default() -> Self {
+        Self::Time(Seconds::new(0.01))
+    }
 }
 
 // ============================================================================
@@ -394,7 +435,13 @@ impl LevelMeterParam {
         match self {
             Self::PeakHold(t) => t.as_f32(),
             Self::DecayRate(v) => v.as_f32(),
-            Self::ShowRms(b) => if *b { 1.0 } else { 0.0 },
+            Self::ShowRms(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -408,5 +455,7 @@ impl LevelMeterParam {
 }
 
 impl Default for LevelMeterParam {
-    fn default() -> Self { Self::PeakHold(Seconds::new(1.0)) }
+    fn default() -> Self {
+        Self::PeakHold(Seconds::new(1.0))
+    }
 }

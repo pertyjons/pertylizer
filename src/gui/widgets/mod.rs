@@ -13,17 +13,17 @@ mod scope;
 mod waveform;
 
 // Re-export theme for convenience
-pub use super::theme::{theme, with_theme_mut, set_theme, Theme};
+pub use super::theme::{Theme, set_theme, theme, with_theme_mut};
 
 // Re-export colors for backwards compatibility
 pub use super::theme::colors;
 
 // Re-export all widgets
 pub use cable::draw_cable;
-pub use envelope::{draw_adsr_curve, EnvelopeEditor};
+pub use envelope::{EnvelopeEditor, draw_adsr_curve};
 pub use frame::module_frame;
 pub use knob::Knob;
-pub use meter::{draw_level_meter, draw_stereo_meter, level_color, Meter};
+pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
 pub use port::{Port, PortDirection, PortType};
 pub use scope::draw_oscilloscope;
 pub use waveform::{WaveformSelector, WaveformType};

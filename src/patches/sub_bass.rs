@@ -1,13 +1,15 @@
 //! Sub Bass - Deep, weighty bass using the sub-oscillator.
 
-use crate::patch::{Patch, ModuleBuilder, ModuleType};
+use crate::patch::{ModuleBuilder, ModuleType, Patch};
 
 /// Sub Bass - Deep bass patch showcasing the sub-oscillator module.
 pub fn patch_sub_bass() -> Patch {
     let mut patch = Patch::new("Sub Bass");
     patch.author = Some("Modular Synth".to_string());
-    patch.description = Some("Deep, weighty bass using the new sub-oscillator for massive low end.".to_string());
-    patch.notes = Some(r#"
+    patch.description =
+        Some("Deep, weighty bass using the new sub-oscillator for massive low end.".to_string());
+    patch.notes = Some(
+        r"
 SIGNAL FLOW:
 This patch demonstrates the new SubOscillator module for adding weight to bass sounds.
 The main oscillator provides harmonic content while the sub-oscillator adds pure fundamental.
@@ -32,86 +34,112 @@ Negative curves give the bass a punchy, immediate character:
 
 TRY: Play in the lowest octave for massive sub bass. Works great for
 dubstep, EDM, or any music needing powerful low end.
-"#.to_string());
-    patch.tags = vec!["bass".into(), "sub".into(), "deep".into(), "edm".into(), "dubstep".into()];
+"
+        .to_string(),
+    );
+    patch.tags = vec![
+        "bass".into(),
+        "sub".into(),
+        "deep".into(),
+        "edm".into(),
+        "dubstep".into(),
+    ];
 
     // Main OSC - Sawtooth for harmonics (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
-        .position(50.0, 50.0)
-        .waveform("sawtooth")
-        .param_f("level", 0.5)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .position(50.0, 50.0)
+            .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .build(),
+    );
 
     // Sub-Oscillator - Pure sine one octave down (sub-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::SubOscillator)
-        .position(50.0, 200.0)
-        .param_choice("waveform", "sine")  // Pure fundamental
-        .param_choice("octave", "minus1")   // One octave down
-        .param_f("level", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::SubOscillator)
+            .position(50.0, 200.0)
+            .param_choice("waveform", "sine") // Pure fundamental
+            .param_choice("octave", "minus1") // One octave down
+            .param_f("level", 0.8)
+            .build(),
+    );
 
     // Filter - Lowpass (flt-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
-        .position(250.0, 100.0)
-        .filter_mode("lowpass")
-        .param_f("cutoff", 300.0)
-        .param_f("resonance", 0.4)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Filter)
+            .position(250.0, 100.0)
+            .filter_mode("lowpass")
+            .param_f("cutoff", 300.0)
+            .param_f("resonance", 0.4)
+            .build(),
+    );
 
     // Amp Envelope with punchy curves (env-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
-        .position(50.0, 400.0)
-        .param_f("attack", 0.003)
-        .param_f("decay", 0.2)
-        .param_f("sustain", 0.7)
-        .param_f("release", 0.15)
-        .param_f("attack_curve", -0.7)  // Fast punch
-        .param_f("decay_curve", -0.3)   // Quick settle
-        .param_f("release_curve", -0.4) // Controlled release
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .position(50.0, 400.0)
+            .param_f("attack", 0.003)
+            .param_f("decay", 0.2)
+            .param_f("sustain", 0.7)
+            .param_f("release", 0.15)
+            .param_f("attack_curve", -0.7) // Fast punch
+            .param_f("decay_curve", -0.3) // Quick settle
+            .param_f("release_curve", -0.4) // Controlled release
+            .build(),
+    );
 
     // Filter Envelope (env-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
-        .position(250.0, 400.0)
-        .param_f("attack", 0.001)
-        .param_f("decay", 0.3)
-        .param_f("sustain", 0.2)
-        .param_f("release", 0.2)
-        .param_f("attack_curve", -0.8)
-        .param_f("decay_curve", -0.4)
-        .param_f("release_curve", -0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Envelope)
+            .position(250.0, 400.0)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.3)
+            .param_f("sustain", 0.2)
+            .param_f("release", 0.2)
+            .param_f("attack_curve", -0.8)
+            .param_f("decay_curve", -0.4)
+            .param_f("release_curve", -0.3)
+            .build(),
+    );
 
     // Amplifier (amp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
-        .position(450.0, 100.0)
-        .param_f("level", 0.85)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .position(450.0, 100.0)
+            .param_f("level", 0.85)
+            .build(),
+    );
 
     // Soft clip for warmth (dst-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Distortion)
-        .position(650.0, 100.0)
-        .distortion_mode("soft_clip")
-        .param_f("drive", 0.15)
-        .param_f("mix", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Distortion)
+            .position(650.0, 100.0)
+            .distortion_mode("soft_clip")
+            .param_f("drive", 0.15)
+            .param_f("mix", 0.3)
+            .build(),
+    );
 
     // Oscilloscope (scp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
-        .position(850.0, 100.0)
-        .param_f("time", 1.0)
-        .param_f("gain", 1.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+            .position(850.0, 100.0)
+            .param_f("time", 1.0)
+            .param_f("gain", 1.0)
+            .build(),
+    );
 
     // Stereo Output (out-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
-        .position(1050.0, 100.0)
-        .param_f("master", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .position(1050.0, 100.0)
+            .param_f("master", 0.8)
+            .build(),
+    );
 
     // Connections
     patch.add_connection("osc-1", "out", "flt-1", "in");
-    patch.add_connection("sub-1", "out", "flt-1", "in");  // Sub adds weight
+    patch.add_connection("sub-1", "out", "flt-1", "in"); // Sub adds weight
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");

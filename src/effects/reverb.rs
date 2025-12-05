@@ -397,7 +397,9 @@ impl AudioEffect for Reverb {
             match reverb_param {
                 ReverbParam::RoomSize(s) => self.room_size = s,
                 ReverbParam::Damping(d) => self.damping = d,
-                ReverbParam::PreDelay(p) => self.pre_delay = Seconds::new(p.as_f32().clamp(0.0, 0.5)),
+                ReverbParam::PreDelay(p) => {
+                    self.pre_delay = Seconds::new(p.as_f32().clamp(0.0, 0.5))
+                }
                 ReverbParam::Width(w) => self.stereo_spread = w,
                 ReverbParam::Mix(m) => self.mix = m,
             }

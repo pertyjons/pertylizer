@@ -133,7 +133,7 @@ impl NoiseState {
     }
 
     /// Default seed value.
-    pub const DEFAULT: Self = Self(0x12345678);
+    pub const DEFAULT: Self = Self(0x1234_5678);
 
     /// Get the raw state.
     #[inline]
@@ -352,7 +352,9 @@ impl From<Amplitude> for f32 {
 ///
 /// Represents the number of simultaneous voices in a module.
 /// Typical range is 1-16 for polyphonic synths, 1-4 for chorus effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[repr(transparent)]
 pub struct VoiceCount(pub u8);
 

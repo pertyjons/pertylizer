@@ -23,9 +23,9 @@ use std::io::Write;
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use thiserror::Error;
 
+use crate::engine::CommandSender;
 use crate::engine::commands::EngineCommand;
 use crate::engine::instrument::MidiChannel;
-use crate::engine::CommandSender;
 use crate::types::{BipolarValue, MidiNote, NormalizedValue};
 
 /// MIDI message status bytes (high nibble).

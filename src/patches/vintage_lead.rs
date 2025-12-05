@@ -1,13 +1,14 @@
 //! Vintage Lead - Classic analog-style mono lead with vibrato.
 
-use crate::patch::{Patch, ModuleBuilder, ModuleType};
+use crate::patch::{ModuleBuilder, ModuleType, Patch};
 
 /// Vintage Lead - Classic analog-style mono lead with vibrato.
 pub fn patch_vintage_lead() -> Patch {
     let mut patch = Patch::new("Vintage Lead");
     patch.author = Some("Modular Synth".to_string());
     patch.description = Some("Classic analog-style mono lead with vibrato and delay.".to_string());
-    patch.notes = Some(r#"
+    patch.notes = Some(
+        r#"
 SIGNAL FLOW:
 Two oscillators create the core sound: a sawtooth for brightness and a
 pulse wave (with PWM) for movement and thickness. The pulse width is
@@ -28,99 +29,130 @@ without overwhelming the dry signal.
 
 TRY: Play melodic lines in the upper register. The vibrato adds expression
 to held notes. Use pitch bends for extra expressiveness.
-"#.to_string());
-    patch.tags = vec!["lead".into(), "vintage".into(), "analog".into(), "mono".into()];
+"#
+        .to_string(),
+    );
+    patch.tags = vec![
+        "lead".into(),
+        "vintage".into(),
+        "analog".into(),
+        "mono".into(),
+    ];
 
     // OSC1 - Sawtooth (osc-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscillator)
-        .position(50.0, 50.0)
-        .waveform("sawtooth")
-        .param_f("level", 0.6)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .position(50.0, 50.0)
+            .waveform("sawtooth")
+            .param_f("level", 0.6)
+            .build(),
+    );
 
     // OSC2 - Pulse with PWM (osc-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Oscillator)
-        .position(50.0, 200.0)
-        .waveform("pulse")
-        .param_f("level", 0.4)
-        .param_f("pulse_width", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Oscillator)
+            .position(50.0, 200.0)
+            .waveform("pulse")
+            .param_f("level", 0.4)
+            .param_f("pulse_width", 0.3)
+            .build(),
+    );
 
     // Mixer (mix-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Mixer)
-        .position(250.0, 100.0)
-        .param_f("level", 0.85)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Mixer)
+            .position(250.0, 100.0)
+            .param_f("level", 0.85)
+            .build(),
+    );
 
     // Filter (flt-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Filter)
-        .position(450.0, 100.0)
-        .filter_mode("lowpass")
-        .param_f("cutoff", 2000.0)
-        .param_f("resonance", 0.4)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Filter)
+            .position(450.0, 100.0)
+            .filter_mode("lowpass")
+            .param_f("cutoff", 2000.0)
+            .param_f("resonance", 0.4)
+            .build(),
+    );
 
     // Amp Envelope (env-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Envelope)
-        .position(50.0, 400.0)
-        .param_f("attack", 0.005)
-        .param_f("decay", 0.1)
-        .param_f("sustain", 0.8)
-        .param_f("release", 0.2)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .position(50.0, 400.0)
+            .param_f("attack", 0.005)
+            .param_f("decay", 0.1)
+            .param_f("sustain", 0.8)
+            .param_f("release", 0.2)
+            .build(),
+    );
 
     // Filter Envelope (env-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Envelope)
-        .position(250.0, 400.0)
-        .param_f("attack", 0.002)
-        .param_f("decay", 0.2)
-        .param_f("sustain", 0.4)
-        .param_f("release", 0.15)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Envelope)
+            .position(250.0, 400.0)
+            .param_f("attack", 0.002)
+            .param_f("decay", 0.2)
+            .param_f("sustain", 0.4)
+            .param_f("release", 0.15)
+            .build(),
+    );
 
     // Vibrato LFO (lfo-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo)
-        .position(450.0, 400.0)
-        .waveform("sine")
-        .param_f("rate", 5.5)
-        .param_f("depth", 0.015)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Lfo)
+            .position(450.0, 400.0)
+            .waveform("sine")
+            .param_f("rate", 5.5)
+            .param_f("depth", 0.015)
+            .build(),
+    );
 
     // PWM LFO (lfo-2)
-    patch.add_module(ModuleBuilder::new(2, ModuleType::Lfo)
-        .position(650.0, 400.0)
-        .waveform("triangle")
-        .param_f("rate", 0.4)
-        .param_f("depth", 0.35)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Lfo)
+            .position(650.0, 400.0)
+            .waveform("triangle")
+            .param_f("rate", 0.4)
+            .param_f("depth", 0.35)
+            .build(),
+    );
 
     // Amplifier (amp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Amplifier)
-        .position(650.0, 100.0)
-        .param_f("level", 0.75)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .position(650.0, 100.0)
+            .param_f("level", 0.75)
+            .build(),
+    );
 
     // Delay (dly-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Delay)
-        .position(850.0, 100.0)
-        .delay_mode("ping_pong")
-        .param_f("time", 0.35)
-        .param_f("feedback", 0.4)
-        .param_f("mix", 0.3)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Delay)
+            .position(850.0, 100.0)
+            .delay_mode("ping_pong")
+            .param_f("time", 0.35)
+            .param_f("feedback", 0.4)
+            .param_f("mix", 0.3)
+            .build(),
+    );
 
     // Oscilloscope - Waveform visualization (scp-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::Oscilloscope)
-        .position(1050.0, 100.0)
-        .param_f("time", 1.0)
-        .param_f("gain", 1.0)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+            .position(1050.0, 100.0)
+            .param_f("time", 1.0)
+            .param_f("gain", 1.0)
+            .build(),
+    );
 
     // Stereo Output - Final destination (out-1)
-    patch.add_module(ModuleBuilder::new(1, ModuleType::StereoOutput)
-        .position(1250.0, 100.0)
-        .param_f("master", 0.8)
-        .build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .position(1250.0, 100.0)
+            .param_f("master", 0.8)
+            .build(),
+    );
 
     // Connections (using string IDs: type-instance)
     patch.add_connection("osc-1", "out", "mix-1", "in1");

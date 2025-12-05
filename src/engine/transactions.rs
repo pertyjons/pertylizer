@@ -124,7 +124,11 @@ impl CommandBatch {
     }
 
     /// Add a module to the batch (to global graph by default).
-    pub fn add_module(&mut self, id: ModuleId, module: Box<dyn crate::modules::PolyModule>) -> &mut Self {
+    pub fn add_module(
+        &mut self,
+        id: ModuleId,
+        module: Box<dyn crate::modules::PolyModule>,
+    ) -> &mut Self {
         self.add_module_to(None, id, module)
     }
 
@@ -136,7 +140,11 @@ impl CommandBatch {
         module: Box<dyn crate::modules::PolyModule>,
     ) -> &mut Self {
         self.add_with_priority(
-            EngineCommand::AddModuleInstance { instrument_id, id, module },
+            EngineCommand::AddModuleInstance {
+                instrument_id,
+                id,
+                module,
+            },
             10, // Modules added first
         )
     }
@@ -166,11 +174,7 @@ impl CommandBatch {
 
     /// Add a parameter set to the batch (to global graph by default).
     /// The Param contains both the parameter type and its value.
-    pub fn set_parameter(
-        &mut self,
-        module_id: ModuleId,
-        param: Param,
-    ) -> &mut Self {
+    pub fn set_parameter(&mut self, module_id: ModuleId, param: Param) -> &mut Self {
         self.set_parameter_on(None, module_id, param)
     }
 
@@ -271,7 +275,8 @@ impl BatchBuilder {
 
     /// Clear all modules first.
     pub fn clear_all(mut self) -> Self {
-        self.batch.add_with_priority(EngineCommand::ClearAllModules, 1);
+        self.batch
+            .add_with_priority(EngineCommand::ClearAllModules, 1);
         self
     }
 
@@ -368,79 +373,88 @@ impl Clone for EngineCommand {
     fn clone(&self) -> Self {
         match self {
             // Commands that can be cloned
-            EngineCommand::NoteOn { note, velocity, channel } => {
-                EngineCommand::NoteOn {
-                    note: *note,
-                    velocity: *velocity,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::NoteOff { note, channel } => {
-                EngineCommand::NoteOff {
-                    note: *note,
-                    channel: *channel,
-                }
-            }
+            EngineCommand::NoteOn {
+                note,
+                velocity,
+                channel,
+            } => EngineCommand::NoteOn {
+                note: *note,
+                velocity: *velocity,
+                channel: *channel,
+            },
+            EngineCommand::NoteOff { note, channel } => EngineCommand::NoteOff {
+                note: *note,
+                channel: *channel,
+            },
             EngineCommand::AllNotesOff => EngineCommand::AllNotesOff,
-            EngineCommand::PitchBend { value, channel } => {
-                EngineCommand::PitchBend {
-                    value: *value,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::ModWheel { value, channel } => {
-                EngineCommand::ModWheel {
-                    value: *value,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::Aftertouch { value, channel } => {
-                EngineCommand::Aftertouch {
-                    value: *value,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::PolyAftertouch { note, value, channel } => {
-                EngineCommand::PolyAftertouch {
-                    note: *note,
-                    value: *value,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::SetVoiceParameter { instrument_id, target, param } => {
-                EngineCommand::SetVoiceParameter {
-                    instrument_id: *instrument_id,
-                    target: *target,
-                    param: *param,
-                }
-            }
-            EngineCommand::SetModuleParameter { instrument_id, module_id, param } => {
-                EngineCommand::SetModuleParameter {
-                    instrument_id: *instrument_id,
-                    module_id: *module_id,
-                    param: *param,
-                }
-            }
-            EngineCommand::RemoveModule { instrument_id, id } => {
-                EngineCommand::RemoveModule { instrument_id: *instrument_id, id: *id }
-            }
-            EngineCommand::Connect { instrument_id, from, to } => {
-                EngineCommand::Connect {
-                    instrument_id: *instrument_id,
-                    from: from.clone(),
-                    to: to.clone(),
-                }
-            }
-            EngineCommand::Disconnect { instrument_id, from, to } => {
-                EngineCommand::Disconnect {
-                    instrument_id: *instrument_id,
-                    from: from.clone(),
-                    to: to.clone(),
-                }
-            }
-            EngineCommand::DisconnectAll { instrument_id, module } => {
-                EngineCommand::DisconnectAll { instrument_id: *instrument_id, module: *module }
-            }
+            EngineCommand::PitchBend { value, channel } => EngineCommand::PitchBend {
+                value: *value,
+                channel: *channel,
+            },
+            EngineCommand::ModWheel { value, channel } => EngineCommand::ModWheel {
+                value: *value,
+                channel: *channel,
+            },
+            EngineCommand::Aftertouch { value, channel } => EngineCommand::Aftertouch {
+                value: *value,
+                channel: *channel,
+            },
+            EngineCommand::PolyAftertouch {
+                note,
+                value,
+                channel,
+            } => EngineCommand::PolyAftertouch {
+                note: *note,
+                value: *value,
+                channel: *channel,
+            },
+            EngineCommand::SetVoiceParameter {
+                instrument_id,
+                target,
+                param,
+            } => EngineCommand::SetVoiceParameter {
+                instrument_id: *instrument_id,
+                target: *target,
+                param: *param,
+            },
+            EngineCommand::SetModuleParameter {
+                instrument_id,
+                module_id,
+                param,
+            } => EngineCommand::SetModuleParameter {
+                instrument_id: *instrument_id,
+                module_id: *module_id,
+                param: *param,
+            },
+            EngineCommand::RemoveModule { instrument_id, id } => EngineCommand::RemoveModule {
+                instrument_id: *instrument_id,
+                id: *id,
+            },
+            EngineCommand::Connect {
+                instrument_id,
+                from,
+                to,
+            } => EngineCommand::Connect {
+                instrument_id: *instrument_id,
+                from: from.clone(),
+                to: to.clone(),
+            },
+            EngineCommand::Disconnect {
+                instrument_id,
+                from,
+                to,
+            } => EngineCommand::Disconnect {
+                instrument_id: *instrument_id,
+                from: from.clone(),
+                to: to.clone(),
+            },
+            EngineCommand::DisconnectAll {
+                instrument_id,
+                module,
+            } => EngineCommand::DisconnectAll {
+                instrument_id: *instrument_id,
+                module: *module,
+            },
             EngineCommand::SetTempo(t) => EngineCommand::SetTempo(*t),
             EngineCommand::Play => EngineCommand::Play,
             EngineCommand::Stop => EngineCommand::Stop,
@@ -450,60 +464,63 @@ impl Clone for EngineCommand {
             EngineCommand::ClearAllModules => EngineCommand::ClearAllModules,
             EngineCommand::SetMasterVolume(v) => EngineCommand::SetMasterVolume(*v),
             EngineCommand::SetGlideTime(t) => EngineCommand::SetGlideTime(*t),
-            EngineCommand::SetBypass { module, bypass } => {
-                EngineCommand::SetBypass {
-                    module: *module,
-                    bypass: *bypass,
-                }
-            }
+            EngineCommand::SetBypass { module, bypass } => EngineCommand::SetBypass {
+                module: *module,
+                bypass: *bypass,
+            },
             EngineCommand::RemoveVisualizer { instrument_id, id } => {
                 EngineCommand::RemoveVisualizer {
                     instrument_id: *instrument_id,
                     id: *id,
                 }
             }
-            EngineCommand::RemoveEffect { instrument_id, id } => {
-                EngineCommand::RemoveEffect {
-                    instrument_id: *instrument_id,
-                    id: *id,
-                }
-            }
-            EngineCommand::SetEffectParameter { instrument_id, effect_type, param } => {
-                EngineCommand::SetEffectParameter {
-                    instrument_id: *instrument_id,
-                    effect_type: *effect_type,
-                    param: *param,
-                }
-            }
-            EngineCommand::SetEffectEnabled { instrument_id, effect_type, enabled } => {
-                EngineCommand::SetEffectEnabled {
-                    instrument_id: *instrument_id,
-                    effect_type: *effect_type,
-                    enabled: *enabled,
-                }
-            }
+            EngineCommand::RemoveEffect { instrument_id, id } => EngineCommand::RemoveEffect {
+                instrument_id: *instrument_id,
+                id: *id,
+            },
+            EngineCommand::SetEffectParameter {
+                instrument_id,
+                effect_type,
+                param,
+            } => EngineCommand::SetEffectParameter {
+                instrument_id: *instrument_id,
+                effect_type: *effect_type,
+                param: *param,
+            },
+            EngineCommand::SetEffectEnabled {
+                instrument_id,
+                effect_type,
+                enabled,
+            } => EngineCommand::SetEffectEnabled {
+                instrument_id: *instrument_id,
+                effect_type: *effect_type,
+                enabled: *enabled,
+            },
             // Instrument management commands
-            EngineCommand::RemoveInstrument { instrument_id } => {
-                EngineCommand::RemoveInstrument { instrument_id: *instrument_id }
-            }
-            EngineCommand::SetInstrumentParameter { instrument_id, param } => {
-                EngineCommand::SetInstrumentParameter {
-                    instrument_id: *instrument_id,
-                    param: *param,
-                }
-            }
-            EngineCommand::SetInstrumentMidiChannel { instrument_id, channel } => {
-                EngineCommand::SetInstrumentMidiChannel {
-                    instrument_id: *instrument_id,
-                    channel: *channel,
-                }
-            }
-            EngineCommand::SetInstrumentEnabled { instrument_id, enabled } => {
-                EngineCommand::SetInstrumentEnabled {
-                    instrument_id: *instrument_id,
-                    enabled: *enabled,
-                }
-            }
+            EngineCommand::RemoveInstrument { instrument_id } => EngineCommand::RemoveInstrument {
+                instrument_id: *instrument_id,
+            },
+            EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param,
+            } => EngineCommand::SetInstrumentParameter {
+                instrument_id: *instrument_id,
+                param: *param,
+            },
+            EngineCommand::SetInstrumentMidiChannel {
+                instrument_id,
+                channel,
+            } => EngineCommand::SetInstrumentMidiChannel {
+                instrument_id: *instrument_id,
+                channel: *channel,
+            },
+            EngineCommand::SetInstrumentEnabled {
+                instrument_id,
+                enabled,
+            } => EngineCommand::SetInstrumentEnabled {
+                instrument_id: *instrument_id,
+                enabled: *enabled,
+            },
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
             EngineCommand::AddInstrument { .. } => {
                 panic!("AddInstrument cannot be cloned - instrument instances are unique")
@@ -549,7 +566,10 @@ mod tests {
         let mut batch = CommandBatch::new("Priority test");
 
         // Add in wrong order
-        batch.add_with_priority(EngineCommand::SetMasterVolume(crate::types::Gain::new(1.0)), 100);
+        batch.add_with_priority(
+            EngineCommand::SetMasterVolume(crate::types::Gain::new(1.0)),
+            100,
+        );
         batch.add_with_priority(EngineCommand::ClearAllModules, 1);
         batch.add_with_priority(EngineCommand::SetTempo(crate::types::Bpm::new(120.0)), 50);
 
@@ -579,13 +599,14 @@ mod tests {
 
     #[test]
     fn test_batch_builder() {
-        let batch = BatchBuilder::new("Builder test")
-            .clear_all()
-            .build();
+        let batch = BatchBuilder::new("Builder test").clear_all().build();
 
         assert!(!batch.is_empty());
         let commands = batch.commands();
-        assert!(matches!(commands[0].command, EngineCommand::ClearAllModules));
+        assert!(matches!(
+            commands[0].command,
+            EngineCommand::ClearAllModules
+        ));
     }
 
     #[test]

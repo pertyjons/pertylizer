@@ -130,11 +130,14 @@ impl ModuleGraph {
             }
         }
 
-        self.nodes.insert(id, GraphNode {
-            module,
-            descriptor,
-            outputs,
-        });
+        self.nodes.insert(
+            id,
+            GraphNode {
+                module,
+                descriptor,
+                outputs,
+            },
+        );
 
         self.order_dirty = true;
         id
@@ -151,11 +154,14 @@ impl ModuleGraph {
             }
         }
 
-        self.nodes.insert(id, GraphNode {
-            module,
-            descriptor,
-            outputs,
-        });
+        self.nodes.insert(
+            id,
+            GraphNode {
+                module,
+                descriptor,
+                outputs,
+            },
+        );
 
         // Update instance counter if this ID is higher
         let counter = self.instance_counters.entry(id.module_type).or_insert(0);
@@ -169,7 +175,8 @@ impl ModuleGraph {
     /// Remove a module from the graph (drops the module).
     pub fn remove_module(&mut self, id: ModuleId) {
         // Remove all connections involving this module
-        self.connections.retain(|c| c.from_module != id && c.to_module != id);
+        self.connections
+            .retain(|c| c.from_module != id && c.to_module != id);
         self.order_dirty = true;
         self.nodes.remove(&id);
     }
@@ -178,7 +185,8 @@ impl ModuleGraph {
     /// Use this to defer dropping to a non-audio thread.
     pub fn remove_module_and_return(&mut self, id: ModuleId) -> Option<Box<dyn PolyModule>> {
         // Remove all connections involving this module
-        self.connections.retain(|c| c.from_module != id && c.to_module != id);
+        self.connections
+            .retain(|c| c.from_module != id && c.to_module != id);
         self.order_dirty = true;
         self.nodes.remove(&id).map(|n| n.module)
     }
@@ -242,7 +250,8 @@ impl ModuleGraph {
     /// Disconnect all connections from/to a module.
     pub fn disconnect_all(&mut self, module: ModuleId) {
         let before = self.connections.len();
-        self.connections.retain(|c| c.from_module != module && c.to_module != module);
+        self.connections
+            .retain(|c| c.from_module != module && c.to_module != module);
         if self.connections.len() != before {
             self.order_dirty = true;
         }
@@ -305,15 +314,15 @@ impl ModuleGraph {
 
         // Copy from final output module (if any) to output buffer
         // Priority 1: Look for a dedicated Output category module
-        if let Some((&id, _)) = self.nodes.iter().find(|(_, n)| {
-            n.descriptor.category == ModuleCategory::Output
-        }) {
-            if let Some(node) = self.nodes.get(&id) {
-                if let Some(out_buf) = node.outputs.get("out") {
-                    output.copy_from(out_buf);
-                    return;
-                }
-            }
+        if let Some((&id, _)) = self
+            .nodes
+            .iter()
+            .find(|(_, n)| n.descriptor.category == ModuleCategory::Output)
+            && let Some(node) = self.nodes.get(&id)
+            && let Some(out_buf) = node.outputs.get("out")
+        {
+            output.copy_from(out_buf);
+            return;
         }
 
         // Priority 2: Find a "sink" module (has connections IN but none OUT)
@@ -369,9 +378,7 @@ impl ModuleGraph {
 
     /// Reset all modules.
     pub fn reset(&mut self) {
-        self.nodes
-            .values_mut()
-            .for_each(|node| node.module.reset());
+        self.nodes.values_mut().for_each(|node| node.module.reset());
     }
 
     /// Get a module's output buffer by port name (for extracting stereo outputs).
@@ -383,7 +390,8 @@ impl ModuleGraph {
     /// Find a module by type and return its ID.
     /// Useful for finding the amplifier in a voice graph.
     pub fn find_module_by_type(&self, module_type: ModuleType) -> Option<ModuleId> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .find(|(id, _)| id.module_type == module_type)
             .map(|(id, _)| *id)
     }
@@ -391,11 +399,12 @@ impl ModuleGraph {
     /// Set the base frequency for all oscillator modules in the graph.
     /// Used by Voice to inject the note frequency before processing.
     pub fn set_oscillator_frequency(&mut self, freq: crate::types::Hertz) {
-        use crate::engine::typed_params::{Param, OscillatorParam};
+        use crate::engine::typed_params::{OscillatorParam, Param};
 
         for (&id, node) in self.nodes.iter_mut() {
             if id.module_type == ModuleType::Oscillator {
-                node.module.set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
+                node.module
+                    .set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
             }
         }
     }
@@ -443,29 +452,39 @@ impl ModuleGraph {
         to_port: &str,
     ) -> Result<(), GraphError> {
         // Check modules exist
-        let from_node = self.nodes.get(&from_module)
+        let from_node = self
+            .nodes
+            .get(&from_module)
             .ok_or(GraphError::ModuleNotFound(from_module))?;
-        let to_node = self.nodes.get(&to_module)
+        let to_node = self
+            .nodes
+            .get(&to_module)
             .ok_or(GraphError::ModuleNotFound(to_module))?;
 
         // Check ports exist and have correct directions
-        let from_port_desc = from_node.descriptor.ports.iter()
+        let from_port_desc = from_node
+            .descriptor
+            .ports
+            .iter()
             .find(|p| p.name == from_port)
             .ok_or_else(|| GraphError::PortNotFound(from_module, from_port.to_string()))?;
 
-        let to_port_desc = to_node.descriptor.ports.iter()
+        let to_port_desc = to_node
+            .descriptor
+            .ports
+            .iter()
             .find(|p| p.name == to_port)
             .ok_or_else(|| GraphError::PortNotFound(to_module, to_port.to_string()))?;
 
         if from_port_desc.direction != PortDirection::Output {
             return Err(GraphError::InvalidConnection(
-                "Source port must be an output".to_string()
+                "Source port must be an output".to_string(),
             ));
         }
 
         if to_port_desc.direction != PortDirection::Input {
             return Err(GraphError::InvalidConnection(
-                "Destination port must be an input".to_string()
+                "Destination port must be an input".to_string(),
             ));
         }
 
@@ -480,19 +499,19 @@ impl ModuleGraph {
     fn would_create_cycle(&self, from: ModuleId, to: ModuleId) -> bool {
         // Check if we can reach 'from' starting from 'to' using DFS
         // If we can, adding an edge from->to would create a cycle
-        
+
         if from == to {
             return true; // Self-loop
         }
-        
+
         let mut visited = HashSet::new();
         let mut stack = vec![to];
-        
+
         while let Some(current) = stack.pop() {
             if current == from {
                 return true; // Found a path from 'to' to 'from', cycle would be created
             }
-            
+
             if visited.insert(current) {
                 // Find all modules that 'current' connects to
                 for conn in &self.connections {
@@ -502,7 +521,7 @@ impl ModuleGraph {
                 }
             }
         }
-        
+
         false
     }
 
@@ -523,7 +542,7 @@ impl ModuleGraph {
         for conn in &self.connections {
             if let (Some(adj), Some(deg)) = (
                 adjacency.get_mut(&conn.from_module),
-                in_degree.get_mut(&conn.to_module)
+                in_degree.get_mut(&conn.to_module),
             ) {
                 adj.push(conn.to_module);
                 *deg += 1;
@@ -531,7 +550,8 @@ impl ModuleGraph {
         }
 
         // Find all nodes with in-degree 0
-        let mut queue: VecDeque<ModuleId> = in_degree.iter()
+        let mut queue: VecDeque<ModuleId> = in_degree
+            .iter()
             .filter(|&(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
@@ -583,27 +603,29 @@ impl ModuleGraph {
 
         // Gather inputs from connected modules
         for (from_module, from_port, to_port) in &self.incoming_cache {
-            if let Some(from_node) = self.nodes.get(from_module) {
-                if let Some(output_buf) = from_node.outputs.get(from_port) {
-                    // Sum inputs if multiple connections to same port
-                    if let Some(existing) = self.input_buffers.get_mut(to_port) {
-                        // Ensure buffer is correctly sized before adding
-                        if existing.len() < context.samples {
-                            existing.resize(context.samples);
-                        }
-                        existing.add_from(output_buf);
-                    } else {
-                        // Need to insert a new buffer - ensure it's sized correctly
-                        let mut buf = AudioBuffer::new(context.samples);
-                        buf.copy_from(output_buf);
-                        self.input_buffers.insert(to_port.clone(), buf);
+            if let Some(from_node) = self.nodes.get(from_module)
+                && let Some(output_buf) = from_node.outputs.get(from_port)
+            {
+                // Sum inputs if multiple connections to same port
+                if let Some(existing) = self.input_buffers.get_mut(to_port) {
+                    // Ensure buffer is correctly sized before adding
+                    if existing.len() < context.samples {
+                        existing.resize(context.samples);
                     }
+                    existing.add_from(output_buf);
+                } else {
+                    // Need to insert a new buffer - ensure it's sized correctly
+                    let mut buf = AudioBuffer::new(context.samples);
+                    buf.copy_from(output_buf);
+                    self.input_buffers.insert(to_port.clone(), buf);
                 }
             }
         }
 
         // Convert to references for the module API
-        let input_refs: HashMap<String, &AudioBuffer> = self.input_buffers.iter()
+        let input_refs: HashMap<String, &AudioBuffer> = self
+            .input_buffers
+            .iter()
             .map(|(k, v)| (k.clone(), v))
             .collect();
 
@@ -673,7 +695,7 @@ mod tests {
         let mut graph = ModuleGraph::new();
         let osc = Oscillator::new();
         let id = graph.add_module(Box::new(osc));
-        
+
         assert!(graph.get_module(id).is_some());
     }
 

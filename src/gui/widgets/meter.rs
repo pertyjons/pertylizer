@@ -98,10 +98,8 @@ pub fn draw_level_meter(
     if horizontal {
         // RMS bar
         let rms_width = inner_rect.width() * rms_norm;
-        let rms_rect = Rect::from_min_size(
-            inner_rect.min,
-            Vec2::new(rms_width, inner_rect.height()),
-        );
+        let rms_rect =
+            Rect::from_min_size(inner_rect.min, Vec2::new(rms_width, inner_rect.height()));
 
         // Gradient from green to yellow to red
         let rms_color = level_color(rms_norm);
@@ -110,7 +108,10 @@ pub fn draw_level_meter(
         // Peak indicator line
         let peak_x = inner_rect.left() + inner_rect.width() * peak_norm;
         painter.line_segment(
-            [Pos2::new(peak_x, inner_rect.top()), Pos2::new(peak_x, inner_rect.bottom())],
+            [
+                Pos2::new(peak_x, inner_rect.top()),
+                Pos2::new(peak_x, inner_rect.bottom()),
+            ],
             Stroke::new(2.0, colors::TEXT_PRIMARY),
         );
     } else {
@@ -128,7 +129,10 @@ pub fn draw_level_meter(
         // Peak indicator line
         let peak_y = inner_rect.bottom() - inner_rect.height() * peak_norm;
         painter.line_segment(
-            [Pos2::new(inner_rect.left(), peak_y), Pos2::new(inner_rect.right(), peak_y)],
+            [
+                Pos2::new(inner_rect.left(), peak_y),
+                Pos2::new(inner_rect.right(), peak_y),
+            ],
             Stroke::new(2.0, colors::TEXT_PRIMARY),
         );
     }
@@ -141,16 +145,18 @@ pub fn draw_level_meter(
                 Vec2::new(6.0, rect.height()),
             )
         } else {
-            Rect::from_min_size(
-                rect.min,
-                Vec2::new(rect.width(), 4.0),
-            )
+            Rect::from_min_size(rect.min, Vec2::new(rect.width(), 4.0))
         };
         painter.rect_filled(clip_rect, 1.0, Color32::RED);
     }
 
     // Border
-    painter.rect_stroke(rect, 2.0, Stroke::new(1.0, colors::BORDER), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0, colors::BORDER),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// Draw a stereo level meter (two vertical bars side by side).
@@ -205,7 +211,12 @@ pub fn draw_stereo_meter(
     );
 
     // Border
-    painter.rect_stroke(rect, 4.0, Stroke::new(1.0, colors::BORDER), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        Stroke::new(1.0, colors::BORDER),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// Helper to draw a single meter bar.

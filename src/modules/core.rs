@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
-use crate::engine::typed_params::{Param, ModuleType as TypedModuleType};
+use crate::engine::typed_params::{ModuleType as TypedModuleType, Param};
 use crate::types::{Bpm, MidiNote, SampleRate};
 
 // ============================================================================
@@ -457,16 +457,12 @@ impl ParameterDescriptor {
                 let max_log = self.max.ln();
                 (min_log + n * (max_log - min_log)).exp()
             }
-            ResponseCurve::Exponential => {
-                self.min + (n * n) * (self.max - self.min)
-            }
+            ResponseCurve::Exponential => self.min + (n * n) * (self.max - self.min),
             ResponseCurve::SCurve => {
                 let s = n * n * (3.0 - 2.0 * n);
                 self.min + s * (self.max - self.min)
             }
-            ResponseCurve::Squared => {
-                self.min + n.sqrt() * (self.max - self.min)
-            }
+            ResponseCurve::Squared => self.min + n.sqrt() * (self.max - self.min),
         }
     }
 
@@ -480,9 +476,7 @@ impl ParameterDescriptor {
                 let max_log = self.max.ln();
                 (v.ln() - min_log) / (max_log - min_log)
             }
-            ResponseCurve::Exponential => {
-                ((v - self.min) / (self.max - self.min)).sqrt()
-            }
+            ResponseCurve::Exponential => ((v - self.min) / (self.max - self.min)).sqrt(),
             ResponseCurve::SCurve => {
                 // Approximate inverse
                 let n = (v - self.min) / (self.max - self.min);
@@ -785,7 +779,7 @@ pub trait AudioEffect: Describable + Send {
 
 // Re-export waveform and filter types from typed_params
 pub use crate::engine::typed_params::{
-    Waveform, LfoWaveform, FilterMode, DelayMode, DistortionMode, LoopMode, MathAlgo,
+    DelayMode, DistortionMode, FilterMode, LfoWaveform, LoopMode, MathAlgo, Waveform,
 };
 
 // Type alias for backward compatibility

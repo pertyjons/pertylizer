@@ -5,12 +5,12 @@
 //! event distribution.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use thiserror::Error;
 
 use super::commands::{EngineCommand, ModuleId};
@@ -268,12 +268,16 @@ impl EngineHub {
     }
 
     /// Send a command to the engine (with permission check).
-    pub fn send_command(&self, client_id: ClientId, command: EngineCommand) -> Result<(), HubError> {
+    pub fn send_command(
+        &self,
+        client_id: ClientId,
+        command: EngineCommand,
+    ) -> Result<(), HubError> {
         // Check if another client has exclusive control
-        if let Some(exclusive_id) = *self.exclusive_client.read() {
-            if exclusive_id != client_id {
-                return Err(HubError::ExclusiveControlActive);
-            }
+        if let Some(exclusive_id) = *self.exclusive_client.read()
+            && exclusive_id != client_id
+        {
+            return Err(HubError::ExclusiveControlActive);
         }
 
         // Get client and check permissions
@@ -290,9 +294,10 @@ impl EngineHub {
         }
 
         // Update activity timestamp
-        client
-            .last_activity
-            .store(self.current_timestamp.load(Ordering::Relaxed), Ordering::Relaxed);
+        client.last_activity.store(
+            self.current_timestamp.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
 
         // Send to engine
         let mut producer = self.command_producer.lock();
@@ -306,8 +311,9 @@ impl EngineHub {
     fn check_command_permission(&self, perms: &ClientPermissions, command: &EngineCommand) -> bool {
         match command {
             // Instrument topology changes
-            EngineCommand::AddInstrument { .. }
-            | EngineCommand::RemoveInstrument { .. } => perms.can_modify_topology,
+            EngineCommand::AddInstrument { .. } | EngineCommand::RemoveInstrument { .. } => {
+                perms.can_modify_topology
+            }
 
             // Instrument parameter changes
             EngineCommand::SetInstrumentParameter { .. }
@@ -464,7 +470,10 @@ impl ClientHandle {
 
     /// Remove a module from the focus list.
     pub fn remove_focused_module(&self, module: ModuleId) {
-        self.client_info.focused_modules.write().retain(|m| *m != module);
+        self.client_info
+            .focused_modules
+            .write()
+            .retain(|m| *m != module);
     }
 
     /// Get the focused modules.

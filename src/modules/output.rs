@@ -128,12 +128,8 @@ impl Describable for StereoOutput {
                 PortDescriptor::audio_input("in", "In")
                     .description("Mono audio input (summed to stereo)"),
             )
-            .port(
-                PortDescriptor::audio_input("in_l", "In L").description("Left channel input"),
-            )
-            .port(
-                PortDescriptor::audio_input("in_r", "In R").description("Right channel input"),
-            )
+            .port(PortDescriptor::audio_input("in_l", "In L").description("Left channel input"))
+            .port(PortDescriptor::audio_input("in_r", "In R").description("Right channel input"))
             // Output ports for Voice to read processed audio
             .port(
                 PortDescriptor::audio_output("left", "Left Out")
@@ -172,24 +168,18 @@ impl Describable for StereoOutput {
                 .widget(WidgetHint::PanKnob),
             )
             .parameter(
-                ParameterDescriptor::float(
-                    Param::Mixer(MixerParam::Limit(true)),
-                    "Limiter",
-                )
-                .description("Enable soft limiter to prevent clipping")
-                .range(0.0, 1.0)
-                .default(1.0)
-                .widget(WidgetHint::Toggle),
+                ParameterDescriptor::float(Param::Mixer(MixerParam::Limit(true)), "Limiter")
+                    .description("Enable soft limiter to prevent clipping")
+                    .range(0.0, 1.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Toggle),
             )
             .parameter(
-                ParameterDescriptor::float(
-                    Param::Mixer(MixerParam::Mute(false)),
-                    "Mute",
-                )
-                .description("Mute output")
-                .range(0.0, 1.0)
-                .default(0.0)
-                .widget(WidgetHint::Toggle),
+                ParameterDescriptor::float(Param::Mixer(MixerParam::Mute(false)), "Mute")
+                    .description("Mute output")
+                    .range(0.0, 1.0)
+                    .default(0.0)
+                    .widget(WidgetHint::Toggle),
             )
             .tag("output")
             .tag("master")

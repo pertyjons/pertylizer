@@ -86,7 +86,9 @@ impl Describable for Chorus {
             .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
-            .port(PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"))
+            .port(
+                PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     Param::Chorus(ChorusParam::Rate(Hertz::new(0.5))),
@@ -147,7 +149,8 @@ impl AudioEffect for Chorus {
                 wet += self.read_interpolated(delay_samples);
 
                 // Advance LFO
-                self.lfo_phases[v] = Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
+                self.lfo_phases[v] =
+                    Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
             }
 
             wet /= voice_count as f32;

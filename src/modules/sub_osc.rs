@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use crate::engine::typed_params::{ModuleType, Param, SubOscParam, SubOscOctave, SubOscWaveform};
+use crate::engine::typed_params::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
 use crate::modules::core::*;
 use crate::types::{Gain, Hertz, MidiNote, Phase, SampleRate};
 

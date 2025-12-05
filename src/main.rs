@@ -19,15 +19,17 @@
 
 use std::env;
 
-use modular_synth::audio::{self, AudioHostTrait, StreamConfig, SampleRate, BufferSize, ChannelCount};
-use modular_synth::engine::{SynthEngine, AllocatorConfig, AllocationMode};
+use modular_synth::audio::{
+    self, AudioHostTrait, BufferSize, ChannelCount, SampleRate, StreamConfig,
+};
+use modular_synth::engine::{AllocationMode, AllocatorConfig, SynthEngine};
 use modular_synth::gui::{GuiType, SynthGuiConfig, create_backend, print_available_backends};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = env::args().collect();
     let gui_type = parse_args(&args)?;
-    
+
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: 8,
@@ -67,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create and run the selected GUI backend
     println!("Starting {} GUI...", gui_type.name());
-    
+
     let backend = create_backend(gui_type)?;
     backend.run(engine, handle, host, gui_config)?;
 
@@ -81,12 +83,11 @@ fn parse_args(args: &[String]) -> Result<GuiType, Box<dyn std::error::Error>> {
             "--gui" | "-g" => {
                 if i + 1 < args.len() {
                     let gui_name = &args[i + 1];
-                    return GuiType::from_arg(gui_name)
-                        .ok_or_else(|| {
-                            eprintln!("Unknown GUI type: {}", gui_name);
-                            print_available_backends();
-                            "Invalid GUI type".into()
-                        });
+                    return GuiType::from_arg(gui_name).ok_or_else(|| {
+                        eprintln!("Unknown GUI type: {}", gui_name);
+                        print_available_backends();
+                        "Invalid GUI type".into()
+                    });
                 } else {
                     return Err("--gui requires an argument".into());
                 }
@@ -112,7 +113,7 @@ fn parse_args(args: &[String]) -> Result<GuiType, Box<dyn std::error::Error>> {
         }
         i += 1;
     }
-    
+
     // Default to egui if available, otherwise console
     Ok(default_gui_type())
 }

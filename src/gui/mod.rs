@@ -59,8 +59,8 @@ pub mod patch_bridge;
 #[cfg(feature = "gui-egui")]
 pub mod instrument_rack;
 
-use crate::engine::{EngineHandle, SynthEngine, AllocatorConfig};
 use crate::audio::{AudioHostTrait, StreamConfig};
+use crate::engine::{AllocatorConfig, EngineHandle, SynthEngine};
 use std::error::Error;
 
 /// Result type for GUI operations.
@@ -100,7 +100,7 @@ impl Default for SynthGuiConfig {
 pub trait GuiBackend {
     /// Returns the name of this backend (e.g., "egui", "console").
     fn name(&self) -> &'static str;
-    
+
     /// Run the GUI event loop.
     ///
     /// This method takes ownership of the audio system and runs
@@ -133,7 +133,7 @@ impl GuiType {
             _ => None,
         }
     }
-    
+
     /// Get the name of this GUI type.
     pub fn name(&self) -> &'static str {
         match self {
@@ -174,13 +174,13 @@ pub fn create_backend(gui_type: GuiType) -> GuiResult<Box<dyn GuiBackend>> {
 /// Print available backends.
 pub fn print_available_backends() {
     println!("Available GUI backends:");
-    
+
     #[cfg(feature = "gui-console")]
     println!("  - console (text-based terminal interface)");
-    
+
     #[cfg(feature = "gui-egui")]
     println!("  - egui (graphical interface) [default]");
-    
+
     #[cfg(not(any(feature = "gui-console", feature = "gui-egui")))]
     println!("  (no backends compiled in)");
 }

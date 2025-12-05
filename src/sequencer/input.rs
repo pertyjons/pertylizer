@@ -18,9 +18,7 @@ pub enum InputCommand {
         instrument: Option<InstrumentId>,
     },
     /// Note off.
-    NoteOff {
-        pitch: Pitch,
-    },
+    NoteOff { pitch: Pitch },
 
     // === Pattern editing ===
     /// Add note to pattern.
@@ -32,10 +30,7 @@ pub enum InputCommand {
         velocity: Velocity,
     },
     /// Remove note.
-    RemoveNote {
-        pattern: PatternId,
-        note_id: NoteId,
-    },
+    RemoveNote { pattern: PatternId, note_id: NoteId },
     /// Move note to new position.
     MoveNote {
         pattern: PatternId,
@@ -100,9 +95,7 @@ pub enum InputCommand {
     /// Clear selection.
     ClearSelection,
     /// Select all notes in pattern.
-    SelectAll {
-        pattern: PatternId,
-    },
+    SelectAll { pattern: PatternId },
 
     // === Clipboard operations ===
     /// Delete selected notes.
@@ -124,25 +117,15 @@ pub enum InputCommand {
 
     // === Quantization ===
     /// Quantize notes to grid.
-    Quantize {
-        pattern: PatternId,
-        strength: f32,
-    },
+    Quantize { pattern: PatternId, strength: f32 },
     /// Quantize selected notes only.
-    QuantizeSelection {
-        strength: f32,
-    },
+    QuantizeSelection { strength: f32 },
 
     // === Bulk operations ===
     /// Transpose selection.
-    TransposeSelection {
-        semitones: i8,
-    },
+    TransposeSelection { semitones: i8 },
     /// Scale velocities.
-    ScaleVelocities {
-        pattern: PatternId,
-        factor: f32,
-    },
+    ScaleVelocities { pattern: PatternId, factor: f32 },
     /// Humanize timing.
     Humanize {
         pattern: PatternId,
@@ -188,29 +171,17 @@ pub enum InputCommand {
     /// Tap tempo.
     TapTempo,
     /// Set time signature.
-    SetTimeSignature {
-        numerator: u8,
-        denominator: u8,
-    },
+    SetTimeSignature { numerator: u8, denominator: u8 },
 
     // === Pattern management ===
     /// Create new pattern.
-    CreatePattern {
-        length: Duration,
-    },
+    CreatePattern { length: Duration },
     /// Delete pattern.
-    DeletePattern {
-        pattern: PatternId,
-    },
+    DeletePattern { pattern: PatternId },
     /// Duplicate pattern.
-    DuplicatePattern {
-        pattern: PatternId,
-    },
+    DuplicatePattern { pattern: PatternId },
     /// Rename pattern.
-    RenamePattern {
-        pattern: PatternId,
-        name: String,
-    },
+    RenamePattern { pattern: PatternId, name: String },
 
     // === Undo/Redo ===
     /// Undo last action.

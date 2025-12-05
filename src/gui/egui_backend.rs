@@ -14,27 +14,31 @@ use std::path::PathBuf;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke, Vec2};
 
 use crate::audio::AudioHostTrait;
-use crate::engine::{EngineCommand, EngineEvent, EngineHandle, SynthEngine, ModuleId};
-use crate::engine::commands::PortId;
-use crate::engine::ModuleType as TypedModuleType;
-use crate::io::MidiHandler;
-use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
-use crate::gui::dialogs::{DialogState, LoadPatchResult, SavePatchResult, show_settings_dialog, show_about_dialog, show_load_patch_dialog, show_save_patch_dialog, show_status_toast};
-use crate::gui::widgets::colors;
-use crate::gui::keyboard::PianoKeyboard;
-use crate::gui::patch_editor::{PatchEditor, ModulePalette, PaletteSelection, EffectType, VisualizerType};
-use crate::gui::patch_bridge;
-use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
-use crate::engine::instrument::{InstrumentId, MidiChannel};
-use crate::types::{MidiNote, NormalizedValue};
-use crate::modules::{
-    Describable, ModuleCategory,
-    Oscillator, MathOscillator, SubOscillator, NoiseGenerator,
-    Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
-};
 use crate::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
-use crate::visualizers::{Oscilloscope, LevelMeter};
+use crate::engine::ModuleType as TypedModuleType;
+use crate::engine::commands::PortId;
+use crate::engine::instrument::{InstrumentId, MidiChannel};
+use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
+use crate::gui::dialogs::{
+    DialogState, LoadPatchResult, SavePatchResult, show_about_dialog, show_load_patch_dialog,
+    show_save_patch_dialog, show_settings_dialog, show_status_toast,
+};
+use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
+use crate::gui::keyboard::PianoKeyboard;
+use crate::gui::patch_bridge;
+use crate::gui::patch_editor::{
+    EffectType, ModulePalette, PaletteSelection, PatchEditor, VisualizerType,
+};
+use crate::gui::widgets::colors;
+use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
+use crate::io::MidiHandler;
+use crate::modules::{
+    Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
+    NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
+};
 use crate::patch::{Patch, example_patches};
+use crate::types::{MidiNote, NormalizedValue};
+use crate::visualizers::{LevelMeter, Oscilloscope};
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -66,9 +70,9 @@ impl GuiBackend for EguiBackend {
     ) -> GuiResult<()> {
         // Start audio before GUI
         let stream_info = host.start_output(None, &config.stream_config, Box::new(engine))?;
-        
+
         let app = SynthApp::new(handle, host, config.clone(), stream_info.output_latency);
-        
+
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([config.width as f32, config.height as f32])
@@ -85,7 +89,8 @@ impl GuiBackend for EguiBackend {
                 setup_custom_style(&cc.egui_ctx);
                 Ok(Box::new(app))
             }),
-        ).map_err(|e| format!("Egui error: {e}"))?;
+        )
+        .map_err(|e| format!("Egui error: {e}"))?;
 
         Ok(())
     }
@@ -123,37 +128,37 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 /// Setup custom egui style for synth look.
 fn setup_custom_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-    
+
     // Dark theme with synth colors
     style.visuals.dark_mode = true;
     style.visuals.override_text_color = Some(colors::TEXT_PRIMARY);
     style.visuals.panel_fill = colors::BG_PANEL;
     style.visuals.window_fill = colors::BG_MODULE;
     style.visuals.faint_bg_color = colors::BG_WIDGET;
-    
+
     // Widget styling
     style.visuals.widgets.inactive.bg_fill = colors::BG_WIDGET;
     style.visuals.widgets.inactive.weak_bg_fill = colors::BG_WIDGET;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, colors::TEXT_SECONDARY);
-    
+
     style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(60, 65, 80);
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, colors::TEXT_PRIMARY);
-    
+
     style.visuals.widgets.active.bg_fill = colors::ACCENT_ORANGE;
     style.visuals.widgets.active.fg_stroke = Stroke::new(2.0, colors::BG_DARK);
-    
+
     style.visuals.selection.bg_fill = colors::ACCENT_ORANGE.gamma_multiply(0.4);
     style.visuals.selection.stroke = Stroke::new(1.0, colors::ACCENT_ORANGE);
-    
+
     // Rounded corners
     style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
-    
+
     // Spacing
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
     style.spacing.button_padding = Vec2::new(8.0, 4.0);
-    
+
     ctx.set_style(style);
 }
 
@@ -271,7 +276,8 @@ impl SynthApp {
 
     /// Get the active instrument's patch editor.
     fn active_patch_editor(&mut self) -> &mut PatchEditor {
-        self.instruments.iter_mut()
+        self.instruments
+            .iter_mut()
             .find(|i| i.id == self.active_instrument_id)
             .map(|i| &mut i.patch_editor)
             .expect("Active instrument not found")
@@ -279,7 +285,8 @@ impl SynthApp {
 
     /// Get the active instrument's patch editor (immutable).
     fn active_patch_editor_ref(&self) -> &PatchEditor {
-        self.instruments.iter()
+        self.instruments
+            .iter()
             .find(|i| i.id == self.active_instrument_id)
             .map(|i| &i.patch_editor)
             .expect("Active instrument not found")
@@ -317,14 +324,15 @@ impl eframe::App for SynthApp {
 
         // Request continuous repaint for meters
         ctx.request_repaint();
-        
+
         // Top menu bar
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("📄 New Patch").clicked() {
                         self.reset_to_new_patch();
-                        self.dialog_state.set_status("New patch created".to_string());
+                        self.dialog_state
+                            .set_status("New patch created".to_string());
                         ui.close();
                     }
                     if ui.button("📂 Load Patch...").clicked() {
@@ -342,7 +350,8 @@ impl eframe::App for SynthApp {
                             if ui.button(&patch.name).clicked() {
                                 self.load_patch_data(&patch);
                                 self.current_patch_name = patch.name.clone();
-                                self.dialog_state.set_status(format!("Loaded: {}", patch.name));
+                                self.dialog_state
+                                    .set_status(format!("Loaded: {}", patch.name));
                                 ui.close();
                             }
                         }
@@ -364,7 +373,7 @@ impl eframe::App for SynthApp {
                         ui.close();
                     }
                 });
-                
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Status indicators
                     let cpu = self.handle.cpu_usage();
@@ -377,9 +386,18 @@ impl eframe::App for SynthApp {
                     };
                     ui.label(RichText::new(format!("CPU: {:.0}%", cpu * 100.0)).color(cpu_color));
                     ui.separator();
-                    ui.label(RichText::new(format!("Voices: {}", self.handle.voice_count())).color(colors::TEXT_SECONDARY));
+                    ui.label(
+                        RichText::new(format!("Voices: {}", self.handle.voice_count()))
+                            .color(colors::TEXT_SECONDARY),
+                    );
                     ui.separator();
-                    ui.label(RichText::new(format!("Latency: {:.1}ms", self.latency.as_secs_f64() * 1000.0)).color(colors::TEXT_DIM));
+                    ui.label(
+                        RichText::new(format!(
+                            "Latency: {:.1}ms",
+                            self.latency.as_secs_f64() * 1000.0
+                        ))
+                        .color(colors::TEXT_DIM),
+                    );
                     ui.separator();
                     // MIDI port selector (styled as button with dropdown indicator)
                     let midi_label = if self.midi_handler.is_connected() {
@@ -399,10 +417,13 @@ impl eframe::App for SynthApp {
                         ui.set_min_width(250.0);
                         let ports = MidiHandler::list_ports();
                         if ports.is_empty() {
-                            ui.label(RichText::new("No MIDI ports available").color(colors::TEXT_DIM));
+                            ui.label(
+                                RichText::new("No MIDI ports available").color(colors::TEXT_DIM),
+                            );
                         } else {
                             for port in &ports {
-                                let is_current = self.midi_handler.port_name() == Some(port.as_str());
+                                let is_current =
+                                    self.midi_handler.port_name() == Some(port.as_str());
                                 let label = if is_current {
                                     RichText::new(format!("● {}", port)).color(colors::METER_GREEN)
                                 } else {
@@ -423,11 +444,14 @@ impl eframe::App for SynthApp {
                     });
                     ui.separator();
                     // Current patch name
-                    ui.label(RichText::new(format!("Patch: {}", self.current_patch_name)).color(colors::ACCENT_CYAN));
+                    ui.label(
+                        RichText::new(format!("Patch: {}", self.current_patch_name))
+                            .color(colors::ACCENT_CYAN),
+                    );
                 });
             });
         });
-        
+
         // Toolbar for adding modules
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -456,7 +480,7 @@ impl eframe::App for SynthApp {
                         }
                     }
                 }
-                
+
                 ui.separator();
 
                 // Glide/Portamento control
@@ -466,13 +490,18 @@ impl eframe::App for SynthApp {
                         .suffix(" s")
                         .fixed_decimals(2)
                         .custom_formatter(|v, _| {
-                            if v < 0.001 { "Off".to_string() } else { format!("{:.2}s", v) }
-                        })
+                            if v < 0.001 {
+                                "Off".to_string()
+                            } else {
+                                format!("{:.2}s", v)
+                            }
+                        }),
                 );
                 if glide_response.changed() {
-                    self.handle.send(EngineCommand::SetGlideTime(
-                        crate::types::Seconds::new(self.glide_time)
-                    ));
+                    self.handle
+                        .send(EngineCommand::SetGlideTime(crate::types::Seconds::new(
+                            self.glide_time,
+                        )));
                 }
 
                 ui.separator();
@@ -480,11 +509,16 @@ impl eframe::App for SynthApp {
                 // Connection info (from active instrument's patch editor)
                 let conn_count = self.active_patch_editor_ref().connections().len();
                 let module_count = self.active_patch_editor_ref().module_ids().len();
-                ui.label(RichText::new(format!("Modules: {} | Connections: {}", module_count, conn_count))
-                    .color(colors::TEXT_DIM));
+                ui.label(
+                    RichText::new(format!(
+                        "Modules: {} | Connections: {}",
+                        module_count, conn_count
+                    ))
+                    .color(colors::TEXT_DIM),
+                );
             });
         });
-        
+
         // Bottom panel with keyboard
         egui::TopBottomPanel::bottom("keyboard_panel")
             .min_height(120.0)
@@ -519,7 +553,9 @@ impl eframe::App for SynthApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Get the active instrument's patch editor
-            let patch_editor = self.instruments.iter_mut()
+            let patch_editor = self
+                .instruments
+                .iter_mut()
                 .find(|i| i.id == active_id)
                 .map(|i| &mut i.patch_editor)
                 .expect("Active instrument not found");
@@ -529,13 +565,16 @@ impl eframe::App for SynthApp {
             // Handle parameter changes - send Param directly (carries its own value)
             for (module_id, param) in result.param_changes {
                 // Check module category
-                let category = patch_editor.module_descriptor(module_id)
+                let category = patch_editor
+                    .module_descriptor(module_id)
                     .map(|d| d.category);
 
                 match category {
                     Some(ModuleCategory::Effect) => {
                         // Effect module - use SetEffectParameter (targets active instrument)
-                        if let Some(effect_type) = patch_bridge::get_effect_type_from_module(patch_editor, module_id) {
+                        if let Some(effect_type) =
+                            patch_bridge::get_effect_type_from_module(patch_editor, module_id)
+                        {
                             self.handle.send(EngineCommand::SetEffectParameter {
                                 instrument_id: Some(active_id),
                                 effect_type,
@@ -543,22 +582,26 @@ impl eframe::App for SynthApp {
                             });
                         }
                     }
-                    Some(ModuleCategory::Oscillator) |
-                    Some(ModuleCategory::Filter) |
-                    Some(ModuleCategory::Envelope) |
-                    Some(ModuleCategory::LFO) |
-                    Some(ModuleCategory::Amplifier) |
-                    Some(ModuleCategory::Mixer) |
-                    Some(ModuleCategory::Output) => {
+                    Some(
+                        ModuleCategory::Oscillator
+                        | ModuleCategory::Filter
+                        | ModuleCategory::Envelope
+                        | ModuleCategory::LFO
+                        | ModuleCategory::Amplifier
+                        | ModuleCategory::Mixer
+                        | ModuleCategory::Output,
+                    ) => {
                         // Voice/modular module - send to active instrument's voice graph
                         self.handle.send(EngineCommand::SetModuleParameter {
                             instrument_id: Some(active_id),
                             module_id,
-                            param: param.clone(),
+                            param,
                         });
 
                         // Also send to voice modules for real-time voice param updates
-                        if let Some(voice_module) = patch_bridge::get_voice_module_for_param(module_id, &param) {
+                        if let Some(voice_module) =
+                            patch_bridge::get_voice_module_for_param(module_id, &param)
+                        {
                             self.handle.send(EngineCommand::SetVoiceParameter {
                                 instrument_id: active_id,
                                 target: voice_module,
@@ -573,7 +616,8 @@ impl eframe::App for SynthApp {
             // Handle module removal
             for module_id in result.modules_to_remove {
                 // Get module descriptor to determine type
-                let category = patch_editor.module_descriptor(module_id)
+                let category = patch_editor
+                    .module_descriptor(module_id)
                     .map(|d| d.category);
 
                 patch_editor.remove_module(module_id);
@@ -593,13 +637,15 @@ impl eframe::App for SynthApp {
                             id: module_id,
                         });
                     }
-                    Some(ModuleCategory::Oscillator) |
-                    Some(ModuleCategory::Filter) |
-                    Some(ModuleCategory::Envelope) |
-                    Some(ModuleCategory::LFO) |
-                    Some(ModuleCategory::Amplifier) |
-                    Some(ModuleCategory::Mixer) |
-                    Some(ModuleCategory::Output) => {
+                    Some(
+                        ModuleCategory::Oscillator
+                        | ModuleCategory::Filter
+                        | ModuleCategory::Envelope
+                        | ModuleCategory::LFO
+                        | ModuleCategory::Amplifier
+                        | ModuleCategory::Mixer
+                        | ModuleCategory::Output,
+                    ) => {
                         // Remove from active instrument's voice graph
                         self.handle.send(EngineCommand::RemoveModule {
                             instrument_id: Some(active_id),
@@ -622,11 +668,11 @@ impl eframe::App for SynthApp {
                 });
             }
         });
-        
+
         // Dialogs
         self.show_dialogs(ctx);
     }
-    
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Stop audio
         if let Some(ref mut host) = self.host {
@@ -642,7 +688,11 @@ impl SynthApp {
     /// for real-time safe addition to the audio engine.
     fn add_module_of_category(&mut self, category: ModuleCategory) {
         // Create module in GUI thread (real-time safe allocation)
-        let (module, descriptor, module_type): (Box<dyn crate::modules::PolyModule>, _, TypedModuleType) = match category {
+        let (module, descriptor, module_type): (
+            Box<dyn crate::modules::PolyModule>,
+            _,
+            TypedModuleType,
+        ) = match category {
             ModuleCategory::Oscillator => {
                 let m = Oscillator::new();
                 let d = m.descriptor();
@@ -734,7 +784,11 @@ impl SynthApp {
 
     fn add_effect_module(&mut self, effect_type: EffectType) {
         // Create effect in GUI thread (real-time safe allocation)
-        let (effect, descriptor, module_type): (Box<dyn crate::modules::AudioEffect>, _, TypedModuleType) = match effect_type {
+        let (effect, descriptor, module_type): (
+            Box<dyn crate::modules::AudioEffect>,
+            _,
+            TypedModuleType,
+        ) = match effect_type {
             EffectType::Delay => {
                 let e = Delay::new();
                 let d = e.descriptor();
@@ -791,8 +845,13 @@ impl SynthApp {
 
     fn add_visualizer_module(&mut self, viz_type: VisualizerType) {
         let (descriptor, module_type) = match viz_type {
-            VisualizerType::Oscilloscope => (Oscilloscope::new().descriptor(), TypedModuleType::Oscilloscope),
-            VisualizerType::LevelMeter => (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter),
+            VisualizerType::Oscilloscope => (
+                Oscilloscope::new().descriptor(),
+                TypedModuleType::Oscilloscope,
+            ),
+            VisualizerType::LevelMeter => {
+                (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
+            }
         };
 
         let next_id = self.next_module_id(module_type);
@@ -803,7 +862,8 @@ impl SynthApp {
         let buffer = std::sync::Arc::new(crate::visualizers::VisualizationBuffer::new(4096));
 
         // Store Arc clone in our handle for GUI access (same buffer!)
-        self.handle.add_visualization_buffer(next_id, buffer.clone());
+        self.handle
+            .add_visualization_buffer(next_id, buffer.clone());
 
         // Convert GUI VisualizerType to engine VisualizerType
         let engine_viz_type = match viz_type {
@@ -838,52 +898,69 @@ impl SynthApp {
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("OUTPUT").color(colors::TEXT_DIM).small());
             ui.add_space(8.0);
-            
+
             let (peak_l, peak_r) = self.handle.peak_meters();
             let (rms_l, rms_r) = self.handle.rms_meters();
-            
+
             ui.horizontal(|ui| {
                 // Left channel
                 ui.vertical(|ui| {
                     ui.label(RichText::new("L").color(colors::TEXT_DIM).small());
                     draw_meter(ui, peak_l, rms_l, 16.0, 150.0);
-                    ui.label(RichText::new(format!("{:.1}", 20.0 * peak_l.max(0.0001).log10()))
-                        .color(colors::TEXT_DIM).small());
+                    ui.label(
+                        RichText::new(format!("{:.1}", 20.0 * peak_l.max(0.0001).log10()))
+                            .color(colors::TEXT_DIM)
+                            .small(),
+                    );
                 });
-                
+
                 // Right channel
                 ui.vertical(|ui| {
                     ui.label(RichText::new("R").color(colors::TEXT_DIM).small());
                     draw_meter(ui, peak_r, rms_r, 16.0, 150.0);
-                    ui.label(RichText::new(format!("{:.1}", 20.0 * peak_r.max(0.0001).log10()))
-                        .color(colors::TEXT_DIM).small());
+                    ui.label(
+                        RichText::new(format!("{:.1}", 20.0 * peak_r.max(0.0001).log10()))
+                            .color(colors::TEXT_DIM)
+                            .small(),
+                    );
                 });
             });
         });
     }
-    
+
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
         // Get the MIDI channel for the active instrument
-        let active_channel = self.instruments.iter()
+        let active_channel = self
+            .instruments
+            .iter()
             .find(|p| p.id == self.active_instrument_id)
             .map(|p| p.channel)
             .unwrap_or(MidiChannel::CH1);
 
         ui.horizontal(|ui| {
             // Panic button (moved here since keyboard handles its own header)
-            if ui.add(egui::Button::new(RichText::new("PANIC").color(colors::ACCENT_RED))).clicked() {
+            if ui
+                .add(egui::Button::new(
+                    RichText::new("PANIC").color(colors::ACCENT_RED),
+                ))
+                .clicked()
+            {
                 self.handle.send(EngineCommand::AllNotesOff);
                 self.pressed_keys.clear();
                 // Keyboard will be cleared by AllNotesReleased event from engine
             }
 
             // Show active instrument indicator
-            let active_name = self.instruments.iter()
+            let active_name = self
+                .instruments
+                .iter()
                 .find(|p| p.id == self.active_instrument_id)
                 .map(|p| p.name.as_str())
                 .unwrap_or("Instrument 1");
             ui.separator();
-            ui.label(RichText::new(format!("Playing: {}", active_name)).color(colors::ACCENT_ORANGE));
+            ui.label(
+                RichText::new(format!("Playing: {}", active_name)).color(colors::ACCENT_ORANGE),
+            );
         });
 
         // Note: Keyboard visual state is now driven by engine events (NoteTriggered/NoteReleased)
@@ -895,32 +972,51 @@ impl SynthApp {
 
         // Handle note events from mouse interaction - send to active instrument's channel
         if let Some(note) = event.note_on {
-            self.handle.note_on_channel(note, NormalizedValue::new(0.8), active_channel);
+            self.handle
+                .note_on_channel(note, NormalizedValue::new(0.8), active_channel);
         }
         for note in event.note_off {
             self.handle.note_off_channel(note, active_channel);
             // Note release will be reflected via NoteReleased event from engine
         }
     }
-    
+
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
         // Get the MIDI channel for the active instrument
-        let active_channel = self.instruments.iter()
+        let active_channel = self
+            .instruments
+            .iter()
             .find(|p| p.id == self.active_instrument_id)
             .map(|p| p.channel)
             .unwrap_or(MidiChannel::CH1);
 
         let key_map: &[(egui::Key, u8)] = &[
             // Lower row: Z-M = C3-B3
-            (egui::Key::Z, 48), (egui::Key::S, 49), (egui::Key::X, 50),
-            (egui::Key::D, 51), (egui::Key::C, 52), (egui::Key::V, 53),
-            (egui::Key::G, 54), (egui::Key::B, 55), (egui::Key::H, 56),
-            (egui::Key::N, 57), (egui::Key::J, 58), (egui::Key::M, 59),
+            (egui::Key::Z, 48),
+            (egui::Key::S, 49),
+            (egui::Key::X, 50),
+            (egui::Key::D, 51),
+            (egui::Key::C, 52),
+            (egui::Key::V, 53),
+            (egui::Key::G, 54),
+            (egui::Key::B, 55),
+            (egui::Key::H, 56),
+            (egui::Key::N, 57),
+            (egui::Key::J, 58),
+            (egui::Key::M, 59),
             // Upper row: Q-P = C4-E5
-            (egui::Key::Q, 60), (egui::Key::Num2, 61), (egui::Key::W, 62),
-            (egui::Key::Num3, 63), (egui::Key::E, 64), (egui::Key::R, 65),
-            (egui::Key::Num5, 66), (egui::Key::T, 67), (egui::Key::Num6, 68),
-            (egui::Key::Y, 69), (egui::Key::Num7, 70), (egui::Key::U, 71),
+            (egui::Key::Q, 60),
+            (egui::Key::Num2, 61),
+            (egui::Key::W, 62),
+            (egui::Key::Num3, 63),
+            (egui::Key::E, 64),
+            (egui::Key::R, 65),
+            (egui::Key::Num5, 66),
+            (egui::Key::T, 67),
+            (egui::Key::Num6, 68),
+            (egui::Key::Y, 69),
+            (egui::Key::Num7, 70),
+            (egui::Key::U, 71),
             (egui::Key::I, 72),
         ];
 
@@ -929,19 +1025,26 @@ impl SynthApp {
         ctx.input(|input| {
             for (key, base_note) in key_map {
                 let note_i32 = *base_note as i32 + octave_offset * 12;
-                if note_i32 < 0 || note_i32 > 127 {
+                if !(0..=127).contains(&note_i32) {
                     continue; // Skip invalid notes
                 }
                 let note = note_i32 as u8;
 
-                if input.key_pressed(*key) && !self.pressed_keys.get(&note).copied().unwrap_or(false) {
-                    self.handle.note_on_channel(MidiNote::new(note), NormalizedValue::new(0.8), active_channel);
+                if input.key_pressed(*key)
+                    && !self.pressed_keys.get(&note).copied().unwrap_or(false)
+                {
+                    self.handle.note_on_channel(
+                        MidiNote::new(note),
+                        NormalizedValue::new(0.8),
+                        active_channel,
+                    );
                     self.pressed_keys.insert(note, true);
                     // Visual feedback will come from NoteTriggered engine event
                 }
 
                 if input.key_released(*key) {
-                    self.handle.note_off_channel(MidiNote::new(note), active_channel);
+                    self.handle
+                        .note_off_channel(MidiNote::new(note), active_channel);
                     self.pressed_keys.insert(note, false);
                     // Visual feedback will come from NoteReleased event from engine
                 }
@@ -956,7 +1059,7 @@ impl SynthApp {
             }
         });
     }
-    
+
     fn show_dialogs(&mut self, ctx: &egui::Context) {
         // Update dialog state (clears expired status messages)
         self.dialog_state.update();
@@ -972,13 +1075,18 @@ impl SynthApp {
             LoadPatchResult::LoadBuiltin(patch) => {
                 self.load_patch_data(&patch);
                 self.current_patch_name = patch.name.clone();
-                self.dialog_state.set_status(format!("Loaded: {}", patch.name));
+                self.dialog_state
+                    .set_status(format!("Loaded: {}", patch.name));
             }
             LoadPatchResult::Cancelled | LoadPatchResult::None => {}
         }
 
         // Save patch dialog
-        match show_save_patch_dialog(ctx, &mut self.dialog_state.show_save_patch, &mut self.dialog_state.patch_save_name) {
+        match show_save_patch_dialog(
+            ctx,
+            &mut self.dialog_state.show_save_patch,
+            &mut self.dialog_state.patch_save_name,
+        ) {
             SavePatchResult::Save(name) => {
                 if let Some(patch) = self.create_patch_from_rack() {
                     let filename = format!("{}.json", name.to_lowercase().replace(' ', "_"));
@@ -997,7 +1105,7 @@ impl SynthApp {
         // Status message toast
         show_status_toast(ctx, &mut self.dialog_state);
     }
-    
+
     /// Load a patch into the active instrument's rack view.
     fn load_patch_data(&mut self, patch: &Patch) {
         // Clear visualization buffers (not handled by patch_bridge)
@@ -1006,7 +1114,9 @@ impl SynthApp {
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
         let active_id = self.active_instrument_id;
-        let patch_editor = self.instruments.iter_mut()
+        let patch_editor = self
+            .instruments
+            .iter_mut()
             .find(|i| i.id == active_id)
             .map(|i| &mut i.patch_editor)
             .expect("Active instrument not found");
@@ -1030,13 +1140,17 @@ impl SynthApp {
 
         // Clear all modules from the active instrument in the engine
         {
-            let patch_editor = self.instruments.iter()
+            let patch_editor = self
+                .instruments
+                .iter()
                 .find(|i| i.id == active_id)
                 .map(|i| &i.patch_editor)
                 .expect("Active instrument not found");
 
             for module_id in patch_editor.module_ids() {
-                let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
+                let category = patch_editor
+                    .module_descriptor(module_id)
+                    .map(|d| d.category);
                 match category {
                     Some(ModuleCategory::Effect) => {
                         self.handle.send_blocking(EngineCommand::RemoveEffect {
@@ -1093,17 +1207,17 @@ impl SynthApp {
 fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
     let painter = ui.painter();
-    
+
     // Background
     painter.rect_filled(rect, 2.0, colors::BG_DARK);
-    
+
     // RMS level
     let rms_height = rect.height() * rms.clamp(0.0, 1.0);
     let rms_rect = egui::Rect::from_min_size(
         Pos2::new(rect.left(), rect.bottom() - rms_height),
         Vec2::new(rect.width(), rms_height),
     );
-    
+
     let rms_color = if rms > 0.9 {
         colors::METER_RED
     } else if rms > 0.7 {
@@ -1111,13 +1225,16 @@ fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
     } else {
         colors::METER_GREEN
     };
-    
+
     painter.rect_filled(rms_rect, 0.0, rms_color);
-    
+
     // Peak indicator
     let peak_y = rect.bottom() - rect.height() * peak.clamp(0.0, 1.0);
     painter.line_segment(
-        [Pos2::new(rect.left(), peak_y), Pos2::new(rect.right(), peak_y)],
+        [
+            Pos2::new(rect.left(), peak_y),
+            Pos2::new(rect.right(), peak_y),
+        ],
         Stroke::new(2.0, colors::TEXT_PRIMARY),
     );
 }

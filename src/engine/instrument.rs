@@ -133,10 +133,22 @@ impl MidiChannel {
 
     /// All 16 standard MIDI channels.
     pub const ALL: [Self; 16] = [
-        Self(0), Self(1), Self(2), Self(3),
-        Self(4), Self(5), Self(6), Self(7),
-        Self(8), Self(9), Self(10), Self(11),
-        Self(12), Self(13), Self(14), Self(15),
+        Self(0),
+        Self(1),
+        Self(2),
+        Self(3),
+        Self(4),
+        Self(5),
+        Self(6),
+        Self(7),
+        Self(8),
+        Self(9),
+        Self(10),
+        Self(11),
+        Self(12),
+        Self(13),
+        Self(14),
+        Self(15),
     ];
 
     /// Iterator over all 16 channels.
@@ -523,11 +535,11 @@ impl Instrument {
             voice.age = voice.age + SampleCount::new(samples);
 
             // Handle stealing fade-out completion
-            if let VoiceState::Stealing { fade_counter, .. } = voice.state {
-                if fade_counter == 0 {
-                    voice.reset();
-                    continue;
-                }
+            if let VoiceState::Stealing { fade_counter, .. } = voice.state
+                && fade_counter == 0
+            {
+                voice.reset();
+                continue;
             }
 
             // Clear temp buffers for this voice

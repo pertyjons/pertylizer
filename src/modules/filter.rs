@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::engine::typed_params::{Param, FilterParam, FilterMode, ModuleType};
+use crate::engine::typed_params::{FilterMode, FilterParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, SampleRate};
 
@@ -170,7 +170,8 @@ impl Describable for Filter {
                     .description("Cutoff modulation"),
             )
             .port(
-                PortDescriptor::control_input("res_cv", "Res CV").description("Resonance modulation"),
+                PortDescriptor::control_input("res_cv", "Res CV")
+                    .description("Resonance modulation"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Filtered output"))
     }
@@ -377,14 +378,11 @@ impl Describable for LadderFilter {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(
-                    Param::Filter(FilterParam::Drive(Gain::UNITY)),
-                    "Drive",
-                )
-                .description("Saturation amount")
-                .range(0.0, 4.0)
-                .default(1.0)
-                .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(Param::Filter(FilterParam::Drive(Gain::UNITY)), "Drive")
+                    .description("Saturation amount")
+                    .range(0.0, 4.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::audio_input("in", "In"))
             .port(PortDescriptor::control_input("cutoff_cv", "Cutoff CV"))
@@ -410,9 +408,7 @@ impl PolyModule for LadderFilter {
 
             let effective_cutoff = if let Some(cv) = cutoff_cv {
                 let mod_amount = cv[i];
-                Hertz::new(
-                    (self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0),
-                )
+                Hertz::new((self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0))
             } else {
                 self.cutoff
             };

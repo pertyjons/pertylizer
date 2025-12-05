@@ -4,8 +4,8 @@
 //! synthesizer user interfaces. It defines traits and types that can
 //! be implemented by different UI frameworks (egui, iced, vizia, etc.).
 
-use crate::engine::{EngineHandle, ModuleId};
 use crate::engine::typed_params::Param;
+use crate::engine::{EngineHandle, ModuleId};
 use crate::modules::{ModuleDescriptor, ParameterDescriptor, WidgetHint};
 use crate::types::{Gain, MidiNote, NormalizedValue};
 
@@ -17,17 +17,17 @@ use crate::types::{Gain, MidiNote, NormalizedValue};
 #[derive(Debug, Clone)]
 pub enum UiEvent {
     /// Trigger a note on.
-    NoteOn { note: MidiNote, velocity: NormalizedValue },
+    NoteOn {
+        note: MidiNote,
+        velocity: NormalizedValue,
+    },
     /// Trigger a note off.
     NoteOff { note: MidiNote },
     /// All notes off.
     AllNotesOff,
     /// Change a parameter value.
     /// The Param carries both the parameter type and its value.
-    ParameterChange {
-        module: ModuleId,
-        param: Param,
-    },
+    ParameterChange { module: ModuleId, param: Param },
     /// Set master volume.
     SetMasterVolume(Gain),
     /// Panic - kill all voices immediately.
@@ -54,7 +54,7 @@ pub enum SynthEvent {
 // ============================================================================
 
 /// Shared state accessible by the UI.
-/// 
+///
 /// This struct provides a clean interface between the audio engine
 /// and any UI implementation.
 pub struct UiState {
@@ -157,7 +157,10 @@ impl UiState {
             UiEvent::AllNotesOff => {
                 self.handle.send(crate::engine::EngineCommand::AllNotesOff);
             }
-            UiEvent::ParameterChange { module: _, param: _ } => {
+            UiEvent::ParameterChange {
+                module: _,
+                param: _,
+            } => {
                 // Legacy parameter change - not supported
                 // Use typed API: SetVoiceParameter or SetEffectParameter
                 eprintln!("Warning: Legacy ParameterChange event not supported");
@@ -210,8 +213,7 @@ impl<'a> ParameterWidget<'a> {
 
     /// Get the current value as a normalized float (0.0 - 1.0).
     pub fn normalized_value(&self) -> f32 {
-        (self.current_value - self.descriptor.min)
-            / (self.descriptor.max - self.descriptor.min)
+        (self.current_value - self.descriptor.min) / (self.descriptor.max - self.descriptor.min)
     }
 
     /// Convert a normalized value back to the parameter's actual value (as f32).

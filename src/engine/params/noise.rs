@@ -25,7 +25,13 @@ pub enum NoiseType {
 }
 
 impl NoiseType {
-    pub const ALL: [Self; 5] = [Self::White, Self::Pink, Self::Brown, Self::Blue, Self::Violet];
+    pub const ALL: [Self; 5] = [
+        Self::White,
+        Self::Pink,
+        Self::Brown,
+        Self::Blue,
+        Self::Violet,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -101,16 +107,18 @@ impl NoiseParam {
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Type(_) => Self::Type(
-                NoiseType::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Type(_) => Self::Type(NoiseType::from_index(value as usize).unwrap_or_default()),
             Self::Level(_) => Self::Level(Gain::new(value)),
         }
     }
 
     /// Default templates
-    pub fn type_default() -> Self { Self::Type(NoiseType::default()) }
-    pub fn level_default() -> Self { Self::Level(Gain::UNITY) }
+    pub fn type_default() -> Self {
+        Self::Type(NoiseType::default())
+    }
+    pub fn level_default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
 }
 
 impl Default for NoiseParam {

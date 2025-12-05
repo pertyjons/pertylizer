@@ -2,8 +2,8 @@
 
 use crate::engine::typed_params::{EqParam, ModuleType, Param};
 use crate::modules::{
-    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{Decibels, Hertz, NormalizedValue, SampleRate};
 
@@ -34,12 +34,10 @@ impl BiquadState {
     /// Process a stereo sample through the filter.
     #[inline]
     fn process(&mut self, in_l: f32, in_r: f32, c: &BiquadCoeffs) -> (f32, f32) {
-        let out_l = c.b0 * in_l + c.b1 * self.x1_l + c.b2 * self.x2_l
-            - c.a1 * self.y1_l
-            - c.a2 * self.y2_l;
-        let out_r = c.b0 * in_r + c.b1 * self.x1_r + c.b2 * self.x2_r
-            - c.a1 * self.y1_r
-            - c.a2 * self.y2_r;
+        let out_l =
+            c.b0 * in_l + c.b1 * self.x1_l + c.b2 * self.x2_l - c.a1 * self.y1_l - c.a2 * self.y2_l;
+        let out_r =
+            c.b0 * in_r + c.b1 * self.x1_r + c.b2 * self.x2_r - c.a1 * self.y1_r - c.a2 * self.y2_r;
 
         self.x2_l = self.x1_l;
         self.x1_l = in_l;
@@ -66,7 +64,7 @@ pub struct Eq {
     low_gain: Decibels,
     mid_freq: Hertz,
     mid_gain: Decibels,
-    mid_q: f32,  // Q factor - dimensionless, kept as f32
+    mid_q: f32, // Q factor - dimensionless, kept as f32
     high_freq: Hertz,
     high_gain: Decibels,
     mix: NormalizedValue,
@@ -290,14 +288,11 @@ impl Describable for Eq {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(
-                    Param::Eq(EqParam::Mix(NormalizedValue::MAX)),
-                    "Mix",
-                )
-                .description("Dry/wet mix")
-                .range(0.0, 1.0)
-                .default(1.0)
-                .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(Param::Eq(EqParam::Mix(NormalizedValue::MAX)), "Mix")
+                    .description("Dry/wet mix")
+                    .range(0.0, 1.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Knob),
             )
     }
 }
@@ -317,7 +312,11 @@ impl AudioEffect for Eq {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
             let in_r = if idx_r < input.len() {
                 input[idx_r]
             } else {

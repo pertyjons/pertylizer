@@ -4,9 +4,9 @@
 //! events (like errors and buffer underruns) are never dropped, while allowing
 //! lower-priority events (like visualization data) to be dropped under load.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::commands::EngineEvent;
 
@@ -60,7 +60,12 @@ pub struct TimestampedEvent {
 
 impl TimestampedEvent {
     /// Create a new timestamped event.
-    pub fn new(event: EngineEvent, timestamp: u64, priority: EventPriority, sequence_id: u64) -> Self {
+    pub fn new(
+        event: EngineEvent,
+        timestamp: u64,
+        priority: EventPriority,
+        sequence_id: u64,
+    ) -> Self {
         Self {
             event,
             timestamp,
@@ -198,7 +203,9 @@ impl PrioritizedEventProducer {
 
     /// Check if any events were dropped.
     pub fn any_dropped(&self) -> bool {
-        self.dropped_counts.iter().any(|c| c.load(Ordering::Relaxed) > 0)
+        self.dropped_counts
+            .iter()
+            .any(|c| c.load(Ordering::Relaxed) > 0)
     }
 }
 
@@ -288,7 +295,14 @@ mod tests {
         let (mut producer, mut consumer) = prioritized_event_channel();
 
         // Send events of different priorities
-        producer.send(EngineEvent::PeakMeter { left: 0.5, right: 0.5 }, EventPriority::Low, 0);
+        producer.send(
+            EngineEvent::PeakMeter {
+                left: 0.5,
+                right: 0.5,
+            },
+            EventPriority::Low,
+            0,
+        );
         producer.send(EngineEvent::VoiceCount(1), EventPriority::High, 1);
         producer.send(EngineEvent::BufferUnderrun, EventPriority::Critical, 2);
 
@@ -314,7 +328,10 @@ mod tests {
             EventPriority::High
         );
         assert_eq!(
-            PrioritizedEventProducer::event_priority(&EngineEvent::PeakMeter { left: 0.0, right: 0.0 }),
+            PrioritizedEventProducer::event_priority(&EngineEvent::PeakMeter {
+                left: 0.0,
+                right: 0.0
+            }),
             EventPriority::Low
         );
     }

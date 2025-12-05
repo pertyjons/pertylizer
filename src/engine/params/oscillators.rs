@@ -331,30 +331,44 @@ impl OscillatorParam {
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Waveform(_) => Self::Waveform(
-                Waveform::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Waveform(_) => {
+                Self::Waveform(Waveform::from_index(value as usize).unwrap_or_default())
+            }
             Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
             Self::Detune(_) => Self::Detune(Cents::new(value)),
             Self::Octave(_) => Self::Octave(Semitones::new(value)),
             Self::PulseWidth(_) => Self::PulseWidth(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::Phase(_) => Self::Phase(Phase::new(value)),
-            Self::FmMode(_) => Self::FmMode(
-                FmMode::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::FmMode(_) => Self::FmMode(FmMode::from_index(value as usize).unwrap_or_default()),
         }
     }
 
     /// Create default parameter templates (for ParameterDescriptor).
-    pub fn frequency_default() -> Self { Self::Frequency(Hertz::A4) }
-    pub fn waveform_default() -> Self { Self::Waveform(Waveform::default()) }
-    pub fn detune_default() -> Self { Self::Detune(Cents::ZERO) }
-    pub fn octave_default() -> Self { Self::Octave(Semitones::ZERO) }
-    pub fn pulse_width_default() -> Self { Self::PulseWidth(NormalizedValue::CENTER) }
-    pub fn level_default() -> Self { Self::Level(Gain::UNITY) }
-    pub fn phase_default() -> Self { Self::Phase(Phase::ZERO) }
-    pub fn fm_mode_default() -> Self { Self::FmMode(FmMode::default()) }
+    pub fn frequency_default() -> Self {
+        Self::Frequency(Hertz::A4)
+    }
+    pub fn waveform_default() -> Self {
+        Self::Waveform(Waveform::default())
+    }
+    pub fn detune_default() -> Self {
+        Self::Detune(Cents::ZERO)
+    }
+    pub fn octave_default() -> Self {
+        Self::Octave(Semitones::ZERO)
+    }
+    pub fn pulse_width_default() -> Self {
+        Self::PulseWidth(NormalizedValue::CENTER)
+    }
+    pub fn level_default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
+    pub fn phase_default() -> Self {
+        Self::Phase(Phase::ZERO)
+    }
+    pub fn fm_mode_default() -> Self {
+        Self::FmMode(FmMode::default())
+    }
 }
 
 impl Default for OscillatorParam {
@@ -417,9 +431,9 @@ impl MathOscillatorParam {
     /// Create the same parameter variant with a new f32 value (for GUI).
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Algorithm(_) => Self::Algorithm(
-                MathAlgo::from_index(value as usize).unwrap_or_default()
-            ),
+            Self::Algorithm(_) => {
+                Self::Algorithm(MathAlgo::from_index(value as usize).unwrap_or_default())
+            }
             Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
             Self::ParamA(_) => Self::ParamA(NormalizedValue::new(value)),
             Self::ParamB(_) => Self::ParamB(NormalizedValue::new(value)),

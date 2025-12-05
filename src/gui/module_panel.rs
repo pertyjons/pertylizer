@@ -3,17 +3,17 @@
 //! This module handles rendering individual synthesizer modules
 //! with their parameters and ports.
 
-use std::collections::HashMap;
 use eframe::egui::{self, Color32, Pos2, Response, Ui, Vec2};
+use std::collections::HashMap;
 
 use crate::engine::ModuleId;
 use crate::engine::typed_params::Param;
 use crate::modules::core::{
-    ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PortDirection as CorePortDirection, PortType as CorePortType, WidgetHint,
+    ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortDirection as CorePortDirection,
+    PortType as CorePortType, WidgetHint,
 };
 
-use super::widgets::{colors, theme, Knob, Port, PortDirection, PortType};
+use super::widgets::{Knob, Port, PortDirection, PortType, colors, theme};
 
 /// State for a module panel in the UI.
 #[derive(Clone)]
@@ -104,7 +104,11 @@ pub fn draw_module_panel(
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 16.0), egui::Sense::hover());
                 ui.painter().rect_filled(rect, 2.0, accent_color);
 
-                ui.label(egui::RichText::new(&descriptor.name).color(accent_color).strong());
+                ui.label(
+                    egui::RichText::new(&descriptor.name)
+                        .color(accent_color)
+                        .strong(),
+                );
             });
 
             ui.add_space(4.0);
@@ -114,7 +118,11 @@ pub fn draw_module_panel(
                 // Input ports on the left
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new("IN").small().color(colors::TEXT_DIM));
-                    for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Input) {
+                    for port in descriptor
+                        .ports
+                        .iter()
+                        .filter(|p| p.direction == CorePortDirection::Input)
+                    {
                         let port_type = convert_port_type(port.port_type);
                         let is_connected = connected_ports.contains(&port.name);
 
@@ -154,7 +162,11 @@ pub fn draw_module_panel(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("OUT").small().color(colors::TEXT_DIM));
-                        for port in descriptor.ports.iter().filter(|p| p.direction == CorePortDirection::Output) {
+                        for port in descriptor
+                            .ports
+                            .iter()
+                            .filter(|p| p.direction == CorePortDirection::Output)
+                        {
                             let port_type = convert_port_type(port.port_type);
                             let is_connected = connected_ports.contains(&port.name);
 
@@ -165,9 +177,10 @@ pub fn draw_module_panel(
                                         .color(colors::TEXT_SECONDARY),
                                 );
 
-                                let (response, center) = Port::new(port_type, PortDirection::Output)
-                                    .connected(is_connected)
-                                    .show(ui);
+                                let (response, center) =
+                                    Port::new(port_type, PortDirection::Output)
+                                        .connected(is_connected)
+                                        .show(ui);
 
                                 let abs_pos = center;
 
@@ -316,7 +329,11 @@ fn draw_slider_param(
     let mut value = current_value;
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+        ui.label(
+            egui::RichText::new(&param.name)
+                .size(theme().fonts.size_normal)
+                .color(colors::TEXT_SECONDARY),
+        );
 
         let slider = egui::Slider::new(&mut value, param.min..=param.max)
             .show_value(true)
@@ -347,9 +364,14 @@ fn draw_dropdown_param(
         let mut selected = current_value.round() as usize;
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(&param.name).size(theme().fonts.size_normal).color(colors::TEXT_SECONDARY));
+            ui.label(
+                egui::RichText::new(&param.name)
+                    .size(theme().fonts.size_normal)
+                    .color(colors::TEXT_SECONDARY),
+            );
 
-            let selected_text = choices.get(selected)
+            let selected_text = choices
+                .get(selected)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|| "?".to_string());
 

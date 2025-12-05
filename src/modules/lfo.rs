@@ -104,13 +104,11 @@ impl Describable for Lfo {
             .category(ModuleCategory::LFO)
             .tag("lfo")
             .tag("modulation")
-            .parameter(
-                ParameterDescriptor::choice(
-                    Param::Lfo(LfoParam::Waveform(LfoWaveform::Sine)),
-                    "Waveform",
-                    LfoWaveform::to_choices(),
-                ),
-            )
+            .parameter(ParameterDescriptor::choice(
+                Param::Lfo(LfoParam::Waveform(LfoWaveform::Sine)),
+                "Waveform",
+                LfoWaveform::to_choices(),
+            ))
             .parameter(
                 ParameterDescriptor::float(Param::Lfo(LfoParam::Rate(Hertz::new(1.0))), "Rate")
                     .range(0.01, 50.0)

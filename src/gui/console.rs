@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::audio::AudioHostTrait;
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, SynthEngine};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
+use crate::types::{MidiNote, NormalizedValue};
 
 /// Console-based GUI backend.
 pub struct ConsoleBackend;
@@ -56,14 +57,23 @@ impl GuiBackend for ConsoleBackend {
 
         println!("\nStarting audio stream...");
         println!("  Sample rate: {} Hz", config.stream_config.sample_rate.0);
-        println!("  Buffer size: {} frames", config.stream_config.buffer_size.0);
+        println!(
+            "  Buffer size: {} frames",
+            config.stream_config.buffer_size.0
+        );
         println!(
             "  Estimated latency: {:.1} ms",
-            config.stream_config.buffer_size
+            config
+                .stream_config
+                .buffer_size
                 .latency_at(config.stream_config.sample_rate)
-                .as_secs_f64() * 1000.0
+                .as_secs_f64()
+                * 1000.0
         );
-        println!("  Max polyphony: {} voices", config.allocator_config.max_voices);
+        println!(
+            "  Max polyphony: {} voices",
+            config.allocator_config.max_voices
+        );
 
         // Start the audio stream
         match host.start_output(None, &config.stream_config, Box::new(engine)) {
@@ -151,7 +161,7 @@ fn handle_note(handle: &mut EngineHandle, parts: &[&str]) {
                 .get(2)
                 .and_then(|s| s.parse::<f32>().ok())
                 .unwrap_or(0.8);
-            handle.note_on(note, velocity);
+            handle.note_on(MidiNote(note), NormalizedValue::new(velocity));
             let freq = 440.0 * 2.0f32.powf((note as f32 - 69.0) / 12.0);
             println!("♪ Note on: {note} ({freq:.1} Hz), velocity: {velocity}");
             println!("  Active voices: {}", handle.voice_count());
@@ -166,7 +176,7 @@ fn handle_note(handle: &mut EngineHandle, parts: &[&str]) {
 fn handle_note_off(handle: &mut EngineHandle, parts: &[&str]) {
     if let Some(&note_str) = parts.get(1) {
         if let Ok(note) = note_str.parse::<u8>() {
-            handle.note_off(note);
+            handle.note_off(MidiNote(note));
             println!("♪ Note off: {note}");
         }
     } else {
@@ -195,7 +205,7 @@ fn handle_chord(handle: &mut EngineHandle, parts: &[&str]) {
             };
 
             for note in &notes {
-                handle.note_on(*note, 0.7);
+                handle.note_on(MidiNote(*note), NormalizedValue::new(0.7));
             }
             println!("♪ Chord: {} {} ({:?})", root, chord_type, notes);
             println!("  Active voices: {}", handle.voice_count());

@@ -50,8 +50,20 @@ impl WaveformType {
                 }
             }
             Self::Sawtooth => 2.0 * x - 1.0,
-            Self::Square => if x < 0.5 { 1.0 } else { -1.0 },
-            Self::Pulse => if x < 0.25 { 1.0 } else { -1.0 },
+            Self::Square => {
+                if x < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            Self::Pulse => {
+                if x < 0.25 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
         }
     }
 }
@@ -134,7 +146,13 @@ impl<'a> WaveformSelector<'a> {
         changed
     }
 
-    fn draw_waveform(&self, painter: &egui::Painter, rect: Rect, waveform: WaveformType, is_selected: bool) {
+    fn draw_waveform(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        waveform: WaveformType,
+        is_selected: bool,
+    ) {
         let color = if is_selected {
             self.accent_color
         } else {
@@ -156,10 +174,7 @@ impl<'a> WaveformSelector<'a> {
 
         // Draw the waveform line
         for i in 0..points.len() - 1 {
-            painter.line_segment(
-                [points[i], points[i + 1]],
-                Stroke::new(1.5, color),
-            );
+            painter.line_segment([points[i], points[i + 1]], Stroke::new(1.5, color));
         }
     }
 }

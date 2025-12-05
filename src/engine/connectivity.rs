@@ -12,10 +12,11 @@ use super::typed_params::Param;
 ///
 /// This indicates whether a module is contributing to the audio output,
 /// allowing the GUI to dim or highlight modules accordingly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ModuleConnectivityStatus {
     /// Module has no connections (isolated).
     /// GUI should show as dimmed/grayed out.
+    #[default]
     Disconnected,
     /// Module has some connections but is not in the signal path to output.
     /// GUI should show as partially visible.
@@ -53,16 +54,12 @@ impl ModuleConnectivityStatus {
     pub fn description(&self) -> &'static str {
         match self {
             ModuleConnectivityStatus::Disconnected => "Not connected",
-            ModuleConnectivityStatus::PartiallyConnected => "Partially connected (not in signal path)",
+            ModuleConnectivityStatus::PartiallyConnected => {
+                "Partially connected (not in signal path)"
+            }
             ModuleConnectivityStatus::Connected => "Connected and active",
             ModuleConnectivityStatus::Bypassed => "Bypassed",
         }
-    }
-}
-
-impl Default for ModuleConnectivityStatus {
-    fn default() -> Self {
-        ModuleConnectivityStatus::Disconnected
     }
 }
 
@@ -106,19 +103,13 @@ pub enum ModuleErrorKind {
         max: f32,
     },
     /// Module is overloading CPU.
-    ProcessingOverload {
-        cpu_percent: f32,
-    },
+    ProcessingOverload { cpu_percent: f32 },
     /// Invalid connection attempt.
-    InvalidConnection {
-        reason: String,
-    },
+    InvalidConnection { reason: String },
     /// Internal module error.
     InternalError(String),
     /// Module output is clipping.
-    OutputClipping {
-        peak_level: f32,
-    },
+    OutputClipping { peak_level: f32 },
     /// Module produced NaN or infinity values.
     InvalidOutput,
     /// Module initialization failed.

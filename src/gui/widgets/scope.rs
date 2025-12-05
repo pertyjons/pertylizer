@@ -26,7 +26,10 @@ pub fn draw_oscilloscope(
     // Horizontal center line
     let center_y = rect.center().y;
     painter.line_segment(
-        [Pos2::new(rect.left(), center_y), Pos2::new(rect.right(), center_y)],
+        [
+            Pos2::new(rect.left(), center_y),
+            Pos2::new(rect.right(), center_y),
+        ],
         Stroke::new(1.0, grid_color),
     );
 
@@ -62,11 +65,19 @@ pub fn draw_oscilloscope(
     } else {
         // No data - draw flat line
         painter.line_segment(
-            [Pos2::new(rect.left() + 4.0, center_y), Pos2::new(rect.right() - 4.0, center_y)],
+            [
+                Pos2::new(rect.left() + 4.0, center_y),
+                Pos2::new(rect.right() - 4.0, center_y),
+            ],
             Stroke::new(1.5, color.gamma_multiply(0.5)),
         );
     }
 
     // Border
-    painter.rect_stroke(rect, 4.0, Stroke::new(1.0, colors::BORDER), eframe::egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        rect,
+        4.0,
+        Stroke::new(1.0, colors::BORDER),
+        eframe::egui::StrokeKind::Outside,
+    );
 }

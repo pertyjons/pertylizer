@@ -214,18 +214,18 @@ impl Describable for Mixer {
             .tag("mixer");
 
         for i in 1..=8 {
-            desc = desc.port(PortDescriptor::audio_input(format!("in{i}"), format!("In {i}")));
+            desc = desc.port(PortDescriptor::audio_input(
+                format!("in{i}"),
+                format!("In {i}"),
+            ));
         }
 
         desc = desc
             .parameter(
-                ParameterDescriptor::float(
-                    Param::Mixer(MixerParam::Master(Gain::UNITY)),
-                    "Master",
-                )
-                .range(0.0, 2.0)
-                .default(1.0)
-                .widget(WidgetHint::Slider),
+                ParameterDescriptor::float(Param::Mixer(MixerParam::Master(Gain::UNITY)), "Master")
+                    .range(0.0, 2.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Slider),
             )
             .port(PortDescriptor::audio_output("out", "Out"));
 

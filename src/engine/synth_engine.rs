@@ -6,8 +6,8 @@
 //! - Effect chain for post-voice processing
 
 use parking_lot::Mutex;
-use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Producer, Split};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,21 +16,21 @@ use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
 use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
 use crate::engine::effect_chain::EffectSlot;
 use crate::engine::graph::ModuleGraph;
+use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::engine::metering::MeteringSystem;
 use crate::engine::params::{
     AmplifierParam, EnvelopeParam, FilterParam, LfoParam, LfoWaveform, ModuleType, OscillatorParam,
     Param, Waveform,
 };
 use crate::engine::sequencer_engine::SequencerEngine;
-use crate::sequencer::SequencerEvent;
 use crate::engine::state::EngineState;
-use crate::engine::instrument::{MidiChannel, InstrumentId, Instrument};
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use crate::types::{Bpm, Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
 use crate::modules::{
-    Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, ProcessContext,
-    PolyModule as PolyModuleTrait,
+    Amplifier, AudioBuffer, Envelope, Filter, Lfo, Oscillator, PolyModule as PolyModuleTrait,
+    ProcessContext,
 };
+use crate::sequencer::SequencerEvent;
+use crate::types::{Bpm, Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
 use crate::visualizers::{LevelMeter, Oscilloscope, VisualizationBuffer};
 
 /// Size of the command ring buffer.
@@ -172,7 +172,12 @@ impl EngineHandle {
     }
 
     /// Send a note on event to a specific channel.
-    pub fn note_on_channel(&mut self, note: MidiNote, velocity: NormalizedValue, channel: super::instrument::MidiChannel) -> bool {
+    pub fn note_on_channel(
+        &mut self,
+        note: MidiNote,
+        velocity: NormalizedValue,
+        channel: super::instrument::MidiChannel,
+    ) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
@@ -181,7 +186,11 @@ impl EngineHandle {
     }
 
     /// Send a note off event to a specific channel.
-    pub fn note_off_channel(&mut self, note: MidiNote, channel: super::instrument::MidiChannel) -> bool {
+    pub fn note_off_channel(
+        &mut self,
+        note: MidiNote,
+        channel: super::instrument::MidiChannel,
+    ) -> bool {
         self.send(EngineCommand::NoteOff { note, channel })
     }
 
@@ -256,13 +265,19 @@ impl EngineHandle {
     }
 
     /// Add a visualization buffer for a module (Arc is shared with engine).
-    pub fn add_visualization_buffer(&mut self, module_id: ModuleId, buffer: Arc<VisualizationBuffer>) {
+    pub fn add_visualization_buffer(
+        &mut self,
+        module_id: ModuleId,
+        buffer: Arc<VisualizationBuffer>,
+    ) {
         self.visualization_buffers.insert(module_id, buffer);
     }
 
     /// Get a visualization buffer for a module.
     pub fn get_visualization_buffer(&self, module_id: ModuleId) -> Option<&VisualizationBuffer> {
-        self.visualization_buffers.get(&module_id).map(|arc| arc.as_ref())
+        self.visualization_buffers
+            .get(&module_id)
+            .map(|arc| arc.as_ref())
     }
 
     /// Remove a visualization buffer.
@@ -345,7 +360,8 @@ impl SynthEngine {
         let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
         // Create default instrument on Channel 1 (strict channel separation)
-        let mut default_instrument = Instrument::with_config(InstrumentId::FIRST, "Default", config);
+        let mut default_instrument =
+            Instrument::with_config(InstrumentId::FIRST, "Default", config);
         default_instrument.set_midi_channel(MidiChannel::CH1);
 
         // Populate the instrument's voice graph with default signal chain
@@ -390,8 +406,13 @@ impl SynthEngine {
     }
 
     /// Find an effect slot by its module type in a specific instrument's effect chain.
-    fn find_effect_by_type(&mut self, instrument_id: InstrumentId, module_type: ModuleType) -> Option<&mut EffectSlot> {
-        self.instruments.iter_mut()
+    fn find_effect_by_type(
+        &mut self,
+        instrument_id: InstrumentId,
+        module_type: ModuleType,
+    ) -> Option<&mut EffectSlot> {
+        self.instruments
+            .iter_mut()
             .find(|i| i.id() == instrument_id)
             .and_then(|inst| inst.effect_chain_mut().find_effect_by_type(module_type))
     }
@@ -409,8 +430,13 @@ impl SynthEngine {
 
     /// Find an effect slot by its module ID in a specific instrument's effect chain.
     #[allow(dead_code)] // Useful for targeted effect updates
-    fn find_effect_by_id(&mut self, instrument_id: InstrumentId, module_id: ModuleId) -> Option<&mut EffectSlot> {
-        self.instruments.iter_mut()
+    fn find_effect_by_id(
+        &mut self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+    ) -> Option<&mut EffectSlot> {
+        self.instruments
+            .iter_mut()
             .find(|i| i.id() == instrument_id)
             .and_then(|inst| inst.effect_chain_mut().find_effect_by_id(module_id))
     }
@@ -426,14 +452,18 @@ impl SynthEngine {
         // Add oscillators with Spacey Bass preset defaults
         let osc1_id = graph.add_module(Box::new({
             let mut osc = Oscillator::new();
-            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
+            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(
+                Waveform::Sawtooth,
+            )));
             osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.6))));
             osc
         }));
 
         let osc2_id = graph.add_module(Box::new({
             let mut osc = Oscillator::new();
-            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
+            osc.set_param(Param::Oscillator(OscillatorParam::Waveform(
+                Waveform::Sawtooth,
+            )));
             osc.set_param(Param::Oscillator(OscillatorParam::Level(Gain::new(0.5))));
             osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::new(7.0))));
             osc
@@ -443,27 +473,45 @@ impl SynthEngine {
         let filter_id = graph.add_module(Box::new({
             let mut filter = Filter::new();
             filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(400.0))));
-            filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(0.4))));
+            filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+                0.4,
+            ))));
             filter
         }));
 
         // Add amp envelope
         let amp_env_id = graph.add_module(Box::new({
             let mut env = Envelope::new();
-            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.005))));
-            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.2))));
-            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.6))));
-            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.3))));
+            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(
+                0.005,
+            ))));
+            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(
+                0.2,
+            ))));
+            env.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                NormalizedValue::new(0.6),
+            )));
+            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(
+                0.3,
+            ))));
             env
         }));
 
         // Add filter envelope
         let filter_env_id = graph.add_module(Box::new({
             let mut env = Envelope::new();
-            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(0.001))));
-            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(0.3))));
-            env.set_param(Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.2))));
-            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(0.4))));
+            env.set_param(Param::Envelope(EnvelopeParam::Attack(TypedSeconds::new(
+                0.001,
+            ))));
+            env.set_param(Param::Envelope(EnvelopeParam::Decay(TypedSeconds::new(
+                0.3,
+            ))));
+            env.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                NormalizedValue::new(0.2),
+            )));
+            env.set_param(Param::Envelope(EnvelopeParam::Release(TypedSeconds::new(
+                0.4,
+            ))));
             env
         }));
 
@@ -513,22 +561,39 @@ impl SynthEngine {
             EngineCommand::RemoveInstrument { instrument_id } => {
                 // Find and remove the instrument, sending it back to main thread for dropping
                 // This is real-time safe: no deallocation happens on the audio thread
-                if let Some(idx) = self.instruments.iter().position(|p| p.id() == instrument_id) {
+                if let Some(idx) = self
+                    .instruments
+                    .iter()
+                    .position(|p| p.id() == instrument_id)
+                {
                     let instrument = self.instruments.swap_remove(idx);
                     // Send to main thread for dropping - ignore if queue is full
                     let _ = self.instrument_return_producer.try_push(instrument);
                 }
             }
 
-            EngineCommand::SetInstrumentParameter { instrument_id, param } => {
+            EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param,
+            } => {
                 use crate::engine::commands::InstrumentParam;
-                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|p| p.id() == instrument_id)
+                {
                     match param {
                         InstrumentParam::Volume(vol) => instrument.set_volume(vol),
                         InstrumentParam::Pan(pan) => instrument.set_pan(pan),
-                        InstrumentParam::GlideTime(time) => instrument.allocator_mut().set_glide_time(time),
-                        InstrumentParam::AllocationMode(mode) => instrument.allocator_mut().set_mode(mode),
-                        InstrumentParam::StealingStrategy(strategy) => instrument.allocator_mut().set_stealing(strategy),
+                        InstrumentParam::GlideTime(time) => {
+                            instrument.allocator_mut().set_glide_time(time)
+                        }
+                        InstrumentParam::AllocationMode(mode) => {
+                            instrument.allocator_mut().set_mode(mode)
+                        }
+                        InstrumentParam::StealingStrategy(strategy) => {
+                            instrument.allocator_mut().set_stealing(strategy)
+                        }
                         InstrumentParam::MaxVoices(_) => {
                             // Cannot change max voices at runtime without reallocating
                             // This would require recreating the allocator
@@ -543,30 +608,48 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::SetInstrumentMidiChannel { instrument_id, channel } => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
+            EngineCommand::SetInstrumentMidiChannel {
+                instrument_id,
+                channel,
+            } => {
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|p| p.id() == instrument_id)
+                {
                     instrument.set_midi_channel(channel);
                 }
             }
 
-            EngineCommand::SetInstrumentEnabled { instrument_id, enabled } => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|p| p.id() == instrument_id) {
+            EngineCommand::SetInstrumentEnabled {
+                instrument_id,
+                enabled,
+            } => {
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|p| p.id() == instrument_id)
+                {
                     instrument.set_enabled(enabled);
                 }
             }
 
             // === Note control - route to instruments by channel ===
-            EngineCommand::NoteOn { note, velocity, channel } => {
+            EngineCommand::NoteOn {
+                note,
+                velocity,
+                channel,
+            } => {
                 // Route to all instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
                 let velocity_f32 = velocity.as_f32();
                 let mut note_triggered = false;
 
                 for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        if instrument.note_on(note, velocity_f32).is_some() {
-                            note_triggered = true;
-                        }
+                    if instrument.responds_to_channel(channel_raw)
+                        && instrument.note_on(note, velocity_f32).is_some()
+                    {
+                        note_triggered = true;
                     }
                 }
                 // Also trigger note on in the modular graph
@@ -599,10 +682,9 @@ impl SynthEngine {
                 }
 
                 // Emit NoteReleased event for GUI feedback
-                let _ = self.event_producer.try_push(EngineEvent::NoteReleased {
-                    note,
-                    channel,
-                });
+                let _ = self
+                    .event_producer
+                    .try_push(EngineEvent::NoteReleased { note, channel });
             }
 
             EngineCommand::AllNotesOff => {
@@ -660,7 +742,11 @@ impl SynthEngine {
                     });
             }
 
-            EngineCommand::PolyAftertouch { note, value, channel } => {
+            EngineCommand::PolyAftertouch {
+                note,
+                value,
+                channel,
+            } => {
                 // Apply poly aftertouch to specific note in instruments that respond to this channel
                 let channel_raw = channel.as_zero_indexed();
                 self.instruments
@@ -690,32 +776,46 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::SetVoiceParameter { instrument_id, target, param } => {
+            EngineCommand::SetVoiceParameter {
+                instrument_id,
+                target,
+                param,
+            } => {
                 // Get the ModuleId from the PolyModule enum
                 let module_id = target.module_id();
 
                 // Find the target instrument and update its voice graph and voices
-                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == instrument_id) {
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
                     // Update the instrument's voice graph (so new voices get the new value)
-                    instrument.voice_graph_mut().set_param(module_id, param.clone());
+                    instrument.voice_graph_mut().set_param(module_id, param);
 
                     // Apply to all existing voices in this instrument
                     for voice in instrument.allocator_mut().voices_mut() {
-                        voice.graph.set_param(module_id, param.clone());
+                        voice.graph.set_param(module_id, param);
                     }
                 }
             }
 
-            EngineCommand::SetModuleParameter { instrument_id, module_id, param } => {
+            EngineCommand::SetModuleParameter {
+                instrument_id,
+                module_id,
+                param,
+            } => {
                 match instrument_id {
                     Some(inst_id) => {
                         // Target a specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            instrument.voice_graph_mut().set_param(module_id, param.clone());
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
+                            instrument.voice_graph_mut().set_param(module_id, param);
 
                             // Apply to all existing voices in this instrument
                             for voice in instrument.allocator_mut().voices_mut() {
-                                voice.graph.set_param(module_id, param.clone());
+                                voice.graph.set_param(module_id, param);
                             }
                         }
                     }
@@ -755,14 +855,21 @@ impl SynthEngine {
                 // SetBypass doesn't have instrument_id - apply to first instrument that has the effect
                 // TODO: Consider adding instrument_id to SetBypass in the future
                 for instrument in &mut self.instruments {
-                    if let Some(slot) = instrument.effect_chain_mut().find_effect_by_type(module.module_type) {
+                    if let Some(slot) = instrument
+                        .effect_chain_mut()
+                        .find_effect_by_type(module.module_type)
+                    {
                         slot.enabled = !bypass;
                         break;
                     }
                 }
             }
 
-            EngineCommand::SetEffectParameter { instrument_id, effect_type, param } => {
+            EngineCommand::SetEffectParameter {
+                instrument_id,
+                effect_type,
+                param,
+            } => {
                 // Convert EffectType to ModuleType and find the effect
                 let mt = effect_type.to_module_type();
                 match instrument_id {
@@ -779,7 +886,11 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::SetEffectEnabled { instrument_id, effect_type, enabled } => {
+            EngineCommand::SetEffectEnabled {
+                instrument_id,
+                effect_type,
+                enabled,
+            } => {
                 let mt = effect_type.to_module_type();
                 match instrument_id {
                     Some(inst_id) => {
@@ -794,7 +905,12 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::AddVisualizer { instrument_id, id, visualizer_type, buffer } => {
+            EngineCommand::AddVisualizer {
+                instrument_id,
+                id,
+                visualizer_type,
+                buffer,
+            } => {
                 use crate::engine::commands::VisualizerType;
                 use crate::modules::AudioEffect;
 
@@ -805,8 +921,12 @@ impl SynthEngine {
 
                 match instrument_id {
                     Some(inst_id) => {
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            instrument.effect_chain_mut().add_visualizer(id, visualizer, buffer);
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
+                            instrument
+                                .effect_chain_mut()
+                                .add_visualizer(id, visualizer, buffer);
                         }
                     }
                     None => {
@@ -815,52 +935,63 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::RemoveVisualizer { instrument_id, id } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            instrument.effect_chain_mut().remove_visualizer(id);
-                        }
-                    }
-                    None => {
-                        eprintln!("RemoveVisualizer: instrument_id is None, ignoring");
+            EngineCommand::RemoveVisualizer { instrument_id, id } => match instrument_id {
+                Some(inst_id) => {
+                    if let Some(instrument) =
+                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                    {
+                        instrument.effect_chain_mut().remove_visualizer(id);
                     }
                 }
-            }
+                None => {
+                    eprintln!("RemoveVisualizer: instrument_id is None, ignoring");
+                }
+            },
 
-            EngineCommand::AddEffectInstance { instrument_id, id, effect } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            instrument.effect_chain_mut().add_effect(id, effect, self.sample_rate);
-                        }
-                    }
-                    None => {
-                        eprintln!("AddEffectInstance: instrument_id is None, ignoring");
+            EngineCommand::AddEffectInstance {
+                instrument_id,
+                id,
+                effect,
+            } => match instrument_id {
+                Some(inst_id) => {
+                    if let Some(instrument) =
+                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                    {
+                        instrument
+                            .effect_chain_mut()
+                            .add_effect(id, effect, self.sample_rate);
                     }
                 }
-            }
+                None => {
+                    eprintln!("AddEffectInstance: instrument_id is None, ignoring");
+                }
+            },
 
-            EngineCommand::RemoveEffect { instrument_id, id } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            instrument.effect_chain_mut().remove_effect(id);
-                        }
-                    }
-                    None => {
-                        eprintln!("RemoveEffect: instrument_id is None, ignoring");
+            EngineCommand::RemoveEffect { instrument_id, id } => match instrument_id {
+                Some(inst_id) => {
+                    if let Some(instrument) =
+                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                    {
+                        instrument.effect_chain_mut().remove_effect(id);
                     }
                 }
-            }
+                None => {
+                    eprintln!("RemoveEffect: instrument_id is None, ignoring");
+                }
+            },
 
             // === Modular routing commands ===
-
-            EngineCommand::AddModuleInstance { instrument_id, id, module } => {
+            EngineCommand::AddModuleInstance {
+                instrument_id,
+                id,
+                module,
+            } => {
                 match instrument_id {
                     Some(inst_id) => {
                         // Add to specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
                             instrument.voice_graph_mut().add_module_with_id(id, module);
                             // Rebuild this instrument's voices with the updated graph
                             instrument.rebuild_voices();
@@ -878,7 +1009,9 @@ impl SynthEngine {
                 match instrument_id {
                     Some(inst_id) => {
                         // Remove from specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
                             instrument.voice_graph_mut().remove_module(id);
                             // Rebuild this instrument's voices with the updated graph
                             instrument.rebuild_voices();
@@ -893,11 +1026,17 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::Connect { instrument_id, from, to } => {
+            EngineCommand::Connect {
+                instrument_id,
+                from,
+                to,
+            } => {
                 match instrument_id {
                     Some(inst_id) => {
                         // Connect in specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
                             if let Err(e) = instrument.voice_graph_mut().connect(
                                 from.module,
                                 &from.port,
@@ -916,12 +1055,10 @@ impl SynthEngine {
                     }
                     None => {
                         // Connect in global graph
-                        if let Err(e) = self.module_graph.connect(
-                            from.module,
-                            &from.port,
-                            to.module,
-                            &to.port,
-                        ) {
+                        if let Err(e) =
+                            self.module_graph
+                                .connect(from.module, &from.port, to.module, &to.port)
+                        {
                             eprintln!(
                                 "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
                                 from.module, from.port, to.module, to.port, e
@@ -931,39 +1068,45 @@ impl SynthEngine {
                 }
             }
 
-            EngineCommand::Disconnect { instrument_id, from, to } => {
+            EngineCommand::Disconnect {
+                instrument_id,
+                from,
+                to,
+            } => {
                 match instrument_id {
                     Some(inst_id) => {
                         // Disconnect in specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                            if instrument.voice_graph_mut().disconnect(
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                            && instrument.voice_graph_mut().disconnect(
                                 from.module,
                                 &from.port,
                                 to.module,
                                 &to.port,
-                            ) {
-                                // Rebuild this instrument's voices
-                                instrument.rebuild_voices();
-                            }
+                            )
+                        {
+                            // Rebuild this instrument's voices
+                            instrument.rebuild_voices();
                         }
                     }
                     None => {
                         // Disconnect in global graph
-                        self.module_graph.disconnect(
-                            from.module,
-                            &from.port,
-                            to.module,
-                            &to.port,
-                        );
+                        self.module_graph
+                            .disconnect(from.module, &from.port, to.module, &to.port);
                     }
                 }
             }
 
-            EngineCommand::DisconnectAll { instrument_id, module } => {
+            EngineCommand::DisconnectAll {
+                instrument_id,
+                module,
+            } => {
                 match instrument_id {
                     Some(inst_id) => {
                         // Disconnect all in specific instrument's voice graph
-                        if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                        if let Some(instrument) =
+                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                        {
                             instrument.voice_graph_mut().disconnect_all(module);
                             // Rebuild this instrument's voices
                             instrument.rebuild_voices();
@@ -1006,7 +1149,7 @@ impl SynthEngine {
     }
 
     /// Process the global module graph.
-    /// 
+    ///
     /// This processes user-added modules and mixes their output
     /// into the main mix buffer.
     fn process_module_graph(&mut self, context: &ProcessContext) {
@@ -1031,7 +1174,8 @@ impl SynthEngine {
 
     /// Update metering.
     fn update_meters(&mut self, output: &[f32]) {
-        self.metering.update(output, &self.state, &mut self.event_producer);
+        self.metering
+            .update(output, &self.state, &mut self.event_producer);
     }
 }
 
@@ -1051,13 +1195,19 @@ impl AudioProcessor for SynthEngine {
         // Process sequencer with type-safe sample count (real-time safe: reuses buffer)
         let sample_count = SampleCount::new(context.frames);
         self.sequencer_event_buffer.clear();
-        self.sequencer.process(sample_count, &mut self.sequencer_event_buffer);
+        self.sequencer
+            .process(sample_count, &mut self.sequencer_event_buffer);
 
         // Route sequencer events to the appropriate instruments
         // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)
         for event in &self.sequencer_event_buffer {
             match event {
-                crate::sequencer::SequencerEvent::NoteOn { pitch, velocity, instrument, .. } => {
+                crate::sequencer::SequencerEvent::NoteOn {
+                    pitch,
+                    velocity,
+                    instrument,
+                    ..
+                } => {
                     let note = MidiNote::new(pitch.as_midi());
                     let vel = velocity.as_f32();
                     let instrument_index = instrument.0 as usize;
@@ -1070,7 +1220,9 @@ impl AudioProcessor for SynthEngine {
                         first.note_on(note, vel);
                     }
                 }
-                crate::sequencer::SequencerEvent::NoteOff { pitch, instrument, .. } => {
+                crate::sequencer::SequencerEvent::NoteOff {
+                    pitch, instrument, ..
+                } => {
                     let note = MidiNote::new(pitch.as_midi());
                     let instrument_index = instrument.0 as usize;
 
@@ -1103,8 +1255,18 @@ impl AudioProcessor for SynthEngine {
         // Copy to output with master volume
         let channels = context.channels as usize;
         for (i, frame) in output.chunks_mut(channels).enumerate() {
-            let left = self.mix_buffer.as_slice().get(i * 2).copied().unwrap_or(0.0);
-            let right = self.mix_buffer.as_slice().get(i * 2 + 1).copied().unwrap_or(left);
+            let left = self
+                .mix_buffer
+                .as_slice()
+                .get(i * 2)
+                .copied()
+                .unwrap_or(0.0);
+            let right = self
+                .mix_buffer
+                .as_slice()
+                .get(i * 2 + 1)
+                .copied()
+                .unwrap_or(left);
 
             if channels >= 2 {
                 frame[0] = (left * self.master_volume).clamp(-1.0, 1.0);
@@ -1118,7 +1280,9 @@ impl AudioProcessor for SynthEngine {
         self.update_meters(output);
 
         // Update transport
-        self.state.transport.advance(context.frames as u64, self.sample_rate);
+        self.state
+            .transport
+            .advance(context.frames as u64, self.sample_rate);
 
         // Calculate CPU usage
         let elapsed = start_time.elapsed().as_secs_f32();
@@ -1139,14 +1303,13 @@ impl AudioProcessor for SynthEngine {
         self.sample_rate = info.sample_rate.as_f32();
         self.state.sample_rate.store(info.sample_rate.0);
         self.metering.set_sample_rate(self.sample_rate);
-        self.sequencer.set_sample_rate(crate::types::SampleRate::new(self.sample_rate));
+        self.sequencer
+            .set_sample_rate(crate::types::SampleRate::new(self.sample_rate));
     }
 
     fn on_stream_stop(&mut self) {
         // Panic all instruments
-        self.instruments
-            .iter_mut()
-            .for_each(|inst| inst.panic());
+        self.instruments.iter_mut().for_each(|inst| inst.panic());
     }
 
     fn on_error(&mut self, error: crate::audio::AudioError) {
@@ -1186,7 +1349,9 @@ mod tests {
         engine.process_commands();
 
         // Should have 3 active voices across all instruments
-        let total_active: usize = engine.instruments.iter()
+        let total_active: usize = engine
+            .instruments
+            .iter()
             .map(|p| p.active_voice_count())
             .sum();
         assert_eq!(total_active, 3);
@@ -1198,7 +1363,10 @@ mod tests {
 
         // Engine should have one default instrument on Channel 1
         assert_eq!(engine.instruments.len(), 1);
-        assert_eq!(engine.instruments[0].id(), crate::engine::instrument::InstrumentId::FIRST);
+        assert_eq!(
+            engine.instruments[0].id(),
+            crate::engine::instrument::InstrumentId::FIRST
+        );
         assert_eq!(engine.instruments[0].name(), "Default");
         assert_eq!(engine.instruments[0].midi_channel(), MidiChannel::CH1);
     }
@@ -1208,12 +1376,15 @@ mod tests {
         let (mut engine, mut handle) = SynthEngine::new();
 
         // Modify default instrument to listen to channel 1 only
-        engine.instruments[0].set_midi_channel(
-            crate::engine::instrument::MidiChannel::from_one_indexed(1).unwrap()
-        );
+        engine.instruments[0]
+            .set_midi_channel(crate::engine::instrument::MidiChannel::from_one_indexed(1).unwrap());
 
         // Send note on channel 1 - should be received
-        handle.note_on_channel(MidiNote::C4, NormalizedValue::new(0.8), crate::engine::instrument::MidiChannel::CH1);
+        handle.note_on_channel(
+            MidiNote::C4,
+            NormalizedValue::new(0.8),
+            crate::engine::instrument::MidiChannel::CH1,
+        );
         engine.process_commands();
         assert_eq!(engine.instruments[0].active_voice_count(), 1);
 
@@ -1233,7 +1404,7 @@ mod tests {
         use super::*;
         use crate::engine::commands::{EngineCommand, ModuleId, PortId};
         use crate::engine::instrument::InstrumentId;
-        use crate::modules::{Oscillator, Filter};
+        use crate::modules::{Filter, Oscillator};
 
         /// Test A: Polyphonic Allocation
         /// An Oscillator should be added to instrument's voice_graph, NOT to module_graph.
@@ -1242,7 +1413,9 @@ mod tests {
             let (mut engine, mut handle) = SynthEngine::new();
 
             // Count existing oscillators in default instrument's voice graph (there are 2 by default)
-            let initial_osc_count = engine.instruments[0].voice_graph().module_ids()
+            let initial_osc_count = engine.instruments[0]
+                .voice_graph()
+                .module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
 
@@ -1260,7 +1433,10 @@ mod tests {
 
             // Verify: Oscillator should be in instrument's voice_graph
             assert!(
-                engine.instruments[0].voice_graph().get_module(osc_id).is_some(),
+                engine.instruments[0]
+                    .voice_graph()
+                    .get_module(osc_id)
+                    .is_some(),
                 "Oscillator should be in instrument's voice_graph"
             );
 
@@ -1271,7 +1447,9 @@ mod tests {
             );
 
             // Verify: voice_graph oscillator count increased
-            let final_osc_count = engine.instruments[0].voice_graph().module_ids()
+            let final_osc_count = engine.instruments[0]
+                .voice_graph()
+                .module_ids()
                 .filter(|id| id.module_type == ModuleType::Oscillator)
                 .count();
             assert_eq!(final_osc_count, initial_osc_count + 1);
@@ -1313,10 +1491,16 @@ mod tests {
             engine.process_commands();
 
             // Verify: All voices in the default instrument should have the new filter
-            for (i, voice) in engine.instruments[0].allocator().voices().iter().enumerate() {
+            for (i, voice) in engine.instruments[0]
+                .allocator()
+                .voices()
+                .iter()
+                .enumerate()
+            {
                 assert!(
                     voice.graph.get_module(filter_id).is_some(),
-                    "Voice {} should have filter_id after AddModuleInstance", i
+                    "Voice {} should have filter_id after AddModuleInstance",
+                    i
                 );
             }
         }
@@ -1356,18 +1540,27 @@ mod tests {
             engine.process_commands();
 
             // Verify: instrument's voice_graph has the connection
-            let template_connections: Vec<_> = engine.instruments[0].voice_graph().connections().collect();
-            let has_connection = template_connections.iter().any(|c| {
-                c.from_module == new_osc_id && c.to_module == new_amp_id
-            });
-            assert!(has_connection, "instrument's voice_graph should have the connection");
+            let template_connections: Vec<_> =
+                engine.instruments[0].voice_graph().connections().collect();
+            let has_connection = template_connections
+                .iter()
+                .any(|c| c.from_module == new_osc_id && c.to_module == new_amp_id);
+            assert!(
+                has_connection,
+                "instrument's voice_graph should have the connection"
+            );
 
             // Verify: All voices have the connection
-            for (i, voice) in engine.instruments[0].allocator().voices().iter().enumerate() {
+            for (i, voice) in engine.instruments[0]
+                .allocator()
+                .voices()
+                .iter()
+                .enumerate()
+            {
                 let voice_connections: Vec<_> = voice.graph.connections().collect();
-                let has_connection = voice_connections.iter().any(|c| {
-                    c.from_module == new_osc_id && c.to_module == new_amp_id
-                });
+                let has_connection = voice_connections
+                    .iter()
+                    .any(|c| c.from_module == new_osc_id && c.to_module == new_amp_id);
                 assert!(has_connection, "Voice {} should have the connection", i);
             }
         }
@@ -1413,7 +1606,12 @@ mod tests {
             engine.process_commands();
 
             // Verify it exists
-            assert!(engine.instruments[0].voice_graph().get_module(filter_id).is_some());
+            assert!(
+                engine.instruments[0]
+                    .voice_graph()
+                    .get_module(filter_id)
+                    .is_some()
+            );
             for voice in engine.instruments[0].allocator().voices() {
                 assert!(voice.graph.get_module(filter_id).is_some());
             }
@@ -1426,7 +1624,12 @@ mod tests {
             engine.process_commands();
 
             // Verify it's gone from instrument's voice_graph
-            assert!(engine.instruments[0].voice_graph().get_module(filter_id).is_none());
+            assert!(
+                engine.instruments[0]
+                    .voice_graph()
+                    .get_module(filter_id)
+                    .is_none()
+            );
 
             // Verify it's gone from all voices
             for voice in engine.instruments[0].allocator().voices() {

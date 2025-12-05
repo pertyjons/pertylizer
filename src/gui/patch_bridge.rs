@@ -10,21 +10,22 @@ use std::sync::Arc;
 
 use eframe::egui::Pos2;
 
-use crate::engine::{EngineCommand, EngineHandle, ModuleId};
+use crate::effects::{Chorus, Delay, Distortion, Reverb};
 use crate::engine::commands::{PolyModule, PortId};
+use crate::engine::graph::Connection;
 use crate::engine::instrument::InstrumentId;
 use crate::engine::typed_params::{ModuleType, Param};
-use crate::engine::graph::Connection;
-use crate::gui::patch_editor::{PatchEditor, EffectType};
+use crate::engine::{EngineCommand, EngineHandle, ModuleId};
 use crate::gui::keyboard::PianoKeyboard;
+use crate::gui::patch_editor::{EffectType, PatchEditor};
 use crate::modules::{
-    Describable, ModuleCategory, ModuleDescriptor,
-    Oscillator, MathOscillator, SubOscillator, NoiseGenerator,
-    Filter, Envelope, Lfo, Amplifier, Mixer, StereoOutput,
+    Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
+    ModuleDescriptor, NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
 };
-use crate::effects::{Chorus, Delay, Distortion, Reverb};
-use crate::visualizers::{Oscilloscope, LevelMeter};
-use crate::patch::{Patch, ModuleType as PatchModuleType, ModuleState, ConnectionState, ParamValue};
+use crate::patch::{
+    ConnectionState, ModuleState, ModuleType as PatchModuleType, ParamValue, Patch,
+};
+use crate::visualizers::{LevelMeter, Oscilloscope};
 
 /// Load a patch into a specific instrument's rack view and send commands to the engine.
 ///
@@ -48,7 +49,9 @@ pub fn load_patch(
     // First remove all modules from the engine for this instrument
     for module_id in patch_editor.module_ids() {
         // Check if this is an effect or visualizer (global) vs instrument module
-        let category = patch_editor.module_descriptor(module_id).map(|d| d.category);
+        let category = patch_editor
+            .module_descriptor(module_id)
+            .map(|d| d.category);
         match category {
             Some(crate::modules::ModuleCategory::Effect) => {
                 // Effects are now per-instrument - remove from this instrument's effect chain
@@ -80,18 +83,22 @@ pub fn load_patch(
 
     // Add modules from patch
     for module_state in &patch.modules {
-        load_module(module_state, patch_editor, instance_counters, handle, instrument_id);
+        load_module(
+            module_state,
+            patch_editor,
+            instance_counters,
+            handle,
+            instrument_id,
+        );
     }
 
     // Add connections to both patch_editor and engine
     for conn in &patch.connections {
-        if let (Ok(from_id), Ok(to_id)) = (conn.from.0.parse::<ModuleId>(), conn.to.0.parse::<ModuleId>()) {
-            let connection = Connection::new(
-                from_id,
-                &conn.from.1,
-                to_id,
-                &conn.to.1,
-            );
+        if let (Ok(from_id), Ok(to_id)) = (
+            conn.from.0.parse::<ModuleId>(),
+            conn.to.0.parse::<ModuleId>(),
+        ) {
+            let connection = Connection::new(from_id, &conn.from.1, to_id, &conn.to.1);
             patch_editor.add_connection(connection);
 
             // Send connection to engine - blocking to ensure all connections are established
@@ -113,12 +120,12 @@ pub fn load_patch(
     // Apply settings
     keyboard.set_octave_offset(patch.settings.octave_offset);
     *glide_time = patch.settings.glide_time;
-    handle.send_blocking(EngineCommand::SetMasterVolume(
-        crate::types::Gain::new(patch.settings.master_volume)
-    ));
-    handle.send_blocking(EngineCommand::SetGlideTime(
-        crate::types::Seconds::new(patch.settings.glide_time)
-    ));
+    handle.send_blocking(EngineCommand::SetMasterVolume(crate::types::Gain::new(
+        patch.settings.master_volume,
+    )));
+    handle.send_blocking(EngineCommand::SetGlideTime(crate::types::Seconds::new(
+        patch.settings.glide_time,
+    )));
 
     // Ensure the target instrument is enabled after loading
     handle.send_blocking(EngineCommand::SetInstrumentEnabled {
@@ -160,7 +167,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::MathOscillator => {
             let m = MathOscillator::new();
@@ -171,7 +186,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::SubOscillator => {
             let m = SubOscillator::new();
@@ -182,7 +205,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Noise => {
             let m = NoiseGenerator::new();
@@ -193,7 +224,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Filter => {
             let m = Filter::new();
@@ -204,7 +243,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Envelope => {
             let m = Envelope::new();
@@ -215,7 +262,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Lfo => {
             let m = Lfo::new();
@@ -226,7 +281,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Amplifier => {
             let m = Amplifier::new();
@@ -237,7 +300,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Mixer => {
             let m = Mixer::new();
@@ -248,7 +319,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::StereoOutput => {
             let m = StereoOutput::new();
@@ -259,7 +338,15 @@ fn load_module(
                 id: module_id,
                 module: Box::new(m),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters, None, patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Delay => {
             let e = Delay::new();
@@ -271,8 +358,15 @@ fn load_module(
                 id: module_id,
                 effect: Box::new(e),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Delay), patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Delay),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Reverb => {
             let e = Reverb::new();
@@ -283,8 +377,15 @@ fn load_module(
                 id: module_id,
                 effect: Box::new(e),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Reverb), patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Reverb),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Distortion => {
             let e = Distortion::new();
@@ -295,8 +396,15 @@ fn load_module(
                 id: module_id,
                 effect: Box::new(e),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Distortion), patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Distortion),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Chorus => {
             let e = Chorus::new();
@@ -307,8 +415,15 @@ fn load_module(
                 id: module_id,
                 effect: Box::new(e),
             });
-            apply_module_parameters(module_id, &descriptor, &module_state.parameters,
-                Some(EffectType::Chorus), patch_editor, handle, instrument_id);
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Chorus),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
         }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
@@ -357,7 +472,9 @@ pub fn apply_module_parameters(
 ) {
     for (param_name, value) in parameters {
         // Find the parameter descriptor by name
-        let param_desc = descriptor.parameters.iter()
+        let param_desc = descriptor
+            .parameters
+            .iter()
             .find(|p| p.name.to_lowercase() == param_name.to_lowercase());
 
         if let Some(param_desc) = param_desc {
@@ -365,11 +482,19 @@ pub fn apply_module_parameters(
             let f32_value = match value {
                 ParamValue::Float(f) => *f,
                 ParamValue::Int(i) => *i as f32,
-                ParamValue::Bool(b) => if *b { 1.0 } else { 0.0 },
+                ParamValue::Bool(b) => {
+                    if *b {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
                 ParamValue::Choice(s) => {
                     // Look up choice index
                     if let Some(ref choices) = param_desc.choices {
-                        choices.iter().position(|c| c.id == *s)
+                        choices
+                            .iter()
+                            .position(|c| c.id == *s)
                             .map(|i| i as f32)
                             .unwrap_or(0.0)
                     } else {
@@ -474,17 +599,24 @@ pub fn get_voice_module_for_param(module_id: ModuleId, param: &Param) -> Option<
         Param::Amplifier(_) => Some(PolyModule::Amplifier),
         Param::Mixer(_) => Some(PolyModule::Mixer),
         // Effects are handled separately
-        Param::Delay(_) | Param::Reverb(_) |
-        Param::Distortion(_) | Param::Chorus(_) |
-        Param::Phaser(_) | Param::Flanger(_) |
-        Param::Compressor(_) | Param::Eq(_) => None,
+        Param::Delay(_)
+        | Param::Reverb(_)
+        | Param::Distortion(_)
+        | Param::Chorus(_)
+        | Param::Phaser(_)
+        | Param::Flanger(_)
+        | Param::Compressor(_)
+        | Param::Eq(_) => None,
         // Visualizers and other types
         _ => None,
     }
 }
 
 /// Get the EffectType for a module from its descriptor.
-pub fn get_effect_type_from_module(patch_editor: &PatchEditor, module_id: ModuleId) -> Option<EffectType> {
+pub fn get_effect_type_from_module(
+    patch_editor: &PatchEditor,
+    module_id: ModuleId,
+) -> Option<EffectType> {
     let desc = patch_editor.module_descriptor(module_id)?;
 
     // Match based on type_id

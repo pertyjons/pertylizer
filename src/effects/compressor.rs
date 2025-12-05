@@ -2,8 +2,8 @@
 
 use crate::engine::typed_params::{CompressorParam, ModuleType, Param};
 use crate::modules::{
-    Describable, AudioEffect, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PortDescriptor, ProcessContext, WidgetHint,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
 use crate::types::{Decibels, Milliseconds, NormalizedValue, Ratio, SampleRate};
 
@@ -170,7 +170,11 @@ impl AudioEffect for Compressor {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() { input[idx_l] } else { 0.0 };
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
             let in_r = if idx_r < input.len() {
                 input[idx_r]
             } else {
