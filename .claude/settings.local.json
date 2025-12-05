@@ -34,7 +34,9 @@
       "Bash(tee:*)",
       "Bash(mv:*)",
       "Bash(cargo update:*)",
-      "Bash(cargo outdated:*)"
+      "Bash(cargo outdated:*)",
+      "Bash(cargo run:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

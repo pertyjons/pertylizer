@@ -211,6 +211,34 @@ impl Default for MidiChannel {
 /// Maximum buffer size for instrument audio buffers.
 const MAX_BUFFER_SIZE: usize = 4096;
 
+/// Soft clipper threshold - signals above this level start to be compressed.
+const SOFT_CLIP_THRESHOLD: f32 = 0.8;
+
+/// Apply soft clipping to prevent harsh digital clipping.
+///
+/// Uses a smooth tanh-like curve that preserves dynamics below the threshold
+/// while gently compressing signals above it.
+///
+/// # Soft Clip Algorithm
+/// - Below threshold: signal passes through unchanged
+/// - Above threshold: smoothly compressed towards ±1.0
+#[inline]
+fn soft_clip(sample: f32) -> f32 {
+    if sample.abs() <= SOFT_CLIP_THRESHOLD {
+        sample
+    } else {
+        // Smooth soft clipping using tanh-like curve
+        let sign = sample.signum();
+        let abs_sample = sample.abs();
+        // Map (threshold, inf) -> (threshold, 1.0) smoothly
+        let excess = abs_sample - SOFT_CLIP_THRESHOLD;
+        let headroom = 1.0 - SOFT_CLIP_THRESHOLD;
+        // Asymptotic approach to 1.0: threshold + headroom * (1 - e^(-excess/headroom))
+        let compressed = SOFT_CLIP_THRESHOLD + headroom * (1.0 - (-excess / headroom).exp());
+        sign * compressed
+    }
+}
+
 /// A synthesizer instrument - an independent sound source with its own voice allocation.
 ///
 /// Instruments enable multitimbral operation where different MIDI channels can
@@ -240,8 +268,11 @@ pub struct Instrument {
     volume: Gain,
     /// Stereo pan position.
     pan: BipolarValue,
-    /// Whether this instrument is enabled.
+    /// Whether this instrument is enabled (mute = !enabled).
     enabled: bool,
+    /// Whether this instrument is soloed.
+    /// When any instrument is soloed, only soloed instruments produce sound.
+    solo: bool,
     /// Left channel buffer for voice summing.
     voice_left: AudioBuffer,
     /// Right channel buffer for voice summing.
@@ -270,6 +301,7 @@ impl Instrument {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
+            solo: false,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
@@ -293,6 +325,7 @@ impl Instrument {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
+            solo: false,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
@@ -412,6 +445,18 @@ impl Instrument {
     #[inline]
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    /// Check if this instrument is soloed.
+    #[inline]
+    pub fn is_solo(&self) -> bool {
+        self.solo
+    }
+
+    /// Set the solo state for this instrument.
+    #[inline]
+    pub fn set_solo(&mut self, solo: bool) {
+        self.solo = solo;
     }
 
     /// Check if this instrument should respond to a MIDI event on the given channel.
@@ -597,10 +642,14 @@ impl Instrument {
         let left_gain = left_gain.as_f32();
         let right_gain = right_gain.as_f32();
 
-        // Mix processed effect_buffer into main output with volume/pan
+        // Mix processed effect_buffer into main output with volume/pan and soft clipping
+        // Soft clipping is applied per-instrument to prevent individual instruments
+        // from causing harsh clipping when mixed together
         for i in 0..samples {
-            output[i * 2] += self.effect_buffer[i * 2] * left_gain;
-            output[i * 2 + 1] += self.effect_buffer[i * 2 + 1] * right_gain;
+            let left = soft_clip(self.effect_buffer[i * 2] * left_gain);
+            let right = soft_clip(self.effect_buffer[i * 2 + 1] * right_gain);
+            output[i * 2] += left;
+            output[i * 2 + 1] += right;
         }
 
         active_count
@@ -628,6 +677,7 @@ impl fmt::Debug for Instrument {
             .field("volume", &self.volume)
             .field("pan", &self.pan)
             .field("enabled", &self.enabled)
+            .field("solo", &self.solo)
             .field("active_voices", &self.active_voice_count())
             .finish()
     }
@@ -740,5 +790,46 @@ mod tests {
         let (left, right) = instrument.stereo_gain();
         assert!((left.as_f32() - sqrt_half * 0.5).abs() < 0.01);
         assert!((right.as_f32() - sqrt_half * 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_solo() {
+        let mut instrument = Instrument::new(InstrumentId::new(1), "Test");
+
+        // Default is not soloed
+        assert!(!instrument.is_solo());
+
+        // Set solo
+        instrument.set_solo(true);
+        assert!(instrument.is_solo());
+
+        // Unset solo
+        instrument.set_solo(false);
+        assert!(!instrument.is_solo());
+    }
+
+    #[test]
+    fn test_soft_clip() {
+        // Below threshold - unchanged
+        assert!((super::soft_clip(0.5) - 0.5).abs() < 0.001);
+        assert!((super::soft_clip(-0.5) - (-0.5)).abs() < 0.001);
+        assert!((super::soft_clip(0.8) - 0.8).abs() < 0.001);
+
+        // At/above threshold - compressed
+        let clipped = super::soft_clip(1.5);
+        assert!(clipped > 0.8); // Above threshold
+        assert!(clipped < 1.0); // Below hard clip
+        assert!(clipped > super::soft_clip(1.2)); // Monotonic
+
+        // Negative side mirrors positive
+        let neg_clipped = super::soft_clip(-1.5);
+        assert!(neg_clipped < -0.8);
+        assert!(neg_clipped > -1.0);
+        assert!((clipped + neg_clipped).abs() < 0.001); // Symmetric
+
+        // Very high input asymptotically approaches 1.0
+        let extreme = super::soft_clip(2.0);
+        assert!(extreme < 1.0);
+        assert!(extreme > 0.9);
     }
 }

@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
 use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
-use crate::engine::effect_chain::EffectSlot;
+use crate::engine::effect_chain::{EffectChain, EffectSlot};
 use crate::engine::graph::ModuleGraph;
 use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::engine::metering::MeteringSystem;
@@ -303,6 +303,11 @@ pub struct SynthEngine {
     /// All synthesizer instruments (each with its own voice graph and allocator).
     instruments: Vec<Box<Instrument>>,
 
+    // === Master effects ===
+    /// Global master effect chain (processes mixed output from all instruments).
+    /// Effects like master reverb, limiter, EQ go here.
+    master_effects: EffectChain,
+
     // === Global module graph ===
     /// The global module graph for modular routing.
     /// Contains all user-added modules and their connections.
@@ -380,6 +385,7 @@ impl SynthEngine {
             instrument_return_producer,
             state: Arc::clone(&state),
             instruments: vec![Box::new(default_instrument)],
+            master_effects: EffectChain::new(),
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             sample_rate: 48000.0,
@@ -634,6 +640,19 @@ impl SynthEngine {
                 }
             }
 
+            EngineCommand::SetInstrumentSolo {
+                instrument_id,
+                solo,
+            } => {
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|p| p.id() == instrument_id)
+                {
+                    instrument.set_solo(solo);
+                }
+            }
+
             // === Note control - route to instruments by channel ===
             EngineCommand::NoteOn {
                 note,
@@ -832,6 +851,8 @@ impl SynthEngine {
                     instrument.panic();
                     instrument.effect_chain_mut().reset();
                 }
+                // Reset master effects
+                self.master_effects.reset();
             }
 
             EngineCommand::ClearAllModules => {
@@ -847,6 +868,8 @@ impl SynthEngine {
                     // Rebuild voices with the cleared graph
                     instrument.rebuild_voices();
                 }
+                // Clear master effects
+                self.master_effects.clear();
                 self.module_graph.clear();
                 self.use_modular_routing = false;
             }
@@ -880,8 +903,11 @@ impl SynthEngine {
                         }
                     }
                     None => {
-                        // No instrument specified - log warning (global master bus not implemented yet)
-                        eprintln!("SetEffectParameter: instrument_id is None, ignoring");
+                        // Target master bus effect chain
+                        if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                            slot.effect.set_param(param);
+                            slot.enabled = true;
+                        }
                     }
                 }
             }
@@ -899,8 +925,10 @@ impl SynthEngine {
                         }
                     }
                     None => {
-                        // No instrument specified - log warning
-                        eprintln!("SetEffectEnabled: instrument_id is None, ignoring");
+                        // Target master bus effect chain
+                        if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                            slot.enabled = enabled;
+                        }
                     }
                 }
             }
@@ -930,7 +958,8 @@ impl SynthEngine {
                         }
                     }
                     None => {
-                        eprintln!("AddVisualizer: instrument_id is None, ignoring");
+                        // Add visualizer to master bus
+                        self.master_effects.add_visualizer(id, visualizer, buffer);
                     }
                 }
             }
@@ -944,7 +973,8 @@ impl SynthEngine {
                     }
                 }
                 None => {
-                    eprintln!("RemoveVisualizer: instrument_id is None, ignoring");
+                    // Remove visualizer from master bus
+                    self.master_effects.remove_visualizer(id);
                 }
             },
 
@@ -963,7 +993,8 @@ impl SynthEngine {
                     }
                 }
                 None => {
-                    eprintln!("AddEffectInstance: instrument_id is None, ignoring");
+                    // Add effect to master bus
+                    self.master_effects.add_effect(id, effect, self.sample_rate);
                 }
             },
 
@@ -976,7 +1007,8 @@ impl SynthEngine {
                     }
                 }
                 None => {
-                    eprintln!("RemoveEffect: instrument_id is None, ignoring");
+                    // Remove effect from master bus
+                    self.master_effects.remove_effect(id);
                 }
             },
 
@@ -1129,6 +1161,10 @@ impl SynthEngine {
     /// - Voice processing through the signal chain
     /// - Instrument volume and pan application
     /// - Mixing into the stereo output buffer
+    ///
+    /// ## Solo Logic
+    /// If any instrument is soloed, only soloed instruments produce sound.
+    /// Non-soloed instruments are skipped entirely (not just muted).
     fn process_voices(&mut self, context: &ProcessContext) {
         let num_channels = 2;
         let buffer_size = context.samples * num_channels;
@@ -1139,8 +1175,17 @@ impl SynthEngine {
 
         let mut active_count = 0u32;
 
+        // Check if any instrument is soloed
+        let any_soloed = self.instruments.iter().any(|i| i.is_solo());
+
         // Process each instrument - delegate to Instrument::process
         for instrument in &mut self.instruments {
+            // Skip this instrument if:
+            // - Any instrument is soloed AND this one is not soloed
+            if any_soloed && !instrument.is_solo() {
+                continue;
+            }
+
             active_count += instrument.process(&mut self.mix_buffer, context);
         }
 
@@ -1170,6 +1215,19 @@ impl SynthEngine {
             self.mix_buffer[i * 2] += sample;
             self.mix_buffer[i * 2 + 1] += sample;
         }
+    }
+
+    /// Process the global master effects chain.
+    ///
+    /// This processes effects like master reverb, limiter, EQ
+    /// on the mixed output from all instruments.
+    fn process_master_effects(&mut self, context: &ProcessContext) {
+        if self.master_effects.is_empty() {
+            return;
+        }
+
+        // Process master effects in place on the mix buffer
+        self.master_effects.process(&mut self.mix_buffer, context);
     }
 
     /// Update metering.
@@ -1251,6 +1309,9 @@ impl AudioProcessor for SynthEngine {
 
         // Process modular graph (user-added modules)
         self.process_module_graph(&process_context);
+
+        // Process master effects (master bus: reverb, limiter, EQ, etc.)
+        self.process_master_effects(&process_context);
 
         // Copy to output with master volume
         let channels = context.channels as usize;

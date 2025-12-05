@@ -1,5 +1,55 @@
 # Version History
 
+## [0.33.6] - 2024
+
+### Added - Fas 1: Signalväg & Mixning
+
+Implementerade grundläggande mixer-funktionalitet med solo-logik, master bus och optimerad gain staging.
+
+**Del 1: Solo & Mute logik**
+
+| Fil | Ändring |
+|-----|---------|
+| `instrument.rs:247` | Nytt `solo: bool` fält i `Instrument` |
+| `instrument.rs:422-431` | `is_solo()` och `set_solo()` metoder |
+| `commands.rs:288` | Nytt `SetInstrumentSolo` kommando |
+| `synth_engine.rs:1159-1168` | Solo-logik i `process_voices()` - skippar non-soloed instruments |
+| `hub.rs:322` | Permission-hantering för solo-kommando |
+| `transactions.rs:524-530` | Clone-impl för solo-kommando |
+
+**Del 2: Global Master Bus**
+
+| Fil | Ändring |
+|-----|---------|
+| `synth_engine.rs:309` | Nytt `master_effects: EffectChain` fält |
+| `synth_engine.rs:1216-1227` | `process_master_effects()` funktion |
+| `synth_engine.rs:1309-1310` | Master effects integrerat i audio-loopen |
+| `synth_engine.rs:901-929` | Effektkommandon stödjer nu `instrument_id: None` för master bus |
+| `effect_chain.rs:176-179` | Ny `is_empty()` metod |
+
+**Del 3: Optimerad Gain Staging (Soft Clipper)**
+
+| Fil | Ändring |
+|-----|---------|
+| `instrument.rs:214-239` | `soft_clip()` funktion med mjuk tanh-kurva |
+| `instrument.rs:648-652` | Soft clipping appliceras per-instrument före mixning |
+
+Soft clipping använder en asymptotisk kurva som:
+- Lämnar signaler under 0.8 oförändrade
+- Mjukt komprimerar signaler över 0.8 mot 1.0
+- Förhindrar hård digital clipping när instrument mixas
+
+**Nya tester:**
+- `test_solo` - Solo getter/setter
+- `test_soft_clip` - Soft clipping beteende
+
+**Resultat:**
+- `cargo build --release`: ✅ Passerar
+- `cargo clippy`: ✅ Passerar
+- Alla 277 tester: ✅ Passerar (+2 nya)
+
+---
+
 ## [0.33.5] - 2024
 
 ### Fixed - Eliminated All unwrap/expect in Production Code

@@ -277,10 +277,17 @@ pub enum EngineCommand {
         channel: MidiChannel,
     },
 
-    /// Enable or disable an instrument.
+    /// Enable or disable an instrument (mute).
     SetInstrumentEnabled {
         instrument_id: InstrumentId,
         enabled: bool,
+    },
+
+    /// Solo an instrument.
+    /// When any instrument is soloed, only soloed instruments produce sound.
+    SetInstrumentSolo {
+        instrument_id: InstrumentId,
+        solo: bool,
     },
 
     // === Note control ===
@@ -676,6 +683,14 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("SetInstrumentEnabled")
                 .field("instrument_id", instrument_id)
                 .field("enabled", enabled)
+                .finish(),
+            Self::SetInstrumentSolo {
+                instrument_id,
+                solo,
+            } => f
+                .debug_struct("SetInstrumentSolo")
+                .field("instrument_id", instrument_id)
+                .field("solo", solo)
                 .finish(),
             // Note commands
             Self::NoteOn {

@@ -197,7 +197,8 @@ pub fn show_instrument_rack(
                                     // Channels 1-16
                                     for ch in 1..=16u8 {
                                         // Safe: ch is always 1-16 which is valid
-                                        let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
+                                        let Some(midi_ch) = MidiChannel::from_one_indexed(ch)
+                                        else {
                                             continue;
                                         };
                                         let is_selected =

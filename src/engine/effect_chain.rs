@@ -173,6 +173,12 @@ impl EffectChain {
         self.slots.clear();
     }
 
+    /// Check if the chain is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
     /// Reset all effects (visualizers don't need reset).
     pub fn reset(&mut self) {
         for slot in &mut self.slots {

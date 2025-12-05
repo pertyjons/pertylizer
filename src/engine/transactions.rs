@@ -521,6 +521,13 @@ impl Clone for EngineCommand {
                 instrument_id: *instrument_id,
                 enabled: *enabled,
             },
+            EngineCommand::SetInstrumentSolo {
+                instrument_id,
+                solo,
+            } => EngineCommand::SetInstrumentSolo {
+                instrument_id: *instrument_id,
+                solo: *solo,
+            },
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
             EngineCommand::AddInstrument { .. } => {
                 panic!("AddInstrument cannot be cloned - instrument instances are unique")

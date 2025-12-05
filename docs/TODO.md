@@ -1,102 +1,76 @@
+# 📋 Master TODO - Modular Synth (v0.34+)
 
-# 📋 Master TODO - Modular Synth (v0.33+)
+## 🔴 Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
+*Mål: Göra klart påbörjad arkitektur och fixa de mest irriterande begränsningarna för användaren.*
 
-## 🔴 Prioritet 1: Arkitektur & Multi-Instrument (Kritiskt)
-*Mål: Få GUI och Backend att prata samma språk gällande instrument. Just nu är backend redo men GUI:t blandar ihop alla instrument i en vy.*
-
-1.  **Per-Instrument PatchEditor (GUI Refactor)** ✅ *Klart i v0.32.19*
-  * [x] Flytta ägandeskapet av `PatchEditor` från `SynthApp` till `InstrumentUiState`.
-  * [x] Se till att GUI:t byter `PatchEditor`-instans när man klickar på ett nytt instrument i listan.
-  * [x] Uppdatera `load_patch` så att den laddar in i *aktivt* instrument istället för att nollställa hela motorn.
-
-2.  **Per-Instrument Voice Graph (Backend Refactor - Fas 3)** ✅ *Klart i v0.32.18*
-  * [x] Implementera ändringarna i `src/engine/instrument.rs` (flytta `voice_graph` dit).
-  * [x] Uppdatera `SynthEngine` så att den inte längre har en global `voice_template`.
-  * [x] Se till att `AddModuleInstance` och `Connect` routas till rätt instruments graf.
-
-3.  **Per-Instrument Effects (Fas 3.5)** ✅ *Klart i v0.32.20*
-  * [x] Flytta `MasterBus` till `Instrument` och döp om till `EffectChain`.
-  * [x] Varje instrument äger nu sin egen effektkedja (insert effects).
-  * [x] Laddning av patch påverkar endast det instrumentets effekter.
-
-4.  **Stereo Routing & Mixning**
-  * [ ] Utred `StereoOutput`-modulens roll. Ska den ligga i varje röst (nuvarande) eller vara en fixerad del av instrumentet? (Rekommendation: Flytta limiter/master-volym till `Instrument`-nivå och låt `PolyModule`-grafen bara summera till L/R).
+1.  **Stereo Routing & Mixning** (Från nuvarande P1)
+    * [x] ~~Flytta limiter/master-volym från röst-nivå till `Instrument`-nivå för att spara CPU.~~ *(0.33.6: Soft clipper på instrument-nivå)*
+2.  **Solo & Mute-logik** (Från nuvarande P2)
+    * [x] ~~Lägg till Solo-knapp. Implementera "Exclusive Solo" logik i mixern.~~ *(0.33.6: Solo-logik i engine, GUI behövs)*
+3.  **Bypass-knappar** (Från nuvarande P2)
+    * [ ] Lägg till Power-knapp i modul-headern för effekter.
+4.  **Attenuverters & Input Gain** (Från nuvarande P2 - Kritiskt för ljuddesign)
+    * [ ] Lägg till skalning på CV-ingångar (t.ex. LFO -> Filter) så man slipper externa VCA:er för enkla modulationer.
+5.  **Ljudinspelning / Tape Recorder** (Nytt - Prio Hög)
+    * [ ] Implementera en global "Record"-knapp som streamar output till WAV-fil. Detta gör synten omedelbart användbar för produktion.
 
 ---
 
-## 🟠 Prioritet 2: Best Practices & Workflow ("Pro features")
-*Mål: Göra synthen smidigare att jobba med och mer kapabel för ljuddesign.*
+## 🟠 Fas 2: Kreativ Expansion (Medellång sikt)
+*Mål: Göra synten rolig och musikalisk att använda.*
 
-5.  **Bypass-knappar**
-  * [ ] **Effekter:** Lägg till en "Power"-knapp i modul-headern som skickar `SetBypass`.
-  * [ ] **Röst-moduler:** Lägg till en `bypass`-parameter i `Filter`, `Distortion` etc. och uppdatera DSP-koden att skicka vidare input om den är aktiv.
-
-6.  **Attenuverters (CV-skalning)**
-  * [ ] Uppdatera moduler (Osc, Filter) att ha en "Input Gain"-parameter för varje CV-ingång (t.ex. `FM Amount`, `Cutoff Mod Amount`).
-  * [ ] Gör det möjligt att invertera signalen (negativ gain).
-
-7.  **Solo-funktion**
-  * [ ] Lägg till "Solo"-knapp (S) bredvid Mute (M) i Instrument Rack.
-  * [ ] Uppdatera mixern i `SynthEngine` att tysta alla icke-soloade instrument om något instrument är soloat.
-
-8.  **Modul-verktyg**
-  * [ ] **Init:** Högerklick på modul -> "Reset to Default".
-  * [ ] **Randomize:** Högerklick -> "Randomize Parameters" (för snabb inspiration).
-  * [ ] **CPU-mätare:** Visa en liten %-siffra eller stapel på varje modul (data finns redan i `ModuleCpuTracker`).
+6.  **Sampling & Audio Assets** (Från nuvarande P3)
+    * [ ] `SampleManager` och `SamplePlayer`-modul. Detta öppnar upp för trummor och texturer.
+7.  **Patch Browser & Taggar** (Nytt - UX)
+    * [ ] Byt ut fil-dialogen mot en inbyggd browser med tag-filtrering (Bass, Pad, FX).
+8.  **Makro-system & Mod Matrix** (Nytt - Ljuddesign)
+    * [ ] Skapa 4 globala Makro-rattar som kan styra flera parametrar. Detta ersätter behovet av komplex kabeldragning för "Performance"-rattar.
+9.  **Dynamic MIDI Learn** (Nytt - UX)
+    * [ ] Högerklick på parameter -> "Learn MIDI CC". Nödvändigt för hårdvarukontroll.
+10. **Visualiseringar: Spectrum Analyzer (FFT)** (Från nuvarande P4)
+    * [ ] Implementera FFT för att se frekvensinnehåll. Det får synten att kännas "levande".
 
 ---
 
-## 🟡 Prioritet 3: Sampling (Audio Assets)
-*Mål: Kunna använda trumsamplingar och loopar.*
+## 🟡 Fas 3: Workstation & Ljudkvalitet (Lång sikt)
+*Mål: Förvandla synten till en professionell miljö.*
 
-9.  **Sample Infrastructure**
-  * [ ] Lägg till `hound` (WAV-loading) och `rfd` (File Dialog) i dependencies.
-  * [ ] Skapa `SampleManager` för att ladda och cacha ljudfiler i minnet.
-
-10. **SamplePlayer Modul**
-  * [ ] Skapa en `PolyModule` som spelar upp en buffer.
-  * [ ] Parametrar: Start, End, Loop, Pitch, Direction.
-  * [ ] Integration i `Add Module`-menyn.
-
----
-
-## 🟢 Prioritet 4: Visualiseringar
-*Mål: Ge visuell feedback på vad som händer med ljudet.*
-
-11. **Spectrum Analyzer (FFT)**
-  * [ ] Lägg till `rustfft`.
-  * [ ] Skapa en ny Visualizer-modul som visar frekvensspektrum.
-
-12. **Visual Feedback i Racket**
-  * [ ] **Portar:** Låt portarna lysa/blinka baserat på om det går signal genom dem (kräver att RMS-värden skickas från motorn, kan vara tungt).
-  * [ ] **Kablar:** (Experimentellt) Animera kablar som har signal.
-
-13. **Vectorscope & Tuner**
-  * [ ] Implementera Vectorscope (L vs R) för att se stereobredd.
-  * [ ] Implementera en enkel Tuner för att stämma oscillatorer.
+11. **Oversampling** (Nytt - Ljudkvalitet)
+    * [ ] Implementera 2x/4x oversampling för att minska aliasing i distortion och FM.
+12. **Undo / Redo** (Nytt - UX)
+    * [ ] Implementera Command-historik för `PatchEditor`. Kritiskt när man bygger komplexa patchar.
+13. **Sequencer GUI & Transport** (Från nuvarande P5)
+    * [ ] Bygg Play/Stop-knappar och en visuell Tracker/Piano Roll.
+14. **Generativa Moduler** (Nytt - Kreativitet)
+    * [ ] Euclidean Sequencer, Turing Machine, Random Gates.
+15. **Projekt-filer (.msproject)** (Från nuvarande Övrigt)
+    * [ ] Spara hela sessionen (alla instrument + sequencer), inte bara enstaka patchar.
 
 ---
 
-## 🔵 Prioritet 5: Sequencer & Transport
-*Mål: Göra det möjligt att bygga låtar, inte bara ljud.*
+## 🔵 Fas 4: "Nice to Have" / Nischade Features
+*Mål: Specialfunktioner för specifika användare.*
 
-14. **Transport Bar**
-  * [ ] Lägg till en panel i toppen med Play, Stop, BPM, Time Signature.
-  * [ ] Koppla knapparna till `EngineCommand::Play`/`Stop`.
+16. **Live Performance View** (Nytt)
+    * [ ] En förenklad vy för scenbruk (stora mätare, makron, setlist).
+17. **Plugin-stöd (CLAP/VST3)** (Nytt)
+    * [ ] Wrappa motorn med `nih-plug` för att köra inuti en DAW.
+18. **Microtuning / Scala-filer** (Nytt)
+    * [ ] Stöd för .scl filer för icke-västerländska skalor.
+19. **M/S Processing** (Från nuvarande Övrigt)
+    * [ ] Mid/Side-läge på EQ och kompressor.
+20. **Avancerade Visualiseringar** (Från nuvarande P4)
+    * [ ] Vectorscope, Tuner, 3D-vyer.
 
-15. **Tracker / Piano Roll View**
-  * [ ] Skapa ett GUI för att redigera `Pattern`-data som redan finns i backend.
-  * [ ] Koppla detta till det aktiva instrumentet.
+## ⚡ Fas 5: Prestanda & Optimering (Ny sektion)
+21. **"Baked Graph" / Graf-kompilering** (Tillagd)
+    * [ ] Implementera ett "kompileringssteg" som omvandlar `ModuleGraph` (HashMap) till en linjär lista av operationer (`Vec<Op>`) och en platt minnesbuffert.
+    * [ ] Mål: Eliminera alla hash-uppslagningar och pointer-jumps i ljudtråden för maximal cache-lokalitet och prestanda.
+22. **Oversampling**
+    * [ ] Stöd för 2x/4x oversampling internt i rösterna för minskad aliasing.
 
----
+### Analys av förändringen
+Denna nya lista prioriterar **användbarhet** (Inspelning, Browser, MIDI Learn) högre än ren teknik (Sequencer GUI, Avancerade Visualiseringar).
 
-## 🟣 Övrigt / Långsiktiga Mål
-
-16. **Projekt-filer**
-  * [ ] Skapa `.msproject`-format som sparar hela "Racket" (alla instrument + sequencer), inte bara en patch.
-
-17. **M/S Processing**
-  * [ ] Lägg till Mid/Side-läge på EQ och Kompressor.
-
-18. **Undo/Redo**
-  * [ ] Implementera en Undo-stack för `PatchEditor`-ändringar.
+* **Varför flytta ner Sequencer?** Motorn har redan en sequencer, men att bygga ett bra *GUI* för den (Piano Roll) är ett enormt projekt. Det är bättre att först göra synten till ett grymt instrument som kan spelas med externt tangentbord/DAW, innan man bygger en hel DAW inuti den.
+* **Varför flytta upp Inspelning?** Det är en "lågt hängande frukt" (lätt att koda) som ger enormt värde direkt ("Jag gjorde ett ljud, jag vill spara det som WAV").

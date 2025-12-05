@@ -318,7 +318,8 @@ impl EngineHub {
             // Instrument parameter changes
             EngineCommand::SetInstrumentParameter { .. }
             | EngineCommand::SetInstrumentMidiChannel { .. }
-            | EngineCommand::SetInstrumentEnabled { .. } => perms.can_modify_params,
+            | EngineCommand::SetInstrumentEnabled { .. }
+            | EngineCommand::SetInstrumentSolo { .. } => perms.can_modify_params,
 
             // Parameter changes
             EngineCommand::SetVoiceParameter { .. }
