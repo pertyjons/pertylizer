@@ -563,6 +563,8 @@ pub enum InstrumentParam {
     Volume(Gain),
     /// Instrument pan (type-safe bipolar value: -1.0 left to +1.0 right).
     Pan(BipolarValue),
+    /// Solo state - when any instrument is soloed, only soloed instruments play.
+    Solo(bool),
     /// Glide/portamento time (type-safe seconds).
     GlideTime(Seconds),
     /// Voice allocation mode.

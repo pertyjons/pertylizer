@@ -36,7 +36,10 @@
       "Bash(cargo update:*)",
       "Bash(cargo outdated:*)",
       "Bash(cargo run:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(timeout 5 cargo run:*)",
+      "Bash(timeout 3 cargo run:*)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []

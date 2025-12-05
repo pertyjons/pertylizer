@@ -610,6 +610,9 @@ impl SynthEngine {
                         InstrumentParam::VelocityFilterSensitivity(sens) => {
                             instrument.set_velocity_filter_sensitivity(sens);
                         }
+                        InstrumentParam::Solo(solo) => {
+                            instrument.set_solo(solo);
+                        }
                     }
                 }
             }

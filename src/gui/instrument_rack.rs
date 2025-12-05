@@ -32,6 +32,9 @@ pub struct InstrumentUiState {
     pub pan: BipolarValue,
     /// Whether this instrument is muted (uses volume = 0 for soft mute).
     pub muted: bool,
+    /// Whether this instrument is soloed.
+    /// When any instrument is soloed, only soloed instruments produce sound.
+    pub solo: bool,
     /// Stored volume when muted (to restore on unmute).
     stored_volume: Gain,
     /// The patch editor for this instrument's visual module graph.
@@ -47,6 +50,7 @@ impl Default for InstrumentUiState {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             muted: false,
+            solo: false,
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
         }
@@ -63,6 +67,7 @@ impl InstrumentUiState {
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             muted: false,
+            solo: false,
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
         }
@@ -163,7 +168,7 @@ pub fn show_instrument_rack(
                                 // Instrument name (editable)
                                 ui.add(
                                     egui::TextEdit::singleline(&mut instruments[idx].name)
-                                        .desired_width(80.0)
+                                        .desired_width(60.0)
                                         .font(egui::FontId::proportional(t.fonts.size_small)),
                                 );
 
@@ -218,13 +223,13 @@ pub fn show_instrument_rack(
 
                                 ui.add_space(4.0);
 
-                                // Volume knob (small)
+                                // Volume knob (compact for rack)
                                 let muted = instruments[idx].muted;
                                 let mut vol = instruments[idx].volume.as_f32();
                                 let vol_response = Knob::new(&mut vol, 0.0, 1.0)
                                     .default(1.0)
                                     .label("Vol")
-                                    .size(t.sizes.knob_size_small)
+                                    .size(40.0) // Compact size for instrument rack
                                     .accent_color(if muted {
                                         colors::TEXT_DIM
                                     } else {
@@ -241,13 +246,13 @@ pub fn show_instrument_rack(
                                     });
                                 }
 
-                                // Pan knob (small)
+                                // Pan knob (compact for rack)
                                 let current_pan = instruments[idx].pan.as_f32();
                                 let mut pan = current_pan;
                                 Knob::new(&mut pan, -1.0, 1.0)
                                     .default(0.0)
                                     .label("Pan")
-                                    .size(t.sizes.knob_size_small)
+                                    .size(40.0) // Compact size for instrument rack
                                     .accent_color(colors::ACCENT_CYAN)
                                     .show(ui);
 
@@ -256,6 +261,32 @@ pub fn show_instrument_rack(
                                     handle.send(EngineCommand::SetInstrumentParameter {
                                         instrument_id,
                                         param: InstrumentParam::Pan(instruments[idx].pan),
+                                    });
+                                }
+
+                                // Solo button
+                                let solo = instruments[idx].solo;
+                                let solo_color = if solo {
+                                    colors::ACCENT_YELLOW
+                                } else {
+                                    colors::TEXT_DIM
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("S")
+                                                .color(solo_color)
+                                                .size(t.fonts.size_small),
+                                        )
+                                        .min_size(egui::vec2(24.0, 24.0)),
+                                    )
+                                    .on_hover_text("Solo this instrument")
+                                    .clicked()
+                                {
+                                    instruments[idx].solo = !instruments[idx].solo;
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::Solo(instruments[idx].solo),
                                     });
                                 }
 
@@ -275,6 +306,7 @@ pub fn show_instrument_rack(
                                         )
                                         .min_size(egui::vec2(24.0, 24.0)),
                                     )
+                                    .on_hover_text("Mute this instrument")
                                     .clicked()
                                 {
                                     let new_volume = instruments[idx].toggle_mute();

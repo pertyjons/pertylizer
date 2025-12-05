@@ -1,5 +1,43 @@
 # Version History
 
+## [0.33.7] - 2024
+
+### Added - Master FX Sidebar UI
+
+Implementerade ett integrerat Master FX-gränssnitt i högra sidopanelen med kollapsbar effektlista.
+
+**GUI-ändringar:**
+
+| Fil | Ändring |
+|-----|---------|
+| `egui_backend.rs:165-201` | Ny `MasterEffectUiState` struct för att tracka effekter i UI |
+| `egui_backend.rs:235` | Nytt `master_effects: Vec<MasterEffectUiState>` fält i `SynthApp` |
+| `egui_backend.rs:949-983` | Uppdaterad `add_master_effect()` som nu också lägger till i UI-listan |
+| `egui_backend.rs:1052-1197` | Ny `draw_master_fx_section()` med kollapsbar effektlista |
+| `egui_backend.rs:593-596` | Bredare sidopanel (120-180px) för att rymma Master FX |
+
+**Funktioner:**
+
+- Kollapsbar lista med alla master-effekter i sidopanelen
+- Expand/collapse-knapp (▼/▶) för varje effekt
+- Bypass-knapp (B) som skickar `SetEffectEnabled` till engine
+- Ta bort-knapp (×) som skickar `RemoveEffect` till engine
+- "Add Effect" dropdown för att lägga till nya effekter
+- Visuell feedback: bypassade effekter är nedtonade
+
+**Borttaget:**
+
+| Fil | Ändring |
+|-----|---------|
+| `egui_backend.rs` | Borttagen popup-dialog `show_master_fx_panel()` |
+| `egui_backend.rs` | Borttagen toolbar-knapp för Master FX popup |
+
+**Resultat:**
+- `cargo build --release`: Passerar
+- `cargo clippy`: Passerar
+
+---
+
 ## [0.33.6] - 2024
 
 ### Added - Fas 1: Signalväg & Mixning

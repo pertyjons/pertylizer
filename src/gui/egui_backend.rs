@@ -162,6 +162,44 @@ fn setup_custom_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// UI state for a master effect in the effects chain.
+#[derive(Clone)]
+struct MasterEffectUiState {
+    /// Module ID for this effect
+    id: ModuleId,
+    /// Effect type
+    effect_type: EffectType,
+    /// Whether the panel is expanded (showing parameters)
+    expanded: bool,
+    /// Whether the effect is bypassed
+    bypassed: bool,
+}
+
+impl MasterEffectUiState {
+    fn new(id: ModuleId, effect_type: EffectType) -> Self {
+        Self {
+            id,
+            effect_type,
+            expanded: true, // Start expanded so user can see parameters
+            bypassed: false,
+        }
+    }
+
+    /// Get a display name for this effect
+    fn display_name(&self) -> &'static str {
+        match self.effect_type {
+            EffectType::Compressor => "Compressor",
+            EffectType::Eq => "EQ",
+            EffectType::Reverb => "Reverb",
+            EffectType::Delay => "Delay",
+            EffectType::Chorus => "Chorus",
+            EffectType::Phaser => "Phaser",
+            EffectType::Flanger => "Flanger",
+            EffectType::Distortion => "Distortion",
+        }
+    }
+}
+
 /// Main application state.
 struct SynthApp {
     handle: EngineHandle,
@@ -192,6 +230,9 @@ struct SynthApp {
     instruments: Vec<InstrumentUiState>,
     active_instrument_id: InstrumentId,
     next_instrument_id: u64,
+
+    // Master effects chain UI state
+    master_effects: Vec<MasterEffectUiState>,
 }
 
 impl SynthApp {
@@ -264,6 +305,7 @@ impl SynthApp {
             instruments,
             active_instrument_id,
             next_instrument_id,
+            master_effects: Vec::new(),
         }
     }
 
@@ -536,8 +578,8 @@ impl eframe::App for SynthApp {
 
         // Left side panel with instrument rack
         egui::SidePanel::left("instrument_rack_panel")
-            .min_width(280.0)
-            .max_width(350.0)
+            .min_width(320.0)
+            .max_width(400.0)
             .show(ctx, |ui| {
                 show_instrument_rack(
                     ui,
@@ -548,9 +590,10 @@ impl eframe::App for SynthApp {
                 );
             });
 
-        // Right side panel with meters
+        // Right side panel with meters and master effects
         egui::SidePanel::right("meters_panel")
-            .min_width(80.0)
+            .min_width(120.0)
+            .max_width(180.0)
             .show(ctx, |ui| {
                 self.draw_meters(ui);
             });
@@ -903,7 +946,41 @@ impl SynthApp {
         });
     }
 
+    /// Add an effect to the master bus.
+    fn add_master_effect(&mut self, effect_type: EffectType) {
+        // Create effect in GUI thread (real-time safe allocation)
+        let (effect, module_type): (Box<dyn crate::modules::AudioEffect>, TypedModuleType) =
+            match effect_type {
+                EffectType::Delay => (Box::new(Delay::new()), TypedModuleType::Delay),
+                EffectType::Reverb => (Box::new(Reverb::new()), TypedModuleType::Reverb),
+                EffectType::Distortion => {
+                    (Box::new(Distortion::new()), TypedModuleType::Distortion)
+                }
+                EffectType::Chorus => (Box::new(Chorus::new()), TypedModuleType::Chorus),
+                EffectType::Phaser => (Box::new(Phaser::new()), TypedModuleType::Phaser),
+                EffectType::Flanger => (Box::new(Flanger::new()), TypedModuleType::Flanger),
+                EffectType::Compressor => {
+                    (Box::new(Compressor::new()), TypedModuleType::Compressor)
+                }
+                EffectType::Eq => (Box::new(Eq::new()), TypedModuleType::Eq),
+            };
+
+        let next_id = self.next_module_id(module_type);
+
+        // Send to engine with instrument_id: None to target master bus
+        self.handle.send(EngineCommand::AddEffectInstance {
+            instrument_id: None, // Master bus!
+            id: next_id,
+            effect,
+        });
+
+        // Track in UI state
+        self.master_effects
+            .push(MasterEffectUiState::new(next_id, effect_type));
+    }
+
     fn draw_meters(&mut self, ui: &mut egui::Ui) {
+        // Output meters section
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("OUTPUT").color(colors::TEXT_DIM).small());
             ui.add_space(8.0);
@@ -934,6 +1011,185 @@ impl SynthApp {
                     );
                 });
             });
+        });
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // Master FX section
+        self.draw_master_fx_section(ui);
+    }
+
+    /// Draw the Master FX section in the sidebar
+    #[allow(clippy::too_many_lines)]
+    fn draw_master_fx_section(&mut self, ui: &mut egui::Ui) {
+        ui.vertical(|ui| {
+            ui.label(RichText::new("MASTER FX").color(colors::TEXT_DIM).small());
+            ui.add_space(4.0);
+
+            // Track actions to apply after iteration (to avoid borrow issues)
+            let mut effect_to_remove: Option<usize> = None;
+            let mut effect_to_toggle_bypass: Option<usize> = None;
+            let mut effect_to_toggle_expand: Option<usize> = None;
+
+            // Scrollable list of effects
+            egui::ScrollArea::vertical()
+                .max_height(ui.available_height() - 40.0)
+                .show(ui, |ui| {
+                    for (idx, effect) in self.master_effects.iter().enumerate() {
+                        let is_expanded = effect.expanded;
+                        let is_bypassed = effect.bypassed;
+
+                        // Effect header frame
+                        let frame_color = if is_bypassed {
+                            colors::BG_WIDGET.gamma_multiply(0.5)
+                        } else {
+                            colors::BG_WIDGET
+                        };
+
+                        egui::Frame::new()
+                            .fill(frame_color)
+                            .inner_margin(4.0)
+                            .corner_radius(4.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Expand/collapse toggle
+                                    let arrow = if is_expanded { "▼" } else { "▶" };
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(arrow)
+                                                    .color(colors::TEXT_DIM)
+                                                    .size(10.0),
+                                            )
+                                            .frame(false),
+                                        )
+                                        .clicked()
+                                    {
+                                        effect_to_toggle_expand = Some(idx);
+                                    }
+
+                                    // Effect name
+                                    let name_color = if is_bypassed {
+                                        colors::TEXT_DIM
+                                    } else {
+                                        colors::TEXT_PRIMARY
+                                    };
+                                    ui.label(
+                                        RichText::new(effect.display_name())
+                                            .color(name_color)
+                                            .size(11.0),
+                                    );
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            // Remove button
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("×")
+                                                            .color(colors::TEXT_DIM)
+                                                            .size(12.0),
+                                                    )
+                                                    .min_size(egui::vec2(18.0, 18.0)),
+                                                )
+                                                .on_hover_text("Remove effect")
+                                                .clicked()
+                                            {
+                                                effect_to_remove = Some(idx);
+                                            }
+
+                                            // Bypass button
+                                            let bypass_color = if is_bypassed {
+                                                colors::ACCENT_YELLOW
+                                            } else {
+                                                colors::TEXT_DIM
+                                            };
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("B")
+                                                            .color(bypass_color)
+                                                            .size(10.0),
+                                                    )
+                                                    .min_size(egui::vec2(18.0, 18.0)),
+                                                )
+                                                .on_hover_text("Bypass effect")
+                                                .clicked()
+                                            {
+                                                effect_to_toggle_bypass = Some(idx);
+                                            }
+                                        },
+                                    );
+                                });
+
+                                // Expanded content with parameters (placeholder for now)
+                                if is_expanded {
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new("(Parameters coming soon)")
+                                            .color(colors::TEXT_DIM)
+                                            .size(9.0)
+                                            .italics(),
+                                    );
+                                }
+                            });
+
+                        ui.add_space(2.0);
+                    }
+                });
+
+            // Apply actions after iteration
+            if let Some(idx) = effect_to_toggle_expand {
+                self.master_effects[idx].expanded = !self.master_effects[idx].expanded;
+            }
+
+            if let Some(idx) = effect_to_toggle_bypass {
+                let effect = &mut self.master_effects[idx];
+                effect.bypassed = !effect.bypassed;
+                self.handle.send(EngineCommand::SetEffectEnabled {
+                    instrument_id: None, // Master bus
+                    effect_type: effect.effect_type,
+                    enabled: !effect.bypassed,
+                });
+            }
+
+            if let Some(idx) = effect_to_remove {
+                let removed = self.master_effects.remove(idx);
+                self.handle.send(EngineCommand::RemoveEffect {
+                    instrument_id: None, // Master bus
+                    id: removed.id,
+                });
+            }
+
+            ui.add_space(8.0);
+
+            // Add effect dropdown
+            egui::ComboBox::from_id_salt("add_master_fx")
+                .selected_text(RichText::new("+ Add Effect").size(10.0))
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    let effect_types = [
+                        (EffectType::Compressor, "Compressor"),
+                        (EffectType::Eq, "EQ"),
+                        (EffectType::Reverb, "Reverb"),
+                        (EffectType::Delay, "Delay"),
+                        (EffectType::Chorus, "Chorus"),
+                        (EffectType::Phaser, "Phaser"),
+                        (EffectType::Flanger, "Flanger"),
+                        (EffectType::Distortion, "Distortion"),
+                    ];
+
+                    for (effect_type, name) in effect_types {
+                        if ui.selectable_label(false, name).clicked() {
+                            self.add_master_effect(effect_type);
+                        }
+                    }
+                });
         });
     }
 
