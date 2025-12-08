@@ -1411,6 +1411,10 @@ pub enum PaletteSelection {
     Effect(EffectType),
     Visualizer(VisualizerType),
     StereoOutput,
+    // Physical modeling
+    KeyboardPanner,
+    BodyResonance,
+    MechanicalNoise,
 }
 
 impl ModulePalette {
@@ -1513,6 +1517,26 @@ impl ModulePalette {
                     }
                     if ui.button("📊 Level Meter").clicked() {
                         selected = Some(PaletteSelection::Visualizer(VisualizerType::LevelMeter));
+                        ui.close();
+                    }
+                },
+            );
+
+            // Physical modeling submenu
+            let phys_color = category_color(ModuleCategory::PhysicalModeling);
+            ui.menu_button(
+                egui::RichText::new("🎹 Physical").color(phys_color),
+                |ui| {
+                    if ui.button("🎹 Keyboard Panner").clicked() {
+                        selected = Some(PaletteSelection::KeyboardPanner);
+                        ui.close();
+                    }
+                    if ui.button("🪵 Body Resonance").clicked() {
+                        selected = Some(PaletteSelection::BodyResonance);
+                        ui.close();
+                    }
+                    if ui.button("🔧 Mechanical Noise").clicked() {
+                        selected = Some(PaletteSelection::MechanicalNoise);
                         ui.close();
                     }
                 },

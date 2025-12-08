@@ -575,7 +575,7 @@ impl eframe::App for SynthApp {
                     } else {
                         theme().colors.meter_green
                     };
-                    ui.label(RichText::new(format!("CPU: {:.0}%", cpu * 100.0)).color(cpu_color));
+                    ui.label(RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color));
                     ui.separator();
                     ui.label(
                         RichText::new(format!("Voices: {}", self.handle.voice_count()))
@@ -671,6 +671,16 @@ impl eframe::App for SynthApp {
                         }
                         PaletteSelection::StereoOutput => {
                             self.add_stereo_output_module();
+                        }
+                        // Physical modeling
+                        PaletteSelection::KeyboardPanner => {
+                            self.add_keyboard_panner_module();
+                        }
+                        PaletteSelection::BodyResonance => {
+                            self.add_body_resonance_module();
+                        }
+                        PaletteSelection::MechanicalNoise => {
+                            self.add_mechanical_noise_module();
                         }
                     }
                 }
@@ -790,22 +800,12 @@ impl eframe::App for SynthApp {
                         | ModuleCategory::Output,
                     ) => {
                         // Voice/modular module - send to active instrument's voice graph
+                        // SetModuleParameter updates both the template AND all active voices
                         self.handle.send(EngineCommand::SetModuleParameter {
                             instrument_id: Some(active_id),
                             module_id,
                             param,
                         });
-
-                        // Also send to voice modules for real-time voice param updates
-                        if let Some(voice_module) =
-                            patch_bridge::get_voice_module_for_param(module_id, &param)
-                        {
-                            self.handle.send(EngineCommand::SetVoiceParameter {
-                                instrument_id: active_id,
-                                target: voice_module,
-                                param,
-                            });
-                        }
                     }
                     _ => {}
                 }
@@ -979,6 +979,51 @@ impl SynthApp {
         let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::Noise);
+        self.active_patch_editor().add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_keyboard_panner_module(&mut self) {
+        let m = crate::modules::KeyboardPanner::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::KeyboardPanner);
+        self.active_patch_editor().add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_body_resonance_module(&mut self) {
+        let m = crate::modules::BodyResonance::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::BodyResonance);
+        self.active_patch_editor().add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_mechanical_noise_module(&mut self) {
+        let m = crate::modules::MechanicalNoise::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn crate::modules::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::MechanicalNoise);
         self.active_patch_editor().add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {

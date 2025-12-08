@@ -93,11 +93,8 @@ pub enum ModuleType {
     Oscilloscope,
     LevelMeter,
     // Physical modeling
-    StringResonator,
-    ResonatorBank,
     KeyboardPanner,
     BodyResonance,
-    VelocityMapper,
     MechanicalNoise,
 }
 
@@ -121,11 +118,8 @@ impl ModuleType {
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
             // Physical modeling
-            Self::StringResonator => "string_resonator",
-            Self::ResonatorBank => "resonator_bank",
             Self::KeyboardPanner => "keyboard_panner",
             Self::BodyResonance => "body_resonance",
-            Self::VelocityMapper => "velocity_mapper",
             Self::MechanicalNoise => "mechanical_noise",
         }
     }
@@ -150,11 +144,8 @@ impl ModuleType {
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             // Physical modeling
-            Self::StringResonator => "str",
-            Self::ResonatorBank => "rsb",
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
-            Self::VelocityMapper => "vel",
             Self::MechanicalNoise => "mec",
         }
     }

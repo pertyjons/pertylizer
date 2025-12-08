@@ -11,10 +11,10 @@ use std::sync::Arc;
 use eframe::egui::Pos2;
 
 use crate::effects::{Chorus, Delay, Distortion, Reverb};
-use crate::engine::commands::{PolyModule, PortId};
+use crate::engine::commands::PortId;
 use crate::engine::graph::Connection;
 use crate::engine::instrument::InstrumentId;
-use crate::engine::typed_params::{ModuleType, Param};
+use crate::engine::typed_params::ModuleType;
 use crate::engine::{EngineCommand, EngineHandle, ModuleId};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
@@ -458,44 +458,6 @@ fn load_module(
             });
         }
         // Physical modeling modules - instantiated via crate::modules
-        PatchModuleType::StringResonator => {
-            let m = crate::modules::StringResonator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::ResonatorBank => {
-            let m = crate::modules::ResonatorBank::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
         PatchModuleType::KeyboardPanner => {
             let m = crate::modules::KeyboardPanner::new();
             let descriptor = m.descriptor();
@@ -517,25 +479,6 @@ fn load_module(
         }
         PatchModuleType::BodyResonance => {
             let m = crate::modules::BodyResonance::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::VelocityMapper => {
-            let m = crate::modules::VelocityMapper::new();
             let descriptor = m.descriptor();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
             handle.send(EngineCommand::AddModuleInstance {
@@ -631,10 +574,13 @@ pub fn apply_module_parameters(
                     effect_type: et,
                     param,
                 });
-            } else if let Some(voice_module) = get_voice_module_for_param(module_id, &param) {
-                handle.send(EngineCommand::SetVoiceParameter {
-                    instrument_id,
-                    target: voice_module,
+            } else {
+                // Voice modules - use SetModuleParameter with direct module_id
+                // This correctly handles arbitrary module instances (env-3, amp-2, etc)
+                // that don't fit the fixed PolyModule enum
+                handle.send(EngineCommand::SetModuleParameter {
+                    instrument_id: Some(instrument_id),
+                    module_id,
                     param,
                 });
             }
@@ -695,36 +641,6 @@ pub fn create_patch_from_rack(
     patch.settings.glide_time = glide_time;
 
     Some(patch)
-}
-
-/// Get the PolyModule target for a given Param.
-pub fn get_voice_module_for_param(module_id: ModuleId, param: &Param) -> Option<PolyModule> {
-    // First try to get from module ID mapping
-    if let Some(vm) = PolyModule::from_module_id(module_id) {
-        return Some(vm);
-    }
-
-    // Fall back to parameter type inference
-    match param {
-        Param::Oscillator(_) => Some(PolyModule::Oscillator1),
-        Param::MathOscillator(_) => Some(PolyModule::Oscillator1),
-        Param::Filter(_) => Some(PolyModule::Filter),
-        Param::Envelope(_) => Some(PolyModule::AmpEnvelope),
-        Param::Lfo(_) => Some(PolyModule::Lfo),
-        Param::Amplifier(_) => Some(PolyModule::Amplifier),
-        Param::Mixer(_) => Some(PolyModule::Mixer),
-        // Effects are handled separately
-        Param::Delay(_)
-        | Param::Reverb(_)
-        | Param::Distortion(_)
-        | Param::Chorus(_)
-        | Param::Phaser(_)
-        | Param::Flanger(_)
-        | Param::Compressor(_)
-        | Param::Eq(_) => None,
-        // Visualizers and other types
-        _ => None,
-    }
 }
 
 /// Get the EffectType for a module from its descriptor.

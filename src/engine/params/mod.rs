@@ -39,7 +39,6 @@ pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
-    ResonatorBankParam, StringResonatorParam, VelocityCurve, VelocityMapperParam,
 };
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 
@@ -78,11 +77,8 @@ pub enum ModuleType {
     Oscilloscope,
     LevelMeter,
     // Physical modeling
-    StringResonator,
-    ResonatorBank,
     KeyboardPanner,
     BodyResonance,
-    VelocityMapper,
     MechanicalNoise,
 }
 
@@ -110,11 +106,8 @@ impl ModuleType {
                 | Self::Mixer
                 | Self::StereoOutput
                 // Physical modeling modules (per-voice)
-                | Self::StringResonator
-                | Self::ResonatorBank
                 | Self::KeyboardPanner
                 | Self::BodyResonance
-                | Self::VelocityMapper
                 | Self::MechanicalNoise
         )
     }
@@ -198,11 +191,8 @@ impl ModuleType {
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
             // Physical modeling
-            Self::StringResonator => "String Resonator",
-            Self::ResonatorBank => "Resonator Bank",
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
-            Self::VelocityMapper => "Velocity Mapper",
             Self::MechanicalNoise => "Mechanical Noise",
         }
     }
@@ -235,11 +225,8 @@ impl ModuleType {
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             // Physical modeling
-            Self::StringResonator => "str",
-            Self::ResonatorBank => "rsb",
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
-            Self::VelocityMapper => "vel",
             Self::MechanicalNoise => "mec",
         }
     }
@@ -272,11 +259,8 @@ impl ModuleType {
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
             // Physical modeling
-            "str" => Some(Self::StringResonator),
-            "rsb" => Some(Self::ResonatorBank),
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
-            "vel" => Some(Self::VelocityMapper),
             "mec" => Some(Self::MechanicalNoise),
             _ => None,
         }
@@ -303,11 +287,8 @@ impl ModuleType {
             Self::Oscilloscope => PM::Oscilloscope,
             Self::LevelMeter => PM::LevelMeter,
             // Physical modeling
-            Self::StringResonator => PM::StringResonator,
-            Self::ResonatorBank => PM::ResonatorBank,
             Self::KeyboardPanner => PM::KeyboardPanner,
             Self::BodyResonance => PM::BodyResonance,
-            Self::VelocityMapper => PM::VelocityMapper,
             Self::MechanicalNoise => PM::MechanicalNoise,
             // These don't have patch equivalents yet, default to Mixer
             Self::Phaser
@@ -358,11 +339,8 @@ pub enum Param {
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
     // Physical modeling
-    StringResonator(StringResonatorParam),
-    ResonatorBank(ResonatorBankParam),
     KeyboardPanner(KeyboardPannerParam),
     BodyResonance(BodyResonanceParam),
-    VelocityMapper(VelocityMapperParam),
     MechanicalNoise(MechanicalNoiseParam),
 }
 
@@ -401,11 +379,8 @@ impl Param {
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
             // Physical modeling
-            (Self::StringResonator(a), Self::StringResonator(b)) => a.same_kind(b),
-            (Self::ResonatorBank(a), Self::ResonatorBank(b)) => a.same_kind(b),
             (Self::KeyboardPanner(a), Self::KeyboardPanner(b)) => a.same_kind(b),
             (Self::BodyResonance(a), Self::BodyResonance(b)) => a.same_kind(b),
-            (Self::VelocityMapper(a), Self::VelocityMapper(b)) => a.same_kind(b),
             (Self::MechanicalNoise(a), Self::MechanicalNoise(b)) => a.same_kind(b),
             _ => false,
         }
@@ -436,11 +411,8 @@ impl Param {
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
             // Physical modeling
-            Self::StringResonator(_) => ModuleType::StringResonator,
-            Self::ResonatorBank(_) => ModuleType::ResonatorBank,
             Self::KeyboardPanner(_) => ModuleType::KeyboardPanner,
             Self::BodyResonance(_) => ModuleType::BodyResonance,
-            Self::VelocityMapper(_) => ModuleType::VelocityMapper,
             Self::MechanicalNoise(_) => ModuleType::MechanicalNoise,
         }
     }
@@ -470,11 +442,8 @@ impl Param {
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
             // Physical modeling
-            Self::StringResonator(p) => p.name(),
-            Self::ResonatorBank(p) => p.name(),
             Self::KeyboardPanner(p) => p.name(),
             Self::BodyResonance(p) => p.name(),
-            Self::VelocityMapper(p) => p.name(),
             Self::MechanicalNoise(p) => p.name(),
         }
     }
@@ -504,11 +473,8 @@ impl Param {
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
             // Physical modeling
-            Self::StringResonator(p) => p.as_f32(),
-            Self::ResonatorBank(p) => p.as_f32(),
             Self::KeyboardPanner(p) => p.as_f32(),
             Self::BodyResonance(p) => p.as_f32(),
-            Self::VelocityMapper(p) => p.as_f32(),
             Self::MechanicalNoise(p) => p.as_f32(),
         }
     }
@@ -538,11 +504,8 @@ impl Param {
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
             // Physical modeling
-            Self::StringResonator(p) => Self::StringResonator(p.with_f32(value)),
-            Self::ResonatorBank(p) => Self::ResonatorBank(p.with_f32(value)),
             Self::KeyboardPanner(p) => Self::KeyboardPanner(p.with_f32(value)),
             Self::BodyResonance(p) => Self::BodyResonance(p.with_f32(value)),
-            Self::VelocityMapper(p) => Self::VelocityMapper(p.with_f32(value)),
             Self::MechanicalNoise(p) => Self::MechanicalNoise(p.with_f32(value)),
         }
     }

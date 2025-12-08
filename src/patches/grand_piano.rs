@@ -8,7 +8,7 @@ pub fn patch_grand_piano() -> Patch {
     patch.author = Some("Modular Synth".to_string());
     patch.description = Some(
         "Dynamic acoustic piano with velocity-sensitive hammer attack, \
-         key tracking, and body resonance."
+         key tracking, stereo keyboard panning, and body resonance."
             .to_string(),
     );
     patch.tags = vec![
@@ -43,8 +43,13 @@ and subtle hammer noise for realistic attack.
    - Natural decay envelope (no sustain plateau)
    - Quick release when key lifted
 
-4. EFFECTS:
-   - Reverb: Simulates piano body and room acoustics
+4. STEREO IMAGING:
+   - Keyboard Panner positions notes across stereo field
+   - Low notes panned slightly left, high notes slightly right
+   - 60% stereo spread centered on middle C
+
+5. EFFECTS:
+   - Add Reverb via Master FX sidebar for room acoustics
 
 PLAYING TIPS:
 - Play softly for mellow jazz tones
@@ -195,20 +200,21 @@ PLAYING TIPS:
     // EFFECTS
     // ========================================================================
 
-    // REVERB: Piano body and room
+    // KEYBOARD PANNER: Note-based stereo positioning (low=left, high=right)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 200.0)
-            .param_f("room_size", 0.4)  // Medium room
-            .param_f("damping", 0.35)   // Slightly bright
-            .param_f("mix", 0.18)       // Subtle, not washy
+        ModuleBuilder::new(1, ModuleType::KeyboardPanner)
+            .position(750.0, 200.0)
+            .param_f("spread", 0.6)     // 60% stereo spread
+            .param_f("center", 60.0)    // Middle C as center
+            .param_f("curve", 0.0)      // Linear panning
+            .param_f("invert", 0.0)     // Normal: low=left, high=right
             .build(),
     );
 
-    // OUTPUT
+    // OUTPUT (Reverb can be added via Master FX sidebar)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 200.0)
+            .position(900.0, 200.0)
             .param_f("master", 0.85)
             .build(),
     );
@@ -230,11 +236,11 @@ PLAYING TIPS:
     // --- Main signal chain ---
     patch.add_connection("mix-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
-    patch.add_connection("amp-1", "out", "rev-1", "in");
+    patch.add_connection("amp-1", "out", "kbp-1", "in");  // VCA -> Keyboard Panner
 
-    // --- Stereo output from reverb ---
-    patch.add_connection("rev-1", "out_l", "out-1", "in_l");
-    patch.add_connection("rev-1", "out_r", "out-1", "in_r");
+    // --- Stereo output from panner ---
+    patch.add_connection("kbp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("kbp-1", "out_r", "out-1", "in_r");
 
     // --- Modulation ---
     patch.add_connection("env-1", "out", "amp-1", "cv");        // Volume envelope

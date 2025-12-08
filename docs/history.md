@@ -1,5 +1,26 @@
 # Version History
 
+## [0.33.18] - 2024
+### Fixed - Parameter Routing for Arbitrary Modules
+- **SetModuleParameter** används nu för alla voice-moduler istället för SetVoiceParameter
+- Fixar parameter-routing för moduler utanför PolyModule enum (env-3, amp-2, sub-1, nse-1, kbp-1, etc)
+- **Grand Piano patch** fungerar nu korrekt med alla 3 envelopes
+- Tog bort redundant get_voice_module_for_param funktion
+- Rensade oanvända imports (PolyModule, Param)
+
+---
+
+## [0.33.17] - 2024
+### Changed - Physical Modeling Cleanup
+- **Removed** StringResonator, ResonatorBank, VelocityMapper (fungerade inte korrekt)
+- **KeyboardPanner** - Not-baserad stereopanorering nu registrerad i GUI-menyn
+- **BodyResonance** - Resonanskropp-simulering nu registrerad i GUI-menyn
+- **MechanicalNoise** - Mekaniska ljud nu registrerad i GUI-menyn
+- **Grand Piano patch** - Uppdaterad med KeyboardPanner för stereo-imaging
+- **Physical-menyn** i modulpaletten med de 3 fungerade modulerna
+
+---
+
 ## [0.33.16] - 2024
 ### Added - Physical Modeling Modules
 - **StringResonator** - Karplus-Strong string synthesis med inharmonicitet och dämpning
