@@ -1470,7 +1470,11 @@ impl SynthApp {
         self.dialog_state.update();
 
         // Settings dialog
-        show_settings_dialog(ctx, &mut self.dialog_state.show_settings);
+        show_settings_dialog(
+            ctx,
+            &mut self.dialog_state.show_settings,
+            &mut self.dialog_state.current_theme,
+        );
 
         // About dialog
         show_about_dialog(ctx, &mut self.dialog_state.show_about);

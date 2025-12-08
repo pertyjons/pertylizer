@@ -5,6 +5,7 @@
 
 use eframe::egui::{self, RichText};
 
+use super::theme::ThemePreset;
 use super::widgets::colors;
 use crate::patch::{Patch, example_patches};
 
@@ -23,6 +24,8 @@ pub struct DialogState {
     pub patch_save_name: String,
     /// Status message with timestamp.
     pub status_message: Option<(String, std::time::Instant)>,
+    /// Currently selected theme preset.
+    pub current_theme: ThemePreset,
 }
 
 impl DialogState {
@@ -67,19 +70,53 @@ pub enum SavePatchResult {
 }
 
 /// Show the settings dialog.
-pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool) {
+pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme: &mut ThemePreset) {
     if !*open {
         return;
     }
 
     egui::Window::new("Settings")
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
+        .min_width(300.0)
         .show(ctx, |ui| {
-            ui.label("Audio settings coming soon...");
-            ui.add_space(8.0);
+            // Theme section
+            ui.heading("Theme");
+            ui.add_space(4.0);
 
+            egui::Grid::new("theme_grid")
+                .num_columns(4)
+                .spacing([8.0, 8.0])
+                .show(ui, |ui| {
+                    for (i, preset) in ThemePreset::ALL.iter().enumerate() {
+                        let is_selected = *current_theme == *preset;
+                        let button = egui::Button::new(preset.name())
+                            .selected(is_selected)
+                            .min_size(egui::vec2(70.0, 28.0));
+
+                        if ui.add(button).clicked() {
+                            *current_theme = *preset;
+                            preset.apply();
+                        }
+
+                        // 4 kolumner per rad
+                        if (i + 1) % 4 == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+
+            ui.add_space(12.0);
             ui.separator();
+
+            // Audio section (placeholder)
+            ui.heading("Audio");
+            ui.label("Audio settings coming soon...");
+
+            ui.add_space(12.0);
+            ui.separator();
+
+            // Keyboard section
             ui.heading("Keyboard Layout");
             ui.label("Lower row (Z-M): C3-B3");
             ui.label("Upper row (Q-I): C4-C5");
