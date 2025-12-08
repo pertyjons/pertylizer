@@ -59,6 +59,12 @@ pub mod patch_bridge;
 #[cfg(feature = "gui-egui")]
 pub mod instrument_rack;
 
+#[cfg(feature = "gui-egui")]
+pub mod app;
+
+#[cfg(feature = "gui-egui")]
+pub mod panels;
+
 use crate::audio::{AudioHostTrait, StreamConfig};
 use crate::engine::{AllocatorConfig, EngineHandle, SynthEngine};
 use std::error::Error;

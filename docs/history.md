@@ -1,5 +1,73 @@
 # Version History
 
+## [0.33.12] - 2024
+
+### Added - Theme System Enhancements
+
+Utökade temasystemet med widget-styling, synth-anpassade färgpaletter och tema-presets.
+
+**Ny modulstruktur:**
+
+| Fil | Innehåll |
+|-----|----------|
+| `gui/app/mod.rs` | App state module entry point |
+| `gui/app/state.rs` | `MasterEffectParams` och `MasterEffectUiState` (extraherad från egui_backend.rs) |
+| `gui/panels/mod.rs` | Panel drawing functions entry point |
+| `gui/panels/meters.rs` | `draw_meter()` och `draw_meter_horizontal()` funktioner |
+
+**WidgetStyle struct (theme.rs:714-762):**
+
+| Parameter | Beskrivning |
+|-----------|-------------|
+| `corner_radius` | Standard hörnradie för paneler (4.0) |
+| `corner_radius_small` | Liten hörnradie för widgets (2.0) |
+| `border_width` | Standard kantbredd (1.0) |
+| `border_width_thick` | Tjock kant för markering (2.0) |
+| `knob_arc_width` | Bredd på knob-arc (3.0) |
+| `knob_indicator_size` | Storlek på position-indikator (3.0) |
+| `knob_sensitivity` | Mus-drag känslighet (0.005) |
+| `meter_segment_gap` | Gap mellan meter-segment (1.0) |
+| `meter_segments` | Antal segment i meters (20) |
+| `cable_curvature` | Krökning för kablar (0.5) |
+
+**Färgpaletter (8 stycken):**
+
+| Tema | Karaktär |
+|------|----------|
+| Dark | Synth-fokuserad med Moog-orange accenter (default) |
+| Light | Ljust tema för välbelysta miljöer |
+| Vintage | Moog/ARP-inspirerade varma toner |
+| Neon | 80-tals synthwave med hot pink och cyan |
+| Studio | Professionellt, neutralt |
+| Dracula | Populärt mörkt tema med lila accenter |
+| Monokai | Klassiskt från Sublime Text |
+| Solarized Dark | Klassiskt låg-kontrast mörkt tema |
+
+**ThemePreset enum (theme.rs:146-212):**
+
+```rust
+pub enum ThemePreset {
+    Dark, Light, Vintage, Neon, Studio, Dracula, Monokai, SolarizedDark
+}
+
+impl ThemePreset {
+    pub const ALL: &'static [Self];    // Alla presets
+    pub const fn name(&self) -> &'static str;  // Visningsnamn
+    pub const fn theme(&self) -> Theme;  // Hämta Theme
+    pub fn apply(&self);  // Applicera som aktivt tema
+}
+```
+
+**Synth-anpassade färger:**
+
+Varje palett inkluderar:
+- VU-meter färger (grön/gul/röd)
+- Portfärger (audio=blå, CV=orange, gate=grön, MIDI=rosa)
+- Kabelfärger (mättade varianter av portfärger)
+- LED-inspirerade accent-färger
+
+---
+
 ## [0.33.11] - 2024
 
 ### Changed - PolyModule::process() InputPorts Refactor

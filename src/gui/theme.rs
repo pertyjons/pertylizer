@@ -49,16 +49,18 @@ pub struct Theme {
     pub fonts: Fonts,
     pub sizes: Sizes,
     pub spacing: Spacing,
+    pub style: WidgetStyle,
 }
 
 impl Theme {
-    /// Default dark theme.
+    /// Default dark theme - synth-focused.
     pub const fn dark() -> Self {
         Self {
             colors: Colors::dark(),
             fonts: Fonts::default_fonts(),
             sizes: Sizes::default_sizes(),
             spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
         }
     }
 
@@ -69,7 +71,143 @@ impl Theme {
             fonts: Fonts::default_fonts(),
             sizes: Sizes::default_sizes(),
             spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
         }
+    }
+
+    /// Vintage theme - Moog/ARP-inspired warm tones.
+    pub const fn vintage() -> Self {
+        Self {
+            colors: Colors::vintage(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+
+    /// Neon theme - 80s synthwave style.
+    pub const fn neon() -> Self {
+        Self {
+            colors: Colors::neon(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+
+    /// Studio theme - professional, neutral.
+    pub const fn studio() -> Self {
+        Self {
+            colors: Colors::studio(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+
+    /// Dracula theme - popular dark theme.
+    pub const fn dracula() -> Self {
+        Self {
+            colors: Colors::dracula(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+
+    /// Monokai theme - classic from Sublime.
+    pub const fn monokai() -> Self {
+        Self {
+            colors: Colors::monokai(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+
+    /// Solarized Dark theme.
+    pub const fn solarized_dark() -> Self {
+        Self {
+            colors: Colors::solarized_dark(),
+            fonts: Fonts::default_fonts(),
+            sizes: Sizes::default_sizes(),
+            spacing: Spacing::default_spacing(),
+            style: WidgetStyle::default_style(),
+        }
+    }
+}
+
+/// Available theme presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemePreset {
+    /// Default dark synth theme with orange accents.
+    #[default]
+    Dark,
+    /// Light theme for well-lit environments.
+    Light,
+    /// Vintage Moog/ARP-inspired warm tones.
+    Vintage,
+    /// 80s synthwave neon colors.
+    Neon,
+    /// Professional neutral studio theme.
+    Studio,
+    /// Popular Dracula theme with purple accents.
+    Dracula,
+    /// Classic Monokai from Sublime Text.
+    Monokai,
+    /// Solarized Dark - low contrast classic.
+    SolarizedDark,
+}
+
+impl ThemePreset {
+    /// All available theme presets.
+    pub const ALL: &'static [Self] = &[
+        Self::Dark,
+        Self::Light,
+        Self::Vintage,
+        Self::Neon,
+        Self::Studio,
+        Self::Dracula,
+        Self::Monokai,
+        Self::SolarizedDark,
+    ];
+
+    /// Get the display name for this preset.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::Vintage => "Vintage",
+            Self::Neon => "Neon",
+            Self::Studio => "Studio",
+            Self::Dracula => "Dracula",
+            Self::Monokai => "Monokai",
+            Self::SolarizedDark => "Solarized Dark",
+        }
+    }
+
+    /// Get the Theme for this preset.
+    pub const fn theme(&self) -> Theme {
+        match self {
+            Self::Dark => Theme::dark(),
+            Self::Light => Theme::light(),
+            Self::Vintage => Theme::vintage(),
+            Self::Neon => Theme::neon(),
+            Self::Studio => Theme::studio(),
+            Self::Dracula => Theme::dracula(),
+            Self::Monokai => Theme::monokai(),
+            Self::SolarizedDark => Theme::solarized_dark(),
+        }
+    }
+
+    /// Apply this preset as the current theme.
+    pub fn apply(&self) {
+        set_theme(self.theme());
     }
 }
 
@@ -118,50 +256,52 @@ pub struct Colors {
 }
 
 impl Colors {
+    /// Default dark theme - synth-focused with deep backgrounds and warm accents.
     pub const fn dark() -> Self {
         Self {
-            // Backgrounds
-            bg_dark: Color32::from_rgb(20, 22, 28),
-            bg_panel: Color32::from_rgb(32, 36, 44),
-            bg_module: Color32::from_rgb(40, 44, 52),
-            bg_widget: Color32::from_rgb(50, 55, 65),
+            // Backgrounds - mörkare, mer "rack"-känsla
+            bg_dark: Color32::from_rgb(12, 12, 16),
+            bg_panel: Color32::from_rgb(22, 24, 28),
+            bg_module: Color32::from_rgb(32, 34, 38),
+            bg_widget: Color32::from_rgb(42, 44, 50),
 
-            // Text
-            text_primary: Color32::from_rgb(240, 240, 245),
-            text_secondary: Color32::from_rgb(180, 180, 190),
-            text_dim: Color32::from_rgb(120, 120, 130),
+            // Text - varm vit
+            text_primary: Color32::from_rgb(230, 225, 220),
+            text_secondary: Color32::from_rgb(160, 155, 150),
+            text_dim: Color32::from_rgb(90, 88, 85),
 
-            // Accent colors
-            accent_primary: Color32::from_rgb(255, 140, 50),
-            accent_cyan: Color32::from_rgb(80, 200, 220),
-            accent_green: Color32::from_rgb(100, 220, 100),
-            accent_red: Color32::from_rgb(255, 80, 80),
-            accent_purple: Color32::from_rgb(180, 100, 255),
-            accent_yellow: Color32::from_rgb(255, 220, 80),
-            accent_orange: Color32::from_rgb(255, 140, 50),
+            // Accent - klassiska synth-färger
+            accent_primary: Color32::from_rgb(255, 100, 50),   // Moog-orange
+            accent_cyan: Color32::from_rgb(0, 255, 200),       // Teal/cyan LED
+            accent_green: Color32::from_rgb(50, 255, 100),     // Grön LED
+            accent_red: Color32::from_rgb(255, 50, 50),        // Röd LED
+            accent_purple: Color32::from_rgb(200, 100, 255),   // Lila
+            accent_yellow: Color32::from_rgb(255, 200, 50),    // Gul LED
+            accent_orange: Color32::from_rgb(255, 120, 30),    // Orange
 
-            // Meters
-            meter_green: Color32::from_rgb(100, 220, 100),
-            meter_yellow: Color32::from_rgb(255, 220, 80),
-            meter_red: Color32::from_rgb(255, 80, 80),
+            // Meters - VU-meter stil
+            meter_green: Color32::from_rgb(50, 220, 80),
+            meter_yellow: Color32::from_rgb(255, 200, 50),
+            meter_red: Color32::from_rgb(255, 50, 50),
 
-            // Ports
-            port_audio: Color32::from_rgb(100, 200, 255),
-            port_control: Color32::from_rgb(255, 180, 80),
-            port_gate: Color32::from_rgb(100, 255, 100),
-            port_midi: Color32::from_rgb(255, 100, 255),
+            // Ports - tydliga signaltyper
+            port_audio: Color32::from_rgb(60, 180, 255),       // Blå = audio
+            port_control: Color32::from_rgb(255, 160, 60),     // Orange = CV
+            port_gate: Color32::from_rgb(50, 255, 120),        // Grön = gate/trigger
+            port_midi: Color32::from_rgb(255, 80, 200),        // Rosa = MIDI
 
-            // Cables
-            cable_audio: Color32::from_rgb(80, 180, 230),
-            cable_control: Color32::from_rgb(230, 160, 60),
-            cable_gate: Color32::from_rgb(80, 230, 80),
+            // Cables - mättade
+            cable_audio: Color32::from_rgb(80, 160, 255),
+            cable_control: Color32::from_rgb(255, 140, 40),
+            cable_gate: Color32::from_rgb(60, 230, 100),
 
             // Borders
-            border: Color32::from_rgb(60, 65, 75),
-            border_selected: Color32::from_rgb(100, 180, 255),
+            border: Color32::from_rgb(50, 52, 58),
+            border_selected: Color32::from_rgb(255, 140, 60),  // Orange markering
         }
     }
 
+    /// Light theme variant.
     pub const fn light() -> Self {
         Self {
             // Backgrounds - inverted/lighter
@@ -203,6 +343,234 @@ impl Colors {
             // Borders
             border: Color32::from_rgb(150, 155, 165),
             border_selected: Color32::from_rgb(70, 140, 220),
+        }
+    }
+
+    /// Vintage theme - Moog/ARP-inspired warm tones.
+    pub const fn vintage() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(25, 22, 18),
+            bg_panel: Color32::from_rgb(35, 32, 28),
+            bg_module: Color32::from_rgb(50, 45, 38),
+            bg_widget: Color32::from_rgb(65, 58, 48),
+
+            text_primary: Color32::from_rgb(230, 220, 200),
+            text_secondary: Color32::from_rgb(180, 170, 150),
+            text_dim: Color32::from_rgb(120, 110, 95),
+
+            accent_primary: Color32::from_rgb(255, 90, 30),
+            accent_cyan: Color32::from_rgb(100, 180, 160),
+            accent_green: Color32::from_rgb(80, 200, 80),
+            accent_red: Color32::from_rgb(230, 60, 50),
+            accent_purple: Color32::from_rgb(160, 100, 180),
+            accent_yellow: Color32::from_rgb(240, 190, 50),
+            accent_orange: Color32::from_rgb(255, 120, 40),
+
+            meter_green: Color32::from_rgb(80, 200, 80),
+            meter_yellow: Color32::from_rgb(240, 190, 50),
+            meter_red: Color32::from_rgb(230, 60, 50),
+
+            port_audio: Color32::from_rgb(80, 160, 220),
+            port_control: Color32::from_rgb(240, 160, 60),
+            port_gate: Color32::from_rgb(80, 220, 100),
+            port_midi: Color32::from_rgb(220, 100, 180),
+
+            cable_audio: Color32::from_rgb(70, 150, 200),
+            cable_control: Color32::from_rgb(220, 140, 50),
+            cable_gate: Color32::from_rgb(70, 200, 90),
+
+            border: Color32::from_rgb(55, 50, 42),
+            border_selected: Color32::from_rgb(255, 130, 50),
+        }
+    }
+
+    /// Neon theme - 80s synthwave style.
+    pub const fn neon() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(10, 8, 24),
+            bg_panel: Color32::from_rgb(18, 14, 36),
+            bg_module: Color32::from_rgb(28, 22, 52),
+            bg_widget: Color32::from_rgb(40, 32, 68),
+
+            text_primary: Color32::from_rgb(240, 230, 255),
+            text_secondary: Color32::from_rgb(180, 170, 210),
+            text_dim: Color32::from_rgb(110, 100, 140),
+
+            accent_primary: Color32::from_rgb(255, 0, 150),    // Hot pink
+            accent_cyan: Color32::from_rgb(0, 255, 255),       // Cyan
+            accent_green: Color32::from_rgb(0, 255, 128),      // Neon green
+            accent_red: Color32::from_rgb(255, 50, 80),
+            accent_purple: Color32::from_rgb(180, 0, 255),     // Purple
+            accent_yellow: Color32::from_rgb(255, 255, 0),
+            accent_orange: Color32::from_rgb(255, 100, 0),
+
+            meter_green: Color32::from_rgb(0, 255, 128),
+            meter_yellow: Color32::from_rgb(255, 255, 0),
+            meter_red: Color32::from_rgb(255, 50, 80),
+
+            port_audio: Color32::from_rgb(0, 200, 255),
+            port_control: Color32::from_rgb(255, 100, 0),
+            port_gate: Color32::from_rgb(0, 255, 128),
+            port_midi: Color32::from_rgb(255, 0, 200),
+
+            cable_audio: Color32::from_rgb(0, 180, 230),
+            cable_control: Color32::from_rgb(255, 80, 0),
+            cable_gate: Color32::from_rgb(0, 230, 110),
+
+            border: Color32::from_rgb(50, 40, 80),
+            border_selected: Color32::from_rgb(255, 0, 200),
+        }
+    }
+
+    /// Studio theme - professional, neutral colors.
+    pub const fn studio() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(32, 32, 34),
+            bg_panel: Color32::from_rgb(42, 42, 45),
+            bg_module: Color32::from_rgb(52, 52, 56),
+            bg_widget: Color32::from_rgb(62, 62, 68),
+
+            text_primary: Color32::from_rgb(210, 210, 215),
+            text_secondary: Color32::from_rgb(150, 150, 158),
+            text_dim: Color32::from_rgb(100, 100, 108),
+
+            accent_primary: Color32::from_rgb(90, 160, 230),   // Blue
+            accent_cyan: Color32::from_rgb(80, 200, 200),
+            accent_green: Color32::from_rgb(80, 200, 100),
+            accent_red: Color32::from_rgb(230, 80, 80),
+            accent_purple: Color32::from_rgb(160, 100, 220),
+            accent_yellow: Color32::from_rgb(230, 200, 80),
+            accent_orange: Color32::from_rgb(230, 140, 60),
+
+            meter_green: Color32::from_rgb(80, 200, 100),
+            meter_yellow: Color32::from_rgb(230, 200, 80),
+            meter_red: Color32::from_rgb(230, 80, 80),
+
+            port_audio: Color32::from_rgb(80, 160, 230),
+            port_control: Color32::from_rgb(230, 160, 60),
+            port_gate: Color32::from_rgb(80, 200, 100),
+            port_midi: Color32::from_rgb(200, 100, 200),
+
+            cable_audio: Color32::from_rgb(70, 150, 210),
+            cable_control: Color32::from_rgb(210, 140, 50),
+            cable_gate: Color32::from_rgb(70, 180, 90),
+
+            border: Color32::from_rgb(55, 55, 60),
+            border_selected: Color32::from_rgb(100, 170, 240),
+        }
+    }
+
+    /// Dracula theme - popular dark theme with purple accents.
+    pub const fn dracula() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(40, 42, 54),        // #282a36
+            bg_panel: Color32::from_rgb(50, 52, 66),
+            bg_module: Color32::from_rgb(60, 62, 78),
+            bg_widget: Color32::from_rgb(68, 71, 90),      // #44475a
+
+            text_primary: Color32::from_rgb(248, 248, 242), // #f8f8f2
+            text_secondary: Color32::from_rgb(200, 200, 195),
+            text_dim: Color32::from_rgb(140, 140, 135),
+
+            accent_primary: Color32::from_rgb(255, 121, 198), // #ff79c6 pink
+            accent_cyan: Color32::from_rgb(139, 233, 253),    // #8be9fd
+            accent_green: Color32::from_rgb(80, 250, 123),    // #50fa7b
+            accent_red: Color32::from_rgb(255, 85, 85),       // #ff5555
+            accent_purple: Color32::from_rgb(189, 147, 249),  // #bd93f9
+            accent_yellow: Color32::from_rgb(241, 250, 140),  // #f1fa8c
+            accent_orange: Color32::from_rgb(255, 184, 108),  // #ffb86c
+
+            meter_green: Color32::from_rgb(80, 250, 123),
+            meter_yellow: Color32::from_rgb(241, 250, 140),
+            meter_red: Color32::from_rgb(255, 85, 85),
+
+            port_audio: Color32::from_rgb(139, 233, 253),
+            port_control: Color32::from_rgb(255, 184, 108),
+            port_gate: Color32::from_rgb(80, 250, 123),
+            port_midi: Color32::from_rgb(255, 121, 198),
+
+            cable_audio: Color32::from_rgb(120, 210, 230),
+            cable_control: Color32::from_rgb(235, 165, 95),
+            cable_gate: Color32::from_rgb(70, 230, 110),
+
+            border: Color32::from_rgb(68, 71, 90),
+            border_selected: Color32::from_rgb(189, 147, 249),
+        }
+    }
+
+    /// Monokai theme - classic from Sublime Text.
+    pub const fn monokai() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(39, 40, 34),        // #272822
+            bg_panel: Color32::from_rgb(49, 50, 44),
+            bg_module: Color32::from_rgb(59, 60, 54),
+            bg_widget: Color32::from_rgb(69, 70, 64),
+
+            text_primary: Color32::from_rgb(248, 248, 242), // #f8f8f2
+            text_secondary: Color32::from_rgb(200, 200, 195),
+            text_dim: Color32::from_rgb(140, 140, 135),
+
+            accent_primary: Color32::from_rgb(249, 38, 114),  // #f92672 pink/red
+            accent_cyan: Color32::from_rgb(102, 217, 239),    // #66d9ef
+            accent_green: Color32::from_rgb(166, 226, 46),    // #a6e22e
+            accent_red: Color32::from_rgb(249, 38, 114),
+            accent_purple: Color32::from_rgb(174, 129, 255),  // #ae81ff
+            accent_yellow: Color32::from_rgb(230, 219, 116),  // #e6db74
+            accent_orange: Color32::from_rgb(253, 151, 31),   // #fd971f
+
+            meter_green: Color32::from_rgb(166, 226, 46),
+            meter_yellow: Color32::from_rgb(230, 219, 116),
+            meter_red: Color32::from_rgb(249, 38, 114),
+
+            port_audio: Color32::from_rgb(102, 217, 239),
+            port_control: Color32::from_rgb(253, 151, 31),
+            port_gate: Color32::from_rgb(166, 226, 46),
+            port_midi: Color32::from_rgb(174, 129, 255),
+
+            cable_audio: Color32::from_rgb(90, 200, 220),
+            cable_control: Color32::from_rgb(230, 135, 25),
+            cable_gate: Color32::from_rgb(150, 210, 40),
+
+            border: Color32::from_rgb(59, 60, 54),
+            border_selected: Color32::from_rgb(249, 38, 114),
+        }
+    }
+
+    /// Solarized Dark theme - classic low-contrast dark theme.
+    pub const fn solarized_dark() -> Self {
+        Self {
+            bg_dark: Color32::from_rgb(0, 43, 54),         // #002b36
+            bg_panel: Color32::from_rgb(7, 54, 66),        // #073642
+            bg_module: Color32::from_rgb(7, 54, 66),
+            bg_widget: Color32::from_rgb(88, 110, 117),    // #586e75
+
+            text_primary: Color32::from_rgb(131, 148, 150), // #839496
+            text_secondary: Color32::from_rgb(101, 123, 131),
+            text_dim: Color32::from_rgb(88, 110, 117),
+
+            accent_primary: Color32::from_rgb(203, 75, 22),  // #cb4b16 orange
+            accent_cyan: Color32::from_rgb(42, 161, 152),    // #2aa198
+            accent_green: Color32::from_rgb(133, 153, 0),    // #859900
+            accent_red: Color32::from_rgb(220, 50, 47),      // #dc322f
+            accent_purple: Color32::from_rgb(108, 113, 196), // #6c71c4
+            accent_yellow: Color32::from_rgb(181, 137, 0),   // #b58900
+            accent_orange: Color32::from_rgb(203, 75, 22),
+
+            meter_green: Color32::from_rgb(133, 153, 0),
+            meter_yellow: Color32::from_rgb(181, 137, 0),
+            meter_red: Color32::from_rgb(220, 50, 47),
+
+            port_audio: Color32::from_rgb(42, 161, 152),
+            port_control: Color32::from_rgb(203, 75, 22),
+            port_gate: Color32::from_rgb(133, 153, 0),
+            port_midi: Color32::from_rgb(108, 113, 196),
+
+            cable_audio: Color32::from_rgb(38, 148, 140),
+            cable_control: Color32::from_rgb(185, 68, 20),
+            cable_gate: Color32::from_rgb(120, 140, 0),
+
+            border: Color32::from_rgb(7, 54, 66),
+            border_selected: Color32::from_rgb(38, 139, 210), // #268bd2
         }
     }
 }
@@ -337,6 +705,58 @@ impl Spacing {
             label_spacing: 4.0,
             module_grid_x: 210.0,
             module_grid_y: 320.0,
+        }
+    }
+}
+
+/// Widget styling parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct WidgetStyle {
+    // Rounded corners
+    /// Default corner radius for panels and modules.
+    pub corner_radius: f32,
+    /// Smaller corner radius for widgets and buttons.
+    pub corner_radius_small: f32,
+
+    // Line widths
+    /// Default border width.
+    pub border_width: f32,
+    /// Thick border width for selection and emphasis.
+    pub border_width_thick: f32,
+
+    // Knob styling
+    /// Width of the arc stroke on knobs.
+    pub knob_arc_width: f32,
+    /// Size of the position indicator on knobs.
+    pub knob_indicator_size: f32,
+    /// Mouse drag sensitivity for knobs (value change per pixel).
+    pub knob_sensitivity: f32,
+
+    // Meter styling
+    /// Gap between meter segments.
+    pub meter_segment_gap: f32,
+    /// Number of segments in meters.
+    pub meter_segments: usize,
+
+    // Cable styling
+    /// Curvature factor for cables (0.0 = straight, 1.0 = very curved).
+    pub cable_curvature: f32,
+}
+
+impl WidgetStyle {
+    /// Default widget style.
+    pub const fn default_style() -> Self {
+        Self {
+            corner_radius: 4.0,
+            corner_radius_small: 2.0,
+            border_width: 1.0,
+            border_width_thick: 2.0,
+            knob_arc_width: 3.0,
+            knob_indicator_size: 3.0,
+            knob_sensitivity: 0.005,
+            meter_segment_gap: 1.0,
+            meter_segments: 20,
+            cable_curvature: 0.5,
         }
     }
 }
