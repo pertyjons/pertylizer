@@ -97,6 +97,8 @@ pub enum FilterParam {
     Drive(Gain),
     /// Envelope amount (-1.0 to 1.0)
     EnvAmount(BipolarValue),
+    /// Cutoff CV input attenuverter (-1.0 to 1.0)
+    CutoffMod(BipolarValue),
 }
 
 impl FilterParam {
@@ -114,6 +116,7 @@ impl FilterParam {
             Self::KeyTracking(_) => "Key Tracking",
             Self::Drive(_) => "Drive",
             Self::EnvAmount(_) => "Env Amount",
+            Self::CutoffMod(_) => "Cutoff Mod",
         }
     }
 
@@ -126,6 +129,7 @@ impl FilterParam {
             Self::KeyTracking(kt) => kt.as_f32(),
             Self::Drive(d) => d.as_f32(),
             Self::EnvAmount(e) => e.as_f32(),
+            Self::CutoffMod(c) => c.as_f32(),
         }
     }
 
@@ -138,6 +142,7 @@ impl FilterParam {
             Self::KeyTracking(_) => Self::KeyTracking(NormalizedValue::new(value)),
             Self::Drive(_) => Self::Drive(Gain::new(value)),
             Self::EnvAmount(_) => Self::EnvAmount(BipolarValue::new(value)),
+            Self::CutoffMod(_) => Self::CutoffMod(BipolarValue::new(value)),
         }
     }
 
@@ -159,6 +164,9 @@ impl FilterParam {
     }
     pub fn env_amount_default() -> Self {
         Self::EnvAmount(BipolarValue::new(0.0))
+    }
+    pub fn cutoff_mod_default() -> Self {
+        Self::CutoffMod(BipolarValue::MAX)
     }
 }
 

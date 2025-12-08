@@ -29,13 +29,14 @@ impl Meter {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
+        let t = theme();
         let desired_size = Vec2::new(self.width, self.height);
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::hover());
 
         let painter = ui.painter();
 
         // Background
-        painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
+        painter.rect_filled(rect, t.style.corner_radius_small, t.colors.bg_dark);
 
         // RMS level
         let rms_height = rect.height() * self.rms.clamp(0.0, 1.0);
@@ -45,11 +46,11 @@ impl Meter {
         );
 
         let rms_color = if self.rms > 0.9 {
-            theme().colors.meter_red
+            t.colors.meter_red
         } else if self.rms > 0.7 {
-            theme().colors.meter_yellow
+            t.colors.meter_yellow
         } else {
-            theme().colors.meter_green
+            t.colors.meter_green
         };
 
         painter.rect_filled(rms_rect, 0.0, rms_color);
@@ -61,7 +62,7 @@ impl Meter {
                 Pos2::new(rect.left(), peak_y),
                 Pos2::new(rect.right(), peak_y),
             ],
-            Stroke::new(2.0, theme().colors.text_primary),
+            Stroke::new(t.style.border_width_thick, t.colors.text_primary),
         );
 
         response
@@ -78,11 +79,12 @@ pub fn draw_level_meter(
     height: f32,
     horizontal: bool,
 ) {
+    let t = theme();
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius_small, t.colors.bg_dark);
 
     // Calculate bar positions
     let peak_db = 20.0 * peak.max(0.0001).log10();
@@ -103,7 +105,7 @@ pub fn draw_level_meter(
 
         // Gradient from green to yellow to red
         let rms_color = level_color(rms_norm);
-        painter.rect_filled(rms_rect, 1.0, rms_color);
+        painter.rect_filled(rms_rect, t.style.border_width, rms_color);
 
         // Peak indicator line
         let peak_x = inner_rect.left() + inner_rect.width() * peak_norm;
@@ -112,7 +114,7 @@ pub fn draw_level_meter(
                 Pos2::new(peak_x, inner_rect.top()),
                 Pos2::new(peak_x, inner_rect.bottom()),
             ],
-            Stroke::new(2.0, theme().colors.text_primary),
+            Stroke::new(t.style.border_width_thick, t.colors.text_primary),
         );
     } else {
         // Vertical meter
@@ -124,7 +126,7 @@ pub fn draw_level_meter(
         );
 
         let rms_color = level_color(rms_norm);
-        painter.rect_filled(rms_rect, 1.0, rms_color);
+        painter.rect_filled(rms_rect, t.style.border_width, rms_color);
 
         // Peak indicator line
         let peak_y = inner_rect.bottom() - inner_rect.height() * peak_norm;
@@ -133,7 +135,7 @@ pub fn draw_level_meter(
                 Pos2::new(inner_rect.left(), peak_y),
                 Pos2::new(inner_rect.right(), peak_y),
             ],
-            Stroke::new(2.0, theme().colors.text_primary),
+            Stroke::new(t.style.border_width_thick, t.colors.text_primary),
         );
     }
 
@@ -147,14 +149,14 @@ pub fn draw_level_meter(
         } else {
             Rect::from_min_size(rect.min, Vec2::new(rect.width(), 4.0))
         };
-        painter.rect_filled(clip_rect, 1.0, Color32::RED);
+        painter.rect_filled(clip_rect, t.style.border_width, Color32::RED);
     }
 
     // Border
     painter.rect_stroke(
         rect,
-        2.0,
-        Stroke::new(1.0, theme().colors.border),
+        t.style.corner_radius_small,
+        Stroke::new(t.style.border_width, t.colors.border),
         egui::StrokeKind::Outside,
     );
 }
@@ -169,11 +171,12 @@ pub fn draw_stereo_meter(
     width: f32,
     height: f32,
 ) {
+    let t = theme();
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     let bar_width = (width - 10.0) / 2.0;
     let padding = 2.0;
@@ -183,44 +186,49 @@ pub fn draw_stereo_meter(
         Pos2::new(rect.left() + padding, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
-    draw_meter_bar(painter, left_rect, peak_l, rms_l);
+    draw_meter_bar(painter, left_rect, peak_l, rms_l, &t);
 
     // Right meter
     let right_rect = Rect::from_min_size(
         Pos2::new(rect.left() + bar_width + 6.0, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
-    draw_meter_bar(painter, right_rect, peak_r, rms_r);
+    draw_meter_bar(painter, right_rect, peak_r, rms_r, &t);
 
     // Labels
-    let t = theme();
     let label_y = rect.bottom() - 12.0;
     painter.text(
         Pos2::new(left_rect.center().x, label_y),
         egui::Align2::CENTER_CENTER,
         "L",
         t.fonts.small(),
-        theme().colors.text_dim,
+        t.colors.text_dim,
     );
     painter.text(
         Pos2::new(right_rect.center().x, label_y),
         egui::Align2::CENTER_CENTER,
         "R",
         t.fonts.small(),
-        theme().colors.text_dim,
+        t.colors.text_dim,
     );
 
     // Border
     painter.rect_stroke(
         rect,
-        4.0,
-        Stroke::new(1.0, theme().colors.border),
+        t.style.corner_radius,
+        Stroke::new(t.style.border_width, t.colors.border),
         egui::StrokeKind::Outside,
     );
 }
 
 /// Helper to draw a single meter bar.
-fn draw_meter_bar(painter: &egui::Painter, rect: Rect, peak: f32, rms: f32) {
+fn draw_meter_bar(
+    painter: &egui::Painter,
+    rect: Rect,
+    peak: f32,
+    rms: f32,
+    t: &crate::gui::theme::Theme,
+) {
     // Calculate levels
     let peak_db = 20.0 * peak.max(0.0001).log10();
     let rms_db = 20.0 * rms.max(0.0001).log10();
@@ -229,25 +237,26 @@ fn draw_meter_bar(painter: &egui::Painter, rect: Rect, peak: f32, rms: f32) {
     let rms_norm = ((rms_db + 60.0) / 60.0).clamp(0.0, 1.0);
 
     // Background
-    painter.rect_filled(rect, 1.0, Color32::from_rgb(25, 28, 35));
+    painter.rect_filled(rect, t.style.border_width, t.colors.bg_dark);
 
     // Draw segments
-    let num_segments = 20;
+    let num_segments = t.style.meter_segments;
     let segment_height = (rect.height() - 14.0) / num_segments as f32;
-    let gap = 1.0;
+    let gap = t.style.meter_segment_gap;
 
     for i in 0..num_segments {
         let level = (i + 1) as f32 / num_segments as f32;
         let y = rect.bottom() - 14.0 - (i + 1) as f32 * segment_height;
 
         let segment_rect = Rect::from_min_size(
-            Pos2::new(rect.left() + 1.0, y + gap),
-            Vec2::new(rect.width() - 2.0, segment_height - gap * 2.0),
+            Pos2::new(rect.left() + t.style.border_width, y + gap),
+            Vec2::new(rect.width() - t.style.border_width * 2.0, segment_height - gap * 2.0),
         );
 
         let color = if level <= rms_norm {
             level_color(level)
         } else {
+            // Inactive segment - use darker bg
             Color32::from_rgb(35, 38, 45)
         };
 
@@ -259,11 +268,11 @@ fn draw_meter_bar(painter: &egui::Painter, rect: Rect, peak: f32, rms: f32) {
         let peak_y = rect.bottom() - 14.0 - rect.height() * peak_norm + 7.0;
         painter.rect_filled(
             Rect::from_min_size(
-                Pos2::new(rect.left() + 1.0, peak_y),
-                Vec2::new(rect.width() - 2.0, 2.0),
+                Pos2::new(rect.left() + t.style.border_width, peak_y),
+                Vec2::new(rect.width() - t.style.border_width * 2.0, t.style.border_width_thick),
             ),
             0.0,
-            theme().colors.text_primary,
+            t.colors.text_primary,
         );
     }
 }

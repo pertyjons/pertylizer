@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Cents, Gain, Hertz, NormalizedValue, Phase, Semitones};
+use crate::types::{BipolarValue, Cents, Gain, Hertz, NormalizedValue, Phase, Semitones};
 
 // ============================================================================
 // WAVEFORM ENUMS
@@ -292,6 +292,8 @@ pub enum OscillatorParam {
     Phase(Phase),
     /// FM mode (Exponential or Linear)
     FmMode(FmMode),
+    /// FM input attenuverter (-1.0 to 1.0)
+    FmAmount(BipolarValue),
 }
 
 impl OscillatorParam {
@@ -311,6 +313,7 @@ impl OscillatorParam {
             Self::Level(_) => "Level",
             Self::Phase(_) => "Phase",
             Self::FmMode(_) => "FM Mode",
+            Self::FmAmount(_) => "FM Amount",
         }
     }
 
@@ -325,6 +328,7 @@ impl OscillatorParam {
             Self::Level(g) => g.as_f32(),
             Self::Phase(p) => p.as_f32(),
             Self::FmMode(m) => m.index() as f32,
+            Self::FmAmount(a) => a.as_f32(),
         }
     }
 
@@ -341,6 +345,7 @@ impl OscillatorParam {
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::Phase(_) => Self::Phase(Phase::new(value)),
             Self::FmMode(_) => Self::FmMode(FmMode::from_index(value as usize).unwrap_or_default()),
+            Self::FmAmount(_) => Self::FmAmount(BipolarValue::new(value)),
         }
     }
 
@@ -368,6 +373,9 @@ impl OscillatorParam {
     }
     pub fn fm_mode_default() -> Self {
         Self::FmMode(FmMode::default())
+    }
+    pub fn fm_amount_default() -> Self {
+        Self::FmAmount(BipolarValue::MAX)
     }
 }
 

@@ -271,13 +271,13 @@ impl Colors {
             text_dim: Color32::from_rgb(90, 88, 85),
 
             // Accent - klassiska synth-färger
-            accent_primary: Color32::from_rgb(255, 100, 50),   // Moog-orange
-            accent_cyan: Color32::from_rgb(0, 255, 200),       // Teal/cyan LED
-            accent_green: Color32::from_rgb(50, 255, 100),     // Grön LED
-            accent_red: Color32::from_rgb(255, 50, 50),        // Röd LED
-            accent_purple: Color32::from_rgb(200, 100, 255),   // Lila
-            accent_yellow: Color32::from_rgb(255, 200, 50),    // Gul LED
-            accent_orange: Color32::from_rgb(255, 120, 30),    // Orange
+            accent_primary: Color32::from_rgb(255, 100, 50), // Moog-orange
+            accent_cyan: Color32::from_rgb(0, 255, 200),     // Teal/cyan LED
+            accent_green: Color32::from_rgb(50, 255, 100),   // Grön LED
+            accent_red: Color32::from_rgb(255, 50, 50),      // Röd LED
+            accent_purple: Color32::from_rgb(200, 100, 255), // Lila
+            accent_yellow: Color32::from_rgb(255, 200, 50),  // Gul LED
+            accent_orange: Color32::from_rgb(255, 120, 30),  // Orange
 
             // Meters - VU-meter stil
             meter_green: Color32::from_rgb(50, 220, 80),
@@ -285,10 +285,10 @@ impl Colors {
             meter_red: Color32::from_rgb(255, 50, 50),
 
             // Ports - tydliga signaltyper
-            port_audio: Color32::from_rgb(60, 180, 255),       // Blå = audio
-            port_control: Color32::from_rgb(255, 160, 60),     // Orange = CV
-            port_gate: Color32::from_rgb(50, 255, 120),        // Grön = gate/trigger
-            port_midi: Color32::from_rgb(255, 80, 200),        // Rosa = MIDI
+            port_audio: Color32::from_rgb(60, 180, 255), // Blå = audio
+            port_control: Color32::from_rgb(255, 160, 60), // Orange = CV
+            port_gate: Color32::from_rgb(50, 255, 120),  // Grön = gate/trigger
+            port_midi: Color32::from_rgb(255, 80, 200),  // Rosa = MIDI
 
             // Cables - mättade
             cable_audio: Color32::from_rgb(80, 160, 255),
@@ -297,7 +297,7 @@ impl Colors {
 
             // Borders
             border: Color32::from_rgb(50, 52, 58),
-            border_selected: Color32::from_rgb(255, 140, 60),  // Orange markering
+            border_selected: Color32::from_rgb(255, 140, 60), // Orange markering
         }
     }
 
@@ -396,11 +396,11 @@ impl Colors {
             text_secondary: Color32::from_rgb(180, 170, 210),
             text_dim: Color32::from_rgb(110, 100, 140),
 
-            accent_primary: Color32::from_rgb(255, 0, 150),    // Hot pink
-            accent_cyan: Color32::from_rgb(0, 255, 255),       // Cyan
-            accent_green: Color32::from_rgb(0, 255, 128),      // Neon green
+            accent_primary: Color32::from_rgb(255, 0, 150), // Hot pink
+            accent_cyan: Color32::from_rgb(0, 255, 255),    // Cyan
+            accent_green: Color32::from_rgb(0, 255, 128),   // Neon green
             accent_red: Color32::from_rgb(255, 50, 80),
-            accent_purple: Color32::from_rgb(180, 0, 255),     // Purple
+            accent_purple: Color32::from_rgb(180, 0, 255), // Purple
             accent_yellow: Color32::from_rgb(255, 255, 0),
             accent_orange: Color32::from_rgb(255, 100, 0),
 
@@ -434,7 +434,7 @@ impl Colors {
             text_secondary: Color32::from_rgb(150, 150, 158),
             text_dim: Color32::from_rgb(100, 100, 108),
 
-            accent_primary: Color32::from_rgb(90, 160, 230),   // Blue
+            accent_primary: Color32::from_rgb(90, 160, 230), // Blue
             accent_cyan: Color32::from_rgb(80, 200, 200),
             accent_green: Color32::from_rgb(80, 200, 100),
             accent_red: Color32::from_rgb(230, 80, 80),
@@ -463,10 +463,10 @@ impl Colors {
     /// Dracula theme - popular dark theme with purple accents.
     pub const fn dracula() -> Self {
         Self {
-            bg_dark: Color32::from_rgb(40, 42, 54),        // #282a36
+            bg_dark: Color32::from_rgb(40, 42, 54), // #282a36
             bg_panel: Color32::from_rgb(50, 52, 66),
             bg_module: Color32::from_rgb(60, 62, 78),
-            bg_widget: Color32::from_rgb(68, 71, 90),      // #44475a
+            bg_widget: Color32::from_rgb(68, 71, 90), // #44475a
 
             text_primary: Color32::from_rgb(248, 248, 242), // #f8f8f2
             text_secondary: Color32::from_rgb(200, 200, 195),
@@ -501,7 +501,7 @@ impl Colors {
     /// Monokai theme - classic from Sublime Text.
     pub const fn monokai() -> Self {
         Self {
-            bg_dark: Color32::from_rgb(39, 40, 34),        // #272822
+            bg_dark: Color32::from_rgb(39, 40, 34), // #272822
             bg_panel: Color32::from_rgb(49, 50, 44),
             bg_module: Color32::from_rgb(59, 60, 54),
             bg_widget: Color32::from_rgb(69, 70, 64),
@@ -510,13 +510,13 @@ impl Colors {
             text_secondary: Color32::from_rgb(200, 200, 195),
             text_dim: Color32::from_rgb(140, 140, 135),
 
-            accent_primary: Color32::from_rgb(249, 38, 114),  // #f92672 pink/red
-            accent_cyan: Color32::from_rgb(102, 217, 239),    // #66d9ef
-            accent_green: Color32::from_rgb(166, 226, 46),    // #a6e22e
+            accent_primary: Color32::from_rgb(249, 38, 114), // #f92672 pink/red
+            accent_cyan: Color32::from_rgb(102, 217, 239),   // #66d9ef
+            accent_green: Color32::from_rgb(166, 226, 46),   // #a6e22e
             accent_red: Color32::from_rgb(249, 38, 114),
-            accent_purple: Color32::from_rgb(174, 129, 255),  // #ae81ff
-            accent_yellow: Color32::from_rgb(230, 219, 116),  // #e6db74
-            accent_orange: Color32::from_rgb(253, 151, 31),   // #fd971f
+            accent_purple: Color32::from_rgb(174, 129, 255), // #ae81ff
+            accent_yellow: Color32::from_rgb(230, 219, 116), // #e6db74
+            accent_orange: Color32::from_rgb(253, 151, 31),  // #fd971f
 
             meter_green: Color32::from_rgb(166, 226, 46),
             meter_yellow: Color32::from_rgb(230, 219, 116),
@@ -539,21 +539,21 @@ impl Colors {
     /// Solarized Dark theme - classic low-contrast dark theme.
     pub const fn solarized_dark() -> Self {
         Self {
-            bg_dark: Color32::from_rgb(0, 43, 54),         // #002b36
-            bg_panel: Color32::from_rgb(7, 54, 66),        // #073642
+            bg_dark: Color32::from_rgb(0, 43, 54),  // #002b36
+            bg_panel: Color32::from_rgb(7, 54, 66), // #073642
             bg_module: Color32::from_rgb(7, 54, 66),
-            bg_widget: Color32::from_rgb(88, 110, 117),    // #586e75
+            bg_widget: Color32::from_rgb(88, 110, 117), // #586e75
 
             text_primary: Color32::from_rgb(131, 148, 150), // #839496
             text_secondary: Color32::from_rgb(101, 123, 131),
             text_dim: Color32::from_rgb(88, 110, 117),
 
-            accent_primary: Color32::from_rgb(203, 75, 22),  // #cb4b16 orange
-            accent_cyan: Color32::from_rgb(42, 161, 152),    // #2aa198
-            accent_green: Color32::from_rgb(133, 153, 0),    // #859900
-            accent_red: Color32::from_rgb(220, 50, 47),      // #dc322f
+            accent_primary: Color32::from_rgb(203, 75, 22), // #cb4b16 orange
+            accent_cyan: Color32::from_rgb(42, 161, 152),   // #2aa198
+            accent_green: Color32::from_rgb(133, 153, 0),   // #859900
+            accent_red: Color32::from_rgb(220, 50, 47),     // #dc322f
             accent_purple: Color32::from_rgb(108, 113, 196), // #6c71c4
-            accent_yellow: Color32::from_rgb(181, 137, 0),   // #b58900
+            accent_yellow: Color32::from_rgb(181, 137, 0),  // #b58900
             accent_orange: Color32::from_rgb(203, 75, 22),
 
             meter_green: Color32::from_rgb(133, 153, 0),
@@ -731,6 +731,14 @@ pub struct WidgetStyle {
     pub knob_indicator_size: f32,
     /// Mouse drag sensitivity for knobs (value change per pixel).
     pub knob_sensitivity: f32,
+    /// Number of segments in knob arc (for smooth rendering).
+    pub knob_arc_segments: usize,
+
+    // Slider styling
+    /// Height of the slider rail/track.
+    pub slider_rail_height: f32,
+    /// Radius of the slider handle.
+    pub slider_handle_radius: f32,
 
     // Meter styling
     /// Gap between meter segments.
@@ -754,10 +762,12 @@ impl WidgetStyle {
             knob_arc_width: 3.0,
             knob_indicator_size: 3.0,
             knob_sensitivity: 0.005,
+            knob_arc_segments: 32,
+            slider_rail_height: 6.0,
+            slider_handle_radius: 7.0,
             meter_segment_gap: 1.0,
             meter_segments: 20,
             cable_curvature: 0.5,
         }
     }
 }
-

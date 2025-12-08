@@ -12,7 +12,9 @@ use std::f32::consts::TAU;
 
 use crate::engine::typed_params::{FmMode, ModuleType, OscillatorParam, Param};
 use crate::modules::core::*;
-use crate::types::{Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Semitones};
+use crate::types::{
+    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Semitones,
+};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -26,6 +28,7 @@ pub struct Oscillator {
     level: Gain,
     phase_offset: Phase,
     fm_mode: FmMode,
+    fm_amount: BipolarValue,
 
     // State
     phase: Phase,
@@ -46,6 +49,7 @@ impl Oscillator {
             level: Gain::UNITY,
             phase_offset: Phase::ZERO,
             fm_mode: FmMode::Exponential,
+            fm_amount: BipolarValue::MAX,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(256),
@@ -214,6 +218,16 @@ impl Describable for Oscillator {
                 .description("FM input mode: Exponential (1V/oct) or Linear (Hz)")
                 .widget(WidgetHint::Dropdown),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::FmAmount(BipolarValue::MAX)),
+                    "FM Amt",
+                )
+                .description("FM input attenuverter (-1 to +1)")
+                .range(-1.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
             )
@@ -244,7 +258,9 @@ impl PolyModule for Oscillator {
         let mut prev_sync = 0.0f32;
 
         for i in 0..context.samples {
-            let fm = fm_input.map(|f| f[i]).unwrap_or(0.0);
+            let fm = fm_input
+                .map(|f| f[i] * self.fm_amount.as_f32())
+                .unwrap_or(0.0);
 
             let effective_pulse_width = if let Some(pwm) = pwm_input {
                 NormalizedValue::new((self.pulse_width.as_f32() + pwm[i] * 0.49).clamp(0.01, 0.99))
@@ -284,6 +300,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::Level(l) => self.level = l,
                 OscillatorParam::Phase(p) => self.phase_offset = p,
                 OscillatorParam::FmMode(m) => self.fm_mode = m,
+                OscillatorParam::FmAmount(a) => self.fm_amount = a,
             }
         }
     }
@@ -299,6 +316,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::Level(_) => self.level.as_f32(),
                 OscillatorParam::Phase(_) => self.phase_offset.as_f32(),
                 OscillatorParam::FmMode(_) => self.fm_mode.index() as f32,
+                OscillatorParam::FmAmount(_) => self.fm_amount.as_f32(),
             })
         } else {
             None
@@ -315,6 +333,7 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::Level(self.level)),
             Param::Oscillator(OscillatorParam::Phase(self.phase_offset)),
             Param::Oscillator(OscillatorParam::FmMode(self.fm_mode)),
+            Param::Oscillator(OscillatorParam::FmAmount(self.fm_amount)),
         ]
     }
 

@@ -10,7 +10,7 @@
 3.  **Bypass-knappar** (Från nuvarande P2)
     * [x] ~~Lägg till Power-knapp i modul-headern för effekter.~~ *(0.33.9)*
 4.  **Attenuverters & Input Gain** (Från nuvarande P2 - Kritiskt för ljuddesign)
-    * [ ] Lägg till skalning på CV-ingångar (t.ex. LFO -> Filter) så man slipper externa VCA:er för enkla modulationer.
+    * [x] ~~Lägg till skalning på CV-ingångar (t.ex. LFO -> Filter) så man slipper externa VCA:er för enkla modulationer.~~ *(0.33.13: Filter CutoffMod, Oscillator FmAmount)*
 5.  **Ljudinspelning / Tape Recorder** (Nytt - Prio Hög)
     * [ ] Implementera en global "Record"-knapp som streamar output till WAV-fil. Detta gör synten omedelbart användbar för produktion.
 

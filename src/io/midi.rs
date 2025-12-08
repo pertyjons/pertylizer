@@ -18,8 +18,6 @@
 //! - Pitch bend (0-16383) -> BipolarValue (-1.0 to 1.0)
 //! - Channel (0-15) -> MidiChannel
 
-use std::io::Write;
-
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use thiserror::Error;
 
@@ -223,19 +221,9 @@ impl MidiHandler {
                 port,
                 "modular-synth-input",
                 move |_timestamp, message, _| {
-                    print!("MIDI IN: [{:02X}", message[0]);
-                    for byte in &message[1..] {
-                        print!(" {:02X}", byte);
-                    }
-                    print!("]");
-
                     if let Some(command) = parse_midi(message) {
-                        println!(" -> {:?}", command);
                         let _ = sender.send(command);
-                    } else {
-                        println!(" -> (ignored)");
                     }
-                    let _ = std::io::stdout().flush();
                 },
                 (),
             )

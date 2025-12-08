@@ -21,6 +21,7 @@ pub struct Filter {
     resonance: NormalizedValue,
     key_tracking: NormalizedValue,
     env_amount: BipolarValue,
+    cutoff_mod_amount: BipolarValue,
     drive: Gain,
 
     // State
@@ -41,6 +42,7 @@ impl Filter {
             resonance: NormalizedValue::MIN,
             key_tracking: NormalizedValue::MIN,
             env_amount: BipolarValue::MAX,
+            cutoff_mod_amount: BipolarValue::MAX,
             drive: Gain::UNITY,
             sample_rate: SampleRate::DVD_QUALITY,
             ic1eq: 0.0,
@@ -164,6 +166,16 @@ impl Describable for Filter {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Filter(FilterParam::CutoffMod(BipolarValue::MAX)),
+                    "CV Amt",
+                )
+                .description("Cutoff CV input attenuverter (-1 to +1)")
+                .range(-1.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
             .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
             .port(
                 PortDescriptor::control_input("cutoff_cv", "Cutoff CV")
@@ -194,7 +206,7 @@ impl PolyModule for Filter {
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
             let cutoff_mod = cutoff_cv
-                .map(|b| b[i] * self.env_amount.as_f32())
+                .map(|b| b[i] * self.cutoff_mod_amount.as_f32())
                 .unwrap_or(0.0);
             let res_mod = res_cv.map(|b| b[i]).unwrap_or(0.0);
 
@@ -215,6 +227,7 @@ impl PolyModule for Filter {
                 FilterParam::KeyTracking(k) => self.key_tracking = k,
                 FilterParam::Drive(d) => self.drive = d,
                 FilterParam::EnvAmount(e) => self.env_amount = e,
+                FilterParam::CutoffMod(c) => self.cutoff_mod_amount = c,
             }
         }
     }
@@ -228,6 +241,7 @@ impl PolyModule for Filter {
                 FilterParam::KeyTracking(_) => self.key_tracking.as_f32(),
                 FilterParam::Drive(_) => self.drive.as_f32(),
                 FilterParam::EnvAmount(_) => self.env_amount.as_f32(),
+                FilterParam::CutoffMod(_) => self.cutoff_mod_amount.as_f32(),
             })
         } else {
             None
@@ -242,6 +256,7 @@ impl PolyModule for Filter {
             Param::Filter(FilterParam::KeyTracking(self.key_tracking)),
             Param::Filter(FilterParam::Drive(self.drive)),
             Param::Filter(FilterParam::EnvAmount(self.env_amount)),
+            Param::Filter(FilterParam::CutoffMod(self.cutoff_mod_amount)),
         ]
     }
 

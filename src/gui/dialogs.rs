@@ -6,7 +6,7 @@
 use eframe::egui::{self, RichText};
 
 use super::egui_backend::setup_custom_style;
-use super::theme::{theme, ThemePreset};
+use super::theme::{ThemePreset, theme};
 use crate::patch::{Patch, example_patches};
 
 /// State for all application dialogs.
@@ -198,7 +198,9 @@ pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatch
                                 *open = false;
                             }
                             if let Some(ref desc) = patch.description {
-                                ui.label(RichText::new(desc).small().color(theme().colors.text_dim));
+                                ui.label(
+                                    RichText::new(desc).small().color(theme().colors.text_dim),
+                                );
                             }
                         });
                     }

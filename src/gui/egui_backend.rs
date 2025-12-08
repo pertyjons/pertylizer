@@ -133,7 +133,8 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 /// Reads colors from the current theme, so call this after changing theme.
 pub fn setup_custom_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
-    let colors = &theme().colors;
+    let t = theme();
+    let colors = &t.colors;
 
     // Dark theme with synth colors
     style.visuals.dark_mode = true;
@@ -142,19 +143,21 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     style.visuals.window_fill = colors.bg_module;
     style.visuals.faint_bg_color = colors.bg_widget;
 
-    // Widget styling
-    style.visuals.widgets.inactive.bg_fill = colors.bg_widget;
-    style.visuals.widgets.inactive.weak_bg_fill = colors.bg_widget;
+    // Widget styling - use bg_dark for slider backgrounds (darker contrast)
+    style.visuals.widgets.inactive.bg_fill = colors.bg_dark;
+    style.visuals.widgets.inactive.weak_bg_fill = colors.bg_dark;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, colors.text_secondary);
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, colors.border);
 
-    // Hovered: slightly lighter than bg_widget
+    // Hovered: slightly lighter than bg_dark
     let hovered_bg = Color32::from_rgb(
-        colors.bg_widget.r().saturating_add(15),
-        colors.bg_widget.g().saturating_add(15),
-        colors.bg_widget.b().saturating_add(15),
+        colors.bg_dark.r().saturating_add(20),
+        colors.bg_dark.g().saturating_add(20),
+        colors.bg_dark.b().saturating_add(20),
     );
     style.visuals.widgets.hovered.bg_fill = hovered_bg;
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, colors.text_primary);
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, colors.accent_primary.gamma_multiply(0.5));
 
     style.visuals.widgets.active.bg_fill = colors.accent_primary;
     style.visuals.widgets.active.fg_stroke = Stroke::new(2.0, colors.bg_dark);
@@ -167,9 +170,11 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
 
-    // Spacing
+    // Spacing - make sliders thicker and easier to interact with
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
     style.spacing.button_padding = Vec2::new(8.0, 4.0);
+    style.spacing.slider_rail_height = t.style.slider_rail_height;
+    style.spacing.interact_size.y = 18.0; // Taller click area for sliders
 
     ctx.set_style(style);
 }
@@ -579,7 +584,8 @@ impl eframe::App for SynthApp {
                         } else {
                             port_name.to_string()
                         };
-                        RichText::new(format!("🎹 {} ▼", short_name)).color(theme().colors.meter_green)
+                        RichText::new(format!("🎹 {} ▼", short_name))
+                            .color(theme().colors.meter_green)
                     } else {
                         RichText::new("🎹 MIDI ▼").color(theme().colors.text_dim)
                     };
@@ -589,14 +595,16 @@ impl eframe::App for SynthApp {
                         let ports = MidiHandler::list_ports();
                         if ports.is_empty() {
                             ui.label(
-                                RichText::new("No MIDI ports available").color(theme().colors.text_dim),
+                                RichText::new("No MIDI ports available")
+                                    .color(theme().colors.text_dim),
                             );
                         } else {
                             for port in &ports {
                                 let is_current =
                                     self.midi_handler.port_name() == Some(port.as_str());
                                 let label = if is_current {
-                                    RichText::new(format!("● {}", port)).color(theme().colors.meter_green)
+                                    RichText::new(format!("● {}", port))
+                                        .color(theme().colors.meter_green)
                                 } else {
                                     RichText::new(format!("  {}", port))
                                 };
@@ -1113,7 +1121,11 @@ impl SynthApp {
     fn draw_meters(&mut self, ui: &mut egui::Ui) {
         // Output meters section - horizontal layout
         ui.vertical(|ui| {
-            ui.label(RichText::new("OUTPUT").color(theme().colors.text_dim).small());
+            ui.label(
+                RichText::new("OUTPUT")
+                    .color(theme().colors.text_dim)
+                    .small(),
+            );
             ui.add_space(4.0);
 
             let (peak_l, peak_r) = self.handle.peak_meters();
@@ -1156,7 +1168,11 @@ impl SynthApp {
     #[allow(clippy::too_many_lines)]
     fn draw_master_fx_section(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            ui.label(RichText::new("MASTER FX").color(theme().colors.text_dim).small());
+            ui.label(
+                RichText::new("MASTER FX")
+                    .color(theme().colors.text_dim)
+                    .small(),
+            );
             ui.add_space(4.0);
 
             // Track actions to apply after iteration (to avoid borrow issues)
@@ -1179,11 +1195,11 @@ impl SynthApp {
                     for (idx, (effect_type, is_expanded, is_bypassed, params)) in
                         effects_snapshot.iter().enumerate()
                     {
-                        // Effect header frame
+                        // Effect header frame - use bg_module (lighter) for contrast with sliders
                         let frame_color = if *is_bypassed {
-                            theme().colors.bg_widget.gamma_multiply(0.5)
+                            theme().colors.bg_module.gamma_multiply(0.7)
                         } else {
-                            theme().colors.bg_widget
+                            theme().colors.bg_module
                         };
 
                         egui::Frame::new()
@@ -1372,7 +1388,8 @@ impl SynthApp {
                 .unwrap_or("Instrument 1");
             ui.separator();
             ui.label(
-                RichText::new(format!("Playing: {}", active_name)).color(theme().colors.accent_orange),
+                RichText::new(format!("Playing: {}", active_name))
+                    .color(theme().colors.accent_orange),
             );
         });
 
@@ -1657,7 +1674,11 @@ fn draw_effect_params(
                 {
                     // Threshold
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Thresh").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Thresh")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}dB", threshold))
@@ -1680,7 +1701,11 @@ fn draw_effect_params(
 
                     // Ratio
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Ratio").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Ratio")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}:1", ratio))
@@ -1703,7 +1728,11 @@ fn draw_effect_params(
 
                     // Attack
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Attack").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Attack")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}ms", attack))
@@ -1730,7 +1759,11 @@ fn draw_effect_params(
 
                     // Release
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Release").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Release")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}ms", release))
@@ -1757,7 +1790,11 @@ fn draw_effect_params(
 
                     // Makeup
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Makeup").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Makeup")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", makeup))
@@ -1780,7 +1817,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -1819,7 +1860,11 @@ fn draw_effect_params(
                 {
                     // Low Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Low").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Low")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", low_gain))
@@ -1840,7 +1885,11 @@ fn draw_effect_params(
 
                     // Mid Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mid").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mid")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", mid_gain))
@@ -1861,7 +1910,11 @@ fn draw_effect_params(
 
                     // High Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("High").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("High")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", high_gain))
@@ -1884,7 +1937,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -1923,7 +1980,11 @@ fn draw_effect_params(
                 {
                     // Room Size
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Size").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Size")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", room_size * 100.0))
@@ -1946,7 +2007,11 @@ fn draw_effect_params(
 
                     // Damping
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Damp").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Damp")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", damping * 100.0))
@@ -1969,7 +2034,11 @@ fn draw_effect_params(
 
                     // Width
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Width").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Width")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", width * 100.0))
@@ -1992,7 +2061,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -2029,7 +2102,11 @@ fn draw_effect_params(
                 {
                     // Time
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Time").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Time")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}s", time))
@@ -2056,7 +2133,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Feedback")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
@@ -2079,7 +2160,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -2112,7 +2197,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Rate")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
@@ -2135,7 +2224,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Depth")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
@@ -2158,7 +2251,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -2197,7 +2294,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Rate")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
@@ -2220,7 +2321,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Depth")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
@@ -2243,7 +2348,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Feedback")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
@@ -2268,7 +2377,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -2307,7 +2420,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Rate")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
@@ -2330,7 +2447,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Depth")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
@@ -2353,7 +2474,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Feedback")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
@@ -2378,7 +2503,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
@@ -2411,7 +2540,11 @@ fn draw_effect_params(
                 {
                     // Drive
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Drive").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Drive")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", drive * 100.0))
@@ -2434,7 +2567,11 @@ fn draw_effect_params(
 
                     // Tone
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Tone").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Tone")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", tone * 100.0))
@@ -2457,7 +2594,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))

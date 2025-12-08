@@ -118,7 +118,11 @@ pub fn draw_module_panel(
             ui.horizontal(|ui| {
                 // Input ports on the left
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("IN").small().color(theme().colors.text_dim));
+                    ui.label(
+                        egui::RichText::new("IN")
+                            .small()
+                            .color(theme().colors.text_dim),
+                    );
                     for port in descriptor
                         .ports
                         .iter()
@@ -162,7 +166,11 @@ pub fn draw_module_panel(
                 // Output ports on the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("OUT").small().color(theme().colors.text_dim));
+                        ui.label(
+                            egui::RichText::new("OUT")
+                                .small()
+                                .color(theme().colors.text_dim),
+                        );
                         for port in descriptor
                             .ports
                             .iter()

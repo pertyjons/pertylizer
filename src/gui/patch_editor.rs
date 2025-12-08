@@ -1103,7 +1103,14 @@ fn draw_visualizer_display(
         let width = ui.available_width().clamp(120.0, 300.0);
         let height = (width * 0.5).clamp(60.0, 120.0);
 
-        super::widgets::draw_oscilloscope(ui, &samples, width, height, gain, theme().colors.accent_cyan);
+        super::widgets::draw_oscilloscope(
+            ui,
+            &samples,
+            width,
+            height,
+            gain,
+            theme().colors.accent_cyan,
+        );
 
         if vis_buffer.is_none() {
             ui.label(
