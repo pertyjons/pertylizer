@@ -279,6 +279,10 @@ pub struct Instrument {
     voice_right: AudioBuffer,
     /// Interleaved stereo buffer for effect processing.
     effect_buffer: AudioBuffer,
+    /// Pre-allocated temporary left buffer for individual voice processing.
+    temp_voice_left: AudioBuffer,
+    /// Pre-allocated temporary right buffer for individual voice processing.
+    temp_voice_right: AudioBuffer,
     /// Default velocity-to-amplitude sensitivity for new voices.
     velocity_amp_sensitivity: NormalizedValue,
     /// Default velocity-to-filter sensitivity for new voices.
@@ -305,6 +309,8 @@ impl Instrument {
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
+            temp_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
+            temp_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             velocity_amp_sensitivity: NormalizedValue::MAX,       // Full dynamic range
             velocity_filter_sensitivity: NormalizedValue::CENTER, // 50% filter sensitivity
         }
@@ -329,6 +335,8 @@ impl Instrument {
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
+            temp_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
+            temp_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             velocity_amp_sensitivity: NormalizedValue::MAX,
             velocity_filter_sensitivity: NormalizedValue::CENTER,
         }
@@ -562,9 +570,14 @@ impl Instrument {
         self.voice_left.clear();
         self.voice_right.clear();
 
-        // Temporary buffers for individual voice processing
-        let mut temp_left = AudioBuffer::new(samples);
-        let mut temp_right = AudioBuffer::new(samples);
+        // Take pre-allocated temp buffers out temporarily to avoid borrow conflicts
+        // (Default::default() creates empty Vec with no allocation)
+        let mut temp_left = std::mem::take(&mut self.temp_voice_left);
+        let mut temp_right = std::mem::take(&mut self.temp_voice_right);
+
+        // Resize temp buffers if needed (no allocation if capacity is sufficient)
+        temp_left.resize(samples);
+        temp_right.resize(samples);
 
         // Process each voice in this instrument and sum into voice_left/voice_right
         for voice in self.allocator.voices_mut() {
@@ -624,6 +637,10 @@ impl Instrument {
                 self.voice_right[i] += temp_right[i];
             }
         }
+
+        // Put pre-allocated temp buffers back (preserves capacity for next frame)
+        self.temp_voice_left = temp_left;
+        self.temp_voice_right = temp_right;
 
         // Advance allocator time
         self.allocator.advance_time(SampleCount::new(samples));

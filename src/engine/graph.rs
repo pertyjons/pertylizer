@@ -11,27 +11,29 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::engine::ModuleId;
 use crate::engine::typed_params::{ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::MidiNote;
+use crate::types::{MidiNote, PortName};
 
 /// A connection between two ports.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// Uses `PortName` (interned strings) for zero-allocation port name handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Connection {
     /// Source module.
     pub from_module: ModuleId,
-    /// Source port name.
-    pub from_port: String,
+    /// Source port name (interned for zero-allocation copying).
+    pub from_port: PortName,
     /// Destination module.
     pub to_module: ModuleId,
-    /// Destination port name.
-    pub to_port: String,
+    /// Destination port name (interned for zero-allocation copying).
+    pub to_port: PortName,
 }
 
 impl Connection {
     pub fn new(
         from_module: ModuleId,
-        from_port: impl Into<String>,
+        from_port: impl Into<PortName>,
         to_module: ModuleId,
-        to_port: impl Into<String>,
+        to_port: impl Into<PortName>,
     ) -> Self {
         Self {
             from_module,
@@ -49,6 +51,8 @@ struct GraphNode {
     /// Module descriptor (cached).
     descriptor: ModuleDescriptor,
     /// Output buffers.
+    /// Note: Uses String keys for compatibility with PolyModule trait.
+    /// This will be changed to PortName when we update the trait (Problem 3).
     outputs: HashMap<String, AudioBuffer>,
 }
 
@@ -76,9 +80,11 @@ pub struct ModuleGraph {
     /// Buffer size.
     buffer_size: usize,
     /// Pre-allocated input buffers for processing (avoid allocations in audio thread).
+    /// Note: Uses String keys for compatibility with PolyModule trait.
     input_buffers: HashMap<String, AudioBuffer>,
     /// Pre-allocated vec for gathering incoming connections.
-    incoming_cache: Vec<(ModuleId, String, String)>,
+    /// Uses PortName for zero-allocation copying of connection info.
+    incoming_cache: Vec<(ModuleId, PortName, PortName)>,
 }
 
 impl ModuleGraph {
@@ -584,13 +590,14 @@ impl ModuleGraph {
 
     fn process_module(&mut self, module_id: ModuleId, context: &ProcessContext) {
         // Gather incoming connections into pre-allocated cache (avoid per-frame allocation)
+        // Connection ports are PortName (Copy, no allocation)
         self.incoming_cache.clear();
         for conn in &self.connections {
             if conn.to_module == module_id {
                 self.incoming_cache.push((
                     conn.from_module,
-                    conn.from_port.clone(), // TODO: Use interned strings to avoid this
-                    conn.to_port.clone(),
+                    conn.from_port, // PortName is Copy - no allocation!
+                    conn.to_port,   // PortName is Copy - no allocation!
                 ));
             }
         }
@@ -602,12 +609,15 @@ impl ModuleGraph {
         }
 
         // Gather inputs from connected modules
+        // Note: We convert PortName to &str for HashMap lookup (no allocation)
         for (from_module, from_port, to_port) in &self.incoming_cache {
+            let from_port_str = from_port.as_str();
+            let to_port_str = to_port.as_str();
             if let Some(from_node) = self.nodes.get(from_module)
-                && let Some(output_buf) = from_node.outputs.get(from_port)
+                && let Some(output_buf) = from_node.outputs.get(from_port_str)
             {
                 // Sum inputs if multiple connections to same port
-                if let Some(existing) = self.input_buffers.get_mut(to_port) {
+                if let Some(existing) = self.input_buffers.get_mut(to_port_str) {
                     // Ensure buffer is correctly sized before adding
                     if existing.len() < context.samples {
                         existing.resize(context.samples);
@@ -615,9 +625,10 @@ impl ModuleGraph {
                     existing.add_from(output_buf);
                 } else {
                     // Need to insert a new buffer - ensure it's sized correctly
+                    // Note: This String allocation only happens on first use of a port
                     let mut buf = AudioBuffer::new(context.samples);
                     buf.copy_from(output_buf);
-                    self.input_buffers.insert(to_port.clone(), buf);
+                    self.input_buffers.insert(to_port_str.to_string(), buf);
                 }
             }
         }

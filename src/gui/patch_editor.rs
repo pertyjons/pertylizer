@@ -303,10 +303,10 @@ impl PatchEditor {
         let mut ports = Vec::new();
         for conn in &self.connections {
             if conn.from_module == module_id {
-                ports.push(conn.from_port.clone());
+                ports.push(conn.from_port.as_str().to_string());
             }
             if conn.to_module == module_id {
-                ports.push(conn.to_port.clone());
+                ports.push(conn.to_port.as_str().to_string());
             }
         }
         ports
@@ -787,8 +787,8 @@ impl PatchEditor {
         let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
         for connection in &self.connections {
-            let from_key = (connection.from_module, connection.from_port.clone());
-            let to_key = (connection.to_module, connection.to_port.clone());
+            let from_key = (connection.from_module, connection.from_port.as_str().to_string());
+            let to_key = (connection.to_module, connection.to_port.as_str().to_string());
 
             if let (Some(from_pos), Some(to_pos)) = (
                 self.port_positions.get(&from_key),
@@ -831,7 +831,7 @@ impl PatchEditor {
 
                     // Remove on right click
                     if right_clicked {
-                        to_remove.push(connection.clone());
+                        to_remove.push(*connection);
                     }
                 }
             }

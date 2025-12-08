@@ -162,8 +162,8 @@ pub struct ConnectionState {
 impl From<&Connection> for ConnectionState {
     fn from(c: &Connection) -> Self {
         Self {
-            from: (c.from_module.to_string(), c.from_port.clone()),
-            to: (c.to_module.to_string(), c.to_port.clone()),
+            from: (c.from_module.to_string(), c.from_port.into()),
+            to: (c.to_module.to_string(), c.to_port.into()),
         }
     }
 }

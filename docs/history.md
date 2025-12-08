@@ -1,5 +1,50 @@
 # Version History
 
+## [0.33.10] - 2024
+
+### Fixed - Realtime Audio Thread Allocations
+
+Eliminerade kritiska heap-allokeringar i audio thread för förbättrad latens och stabilitet.
+
+**Problem 1: AudioBuffer::new() i Instrument::process()**
+
+| Fil | Ändring |
+|-----|---------|
+| `instrument.rs:282-285` | Nya fält `temp_voice_left` och `temp_voice_right` i struct |
+| `instrument.rs:312-313` | Initiering i `new()` med `MAX_BUFFER_SIZE` |
+| `instrument.rs:338-339` | Initiering i `with_config()` |
+| `instrument.rs:573-580` | Använder `std::mem::take()` för zero-alloc buffer reuse |
+| `instrument.rs:641-643` | Återställer buffers efter loop |
+
+**Resultat:** Eliminerar ~187 allokeringar/sekund (vid 48kHz/256 samples)
+
+**Problem 2: String::clone() i Connection**
+
+| Fil | Ändring |
+|-----|---------|
+| `graph.rs:16-44` | `Connection` använder nu `PortName` (Copy) istället för `String` |
+| `graph.rs:19` | `Connection` är nu `Copy` - zero-allocation vid kopiering |
+| `graph.rs:85-87` | `incoming_cache` använder `PortName` tuple |
+| `graph.rs:597-601` | Inga `.clone()` anrop i connection-loopen |
+| `interned.rs:107-110` | Ny `From<&String> for PortName` implementation |
+| `interned.rs:113-116` | Ny `From<PortName> for String` implementation |
+
+**Resultat:** Eliminerar String-allokeringar vid connection-hantering i audio thread
+
+**Tekniska detaljer:**
+
+- `PortName` är en internad sträng (u32 index) med `Copy` trait
+- `Connection` struct är nu 24 bytes och `Copy` (var ~80 bytes med heap-allokerade Strings)
+- `std::mem::take()` används för att undvika borrow-konflikter utan allokering
+- Kvarvarande allokering: `input_refs` HashMap i `process_module()` (kräver trait-ändring, uppskjuten)
+
+**Resultat:**
+- `cargo build --release`: Passerar
+- `cargo clippy`: Passerar (strikta lints)
+- `cargo test`: 277/277 passerar
+
+---
+
 ## [0.33.9] - 2024
 
 ### Added - Bypass-knappar på Rack-moduler

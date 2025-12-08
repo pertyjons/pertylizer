@@ -570,8 +570,8 @@ pub fn create_patch_from_rack(
     // Add connections
     for conn in patch_editor.connections() {
         patch.connections.push(ConnectionState {
-            from: (conn.from_module.to_string(), conn.from_port.clone()),
-            to: (conn.to_module.to_string(), conn.to_port.clone()),
+            from: (conn.from_module.to_string(), conn.from_port.into()),
+            to: (conn.to_module.to_string(), conn.to_port.into()),
         });
     }
 

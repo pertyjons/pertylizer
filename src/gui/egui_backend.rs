@@ -825,13 +825,13 @@ impl eframe::App for SynthApp {
 
             // Handle new connections - now synced with engine
             for connection in result.connections_to_add {
-                patch_editor.add_connection(connection.clone());
+                patch_editor.add_connection(connection);
 
                 // Send Connect command to engine (active instrument's voice graph)
                 self.handle.send(EngineCommand::Connect {
                     instrument_id: Some(active_id),
-                    from: PortId::new(connection.from_module, connection.from_port.clone()),
-                    to: PortId::new(connection.to_module, connection.to_port.clone()),
+                    from: PortId::new(connection.from_module, connection.from_port),
+                    to: PortId::new(connection.to_module, connection.to_port),
                 });
             }
 

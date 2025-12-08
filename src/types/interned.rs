@@ -104,6 +104,18 @@ impl From<String> for PortName {
     }
 }
 
+impl From<&String> for PortName {
+    fn from(s: &String) -> Self {
+        Self::intern(s)
+    }
+}
+
+impl From<PortName> for String {
+    fn from(p: PortName) -> Self {
+        p.as_str().to_string()
+    }
+}
+
 // Common port names as constants (interned at first use)
 impl PortName {
     /// Standard input port.
