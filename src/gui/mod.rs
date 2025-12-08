@@ -57,6 +57,9 @@ pub mod dialogs;
 pub mod patch_bridge;
 
 #[cfg(feature = "gui-egui")]
+pub mod auto_layout;
+
+#[cfg(feature = "gui-egui")]
 pub mod instrument_rack;
 
 #[cfg(feature = "gui-egui")]

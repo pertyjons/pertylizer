@@ -873,6 +873,11 @@ impl eframe::App for SynthApp {
                     bypass: new_bypass_state,
                 });
             }
+
+            // Handle auto-layout request
+            if result.request_auto_layout {
+                patch_editor.apply_auto_layout();
+            }
         });
 
         // Dialogs

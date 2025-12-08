@@ -1,5 +1,19 @@
 # Version History
 
+## [0.33.19] - 2024
+### Added - Improved Cables & Auto-Layout
+- **Kablar med gravitation** - Kablar hänger nedåt med naturlig "sag" (15% av avståndet)
+- **Skuggor** - Svart skugga under kablar för djupkänsla
+- **Semi-transparens** - Kablar är delvis genomskinliga (alpha 180)
+- **Highlight på hover** - Röd glow-effekt från theme().colors.accent_red
+- **Dragging-kablar** - Mindre sag (5%) för responsiv känsla
+- **Auto-Layout** - Ny knapp "📐 Auto Layout" som organiserar moduler
+  - Vänster→höger baserat på signalflöde (BFS från sources)
+  - Envelopes/LFOs placeras under huvudsignalvägen
+  - Konfigurerbara avstånd via LayoutConfig
+
+---
+
 ## [0.33.18] - 2024
 ### Fixed - Parameter Routing for Arbitrary Modules
 - **SetModuleParameter** används nu för alla voice-moduler istället för SetVoiceParameter

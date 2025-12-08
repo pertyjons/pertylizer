@@ -16,7 +16,7 @@ mod waveform;
 pub use super::theme::{Theme, set_theme, theme, with_theme_mut};
 
 // Re-export all widgets
-pub use cable::draw_cable;
+pub use cable::{cable_color, draw_cable, draw_cable_dragging, draw_cable_highlighted, point_near_cable};
 pub use envelope::{EnvelopeEditor, draw_adsr_curve};
 pub use frame::module_frame;
 pub use knob::Knob;

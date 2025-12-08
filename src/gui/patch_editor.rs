@@ -16,7 +16,10 @@ use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
-use super::widgets::{PortDirection, PortType, draw_cable};
+use super::widgets::{
+    PortDirection, PortType, cable_color, draw_cable, draw_cable_dragging,
+    draw_cable_highlighted, point_near_cable,
+};
 
 /// Module connectivity status for visualization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -346,6 +349,18 @@ impl PatchEditor {
         // Draw grid
         self.draw_grid(ui, canvas_rect);
 
+        // Toolbar overlay (top-left corner)
+        let toolbar_rect = Rect::from_min_size(
+            canvas_rect.min + Vec2::new(10.0, 10.0),
+            Vec2::new(120.0, 30.0),
+        );
+        let mut toolbar_ui = ui.new_child(egui::UiBuilder::new().max_rect(toolbar_rect));
+        toolbar_ui.horizontal(|ui| {
+            if ui.button("📐 Auto Layout").clicked() {
+                result.request_auto_layout = true;
+            }
+        });
+
         // Clear port positions for this frame
         self.port_positions.clear();
 
@@ -606,19 +621,13 @@ impl PatchEditor {
             self.calculate_connectivity();
         }
 
-        // Draw pending connection in foreground
+        // Draw pending connection in foreground (less sag for responsive feel)
         if let Some(ref pending) = self.pending_connection {
-            let color = match pending.from_type {
-                PortType::Audio => theme().colors.cable_audio,
-                PortType::Control => theme().colors.cable_control,
-                PortType::Gate => theme().colors.cable_gate,
-                PortType::Midi => theme().colors.port_midi,
-            };
-
+            let color = cable_color(pending.from_type, 180);
             let painter = ui
                 .ctx()
                 .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
-            draw_cable(&painter, pending.from_position, pending.current_pos, color);
+            draw_cable_dragging(&painter, pending.from_position, pending.current_pos, color);
         }
 
         // Handle click on empty space to deselect
@@ -801,29 +810,15 @@ impl PatchEditor {
                 self.port_positions.get(&from_key),
                 self.port_positions.get(&to_key),
             ) {
-                let color = match from_pos.port_type {
-                    PortType::Audio => theme().colors.cable_audio,
-                    PortType::Control => theme().colors.cable_control,
-                    PortType::Gate => theme().colors.cable_gate,
-                    PortType::Midi => theme().colors.port_midi,
-                };
-
-                // Check if mouse is near this cable
+                // Check if mouse is near this cable (use new sag-aware hit testing)
                 let is_hovered = pointer_pos
-                    .map(|p| point_near_bezier(p, from_pos.position, to_pos.position, 8.0))
+                    .map(|p| point_near_cable(p, from_pos.position, to_pos.position, 10.0))
                     .unwrap_or(false);
 
-                // Draw cable with highlight if hovered
-                let draw_color = if is_hovered {
-                    Color32::from_rgb(255, 100, 100) // Red highlight when hovered
-                } else {
-                    color
-                };
-
-                draw_cable(&painter, from_pos.position, to_pos.position, draw_color);
-
-                // Draw thicker outline when hovered for better visibility
                 if is_hovered {
+                    // Draw highlighted cable with glow effect
+                    draw_cable_highlighted(&painter, from_pos.position, to_pos.position);
+
                     // Show tooltip
                     if let Some(pos) = pointer_pos {
                         let tooltip_pos = pos + Vec2::new(10.0, 10.0);
@@ -840,6 +835,10 @@ impl PatchEditor {
                     if right_clicked {
                         to_remove.push(*connection);
                     }
+                } else {
+                    // Draw normal cable with theme color and transparency
+                    let color = cable_color(from_pos.port_type, 180);
+                    draw_cable(&painter, from_pos.position, to_pos.position, color);
                 }
             }
         }
@@ -1033,6 +1032,44 @@ impl PatchEditor {
     pub fn set_bypassed(&mut self, id: ModuleId, bypassed: bool) {
         self.bypassed.insert(id, bypassed);
     }
+
+    /// Apply automatic layout to modules based on signal flow.
+    pub fn apply_auto_layout(&mut self) {
+        use super::auto_layout::{calculate_layout, LayoutConfig, LayoutConnection, ModuleInfo};
+
+        // Collect module info
+        let modules: Vec<ModuleInfo> = self
+            .panels
+            .keys()
+            .filter_map(|&id| {
+                self.descriptors.get(&id).map(|desc| ModuleInfo {
+                    id,
+                    category: desc.category,
+                })
+            })
+            .collect();
+
+        // Collect connections
+        let connections: Vec<LayoutConnection> = self
+            .connections
+            .iter()
+            .map(|conn| LayoutConnection {
+                from_module: conn.from_module,
+                to_module: conn.to_module,
+            })
+            .collect();
+
+        // Calculate layout
+        let config = LayoutConfig::default();
+        let result = calculate_layout(&modules, &connections, &config);
+
+        // Apply new positions
+        for (module_id, position) in result.positions {
+            if let Some(panel) = self.panels.get_mut(&module_id) {
+                panel.position = position;
+            }
+        }
+    }
 }
 
 impl Default for PatchEditor {
@@ -1054,6 +1091,8 @@ pub struct PatchEditorResult {
     /// Connections to remove.
     #[allow(dead_code)]
     pub connections_to_remove: Vec<Connection>,
+    /// Request auto-layout of modules.
+    pub request_auto_layout: bool,
     /// Bypass state toggles (module_id, new_bypass_state).
     /// true = bypassed (module is off), false = active (module is on).
     pub bypass_toggles: Vec<(ModuleId, bool)>,
@@ -1565,30 +1604,3 @@ fn convert_port_type(port_type: crate::modules::core::PortType) -> PortType {
     }
 }
 
-/// Check if a point is near a bezier cable curve.
-fn point_near_bezier(point: Pos2, from: Pos2, to: Pos2, threshold: f32) -> bool {
-    // Control points for bezier (same as in draw_cable)
-    let control_offset = (to.x - from.x).abs() * 0.5;
-    let ctrl1 = Pos2::new(from.x + control_offset, from.y);
-    let ctrl2 = Pos2::new(to.x - control_offset, to.y);
-
-    // Sample points along the bezier curve and check distance
-    let segments = 20;
-    for i in 0..=segments {
-        let t = i as f32 / segments as f32;
-        let t2 = t * t;
-        let t3 = t2 * t;
-        let mt = 1.0 - t;
-        let mt2 = mt * mt;
-        let mt3 = mt2 * mt;
-
-        let x = mt3 * from.x + 3.0 * mt2 * t * ctrl1.x + 3.0 * mt * t2 * ctrl2.x + t3 * to.x;
-        let y = mt3 * from.y + 3.0 * mt2 * t * ctrl1.y + 3.0 * mt * t2 * ctrl2.y + t3 * to.y;
-
-        let dist = ((point.x - x).powi(2) + (point.y - y).powi(2)).sqrt();
-        if dist < threshold {
-            return true;
-        }
-    }
-    false
-}
