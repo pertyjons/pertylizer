@@ -613,6 +613,15 @@ impl SynthEngine {
                         InstrumentParam::Solo(solo) => {
                             instrument.set_solo(solo);
                         }
+                        InstrumentParam::KeyRange(range) => {
+                            instrument.set_key_range(range);
+                        }
+                        InstrumentParam::Transpose(semitones) => {
+                            instrument.set_transpose(semitones);
+                        }
+                        InstrumentParam::LearnState(state) => {
+                            instrument.set_learn_state(state);
+                        }
                     }
                 }
             }
@@ -668,9 +677,24 @@ impl SynthEngine {
                 let mut note_triggered = false;
 
                 for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw)
-                        && instrument.note_on(note, velocity_f32).is_some()
-                    {
+                    if !instrument.responds_to_channel(channel_raw) {
+                        continue;
+                    }
+
+                    // Check if instrument is in learn mode - if so, learn the note
+                    // instead of playing it
+                    if instrument.handle_note_learn(note) {
+                        // Note was captured for learning - emit event to update GUI
+                        let _ = self.event_producer.try_push(EngineEvent::KeyRangeLearned {
+                            instrument_id: instrument.id(),
+                            key_range: instrument.key_range(),
+                            learn_state: instrument.learn_state(),
+                        });
+                        continue; // Don't play the note, it was for learning
+                    }
+
+                    // Normal note handling - check key range and play
+                    if instrument.note_on(note, velocity_f32).is_some() {
                         note_triggered = true;
                     }
                 }

@@ -1,5 +1,16 @@
 # Version History
 
+## [0.33.15] - 2024
+### Added - Keyboard Splitting & MIDI Learn
+- **KeyRange** - Ny typ för att definiera vilka noter ett instrument svarar på (keyboard splitting)
+- **LearnState** - State machine för MIDI learn (Idle, WaitingForLowNote, WaitingForHighNote)
+- **Transpose** - Semitone-offset per instrument (-24 till +24)
+- **Instrument Rack UI** - Ny rad med Range-visning, Learn-knapp, Full-knapp, Transpose-kontroll
+- **KeyRangeLearned event** - Engine skickar event till GUI när range lärs in
+- **note_on/note_off** - Kollar key_range och applicerar transpose
+
+---
+
 ## [0.33.14] - 2024
 ### Improved - GUI Styling & Theme Consistency
 - **Master FX Sliders** - Bättre synlighet med mörkare bakgrund och tydlig kontrast

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use super::instrument::{Instrument, InstrumentId, MidiChannel};
+use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use super::typed_params::{ModuleType, Param};
 use crate::types::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds};
 
@@ -577,6 +577,12 @@ pub enum InstrumentParam {
     VelocityAmpSensitivity(NormalizedValue),
     /// Velocity to filter cutoff sensitivity (0 = none, 1 = full).
     VelocityFilterSensitivity(NormalizedValue),
+    /// Key range for keyboard splitting.
+    KeyRange(KeyRange),
+    /// Transpose offset in semitones (-24 to +24).
+    Transpose(i8),
+    /// MIDI learn state machine.
+    LearnState(LearnState),
 }
 
 /// Events sent from the audio engine to the UI.
@@ -646,6 +652,19 @@ pub enum EngineEvent {
     /// This is sent when AllNotesOff command is processed, allowing the
     /// GUI to clear all pressed keys at once.
     AllNotesReleased,
+
+    /// Key range was learned from MIDI input.
+    ///
+    /// This event is sent when an instrument in learn mode receives a note
+    /// and updates its key range. The GUI should update its state accordingly.
+    KeyRangeLearned {
+        /// The instrument that learned the key range.
+        instrument_id: InstrumentId,
+        /// The new key range.
+        key_range: KeyRange,
+        /// The new learn state (usually Idle or WaitingForHighNote).
+        learn_state: LearnState,
+    },
 }
 
 // Manual Debug implementation because Box<dyn PolyModule> doesn't implement Debug

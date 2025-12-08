@@ -490,6 +490,21 @@ impl eframe::App for SynthApp {
                     self.keyboard.clear_pressed();
                     self.pressed_keys.clear();
                 }
+                EngineEvent::KeyRangeLearned {
+                    instrument_id,
+                    key_range,
+                    learn_state,
+                } => {
+                    // Update the instrument's UI state with the learned key range
+                    if let Some(inst) = self
+                        .instruments
+                        .iter_mut()
+                        .find(|i| i.id == instrument_id)
+                    {
+                        inst.key_range = key_range;
+                        inst.learn_state = learn_state;
+                    }
+                }
                 // Other events (meters, etc.) are handled elsewhere
                 _ => {}
             }

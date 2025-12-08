@@ -173,6 +173,7 @@ impl PrioritizedEventProducer {
             EngineEvent::NoteTriggered { .. } => EventPriority::High,
             EngineEvent::NoteReleased { .. } => EventPriority::High,
             EngineEvent::AllNotesReleased => EventPriority::High,
+            EngineEvent::KeyRangeLearned { .. } => EventPriority::High,
 
             // Extended events (when added)
             // EngineEvent::ModuleAdded { .. } => EventPriority::High,

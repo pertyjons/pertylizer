@@ -22,6 +22,106 @@ use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
 use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, SampleCount};
 
+// ============================================================================
+// Key Range & Learn State Types
+// ============================================================================
+
+/// A range of MIDI notes that an instrument responds to.
+///
+/// This allows keyboard splitting (e.g., bass on lower keys, lead on upper keys)
+/// and drum pad assignment (single note per instrument).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyRange {
+    /// Lowest note in the range (inclusive).
+    pub low: MidiNote,
+    /// Highest note in the range (inclusive).
+    pub high: MidiNote,
+}
+
+impl Default for KeyRange {
+    fn default() -> Self {
+        Self {
+            low: MidiNote::new(0),
+            high: MidiNote::new(127),
+        }
+    }
+}
+
+impl KeyRange {
+    /// Create a new key range.
+    ///
+    /// Automatically ensures low <= high by swapping if necessary.
+    #[must_use]
+    pub fn new(low: MidiNote, high: MidiNote) -> Self {
+        let (l, h) = if low.as_u8() <= high.as_u8() {
+            (low, high)
+        } else {
+            (high, low)
+        };
+        Self { low: l, high: h }
+    }
+
+    /// Create a single-note range (for drum pads).
+    #[must_use]
+    pub fn single(note: MidiNote) -> Self {
+        Self {
+            low: note,
+            high: note,
+        }
+    }
+
+    /// Check if a note is within this range.
+    #[must_use]
+    pub fn contains(&self, note: MidiNote) -> bool {
+        note.as_u8() >= self.low.as_u8() && note.as_u8() <= self.high.as_u8()
+    }
+
+    /// Get the span of notes in this range.
+    #[must_use]
+    pub fn span(&self) -> u8 {
+        self.high.as_u8() - self.low.as_u8() + 1
+    }
+
+    /// Check if this is a single-note range.
+    #[must_use]
+    pub fn is_single(&self) -> bool {
+        self.low == self.high
+    }
+
+    /// Check if this covers the full MIDI range (0-127).
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.low.as_u8() == 0 && self.high.as_u8() == 127
+    }
+
+    /// Full range (all 128 MIDI notes).
+    pub const FULL: Self = Self {
+        low: MidiNote::new(0),
+        high: MidiNote::new(127),
+    };
+}
+
+/// State machine for MIDI learn functionality.
+///
+/// Uses an enum instead of a boolean to be explicit about what the instrument
+/// is waiting for, and to allow future expansion (e.g., learning a range).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LearnState {
+    /// Not learning - normal operation.
+    #[default]
+    Idle,
+    /// Waiting for a single note to set both low and high (drum pad mode).
+    /// The next note received will set the entire range to that single note.
+    WaitingForNote,
+    /// Waiting for the low note of a range.
+    WaitingForLowNote,
+    /// Waiting for the high note of a range after low was set.
+    WaitingForHighNote {
+        /// The low note that was already captured.
+        low: MidiNote,
+    },
+}
+
 /// Unique identifier for an instrument.
 ///
 /// Each instrument in the synth engine has a unique ID that persists for
@@ -248,6 +348,7 @@ fn soft_clip(sample: f32) -> f32 {
 /// - Its own effect chain (insert effects processed before mixing to output)
 /// - Volume and pan controls
 /// - MIDI channel assignment
+/// - Key range for keyboard splitting
 /// - Internal audio buffers for voice processing
 pub struct Instrument {
     /// Unique identifier for this instrument.
@@ -256,6 +357,13 @@ pub struct Instrument {
     name: String,
     /// MIDI channel this instrument responds to.
     midi_channel: MidiChannel,
+    /// Key range this instrument responds to.
+    /// Notes outside this range are ignored.
+    key_range: KeyRange,
+    /// Transpose offset in semitones (-24 to +24).
+    transpose: i8,
+    /// MIDI learn state machine.
+    learn_state: LearnState,
     /// The module graph defining this instrument's voice architecture.
     /// Each instrument can have a completely different sound design.
     voice_graph: ModuleGraph,
@@ -299,6 +407,9 @@ impl Instrument {
             id,
             name: name.into(),
             midi_channel: MidiChannel::default(),
+            key_range: KeyRange::default(),
+            transpose: 0,
+            learn_state: LearnState::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(AllocatorConfig::default()),
             effect_chain: EffectChain::new(),
@@ -325,6 +436,9 @@ impl Instrument {
             id,
             name: name.into(),
             midi_channel: MidiChannel::default(),
+            key_range: KeyRange::default(),
+            transpose: 0,
+            learn_state: LearnState::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(config),
             effect_chain: EffectChain::new(),
@@ -370,6 +484,93 @@ impl Instrument {
     #[inline]
     pub fn set_midi_channel(&mut self, channel: MidiChannel) {
         self.midi_channel = channel;
+    }
+
+    /// Get the key range.
+    #[inline]
+    pub fn key_range(&self) -> KeyRange {
+        self.key_range
+    }
+
+    /// Set the key range.
+    #[inline]
+    pub fn set_key_range(&mut self, range: KeyRange) {
+        self.key_range = range;
+    }
+
+    /// Get the transpose offset in semitones.
+    #[inline]
+    pub fn transpose(&self) -> i8 {
+        self.transpose
+    }
+
+    /// Set the transpose offset in semitones.
+    ///
+    /// Clamped to -24..=24 (two octaves up or down).
+    #[inline]
+    pub fn set_transpose(&mut self, semitones: i8) {
+        self.transpose = semitones.clamp(-24, 24);
+    }
+
+    /// Get the current learn state.
+    #[inline]
+    pub fn learn_state(&self) -> LearnState {
+        self.learn_state
+    }
+
+    /// Set the learn state.
+    #[inline]
+    pub fn set_learn_state(&mut self, state: LearnState) {
+        self.learn_state = state;
+    }
+
+    /// Check if this instrument should play a specific note.
+    ///
+    /// Returns true if the note is within the key range and the instrument is enabled.
+    #[inline]
+    pub fn should_play_note(&self, note: MidiNote) -> bool {
+        self.enabled && self.key_range.contains(note)
+    }
+
+    /// Handle a note for MIDI learn functionality.
+    ///
+    /// If the instrument is in a learn state, this will capture the note
+    /// and potentially update the key range. Returns true if the note was
+    /// captured for learning (and should NOT be played).
+    pub fn handle_note_learn(&mut self, note: MidiNote) -> bool {
+        match self.learn_state {
+            LearnState::Idle => false,
+            LearnState::WaitingForNote => {
+                // Single note mode: set range to exactly this note
+                self.key_range = KeyRange::single(note);
+                self.learn_state = LearnState::Idle;
+                true
+            }
+            LearnState::WaitingForLowNote => {
+                // Captured low note, now wait for high note
+                self.learn_state = LearnState::WaitingForHighNote { low: note };
+                true
+            }
+            LearnState::WaitingForHighNote { low } => {
+                // Captured high note, set the full range
+                self.key_range = KeyRange::new(low, note);
+                self.learn_state = LearnState::Idle;
+                true
+            }
+        }
+    }
+
+    /// Apply transpose to a note.
+    ///
+    /// Returns None if the transposed note would be outside valid MIDI range.
+    #[inline]
+    pub fn transpose_note(&self, note: MidiNote) -> Option<MidiNote> {
+        let transposed = note.as_u8() as i16 + self.transpose as i16;
+        if (0..=127).contains(&transposed) {
+            Some(MidiNote::new(transposed as u8))
+        } else {
+            None
+        }
     }
 
     /// Get the voice allocator.
@@ -516,16 +717,36 @@ impl Instrument {
     /// Handle a note on event.
     ///
     /// Returns the voice ID if a voice was allocated.
+    /// The note is checked against the key range and transposed before playing.
     pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
         if !self.enabled {
             return None;
         }
-        self.allocator.note_on(note, velocity)
+
+        // Check if note is within key range
+        if !self.key_range.contains(note) {
+            return None;
+        }
+
+        // Apply transpose
+        let transposed_note = self.transpose_note(note)?;
+
+        self.allocator.note_on(transposed_note, velocity)
     }
 
     /// Handle a note off event.
+    ///
+    /// The note is checked against the key range and transposed to match note_on.
     pub fn note_off(&mut self, note: MidiNote) {
-        self.allocator.note_off(note);
+        // Check if note is within key range (same check as note_on)
+        if !self.key_range.contains(note) {
+            return;
+        }
+
+        // Apply same transpose as note_on
+        if let Some(transposed_note) = self.transpose_note(note) {
+            self.allocator.note_off(transposed_note);
+        }
     }
 
     /// Release all notes.

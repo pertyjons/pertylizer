@@ -8,9 +8,9 @@ use super::theme::theme;
 use super::widgets::Knob;
 use crate::engine::{
     EngineCommand, EngineHandle, InstrumentParam,
-    instrument::{Instrument, InstrumentId, MidiChannel},
+    instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel},
 };
-use crate::types::{BipolarValue, Gain};
+use crate::types::{BipolarValue, Gain, MidiNote};
 use eframe::egui::{self, RichText, Ui};
 
 /// GUI state for a single instrument.
@@ -39,6 +39,12 @@ pub struct InstrumentUiState {
     stored_volume: Gain,
     /// The patch editor for this instrument's visual module graph.
     pub patch_editor: PatchEditor,
+    /// Key range for keyboard splitting (which notes this instrument responds to).
+    pub key_range: KeyRange,
+    /// Transpose offset in semitones (-24 to +24).
+    pub transpose: i8,
+    /// MIDI learn state for key range assignment.
+    pub learn_state: LearnState,
 }
 
 impl Default for InstrumentUiState {
@@ -53,6 +59,9 @@ impl Default for InstrumentUiState {
             solo: false,
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
+            key_range: KeyRange::FULL,
+            transpose: 0,
+            learn_state: LearnState::Idle,
         }
     }
 }
@@ -70,6 +79,9 @@ impl InstrumentUiState {
             solo: false,
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
+            key_range: KeyRange::FULL,
+            transpose: 0,
+            learn_state: LearnState::Idle,
         }
     }
 
@@ -93,6 +105,17 @@ impl InstrumentUiState {
         }
         self.volume
     }
+}
+
+/// Format a MIDI note number as a note name (e.g., "C4", "F#2").
+fn format_note_name(note: MidiNote) -> String {
+    const NOTE_NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let n = note.as_u8();
+    let octave = (n / 12).saturating_sub(1); // MIDI note 0 = C-1, note 60 = C4
+    let note_idx = (n % 12) as usize;
+    format!("{}{}", NOTE_NAMES[note_idx], octave)
 }
 
 /// Result of instrument rack interactions.
@@ -331,6 +354,128 @@ pub fn show_instrument_rack(
                                         .clicked()
                                 {
                                     instrument_to_remove = Some(idx);
+                                }
+                            });
+
+                            // Second row: KeyRange, Learn, Transpose
+                            ui.horizontal(|ui| {
+                                ui.add_space(16.0); // Indent to align with controls above
+
+                                // Key Range display
+                                let key_range = instruments[idx].key_range;
+                                let range_text = if key_range.is_full() {
+                                    "All".to_string()
+                                } else if key_range.is_single() {
+                                    format_note_name(key_range.low)
+                                } else {
+                                    format!(
+                                        "{}-{}",
+                                        format_note_name(key_range.low),
+                                        format_note_name(key_range.high)
+                                    )
+                                };
+
+                                ui.label(
+                                    RichText::new("Range:")
+                                        .color(theme().colors.text_dim)
+                                        .size(t.fonts.size_small),
+                                );
+                                ui.label(
+                                    RichText::new(&range_text)
+                                        .color(theme().colors.text_primary)
+                                        .size(t.fonts.size_small),
+                                );
+
+                                ui.add_space(4.0);
+
+                                // Learn button
+                                let learn_state = instruments[idx].learn_state;
+                                let (learn_text, learn_color) = match learn_state {
+                                    LearnState::Idle => ("Learn", theme().colors.text_dim),
+                                    LearnState::WaitingForNote => {
+                                        ("Wait...", theme().colors.accent_orange)
+                                    }
+                                    LearnState::WaitingForLowNote => {
+                                        ("Low?", theme().colors.accent_orange)
+                                    }
+                                    LearnState::WaitingForHighNote { .. } => {
+                                        ("High?", theme().colors.accent_orange)
+                                    }
+                                };
+
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(learn_text)
+                                                .color(learn_color)
+                                                .size(t.fonts.size_small),
+                                        )
+                                        .min_size(egui::vec2(40.0, 20.0)),
+                                    )
+                                    .on_hover_text(match learn_state {
+                                        LearnState::Idle => {
+                                            "Click to learn key range from MIDI input"
+                                        }
+                                        _ => "Press a key to set range (or click to cancel)",
+                                    })
+                                    .clicked()
+                                {
+                                    let new_state = match learn_state {
+                                        LearnState::Idle => LearnState::WaitingForLowNote,
+                                        _ => LearnState::Idle, // Cancel learning
+                                    };
+                                    instruments[idx].learn_state = new_state;
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::LearnState(new_state),
+                                    });
+                                }
+
+                                // Reset to full range button
+                                if !key_range.is_full()
+                                    && ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("Full")
+                                                    .color(theme().colors.text_dim)
+                                                    .size(t.fonts.size_small),
+                                            )
+                                            .min_size(egui::vec2(32.0, 20.0)),
+                                        )
+                                        .on_hover_text("Reset to full key range")
+                                        .clicked()
+                                {
+                                    instruments[idx].key_range = KeyRange::FULL;
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::KeyRange(KeyRange::FULL),
+                                    });
+                                }
+
+                                ui.add_space(8.0);
+
+                                // Transpose control
+                                ui.label(
+                                    RichText::new("Trans:")
+                                        .color(theme().colors.text_dim)
+                                        .size(t.fonts.size_small),
+                                );
+
+                                let mut transpose = i32::from(instruments[idx].transpose);
+                                let response = ui.add(
+                                    egui::DragValue::new(&mut transpose)
+                                        .range(-24..=24)
+                                        .speed(0.1)
+                                        .suffix(" st"),
+                                );
+
+                                if response.changed() {
+                                    let new_transpose = transpose.clamp(-24, 24) as i8;
+                                    instruments[idx].transpose = new_transpose;
+                                    handle.send(EngineCommand::SetInstrumentParameter {
+                                        instrument_id,
+                                        param: InstrumentParam::Transpose(new_transpose),
+                                    });
                                 }
                             });
                         });
