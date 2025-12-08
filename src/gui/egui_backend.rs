@@ -130,29 +130,39 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 }
 
 /// Setup custom egui style for synth look.
-fn setup_custom_style(ctx: &egui::Context) {
+/// Reads colors from the current theme, so call this after changing theme.
+pub fn setup_custom_style(ctx: &egui::Context) {
+    use crate::gui::theme::theme;
+
     let mut style = (*ctx.style()).clone();
+    let colors = &theme().colors;
 
     // Dark theme with synth colors
     style.visuals.dark_mode = true;
-    style.visuals.override_text_color = Some(colors::TEXT_PRIMARY);
-    style.visuals.panel_fill = colors::BG_PANEL;
-    style.visuals.window_fill = colors::BG_MODULE;
-    style.visuals.faint_bg_color = colors::BG_WIDGET;
+    style.visuals.override_text_color = Some(colors.text_primary);
+    style.visuals.panel_fill = colors.bg_panel;
+    style.visuals.window_fill = colors.bg_module;
+    style.visuals.faint_bg_color = colors.bg_widget;
 
     // Widget styling
-    style.visuals.widgets.inactive.bg_fill = colors::BG_WIDGET;
-    style.visuals.widgets.inactive.weak_bg_fill = colors::BG_WIDGET;
-    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, colors::TEXT_SECONDARY);
+    style.visuals.widgets.inactive.bg_fill = colors.bg_widget;
+    style.visuals.widgets.inactive.weak_bg_fill = colors.bg_widget;
+    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, colors.text_secondary);
 
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(60, 65, 80);
-    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, colors::TEXT_PRIMARY);
+    // Hovered: slightly lighter than bg_widget
+    let hovered_bg = Color32::from_rgb(
+        colors.bg_widget.r().saturating_add(15),
+        colors.bg_widget.g().saturating_add(15),
+        colors.bg_widget.b().saturating_add(15),
+    );
+    style.visuals.widgets.hovered.bg_fill = hovered_bg;
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, colors.text_primary);
 
-    style.visuals.widgets.active.bg_fill = colors::ACCENT_ORANGE;
-    style.visuals.widgets.active.fg_stroke = Stroke::new(2.0, colors::BG_DARK);
+    style.visuals.widgets.active.bg_fill = colors.accent_primary;
+    style.visuals.widgets.active.fg_stroke = Stroke::new(2.0, colors.bg_dark);
 
-    style.visuals.selection.bg_fill = colors::ACCENT_ORANGE.gamma_multiply(0.4);
-    style.visuals.selection.stroke = Stroke::new(1.0, colors::ACCENT_ORANGE);
+    style.visuals.selection.bg_fill = colors.accent_primary.gamma_multiply(0.4);
+    style.visuals.selection.stroke = Stroke::new(1.0, colors.accent_primary);
 
     // Rounded corners
     style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);

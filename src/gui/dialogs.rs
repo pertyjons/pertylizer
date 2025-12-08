@@ -5,6 +5,7 @@
 
 use eframe::egui::{self, RichText};
 
+use super::egui_backend::setup_custom_style;
 use super::theme::ThemePreset;
 use super::widgets::colors;
 use crate::patch::{Patch, example_patches};
@@ -97,6 +98,7 @@ pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme:
                         if ui.add(button).clicked() {
                             *current_theme = *preset;
                             preset.apply();
+                            setup_custom_style(ctx);
                         }
 
                         // 4 kolumner per rad
