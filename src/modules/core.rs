@@ -659,6 +659,7 @@ pub enum ModuleCategory {
     Mixer,
     Output,
     Visualizer,
+    PhysicalModeling,
 }
 
 /// Complete description of a module for UI generation.

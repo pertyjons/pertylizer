@@ -1,5 +1,17 @@
 # Version History
 
+## [0.33.16] - 2024
+### Added - Physical Modeling Modules
+- **StringResonator** - Karplus-Strong string synthesis med inharmonicitet och dämpning
+- **ResonatorBank** - Sympatisk resonans med 1-12 avstämbara strängar
+- **KeyboardPanner** - Not-baserad stereopanorering för piano-liknande stereo
+- **BodyResonance** - Resonanskropp-simulering (soundboard)
+- **VelocityMapper** - Velocity-kurvor (Linear, Soft, Hard, S-Curve, Fixed)
+- **MechanicalNoise** - Mekaniska ljud (tangent ner/upp, pedal, hammare)
+- **ModuleCategory::PhysicalModeling** - Ny kategori för modulpalett
+
+---
+
 ## [0.33.15] - 2024
 ### Added - Keyboard Splitting & MIDI Learn
 - **KeyRange** - Ny typ för att definiera vilka noter ett instrument svarar på (keyboard splitting)

@@ -439,6 +439,7 @@ pub fn category_color(category: ModuleCategory) -> Color32 {
         ModuleCategory::Mixer => theme().colors.accent_yellow,
         ModuleCategory::Output => theme().colors.accent_green,
         ModuleCategory::Visualizer => theme().colors.accent_purple,
+        ModuleCategory::PhysicalModeling => theme().colors.accent_red,
     }
 }
 

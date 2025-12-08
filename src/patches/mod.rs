@@ -13,6 +13,7 @@ mod drum_kick;
 mod drum_snare;
 mod fm_bell;
 mod formant_voice;
+mod grand_piano;
 mod karplus_guitar;
 mod noise_sweep;
 mod pluck_synth;
@@ -35,6 +36,7 @@ pub use drum_kick::patch_drum_kick;
 pub use drum_snare::patch_drum_snare;
 pub use fm_bell::patch_fm_bell;
 pub use formant_voice::patch_formant_voice;
+pub use grand_piano::patch_grand_piano;
 pub use karplus_guitar::patch_karplus_guitar;
 pub use noise_sweep::patch_noise_sweep;
 pub use pluck_synth::patch_pluck_synth;
@@ -48,10 +50,15 @@ pub use wave_folder_bass::patch_wave_folder_bass;
 
 use crate::patch::Patch;
 
+/// Get the default patch (loaded on startup).
+pub fn default_patch() -> Patch {
+    patch_grand_piano()
+}
+
 /// Get all example patches.
 pub fn example_patches() -> Vec<Patch> {
     vec![
-        patch_string_ensemble(), // Default startup patch
+        patch_grand_piano(), // Default startup patch
         patch_spacey_bass(),
         patch_deep_space_pad(),
         patch_aggressive_bass(),
@@ -74,5 +81,6 @@ pub fn example_patches() -> Vec<Patch> {
         patch_sub_bass(),
         patch_brown_drone(),
         patch_punchy_stab(),
+        patch_string_ensemble(),
     ]
 }

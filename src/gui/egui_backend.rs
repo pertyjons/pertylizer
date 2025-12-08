@@ -396,7 +396,7 @@ impl SynthApp {
 
         // Create and load the startup patch into the default instrument
         // Uses send_blocking to ensure commands aren't dropped during startup
-        let startup_patch = crate::patches::patch_spacey_bass();
+        let startup_patch = crate::patches::default_patch();
         let patch_name = startup_patch.name.clone();
 
         patch_bridge::load_patch(
