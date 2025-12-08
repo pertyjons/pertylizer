@@ -834,6 +834,14 @@ impl eframe::App for SynthApp {
                     to: PortId::new(connection.to_module, connection.to_port.clone()),
                 });
             }
+
+            // Handle bypass toggles - send SetBypass commands to engine
+            for (module_id, new_bypass_state) in result.bypass_toggles {
+                self.handle.send(EngineCommand::SetBypass {
+                    module: module_id,
+                    bypass: new_bypass_state,
+                });
+            }
         });
 
         // Dialogs

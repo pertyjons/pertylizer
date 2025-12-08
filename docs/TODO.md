@@ -8,7 +8,7 @@
 2.  **Solo & Mute-logik** (Från nuvarande P2)
     * [x] ~~Lägg till Solo-knapp. Implementera "Exclusive Solo" logik i mixern.~~ *(0.33.6: Solo-logik i engine, GUI behövs)*
 3.  **Bypass-knappar** (Från nuvarande P2)
-    * [ ] Lägg till Power-knapp i modul-headern för effekter.
+    * [x] ~~Lägg till Power-knapp i modul-headern för effekter.~~ *(0.33.9)*
 4.  **Attenuverters & Input Gain** (Från nuvarande P2 - Kritiskt för ljuddesign)
     * [ ] Lägg till skalning på CV-ingångar (t.ex. LFO -> Filter) så man slipper externa VCA:er för enkla modulationer.
 5.  **Ljudinspelning / Tape Recorder** (Nytt - Prio Hög)

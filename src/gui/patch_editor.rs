@@ -67,6 +67,8 @@ pub struct PatchEditor {
     z_order: Vec<ModuleId>,
     /// Module connectivity status (updated when connections change).
     connectivity: HashMap<ModuleId, ModuleConnectivity>,
+    /// Module bypass state (true = bypassed/off, false = active/on).
+    bypassed: HashMap<ModuleId, bool>,
 }
 
 impl PatchEditor {
@@ -83,6 +85,7 @@ impl PatchEditor {
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
             connectivity: HashMap::new(),
+            bypassed: HashMap::new(),
         }
     }
 
@@ -135,6 +138,8 @@ impl PatchEditor {
         self.connections.clear();
         self.port_positions.clear();
         self.z_order.clear();
+        self.connectivity.clear();
+        self.bypassed.clear();
         self.selected_module = None;
         self.pending_connection = None;
         self.next_module_pos = Pos2::new(50.0, 50.0);
@@ -160,6 +165,7 @@ impl PatchEditor {
         self.descriptors.remove(&id);
         self.z_order.retain(|&mid| mid != id);
         self.connectivity.remove(&id);
+        self.bypassed.remove(&id);
         // Remove connections involving this module
         self.connections
             .retain(|c| c.from_module != id && c.to_module != id);
@@ -379,12 +385,17 @@ impl PatchEditor {
             let accent_color = category_color(descriptor.category);
             let is_selected = self.selected_module == Some(module_id);
             let connectivity_status = self.get_connectivity(module_id);
+            let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
 
-            // Dim modules that aren't connected to output
-            let opacity = match connectivity_status {
-                ModuleConnectivity::Connected => 1.0,
-                ModuleConnectivity::Orphaned => 0.6,
-                ModuleConnectivity::Disconnected => 0.4,
+            // Dim modules that aren't connected to output, or are bypassed
+            let opacity = if is_bypassed {
+                0.4 // Heavily dimmed when bypassed
+            } else {
+                match connectivity_status {
+                    ModuleConnectivity::Connected => 1.0,
+                    ModuleConnectivity::Orphaned => 0.6,
+                    ModuleConnectivity::Disconnected => 0.4,
+                }
             };
 
             let dimmed_accent = accent_color.gamma_multiply(opacity);
@@ -449,6 +460,34 @@ impl PatchEditor {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Power/bypass button (rightmost)
+                        let power_color = if is_bypassed {
+                            colors::TEXT_DIM
+                        } else {
+                            colors::ACCENT_GREEN
+                        };
+                        let power_tooltip = if is_bypassed {
+                            "Module is bypassed (click to activate)"
+                        } else {
+                            "Module is active (click to bypass)"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("⏻").color(power_color).size(14.0),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text(power_tooltip)
+                            .clicked()
+                        {
+                            let new_bypass_state = !is_bypassed;
+                            self.bypassed.insert(module_id, new_bypass_state);
+                            result.bypass_toggles.push((module_id, new_bypass_state));
+                        }
+
+                        ui.add_space(4.0);
+
                         // Connectivity status indicator
                         match connectivity_status {
                             ModuleConnectivity::Connected => {
@@ -974,6 +1013,19 @@ impl PatchEditor {
             .copied()
             .unwrap_or(ModuleConnectivity::Disconnected)
     }
+
+    /// Get bypass state for a module.
+    /// Returns true if bypassed (off), false if active (on).
+    pub fn is_bypassed(&self, id: ModuleId) -> bool {
+        self.bypassed.get(&id).copied().unwrap_or(false)
+    }
+
+    /// Set bypass state for a module.
+    /// `bypassed = true` means the module is off/bypassed.
+    /// `bypassed = false` means the module is active/on.
+    pub fn set_bypassed(&mut self, id: ModuleId, bypassed: bool) {
+        self.bypassed.insert(id, bypassed);
+    }
 }
 
 impl Default for PatchEditor {
@@ -995,6 +1047,9 @@ pub struct PatchEditorResult {
     /// Connections to remove.
     #[allow(dead_code)]
     pub connections_to_remove: Vec<Connection>,
+    /// Bypass state toggles (module_id, new_bypass_state).
+    /// true = bypassed (module is off), false = active (module is on).
+    pub bypass_toggles: Vec<(ModuleId, bool)>,
 }
 
 /// Simplified panel result for parameters only.

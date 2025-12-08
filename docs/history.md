@@ -1,5 +1,47 @@
 # Version History
 
+## [0.33.9] - 2024
+
+### Added - Bypass-knappar på Rack-moduler
+
+Implementerade bypass/power-knappar i headern på alla moduler i PatchEditor för A/B-testning av ljud.
+
+**GUI-ändringar:**
+
+| Fil | Ändring |
+|-----|---------|
+| `patch_editor.rs:70-71` | Nytt `bypassed: HashMap<ModuleId, bool>` fält i `PatchEditor` |
+| `patch_editor.rs:388` | Hämtar bypass-status per modul i render-loopen |
+| `patch_editor.rs:390-399` | Dimmar bypassade moduler till 40% opacity |
+| `patch_editor.rs:462-487` | Power-knapp (⏻) i modul-headern med grön/grå färg |
+| `patch_editor.rs:1004-1006` | Nytt `bypass_toggles` fält i `PatchEditorResult` |
+| `patch_editor.rs:1017-1028` | Nya metoder `is_bypassed()` och `set_bypassed()` |
+| `egui_backend.rs:838-844` | Hanterar bypass-toggles och skickar `SetBypass` till engine |
+
+**Funktioner:**
+
+| Feature | Beskrivning |
+|---------|-------------|
+| Power-ikon | ⏻ symbol i varje moduls titelrad (höger sida) |
+| Visuell feedback | Grön = aktiv, Grå = bypassad |
+| Modul-dimning | Bypassade moduler dimmas till 40% för tydlig indikation |
+| Tooltip | "Module is active/bypassed (click to toggle)" |
+| Engine-integration | Skickar `EngineCommand::SetBypass` vid klick |
+
+**Tekniska detaljer:**
+
+- Bypass-state lagras lokalt i `PatchEditor` (GUI-sida)
+- Engine får bypass-kommandot och stänger av modulens ljudutgång
+- Metoder för programmatisk styrning (för patch-laddning etc.)
+
+**Resultat:**
+- `cargo build --release`: Passerar
+- `cargo clippy`: Passerar (strikta lints)
+- `cargo test`: 277/277 passerar
+- `cargo fmt --check`: Passerar
+
+---
+
 ## [0.33.8] - 2024
 
 ### Added - Master FX Parameters & Resizable Sidebar
