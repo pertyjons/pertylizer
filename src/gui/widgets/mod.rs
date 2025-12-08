@@ -15,9 +15,6 @@ mod waveform;
 // Re-export theme for convenience
 pub use super::theme::{Theme, set_theme, theme, with_theme_mut};
 
-// Re-export colors for backwards compatibility
-pub use super::theme::colors;
-
 // Re-export all widgets
 pub use cable::draw_cable;
 pub use envelope::{EnvelopeEditor, draw_adsr_curve};

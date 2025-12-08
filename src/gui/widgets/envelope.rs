@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, Ui, Vec2};
 
-use super::{colors, theme};
+use crate::gui::theme::theme;
 
 /// Draw an ADSR envelope visualization.
 pub fn draw_adsr_curve(
@@ -18,7 +18,7 @@ pub fn draw_adsr_curve(
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, colors::BG_DARK);
+    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
 
     // Normalize times
     let total_time = attack + decay + release + 0.5; // 0.5 for sustain display
@@ -43,13 +43,13 @@ pub fn draw_adsr_curve(
     for i in 0..points.len() - 1 {
         painter.line_segment(
             [points[i], points[i + 1]],
-            Stroke::new(2.0, colors::ACCENT_CYAN),
+            Stroke::new(2.0, theme().colors.accent_cyan),
         );
     }
 
     // Draw dots at key points
     for point in &points[1..4] {
-        painter.circle_filled(*point, 3.0, colors::ACCENT_CYAN);
+        painter.circle_filled(*point, 3.0, theme().colors.accent_cyan);
     }
 }
 
@@ -77,7 +77,7 @@ impl<'a> EnvelopeEditor<'a> {
             decay,
             sustain,
             release,
-            accent_color: colors::ACCENT_GREEN,
+            accent_color: theme().colors.accent_green,
             width: 150.0,
             height: 60.0,
         }
@@ -103,11 +103,11 @@ impl<'a> EnvelopeEditor<'a> {
         let painter = ui.painter();
 
         // Background
-        painter.rect_filled(rect, 4.0, colors::BG_WIDGET);
+        painter.rect_filled(rect, 4.0, theme().colors.bg_widget);
         painter.rect_stroke(
             rect,
             4.0,
-            Stroke::new(1.0, colors::TEXT_DIM),
+            Stroke::new(1.0, theme().colors.text_dim),
             egui::StrokeKind::Outside,
         );
 
@@ -195,7 +195,7 @@ impl<'a> EnvelopeEditor<'a> {
                 egui::Align2::CENTER_BOTTOM,
                 *label,
                 theme().fonts.small(),
-                colors::TEXT_DIM,
+                theme().colors.text_dim,
             );
         }
 

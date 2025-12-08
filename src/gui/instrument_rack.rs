@@ -5,7 +5,7 @@
 
 use super::patch_editor::PatchEditor;
 use super::theme::theme;
-use super::widgets::{Knob, colors};
+use super::widgets::Knob;
 use crate::engine::{
     EngineCommand, EngineHandle, InstrumentParam,
     instrument::{Instrument, InstrumentId, MidiChannel},
@@ -125,7 +125,7 @@ pub fn show_instrument_rack(
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("INSTRUMENTS")
-                    .color(colors::TEXT_SECONDARY)
+                    .color(theme().colors.text_secondary)
                     .size(t.fonts.size_normal),
             );
         });
@@ -147,9 +147,9 @@ pub fn show_instrument_rack(
 
                     // Instrument row frame
                     let frame_color = if is_active {
-                        colors::ACCENT_ORANGE.gamma_multiply(0.2)
+                        theme().colors.accent_orange.gamma_multiply(0.2)
                     } else {
-                        colors::BG_WIDGET
+                        theme().colors.bg_widget
                     };
 
                     egui::Frame::new()
@@ -231,9 +231,9 @@ pub fn show_instrument_rack(
                                     .label("Vol")
                                     .size(40.0) // Compact size for instrument rack
                                     .accent_color(if muted {
-                                        colors::TEXT_DIM
+                                        theme().colors.text_dim
                                     } else {
-                                        colors::ACCENT_GREEN
+                                        theme().colors.accent_green
                                     })
                                     .show(ui);
 
@@ -253,7 +253,7 @@ pub fn show_instrument_rack(
                                     .default(0.0)
                                     .label("Pan")
                                     .size(40.0) // Compact size for instrument rack
-                                    .accent_color(colors::ACCENT_CYAN)
+                                    .accent_color(theme().colors.accent_cyan)
                                     .show(ui);
 
                                 if (pan - current_pan).abs() > f32::EPSILON {
@@ -267,9 +267,9 @@ pub fn show_instrument_rack(
                                 // Solo button
                                 let solo = instruments[idx].solo;
                                 let solo_color = if solo {
-                                    colors::ACCENT_YELLOW
+                                    theme().colors.accent_yellow
                                 } else {
-                                    colors::TEXT_DIM
+                                    theme().colors.text_dim
                                 };
                                 if ui
                                     .add(
@@ -293,9 +293,9 @@ pub fn show_instrument_rack(
                                 // Mute button
                                 let mute_text = "M";
                                 let mute_color = if muted {
-                                    colors::ACCENT_RED
+                                    theme().colors.accent_red
                                 } else {
-                                    colors::TEXT_DIM
+                                    theme().colors.text_dim
                                 };
                                 if ui
                                     .add(
@@ -322,7 +322,7 @@ pub fn show_instrument_rack(
                                         .add(
                                             egui::Button::new(
                                                 RichText::new("×")
-                                                    .color(colors::TEXT_DIM)
+                                                    .color(theme().colors.text_dim)
                                                     .size(t.fonts.size_small),
                                             )
                                             .min_size(egui::vec2(20.0, 24.0)),

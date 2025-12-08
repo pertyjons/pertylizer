@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Sense, Stroke, Ui, Vec2};
 
-use super::colors;
+use crate::gui::theme::theme;
 
 /// Draw a module frame with title and accent color.
 pub fn module_frame(
@@ -12,7 +12,7 @@ pub fn module_frame(
     add_contents: impl FnOnce(&mut Ui),
 ) {
     egui::Frame::new()
-        .fill(colors::BG_MODULE)
+        .fill(theme().colors.bg_module)
         .corner_radius(8.0)
         .stroke(Stroke::new(1.0, accent_color.gamma_multiply(0.5)))
         .inner_margin(12.0)

@@ -6,8 +6,7 @@
 use eframe::egui::{self, RichText};
 
 use super::egui_backend::setup_custom_style;
-use super::theme::ThemePreset;
-use super::widgets::colors;
+use super::theme::{theme, ThemePreset};
 use crate::patch::{Patch, example_patches};
 
 /// State for all application dialogs.
@@ -199,7 +198,7 @@ pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatch
                                 *open = false;
                             }
                             if let Some(ref desc) = patch.description {
-                                ui.label(RichText::new(desc).small().color(colors::TEXT_DIM));
+                                ui.label(RichText::new(desc).small().color(theme().colors.text_dim));
                             }
                         });
                     }
@@ -272,7 +271,7 @@ pub fn show_status_toast(ctx: &egui::Context, state: &mut DialogState) {
                 .title_bar(false)
                 .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -50.0])
                 .show(ctx, |ui| {
-                    ui.label(RichText::new(msg).color(colors::ACCENT_GREEN));
+                    ui.label(RichText::new(msg).color(theme().colors.accent_green));
                 });
         } else {
             state.status_message = None;

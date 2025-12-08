@@ -3,7 +3,7 @@
 //! Provides an 88-key piano keyboard (A0-C8) that can be played with mouse
 //! and shows the currently active octave range for computer keyboard input.
 
-use crate::gui::widgets::colors;
+use crate::gui::theme::theme;
 use crate::types::MidiNote;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use std::collections::HashMap;
@@ -126,13 +126,13 @@ impl PianoKeyboard {
 
         // Header with controls
         ui.horizontal(|ui| {
-            ui.label(RichText::new("KEYBOARD").color(colors::TEXT_DIM));
+            ui.label(RichText::new("KEYBOARD").color(theme().colors.text_dim));
             ui.separator();
 
             // Octave display and controls
             ui.label(
                 RichText::new(format!("Octave: {:+}", self.octave_offset))
-                    .color(colors::TEXT_SECONDARY),
+                    .color(theme().colors.text_secondary),
             );
             if ui.small_button("-").clicked() && self.octave_offset > -2 {
                 self.octave_offset -= 1;
@@ -204,7 +204,7 @@ impl PianoKeyboard {
 
         // Now get painter after all allocations are done
         let painter = ui.painter();
-        painter.rect_filled(outer_rect, 4.0, colors::BG_DARK);
+        painter.rect_filled(outer_rect, 4.0, theme().colors.bg_dark);
         painter.with_clip_rect(inner_rect).rect_filled(
             inner_rect,
             2.0,
@@ -264,7 +264,7 @@ impl PianoKeyboard {
             let fill = if let Some(vel) = velocity {
                 // Intensity: 0.4 base + 0.6 * velocity (soft notes visible, hard notes bright)
                 let intensity = 0.4 + (0.6 * vel);
-                colors::ACCENT_ORANGE.gamma_multiply(intensity)
+                theme().colors.accent_orange.gamma_multiply(intensity)
             } else if is_hovered {
                 Color32::from_rgb(230, 230, 235)
             } else if is_in_highlight {
@@ -287,7 +287,7 @@ impl PianoKeyboard {
                 painter.with_clip_rect(inner_rect).rect_filled(
                     indicator_rect,
                     0.0,
-                    colors::ACCENT_ORANGE.gamma_multiply(0.7),
+                    theme().colors.accent_orange.gamma_multiply(0.7),
                 );
             }
 
@@ -346,7 +346,7 @@ impl PianoKeyboard {
             let fill = if let Some(vel) = velocity {
                 // Intensity: 0.4 base + 0.6 * velocity (soft notes visible, hard notes bright)
                 let intensity = 0.4 + (0.6 * vel);
-                colors::ACCENT_ORANGE.gamma_multiply(intensity)
+                theme().colors.accent_orange.gamma_multiply(intensity)
             } else if is_hovered {
                 Color32::from_rgb(60, 60, 65)
             } else if is_in_highlight {
@@ -369,7 +369,7 @@ impl PianoKeyboard {
                 painter.with_clip_rect(inner_rect).rect_filled(
                     indicator_rect,
                     0.0,
-                    colors::ACCENT_ORANGE.gamma_multiply(0.7),
+                    theme().colors.accent_orange.gamma_multiply(0.7),
                 );
             }
 
@@ -422,13 +422,13 @@ impl PianoKeyboard {
                 outer_rect.left_top() + Vec2::new(2.0, keyboard_height / 2.0 - 10.0),
                 Vec2::new(15.0, 20.0),
             );
-            painter.rect_filled(arrow_rect, 3.0, colors::BG_PANEL.gamma_multiply(0.8));
+            painter.rect_filled(arrow_rect, 3.0, theme().colors.bg_panel.gamma_multiply(0.8));
             painter.text(
                 arrow_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "◀",
                 egui::FontId::proportional(12.0),
-                colors::TEXT_DIM,
+                theme().colors.text_dim,
             );
         }
 
@@ -438,13 +438,13 @@ impl PianoKeyboard {
                 outer_rect.right_top() + Vec2::new(-17.0, keyboard_height / 2.0 - 10.0),
                 Vec2::new(15.0, 20.0),
             );
-            painter.rect_filled(arrow_rect, 3.0, colors::BG_PANEL.gamma_multiply(0.8));
+            painter.rect_filled(arrow_rect, 3.0, theme().colors.bg_panel.gamma_multiply(0.8));
             painter.text(
                 arrow_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "▶",
                 egui::FontId::proportional(12.0),
-                colors::TEXT_DIM,
+                theme().colors.text_dim,
             );
         }
 

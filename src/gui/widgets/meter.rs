@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
 
-use super::{colors, theme};
+use crate::gui::theme::theme;
 
 /// A vertical meter widget for audio levels.
 pub struct Meter {
@@ -35,7 +35,7 @@ impl Meter {
         let painter = ui.painter();
 
         // Background
-        painter.rect_filled(rect, 2.0, colors::BG_DARK);
+        painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
 
         // RMS level
         let rms_height = rect.height() * self.rms.clamp(0.0, 1.0);
@@ -45,11 +45,11 @@ impl Meter {
         );
 
         let rms_color = if self.rms > 0.9 {
-            colors::METER_RED
+            theme().colors.meter_red
         } else if self.rms > 0.7 {
-            colors::METER_YELLOW
+            theme().colors.meter_yellow
         } else {
-            colors::METER_GREEN
+            theme().colors.meter_green
         };
 
         painter.rect_filled(rms_rect, 0.0, rms_color);
@@ -61,7 +61,7 @@ impl Meter {
                 Pos2::new(rect.left(), peak_y),
                 Pos2::new(rect.right(), peak_y),
             ],
-            Stroke::new(2.0, colors::TEXT_PRIMARY),
+            Stroke::new(2.0, theme().colors.text_primary),
         );
 
         response
@@ -82,7 +82,7 @@ pub fn draw_level_meter(
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 2.0, colors::BG_DARK);
+    painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
 
     // Calculate bar positions
     let peak_db = 20.0 * peak.max(0.0001).log10();
@@ -112,7 +112,7 @@ pub fn draw_level_meter(
                 Pos2::new(peak_x, inner_rect.top()),
                 Pos2::new(peak_x, inner_rect.bottom()),
             ],
-            Stroke::new(2.0, colors::TEXT_PRIMARY),
+            Stroke::new(2.0, theme().colors.text_primary),
         );
     } else {
         // Vertical meter
@@ -133,7 +133,7 @@ pub fn draw_level_meter(
                 Pos2::new(inner_rect.left(), peak_y),
                 Pos2::new(inner_rect.right(), peak_y),
             ],
-            Stroke::new(2.0, colors::TEXT_PRIMARY),
+            Stroke::new(2.0, theme().colors.text_primary),
         );
     }
 
@@ -154,7 +154,7 @@ pub fn draw_level_meter(
     painter.rect_stroke(
         rect,
         2.0,
-        Stroke::new(1.0, colors::BORDER),
+        Stroke::new(1.0, theme().colors.border),
         egui::StrokeKind::Outside,
     );
 }
@@ -173,7 +173,7 @@ pub fn draw_stereo_meter(
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, colors::BG_DARK);
+    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
 
     let bar_width = (width - 10.0) / 2.0;
     let padding = 2.0;
@@ -200,21 +200,21 @@ pub fn draw_stereo_meter(
         egui::Align2::CENTER_CENTER,
         "L",
         t.fonts.small(),
-        colors::TEXT_DIM,
+        theme().colors.text_dim,
     );
     painter.text(
         Pos2::new(right_rect.center().x, label_y),
         egui::Align2::CENTER_CENTER,
         "R",
         t.fonts.small(),
-        colors::TEXT_DIM,
+        theme().colors.text_dim,
     );
 
     // Border
     painter.rect_stroke(
         rect,
         4.0,
-        Stroke::new(1.0, colors::BORDER),
+        Stroke::new(1.0, theme().colors.border),
         egui::StrokeKind::Outside,
     );
 }
@@ -263,7 +263,7 @@ fn draw_meter_bar(painter: &egui::Painter, rect: Rect, peak: f32, rms: f32) {
                 Vec2::new(rect.width() - 2.0, 2.0),
             ),
             0.0,
-            colors::TEXT_PRIMARY,
+            theme().colors.text_primary,
         );
     }
 }

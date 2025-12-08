@@ -15,7 +15,8 @@ use crate::engine::{EngineHandle, ModuleId};
 use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
-use super::widgets::{PortDirection, PortType, colors, draw_cable, theme};
+use super::theme::theme;
+use super::widgets::{PortDirection, PortType, draw_cable};
 
 /// Module connectivity status for visualization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -450,7 +451,7 @@ impl PatchEditor {
                         ui.label(
                             egui::RichText::new(order_text)
                                 .small()
-                                .color(colors::TEXT_DIM),
+                                .color(theme().colors.text_dim),
                         )
                         .on_hover_text(format!(
                             "Processing order: {} of {}",
@@ -462,9 +463,9 @@ impl PatchEditor {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Power/bypass button (rightmost)
                         let power_color = if is_bypassed {
-                            colors::TEXT_DIM
+                            theme().colors.text_dim
                         } else {
-                            colors::ACCENT_GREEN
+                            theme().colors.accent_green
                         };
                         let power_tooltip = if is_bypassed {
                             "Module is bypassed (click to activate)"
@@ -608,10 +609,10 @@ impl PatchEditor {
         // Draw pending connection in foreground
         if let Some(ref pending) = self.pending_connection {
             let color = match pending.from_type {
-                PortType::Audio => colors::CABLE_AUDIO,
-                PortType::Control => colors::CABLE_CONTROL,
-                PortType::Gate => colors::CABLE_GATE,
-                PortType::Midi => colors::PORT_MIDI,
+                PortType::Audio => theme().colors.cable_audio,
+                PortType::Control => theme().colors.cable_control,
+                PortType::Gate => theme().colors.cable_gate,
+                PortType::Midi => theme().colors.port_midi,
             };
 
             let painter = ui
@@ -649,7 +650,7 @@ impl PatchEditor {
                 ui.label(
                     egui::RichText::new("IN")
                         .size(theme().fonts.size_small)
-                        .color(colors::TEXT_DIM),
+                        .color(theme().colors.text_dim),
                 );
                 for port in descriptor
                     .ports
@@ -680,7 +681,7 @@ impl PatchEditor {
                         ui.label(
                             egui::RichText::new(&port.label)
                                 .size(theme().fonts.size_small)
-                                .color(colors::TEXT_SECONDARY),
+                                .color(theme().colors.text_secondary),
                         );
 
                         if response.hovered() && !port.description.is_empty() {
@@ -698,7 +699,7 @@ impl PatchEditor {
                     ui.label(
                         egui::RichText::new("OUT")
                             .size(theme().fonts.size_small)
-                            .color(colors::TEXT_DIM),
+                            .color(theme().colors.text_dim),
                     );
                     for port in descriptor
                         .ports
@@ -712,7 +713,7 @@ impl PatchEditor {
                             ui.label(
                                 egui::RichText::new(&port.label)
                                     .size(theme().fonts.size_small)
-                                    .color(colors::TEXT_SECONDARY),
+                                    .color(theme().colors.text_secondary),
                             );
 
                             let (response, center) =
@@ -745,7 +746,7 @@ impl PatchEditor {
         let painter = ui.painter();
 
         // Background
-        painter.rect_filled(rect, 0.0, colors::BG_DARK);
+        painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
 
         // Grid lines
         let grid_size = 50.0 * self.zoom;
@@ -801,10 +802,10 @@ impl PatchEditor {
                 self.port_positions.get(&to_key),
             ) {
                 let color = match from_pos.port_type {
-                    PortType::Audio => colors::CABLE_AUDIO,
-                    PortType::Control => colors::CABLE_CONTROL,
-                    PortType::Gate => colors::CABLE_GATE,
-                    PortType::Midi => colors::PORT_MIDI,
+                    PortType::Audio => theme().colors.cable_audio,
+                    PortType::Control => theme().colors.cable_control,
+                    PortType::Gate => theme().colors.cable_gate,
+                    PortType::Midi => theme().colors.port_midi,
                 };
 
                 // Check if mouse is near this cable
@@ -1102,13 +1103,13 @@ fn draw_visualizer_display(
         let width = ui.available_width().clamp(120.0, 300.0);
         let height = (width * 0.5).clamp(60.0, 120.0);
 
-        super::widgets::draw_oscilloscope(ui, &samples, width, height, gain, colors::ACCENT_CYAN);
+        super::widgets::draw_oscilloscope(ui, &samples, width, height, gain, theme().colors.accent_cyan);
 
         if vis_buffer.is_none() {
             ui.label(
                 egui::RichText::new("No signal")
                     .small()
-                    .color(colors::TEXT_DIM),
+                    .color(theme().colors.text_dim),
             );
         }
     } else if descriptor.type_id.0 == "level_meter" {
@@ -1132,7 +1133,7 @@ fn draw_visualizer_display(
             ui.label(
                 egui::RichText::new("No signal")
                     .small()
-                    .color(colors::TEXT_DIM),
+                    .color(theme().colors.text_dim),
             );
         }
     }
@@ -1207,7 +1208,7 @@ fn draw_module_panel_params(
             ui.label(
                 egui::RichText::new(&param.name)
                     .size(theme().fonts.size_normal)
-                    .color(colors::TEXT_SECONDARY),
+                    .color(theme().colors.text_secondary),
             );
 
             if WaveformSelector::new(&mut selected)
@@ -1226,7 +1227,7 @@ fn draw_module_panel_params(
                 ui.label(
                     egui::RichText::new(&choice.name)
                         .size(theme().fonts.size_small)
-                        .color(colors::TEXT_DIM),
+                        .color(theme().colors.text_dim),
                 );
             }
         }
@@ -1245,7 +1246,7 @@ fn draw_module_panel_params(
             ui.label(
                 egui::RichText::new(&param.name)
                     .size(theme().fonts.size_normal)
-                    .color(colors::TEXT_SECONDARY),
+                    .color(theme().colors.text_secondary),
             );
             ui.add_space(4.0);
 
@@ -1299,7 +1300,7 @@ fn draw_module_panel_params(
                 ui.label(
                     egui::RichText::new(&param.name)
                         .size(theme().fonts.size_normal)
-                        .color(colors::TEXT_SECONDARY),
+                        .color(theme().colors.text_secondary),
                 );
                 let text = choices
                     .get(selected)
@@ -1411,7 +1412,7 @@ impl ModulePalette {
         let mut selected = None;
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Add Module:").color(colors::TEXT_SECONDARY));
+            ui.label(egui::RichText::new("Add Module:").color(theme().colors.text_secondary));
 
             // Oscillator submenu (Basic, Math, Sub, Noise)
             let osc_color = category_color(ModuleCategory::Oscillator);

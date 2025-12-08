@@ -13,7 +13,8 @@ use crate::modules::core::{
     PortType as CorePortType, WidgetHint,
 };
 
-use super::widgets::{Knob, Port, PortDirection, PortType, colors, theme};
+use super::theme::theme;
+use super::widgets::{Knob, Port, PortDirection, PortType};
 
 /// State for a module panel in the UI.
 #[derive(Clone)]
@@ -83,7 +84,7 @@ pub fn draw_module_panel(
     let min_height = 120.0;
 
     let frame_response = egui::Frame::new()
-        .fill(colors::BG_MODULE)
+        .fill(theme().colors.bg_module)
         .corner_radius(8.0)
         .stroke(egui::Stroke::new(
             if state.selected { 2.0 } else { 1.0 },
@@ -117,7 +118,7 @@ pub fn draw_module_panel(
             ui.horizontal(|ui| {
                 // Input ports on the left
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("IN").small().color(colors::TEXT_DIM));
+                    ui.label(egui::RichText::new("IN").small().color(theme().colors.text_dim));
                     for port in descriptor
                         .ports
                         .iter()
@@ -145,7 +146,7 @@ pub fn draw_module_panel(
                             ui.label(
                                 egui::RichText::new(&port.label)
                                     .small()
-                                    .color(colors::TEXT_SECONDARY),
+                                    .color(theme().colors.text_secondary),
                             );
 
                             // Show tooltip on hover
@@ -161,7 +162,7 @@ pub fn draw_module_panel(
                 // Output ports on the right
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("OUT").small().color(colors::TEXT_DIM));
+                        ui.label(egui::RichText::new("OUT").small().color(theme().colors.text_dim));
                         for port in descriptor
                             .ports
                             .iter()
@@ -174,7 +175,7 @@ pub fn draw_module_panel(
                                 ui.label(
                                     egui::RichText::new(&port.label)
                                         .small()
-                                        .color(colors::TEXT_SECONDARY),
+                                        .color(theme().colors.text_secondary),
                                 );
 
                                 let (response, center) =
@@ -332,7 +333,7 @@ fn draw_slider_param(
         ui.label(
             egui::RichText::new(&param.name)
                 .size(theme().fonts.size_normal)
-                .color(colors::TEXT_SECONDARY),
+                .color(theme().colors.text_secondary),
         );
 
         let slider = egui::Slider::new(&mut value, param.min..=param.max)
@@ -367,7 +368,7 @@ fn draw_dropdown_param(
             ui.label(
                 egui::RichText::new(&param.name)
                     .size(theme().fonts.size_normal)
-                    .color(colors::TEXT_SECONDARY),
+                    .color(theme().colors.text_secondary),
             );
 
             let selected_text = choices
@@ -418,18 +419,18 @@ fn draw_toggle_param(
 /// Get accent color for a module category.
 pub fn category_color(category: ModuleCategory) -> Color32 {
     match category {
-        ModuleCategory::Oscillator => colors::ACCENT_ORANGE,
-        ModuleCategory::Filter => colors::ACCENT_CYAN,
-        ModuleCategory::Envelope => colors::ACCENT_GREEN,
-        ModuleCategory::LFO => colors::ACCENT_PURPLE,
-        ModuleCategory::Amplifier => colors::ACCENT_YELLOW,
-        ModuleCategory::Effect => colors::ACCENT_CYAN,
-        ModuleCategory::Utility => colors::TEXT_SECONDARY,
-        ModuleCategory::Sampler => colors::ACCENT_ORANGE,
-        ModuleCategory::Sequencer => colors::ACCENT_RED,
-        ModuleCategory::Mixer => colors::ACCENT_YELLOW,
-        ModuleCategory::Output => colors::ACCENT_GREEN,
-        ModuleCategory::Visualizer => colors::ACCENT_PURPLE,
+        ModuleCategory::Oscillator => theme().colors.accent_orange,
+        ModuleCategory::Filter => theme().colors.accent_cyan,
+        ModuleCategory::Envelope => theme().colors.accent_green,
+        ModuleCategory::LFO => theme().colors.accent_purple,
+        ModuleCategory::Amplifier => theme().colors.accent_yellow,
+        ModuleCategory::Effect => theme().colors.accent_cyan,
+        ModuleCategory::Utility => theme().colors.text_secondary,
+        ModuleCategory::Sampler => theme().colors.accent_orange,
+        ModuleCategory::Sequencer => theme().colors.accent_red,
+        ModuleCategory::Mixer => theme().colors.accent_yellow,
+        ModuleCategory::Output => theme().colors.accent_green,
+        ModuleCategory::Visualizer => theme().colors.accent_purple,
     }
 }
 

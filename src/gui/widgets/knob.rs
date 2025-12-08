@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
-use super::{colors, theme};
+use crate::gui::theme::theme;
 use crate::modules::core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
 
 /// A rotary knob widget.
@@ -29,7 +29,7 @@ impl<'a> Knob<'a> {
             unit: ParameterUnit::None,
             label: String::new(),
             size: 80.0,
-            accent_color: colors::ACCENT_ORANGE,
+            accent_color: theme().colors.accent_orange,
         }
     }
 
@@ -43,7 +43,7 @@ impl<'a> Knob<'a> {
             unit: descriptor.unit,
             label: descriptor.name.clone(),
             size: 80.0,
-            accent_color: colors::ACCENT_ORANGE,
+            accent_color: theme().colors.accent_orange,
         }
     }
 
@@ -124,11 +124,11 @@ impl<'a> Knob<'a> {
         let painter = ui.painter();
 
         // Draw frame around entire widget
-        painter.rect_filled(rect, 4.0, colors::BG_DARK);
+        painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
         painter.rect_stroke(
             rect,
             4.0,
-            Stroke::new(1.0, colors::BG_WIDGET),
+            Stroke::new(1.0, theme().colors.bg_widget),
             egui::StrokeKind::Inside,
         );
 
@@ -137,8 +137,8 @@ impl<'a> Knob<'a> {
         let radius = knob_rect.width() / 2.0 - 2.0;
 
         // Background circle
-        painter.circle_filled(center, radius, colors::BG_WIDGET);
-        painter.circle_stroke(center, radius, Stroke::new(1.5, colors::BG_PANEL));
+        painter.circle_filled(center, radius, theme().colors.bg_widget);
+        painter.circle_stroke(center, radius, Stroke::new(1.5, theme().colors.bg_panel));
 
         // Value arc
         let normalized = self
@@ -169,7 +169,7 @@ impl<'a> Knob<'a> {
         let indicator_radius = radius - 8.0;
         let indicator_pos =
             center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
-        painter.circle_filled(indicator_pos, 3.0, colors::TEXT_PRIMARY);
+        painter.circle_filled(indicator_pos, 3.0, theme().colors.text_primary);
 
         // Value text in center of knob
         let value_text = self.format_value();
@@ -178,7 +178,7 @@ impl<'a> Knob<'a> {
             egui::Align2::CENTER_CENTER,
             &value_text,
             t.fonts.small(),
-            colors::TEXT_PRIMARY,
+            theme().colors.text_primary,
         );
 
         // Label below knob circle, inside frame
@@ -189,7 +189,7 @@ impl<'a> Knob<'a> {
                 egui::Align2::CENTER_TOP,
                 &self.label,
                 t.fonts.small(),
-                colors::TEXT_SECONDARY,
+                theme().colors.text_secondary,
             );
         }
 

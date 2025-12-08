@@ -33,7 +33,7 @@ use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{
     EffectType, ModulePalette, PaletteSelection, PatchEditor, VisualizerType,
 };
-use crate::gui::widgets::colors;
+use crate::gui::theme::theme;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
 use crate::modules::{
@@ -132,8 +132,6 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 /// Setup custom egui style for synth look.
 /// Reads colors from the current theme, so call this after changing theme.
 pub fn setup_custom_style(ctx: &egui::Context) {
-    use crate::gui::theme::theme;
-
     let mut style = (*ctx.style()).clone();
     let colors = &theme().colors;
 
@@ -551,17 +549,17 @@ impl eframe::App for SynthApp {
                     // Status indicators
                     let cpu = self.handle.cpu_usage();
                     let cpu_color = if cpu > 0.8 {
-                        colors::METER_RED
+                        theme().colors.meter_red
                     } else if cpu > 0.5 {
-                        colors::METER_YELLOW
+                        theme().colors.meter_yellow
                     } else {
-                        colors::METER_GREEN
+                        theme().colors.meter_green
                     };
                     ui.label(RichText::new(format!("CPU: {:.0}%", cpu * 100.0)).color(cpu_color));
                     ui.separator();
                     ui.label(
                         RichText::new(format!("Voices: {}", self.handle.voice_count()))
-                            .color(colors::TEXT_SECONDARY),
+                            .color(theme().colors.text_secondary),
                     );
                     ui.separator();
                     ui.label(
@@ -569,7 +567,7 @@ impl eframe::App for SynthApp {
                             "Latency: {:.1}ms",
                             self.latency.as_secs_f64() * 1000.0
                         ))
-                        .color(colors::TEXT_DIM),
+                        .color(theme().colors.text_dim),
                     );
                     ui.separator();
                     // MIDI port selector (styled as button with dropdown indicator)
@@ -581,9 +579,9 @@ impl eframe::App for SynthApp {
                         } else {
                             port_name.to_string()
                         };
-                        RichText::new(format!("🎹 {} ▼", short_name)).color(colors::METER_GREEN)
+                        RichText::new(format!("🎹 {} ▼", short_name)).color(theme().colors.meter_green)
                     } else {
-                        RichText::new("🎹 MIDI ▼").color(colors::TEXT_DIM)
+                        RichText::new("🎹 MIDI ▼").color(theme().colors.text_dim)
                     };
 
                     ui.menu_button(midi_label, |ui| {
@@ -591,14 +589,14 @@ impl eframe::App for SynthApp {
                         let ports = MidiHandler::list_ports();
                         if ports.is_empty() {
                             ui.label(
-                                RichText::new("No MIDI ports available").color(colors::TEXT_DIM),
+                                RichText::new("No MIDI ports available").color(theme().colors.text_dim),
                             );
                         } else {
                             for port in &ports {
                                 let is_current =
                                     self.midi_handler.port_name() == Some(port.as_str());
                                 let label = if is_current {
-                                    RichText::new(format!("● {}", port)).color(colors::METER_GREEN)
+                                    RichText::new(format!("● {}", port)).color(theme().colors.meter_green)
                                 } else {
                                     RichText::new(format!("  {}", port))
                                 };
@@ -619,7 +617,7 @@ impl eframe::App for SynthApp {
                     // Current patch name
                     ui.label(
                         RichText::new(format!("Patch: {}", self.current_patch_name))
-                            .color(colors::ACCENT_CYAN),
+                            .color(theme().colors.accent_cyan),
                     );
                 });
             });
@@ -657,7 +655,7 @@ impl eframe::App for SynthApp {
                 ui.separator();
 
                 // Glide/Portamento control
-                ui.label(RichText::new("Glide:").color(colors::TEXT_DIM));
+                ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
                 let glide_response = ui.add(
                     egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
                         .suffix(" s")
@@ -687,7 +685,7 @@ impl eframe::App for SynthApp {
                         "Modules: {} | Connections: {}",
                         module_count, conn_count
                     ))
-                    .color(colors::TEXT_DIM),
+                    .color(theme().colors.text_dim),
                 );
             });
         });
@@ -1115,7 +1113,7 @@ impl SynthApp {
     fn draw_meters(&mut self, ui: &mut egui::Ui) {
         // Output meters section - horizontal layout
         ui.vertical(|ui| {
-            ui.label(RichText::new("OUTPUT").color(colors::TEXT_DIM).small());
+            ui.label(RichText::new("OUTPUT").color(theme().colors.text_dim).small());
             ui.add_space(4.0);
 
             let (peak_l, peak_r) = self.handle.peak_meters();
@@ -1124,13 +1122,13 @@ impl SynthApp {
 
             // Left channel - horizontal
             ui.horizontal(|ui| {
-                ui.label(RichText::new("L").color(colors::TEXT_DIM).size(10.0));
+                ui.label(RichText::new("L").color(theme().colors.text_dim).size(10.0));
                 draw_meter_horizontal(ui, peak_l, rms_l, meter_width, 12.0);
             });
 
             // Right channel - horizontal
             ui.horizontal(|ui| {
-                ui.label(RichText::new("R").color(colors::TEXT_DIM).size(10.0));
+                ui.label(RichText::new("R").color(theme().colors.text_dim).size(10.0));
                 draw_meter_horizontal(ui, peak_r, rms_r, meter_width, 12.0);
             });
 
@@ -1140,7 +1138,7 @@ impl SynthApp {
                 let db_r = 20.0 * peak_r.max(0.0001).log10();
                 ui.label(
                     RichText::new(format!("{:+.1} / {:+.1} dB", db_l, db_r))
-                        .color(colors::TEXT_DIM)
+                        .color(theme().colors.text_dim)
                         .size(9.0),
                 );
             });
@@ -1158,7 +1156,7 @@ impl SynthApp {
     #[allow(clippy::too_many_lines)]
     fn draw_master_fx_section(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            ui.label(RichText::new("MASTER FX").color(colors::TEXT_DIM).small());
+            ui.label(RichText::new("MASTER FX").color(theme().colors.text_dim).small());
             ui.add_space(4.0);
 
             // Track actions to apply after iteration (to avoid borrow issues)
@@ -1183,9 +1181,9 @@ impl SynthApp {
                     {
                         // Effect header frame
                         let frame_color = if *is_bypassed {
-                            colors::BG_WIDGET.gamma_multiply(0.5)
+                            theme().colors.bg_widget.gamma_multiply(0.5)
                         } else {
-                            colors::BG_WIDGET
+                            theme().colors.bg_widget
                         };
 
                         egui::Frame::new()
@@ -1200,7 +1198,7 @@ impl SynthApp {
                                         .add(
                                             egui::Button::new(
                                                 RichText::new(arrow)
-                                                    .color(colors::TEXT_DIM)
+                                                    .color(theme().colors.text_dim)
                                                     .size(10.0),
                                             )
                                             .frame(false),
@@ -1213,9 +1211,9 @@ impl SynthApp {
                                     // Effect name
                                     let name = self.master_effects[idx].display_name();
                                     let name_color = if *is_bypassed {
-                                        colors::TEXT_DIM
+                                        theme().colors.text_dim
                                     } else {
-                                        colors::TEXT_PRIMARY
+                                        theme().colors.text_primary
                                     };
                                     ui.label(RichText::new(name).color(name_color).size(11.0));
 
@@ -1227,7 +1225,7 @@ impl SynthApp {
                                                 .add(
                                                     egui::Button::new(
                                                         RichText::new("×")
-                                                            .color(colors::TEXT_DIM)
+                                                            .color(theme().colors.text_dim)
                                                             .size(12.0),
                                                     )
                                                     .min_size(egui::vec2(18.0, 18.0)),
@@ -1240,9 +1238,9 @@ impl SynthApp {
 
                                             // Bypass button
                                             let bypass_color = if *is_bypassed {
-                                                colors::ACCENT_YELLOW
+                                                theme().colors.accent_yellow
                                             } else {
-                                                colors::TEXT_DIM
+                                                theme().colors.text_dim
                                             };
                                             if ui
                                                 .add(
@@ -1356,7 +1354,7 @@ impl SynthApp {
             // Panic button (moved here since keyboard handles its own header)
             if ui
                 .add(egui::Button::new(
-                    RichText::new("PANIC").color(colors::ACCENT_RED),
+                    RichText::new("PANIC").color(theme().colors.accent_red),
                 ))
                 .clicked()
             {
@@ -1374,7 +1372,7 @@ impl SynthApp {
                 .unwrap_or("Instrument 1");
             ui.separator();
             ui.label(
-                RichText::new(format!("Playing: {}", active_name)).color(colors::ACCENT_ORANGE),
+                RichText::new(format!("Playing: {}", active_name)).color(theme().colors.accent_orange),
             );
         });
 
@@ -1659,11 +1657,11 @@ fn draw_effect_params(
                 {
                     // Threshold
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Thresh").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Thresh").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}dB", threshold))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1682,11 +1680,11 @@ fn draw_effect_params(
 
                     // Ratio
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Ratio").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Ratio").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}:1", ratio))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1705,11 +1703,11 @@ fn draw_effect_params(
 
                     // Attack
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Attack").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Attack").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}ms", attack))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1732,11 +1730,11 @@ fn draw_effect_params(
 
                     // Release
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Release").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Release").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}ms", release))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1759,11 +1757,11 @@ fn draw_effect_params(
 
                     // Makeup
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Makeup").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Makeup").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", makeup))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1782,11 +1780,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1821,11 +1819,11 @@ fn draw_effect_params(
                 {
                     // Low Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Low").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Low").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", low_gain))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1842,11 +1840,11 @@ fn draw_effect_params(
 
                     // Mid Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mid").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mid").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", mid_gain))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1863,11 +1861,11 @@ fn draw_effect_params(
 
                     // High Gain
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("High").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("High").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:+.1}dB", high_gain))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1886,11 +1884,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1925,11 +1923,11 @@ fn draw_effect_params(
                 {
                     // Room Size
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Size").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Size").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", room_size * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1948,11 +1946,11 @@ fn draw_effect_params(
 
                     // Damping
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Damp").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Damp").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", damping * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1971,11 +1969,11 @@ fn draw_effect_params(
 
                     // Width
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Width").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Width").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", width * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -1994,11 +1992,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2031,11 +2029,11 @@ fn draw_effect_params(
                 {
                     // Time
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Time").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Time").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}s", time))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2058,11 +2056,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2081,11 +2079,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2114,11 +2112,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2137,11 +2135,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2160,11 +2158,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2199,11 +2197,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2222,11 +2220,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2245,11 +2243,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2270,11 +2268,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2309,11 +2307,11 @@ fn draw_effect_params(
                 {
                     // Rate
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Rate").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Rate").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.2}Hz", rate))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2332,11 +2330,11 @@ fn draw_effect_params(
 
                     // Depth
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Depth").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Depth").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2355,11 +2353,11 @@ fn draw_effect_params(
 
                     // Feedback
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Feedback").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Feedback").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2380,11 +2378,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2413,11 +2411,11 @@ fn draw_effect_params(
                 {
                     // Drive
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Drive").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Drive").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", drive * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2436,11 +2434,11 @@ fn draw_effect_params(
 
                     // Tone
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Tone").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Tone").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", tone * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2459,11 +2457,11 @@ fn draw_effect_params(
 
                     // Mix
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Mix").color(colors::TEXT_DIM).size(9.0));
+                        ui.label(RichText::new("Mix").color(theme().colors.text_dim).size(9.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(colors::TEXT_SECONDARY)
+                                    .color(theme().colors.text_secondary)
                                     .size(9.0),
                             );
                         });
@@ -2492,7 +2490,7 @@ fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 2.0, colors::BG_DARK);
+    painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
 
     // RMS level
     let rms_height = rect.height() * rms.clamp(0.0, 1.0);
@@ -2502,11 +2500,11 @@ fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
     );
 
     let rms_color = if rms > 0.9 {
-        colors::METER_RED
+        theme().colors.meter_red
     } else if rms > 0.7 {
-        colors::METER_YELLOW
+        theme().colors.meter_yellow
     } else {
-        colors::METER_GREEN
+        theme().colors.meter_green
     };
 
     painter.rect_filled(rms_rect, 0.0, rms_color);
@@ -2518,7 +2516,7 @@ fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
             Pos2::new(rect.left(), peak_y),
             Pos2::new(rect.right(), peak_y),
         ],
-        Stroke::new(2.0, colors::TEXT_PRIMARY),
+        Stroke::new(2.0, theme().colors.text_primary),
     );
 }
 
@@ -2528,18 +2526,18 @@ fn draw_meter_horizontal(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, hei
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 2.0, colors::BG_DARK);
+    painter.rect_filled(rect, 2.0, theme().colors.bg_dark);
 
     // RMS level (horizontal - grows from left)
     let rms_width = rect.width() * rms.clamp(0.0, 1.0);
     let rms_rect = egui::Rect::from_min_size(rect.min, Vec2::new(rms_width, rect.height()));
 
     let rms_color = if rms > 0.9 {
-        colors::METER_RED
+        theme().colors.meter_red
     } else if rms > 0.7 {
-        colors::METER_YELLOW
+        theme().colors.meter_yellow
     } else {
-        colors::METER_GREEN
+        theme().colors.meter_green
     };
 
     painter.rect_filled(rms_rect, 0.0, rms_color);
@@ -2551,6 +2549,6 @@ fn draw_meter_horizontal(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, hei
             Pos2::new(peak_x, rect.top()),
             Pos2::new(peak_x, rect.bottom()),
         ],
-        Stroke::new(2.0, colors::TEXT_PRIMARY),
+        Stroke::new(2.0, theme().colors.text_primary),
     );
 }

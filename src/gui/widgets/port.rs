@@ -2,7 +2,7 @@
 
 use eframe::egui::{Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
-use super::colors;
+use crate::gui::theme::theme;
 
 /// A port widget for connections.
 pub struct Port {
@@ -50,11 +50,12 @@ impl Port {
     }
 
     pub fn color(&self) -> Color32 {
+        let colors = &theme().colors;
         match self.port_type {
-            PortType::Audio => colors::PORT_AUDIO,
-            PortType::Control => colors::PORT_CONTROL,
-            PortType::Gate => colors::PORT_GATE,
-            PortType::Midi => colors::PORT_MIDI,
+            PortType::Audio => colors.port_audio,
+            PortType::Control => colors.port_control,
+            PortType::Gate => colors.port_gate,
+            PortType::Midi => colors.port_midi,
         }
     }
 
@@ -73,7 +74,7 @@ impl Port {
         if self.connected {
             painter.circle_filled(center, radius - 3.0, self.color());
         } else {
-            painter.circle_filled(center, radius - 3.0, colors::BG_DARK);
+            painter.circle_filled(center, radius - 3.0, theme().colors.bg_dark);
         }
 
         // Highlight on hover

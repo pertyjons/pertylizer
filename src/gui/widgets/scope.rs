@@ -2,7 +2,7 @@
 
 use eframe::egui::{Color32, Pos2, Sense, Stroke, Ui, Vec2};
 
-use super::colors;
+use crate::gui::theme::theme;
 
 /// Draw an oscilloscope display.
 /// Shows a waveform visualization with optional grid.
@@ -18,7 +18,7 @@ pub fn draw_oscilloscope(
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, colors::BG_DARK);
+    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
 
     // Draw grid
     let grid_color = Color32::from_rgba_premultiplied(60, 65, 75, 100);
@@ -77,7 +77,7 @@ pub fn draw_oscilloscope(
     painter.rect_stroke(
         rect,
         4.0,
-        Stroke::new(1.0, colors::BORDER),
+        Stroke::new(1.0, theme().colors.border),
         eframe::egui::StrokeKind::Outside,
     );
 }

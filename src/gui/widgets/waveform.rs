@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, Ui, Vec2};
 
-use super::colors;
+use crate::gui::theme::theme;
 
 /// Types of waveforms to display.
 /// Note: Noise waveforms have been moved to the dedicated NoiseGenerator module.
@@ -81,7 +81,7 @@ impl<'a> WaveformSelector<'a> {
         Self {
             selected,
             waveforms: WaveformType::all(),
-            accent_color: colors::ACCENT_ORANGE,
+            accent_color: theme().colors.accent_orange,
         }
     }
 
@@ -115,15 +115,15 @@ impl<'a> WaveformSelector<'a> {
                 let bg_color = if is_selected {
                     self.accent_color.gamma_multiply(0.3)
                 } else if response.hovered() {
-                    colors::BG_WIDGET.gamma_multiply(1.3)
+                    theme().colors.bg_widget.gamma_multiply(1.3)
                 } else {
-                    colors::BG_WIDGET
+                    theme().colors.bg_widget
                 };
 
                 let stroke_color = if is_selected {
                     self.accent_color
                 } else {
-                    colors::TEXT_DIM
+                    theme().colors.text_dim
                 };
 
                 ui.painter().rect(
@@ -156,7 +156,7 @@ impl<'a> WaveformSelector<'a> {
         let color = if is_selected {
             self.accent_color
         } else {
-            colors::TEXT_SECONDARY
+            theme().colors.text_secondary
         };
 
         let samples = 32;
