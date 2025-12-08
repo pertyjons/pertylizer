@@ -84,7 +84,7 @@ impl Describable for Amplifier {
 impl PolyModule for Amplifier {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -236,7 +236,7 @@ impl Describable for Mixer {
 impl PolyModule for Mixer {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

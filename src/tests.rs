@@ -13,9 +13,10 @@
 mod audio_safety {
     use crate::effects::{Chorus, Delay, Distortion, Reverb};
     use crate::modules::{
-        AudioBuffer, AudioEffect, Envelope, Filter, Oscillator, PolyModule, ProcessContext,
+        AudioBuffer, AudioEffect, Envelope, Filter, InputPorts, Oscillator, PolyModule,
+        ProcessContext,
     };
-    use crate::types::{Bpm, MidiNote, SampleRate};
+    use crate::types::{Bpm, MidiNote, PortName, SampleRate};
     use std::collections::HashMap;
 
     fn make_context(samples: usize) -> ProcessContext {
@@ -42,13 +43,13 @@ mod audio_safety {
     fn test_oscillator_no_nan() {
         let mut osc = Oscillator::new();
         let context = make_context(256);
-        let inputs = HashMap::new();
+        let inputs = InputPorts::empty();
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
         // Process multiple times to catch any state accumulation issues
         for _ in 0..100 {
-            osc.process(&inputs, &mut outputs, &context);
+            osc.process(inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
             assert!(
                 is_valid_audio(out.as_slice()),
@@ -61,11 +62,11 @@ mod audio_safety {
     fn test_oscillator_output_range() {
         let mut osc = Oscillator::new();
         let context = make_context(256);
-        let inputs = HashMap::new();
+        let inputs = InputPorts::empty();
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
-        osc.process(&inputs, &mut outputs, &context);
+        osc.process(inputs, &mut outputs, &context);
         let out = outputs.get("out").unwrap();
 
         // Oscillator output should be in [-1, 1] range
@@ -91,15 +92,15 @@ mod audio_safety {
         let mut input_buf = AudioBuffer::new(256);
         input_buf[0] = 1.0;
 
-        let mut inputs = HashMap::new();
-        inputs.insert("in".to_string(), &input_buf);
+        let input_slice: [(PortName, &AudioBuffer); 1] = [(PortName::intern("in"), &input_buf)];
+        let inputs = InputPorts::new(&input_slice);
 
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
         // Process multiple times
         for _ in 0..100 {
-            filter.process(&inputs, &mut outputs, &context);
+            filter.process(inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
             assert!(
                 is_valid_audio(out.as_slice()),
@@ -112,7 +113,7 @@ mod audio_safety {
     fn test_envelope_no_nan() {
         let mut env = Envelope::new();
         let context = make_context(256);
-        let inputs = HashMap::new();
+        let inputs = InputPorts::empty();
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
@@ -120,7 +121,7 @@ mod audio_safety {
         env.note_on(MidiNote::C4, 1.0);
 
         for _ in 0..50 {
-            env.process(&inputs, &mut outputs, &context);
+            env.process(inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
             assert!(
                 is_valid_audio(out.as_slice()),
@@ -136,7 +137,7 @@ mod audio_safety {
         env.note_off();
 
         for _ in 0..50 {
-            env.process(&inputs, &mut outputs, &context);
+            env.process(inputs, &mut outputs, &context);
             let out = outputs.get("out").unwrap();
             assert!(
                 is_valid_audio(out.as_slice()),

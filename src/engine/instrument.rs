@@ -311,7 +311,7 @@ impl Instrument {
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
             temp_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             temp_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
-            velocity_amp_sensitivity: NormalizedValue::MAX,       // Full dynamic range
+            velocity_amp_sensitivity: NormalizedValue::MAX, // Full dynamic range
             velocity_filter_sensitivity: NormalizedValue::CENTER, // 50% filter sensitivity
         }
     }

@@ -104,6 +104,57 @@ impl std::ops::IndexMut<usize> for AudioBuffer {
 }
 
 // ============================================================================
+// Zero-allocation port wrappers for realtime-safe processing
+// ============================================================================
+
+use crate::types::PortName;
+
+/// Zero-allocation wrapper for looking up input buffers by port name.
+///
+/// Used in `PolyModule::process()` to avoid HashMap allocation every audio frame.
+/// Provides O(n) linear search which is fast for the typical 1-4 input ports.
+#[derive(Clone, Copy)]
+pub struct InputPorts<'a>(&'a [(PortName, &'a AudioBuffer)]);
+
+impl<'a> InputPorts<'a> {
+    /// Create a new InputPorts wrapper from a slice.
+    #[inline]
+    pub fn new(ports: &'a [(PortName, &'a AudioBuffer)]) -> Self {
+        Self(ports)
+    }
+
+    /// Create an empty InputPorts (no inputs connected).
+    #[inline]
+    pub fn empty() -> Self {
+        Self(&[])
+    }
+
+    /// Get an input buffer by port name.
+    ///
+    /// Returns `None` if no input is connected to this port.
+    /// O(n) linear search, but n is typically 1-4 ports.
+    #[inline]
+    pub fn get(&self, name: &str) -> Option<&AudioBuffer> {
+        self.0
+            .iter()
+            .find(|(n, _)| n.as_str() == name)
+            .map(|(_, buf)| *buf)
+    }
+
+    /// Check if any inputs are connected.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Get the number of connected inputs.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+// ============================================================================
 // Processing context
 // ============================================================================
 
@@ -685,12 +736,17 @@ pub trait PolyModule: Describable + Send {
     /// Process audio.
     ///
     /// # Arguments
-    /// * `inputs` - Map of input port name to buffer
+    /// * `inputs` - Zero-allocation wrapper for input buffers (use `inputs.get("port_name")`)
     /// * `outputs` - Map of output port name to buffer (to fill)
     /// * `context` - Processing context
+    ///
+    /// # Realtime Safety
+    /// The `inputs` parameter uses `InputPorts` instead of `HashMap` to avoid
+    /// heap allocation on every audio frame. This is critical for low-latency
+    /// audio processing.
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     );

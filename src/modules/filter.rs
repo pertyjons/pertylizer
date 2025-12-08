@@ -180,7 +180,7 @@ impl Describable for Filter {
 impl PolyModule for Filter {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -393,7 +393,7 @@ impl Describable for LadderFilter {
 impl PolyModule for LadderFilter {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

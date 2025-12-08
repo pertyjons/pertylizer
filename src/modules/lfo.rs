@@ -141,7 +141,7 @@ impl Describable for Lfo {
 impl PolyModule for Lfo {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

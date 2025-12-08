@@ -63,10 +63,15 @@
     * [ ] Vectorscope, Tuner, 3D-vyer.
 
 ## ⚡ Fas 5: Prestanda & Optimering (Ny sektion)
-21. **"Baked Graph" / Graf-kompilering** (Tillagd)
+21. **Realtime Audio Thread Safety**
+    * [x] ~~Eliminera AudioBuffer::new() i Instrument::process()~~ *(0.33.10)*
+    * [x] ~~Ändra Connection till PortName (Copy) istället för String~~ *(0.33.10)*
+    * [x] ~~Refaktorera PolyModule::process() till InputPorts istället för HashMap~~ *(0.33.11)*
+    * [ ] Eliminera kvarvarande Vec-allokering i process_module() (kräver stack-array eller arrayvec)
+22. **"Baked Graph" / Graf-kompilering** (Tillagd)
     * [ ] Implementera ett "kompileringssteg" som omvandlar `ModuleGraph` (HashMap) till en linjär lista av operationer (`Vec<Op>`) och en platt minnesbuffert.
     * [ ] Mål: Eliminera alla hash-uppslagningar och pointer-jumps i ljudtråden för maximal cache-lokalitet och prestanda.
-22. **Oversampling**
+23. **Oversampling**
     * [ ] Stöd för 2x/4x oversampling internt i rösterna för minskad aliasing.
 
 ### Analys av förändringen

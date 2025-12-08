@@ -227,7 +227,7 @@ impl Describable for Oscillator {
 impl PolyModule for Oscillator {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

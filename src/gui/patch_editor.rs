@@ -787,8 +787,14 @@ impl PatchEditor {
         let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
         for connection in &self.connections {
-            let from_key = (connection.from_module, connection.from_port.as_str().to_string());
-            let to_key = (connection.to_module, connection.to_port.as_str().to_string());
+            let from_key = (
+                connection.from_module,
+                connection.from_port.as_str().to_string(),
+            );
+            let to_key = (
+                connection.to_module,
+                connection.to_port.as_str().to_string(),
+            );
 
             if let (Some(from_pos), Some(to_pos)) = (
                 self.port_positions.get(&from_key),

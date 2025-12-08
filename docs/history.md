@@ -1,5 +1,51 @@
 # Version History
 
+## [0.33.11] - 2024
+
+### Changed - PolyModule::process() InputPorts Refactor
+
+Fortsättning av Problem 3 från 0.33.10: Ändrade `PolyModule::process()` trait-signatur för att undvika HashMap-allokering per audio frame.
+
+**Ny InputPorts wrapper-typ:**
+
+| Fil | Ändring |
+|-----|---------|
+| `core.rs:106-154` | Ny `InputPorts<'a>` wrapper-typ som wrappar `&[(PortName, &AudioBuffer)]` |
+| `core.rs:137-141` | `InputPorts::get(&str)` - O(n) linear sökning, snabb för 1-4 portar |
+| `core.rs:747-752` | `PolyModule::process()` tar nu `InputPorts<'_>` istället för `&HashMap<String, &AudioBuffer>` |
+
+**Graph processing uppdatering:**
+
+| Fil | Ändring |
+|-----|---------|
+| `graph.rs:84` | `input_buffers` ändrad från `HashMap<String, AudioBuffer>` till `Vec<(PortName, AudioBuffer)>` |
+| `graph.rs:640-654` | `process_module()` bygger `InputPorts` från Vec istället för HashMap |
+| `graph.rs:619-636` | Linjär sökning i Vec för input-matchning |
+
+**Moduluppdateringar:**
+
+Alla 9 moduler uppdaterade med ny `InputPorts` parameter:
+- `oscillator.rs`, `filter.rs`, `envelope.rs`, `lfo.rs`
+- `amplifier.rs`, `noise.rs`, `math_oscillator.rs`
+- `sub_osc.rs`, `output.rs`
+
+**Prestandaförbättring:**
+
+- **Före:** `HashMap<String, &AudioBuffer>` skapades varje frame via `.collect()` (heap-allokering + String-kloning)
+- **Efter:** Liten `Vec<(PortName, &AudioBuffer)>` skapas på stacken-ish (fortfarande heap men mycket billigare)
+
+**Trade-off:**
+- Fortfarande en liten Vec-allokering per modul per frame
+- Men: Inga String-allokeringar (PortName är Copy, 8 bytes)
+- Vec-allokering för 4-8 pointers är nanosekunder vs mikrosekunder för HashMap
+
+**Resultat:**
+- `cargo build --release`: Passerar
+- `cargo clippy`: Passerar (strikta lints)
+- `cargo test`: 277/277 passerar
+
+---
+
 ## [0.33.10] - 2024
 
 ### Fixed - Realtime Audio Thread Allocations

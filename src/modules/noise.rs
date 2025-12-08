@@ -196,7 +196,7 @@ impl Describable for NoiseGenerator {
 impl PolyModule for NoiseGenerator {
     fn process(
         &mut self,
-        _inputs: &HashMap<String, &AudioBuffer>,
+        _inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

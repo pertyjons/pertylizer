@@ -10,7 +10,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::engine::ModuleId;
 use crate::engine::typed_params::{ModuleType, Param};
-use crate::modules::core::*;
+use crate::modules::core::{
+    AudioBuffer, InputPorts, ModuleCategory, ModuleDescriptor, PolyModule, PortDirection,
+    ProcessContext,
+};
 use crate::types::{MidiNote, PortName};
 
 /// A connection between two ports.
@@ -80,8 +83,8 @@ pub struct ModuleGraph {
     /// Buffer size.
     buffer_size: usize,
     /// Pre-allocated input buffers for processing (avoid allocations in audio thread).
-    /// Note: Uses String keys for compatibility with PolyModule trait.
-    input_buffers: HashMap<String, AudioBuffer>,
+    /// Vec of (port_name, buffer) pairs - allows creating a reference slice without allocation.
+    input_buffers: Vec<(PortName, AudioBuffer)>,
     /// Pre-allocated vec for gathering incoming connections.
     /// Uses PortName for zero-allocation copying of connection info.
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
@@ -97,7 +100,7 @@ impl ModuleGraph {
             instance_counters: HashMap::new(),
             order_dirty: true,
             buffer_size: 256,
-            input_buffers: HashMap::with_capacity(8),
+            input_buffers: Vec::with_capacity(8),
             incoming_cache: Vec::with_capacity(16),
         }
     }
@@ -602,43 +605,56 @@ impl ModuleGraph {
             }
         }
 
-        // Clear and reuse the pre-allocated input buffers
-        // First, clear all existing buffers
-        for buf in self.input_buffers.values_mut() {
+        // Clear and reuse the pre-allocated input buffers Vec
+        // We clear all buffers to silence and track which ports have data
+        for (_, buf) in self.input_buffers.iter_mut() {
             buf.clear();
         }
 
         // Gather inputs from connected modules
-        // Note: We convert PortName to &str for HashMap lookup (no allocation)
+        // Uses Vec for zero-allocation (no HashMap creation per frame)
         for (from_module, from_port, to_port) in &self.incoming_cache {
             let from_port_str = from_port.as_str();
-            let to_port_str = to_port.as_str();
             if let Some(from_node) = self.nodes.get(from_module)
                 && let Some(output_buf) = from_node.outputs.get(from_port_str)
             {
                 // Sum inputs if multiple connections to same port
-                if let Some(existing) = self.input_buffers.get_mut(to_port_str) {
+                // Linear search in Vec is fast for typical 1-4 input ports
+                if let Some((_, existing)) = self
+                    .input_buffers
+                    .iter_mut()
+                    .find(|(name, _)| *name == *to_port)
+                {
                     // Ensure buffer is correctly sized before adding
                     if existing.len() < context.samples {
                         existing.resize(context.samples);
                     }
                     existing.add_from(output_buf);
                 } else {
-                    // Need to insert a new buffer - ensure it's sized correctly
-                    // Note: This String allocation only happens on first use of a port
+                    // First connection to this port - add new buffer entry
+                    // Note: Vec only grows during warmup, not during steady-state processing
                     let mut buf = AudioBuffer::new(context.samples);
                     buf.copy_from(output_buf);
-                    self.input_buffers.insert(to_port_str.to_string(), buf);
+                    self.input_buffers.push((*to_port, buf));
                 }
             }
         }
 
-        // Convert to references for the module API
-        let input_refs: HashMap<String, &AudioBuffer> = self
+        // Build InputPorts from the input_buffers Vec.
+        // Uses a small Vec allocation for the reference slice, which is much cheaper
+        // than the old HashMap<String, &AudioBuffer> approach:
+        // - No String cloning (PortName is Copy - 8 bytes vs 24+ bytes for String)
+        // - No hashing or bucket allocation
+        // - Typical size is 1-4 entries, so Vec allocation is minimal
+        //
+        // Trade-off: Still allocates a small Vec per module per frame, but this is
+        // acceptable for realtime audio (takes nanoseconds for 4-8 pointers).
+        let input_refs: Vec<(PortName, &AudioBuffer)> = self
             .input_buffers
             .iter()
-            .map(|(k, v)| (k.clone(), v))
+            .map(|(name, buf)| (*name, buf))
             .collect();
+        let inputs = InputPorts::new(&input_refs);
 
         // Get the node and process
         if let Some(node) = self.nodes.get_mut(&module_id) {
@@ -648,7 +664,7 @@ impl ModuleGraph {
             }
 
             // Process
-            node.module.process(&input_refs, &mut node.outputs, context);
+            node.module.process(inputs, &mut node.outputs, context);
         }
     }
 
@@ -661,7 +677,7 @@ impl ModuleGraph {
                 }
             }
             // Also resize the input buffer cache to prevent out-of-bounds access
-            for buf in self.input_buffers.values_mut() {
+            for (_, buf) in self.input_buffers.iter_mut() {
                 buf.resize(size);
             }
         }

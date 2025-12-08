@@ -462,7 +462,7 @@ impl Describable for MathOscillator {
 impl PolyModule for MathOscillator {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

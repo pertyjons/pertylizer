@@ -128,7 +128,7 @@ impl Describable for SubOscillator {
 impl PolyModule for SubOscillator {
     fn process(
         &mut self,
-        _inputs: &HashMap<String, &AudioBuffer>,
+        _inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {

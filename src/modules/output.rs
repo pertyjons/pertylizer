@@ -190,7 +190,7 @@ impl Describable for StereoOutput {
 impl PolyModule for StereoOutput {
     fn process(
         &mut self,
-        inputs: &HashMap<String, &AudioBuffer>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -390,6 +390,8 @@ mod tests {
 
     #[test]
     fn test_mute() {
+        use crate::types::PortName;
+
         let mut output = StereoOutput::new();
         let context = ProcessContext::default();
 
@@ -399,17 +401,18 @@ mod tests {
             test_buf[i] = 0.5;
         }
 
-        let mut inputs = HashMap::new();
-        inputs.insert("in".to_string(), &test_buf);
+        let input_slice: [(PortName, &AudioBuffer); 1] = [(PortName::intern("in"), &test_buf)];
+        let inputs = InputPorts::new(&input_slice);
         let mut outputs = HashMap::new();
 
         // Process unmuted
-        output.process(&inputs, &mut outputs, &context);
+        output.process(inputs, &mut outputs, &context);
         let unmuted_output = output.get_output().to_vec();
 
         // Process muted
         output.set_muted(true);
-        output.process(&inputs, &mut outputs, &context);
+        let inputs = InputPorts::new(&input_slice);
+        output.process(inputs, &mut outputs, &context);
         let muted_output = output.get_output();
 
         // Muted should be silence
