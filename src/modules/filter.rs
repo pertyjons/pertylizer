@@ -26,8 +26,10 @@ pub struct Filter {
 
     // State
     sample_rate: SampleRate,
-    ic1eq: f32,
-    ic2eq: f32,
+    /// Integrator 1 state (type-safe DSP state).
+    ic1eq: FilterState,
+    /// Integrator 2 state (type-safe DSP state).
+    ic2eq: FilterState,
     base_note: MidiNote,
 
     // Output buffer
@@ -45,8 +47,8 @@ impl Filter {
             cutoff_mod_amount: BipolarValue::MAX,
             drive: Gain::UNITY,
             sample_rate: SampleRate::DVD_QUALITY,
-            ic1eq: 0.0,
-            ic2eq: 0.0,
+            ic1eq: FilterState::ZERO,
+            ic2eq: FilterState::ZERO,
             base_note: MidiNote::C4,
             output_buffer: AudioBuffer::new(256),
         }
@@ -73,12 +75,15 @@ impl Filter {
         let a2 = g * a1;
         let a3 = g * a2;
 
-        let v3 = input - self.ic2eq;
-        let v1 = a1 * self.ic1eq + a2 * v3;
-        let v2 = self.ic2eq + a2 * self.ic1eq + a3 * v3;
+        let ic1 = self.ic1eq.as_f32();
+        let ic2 = self.ic2eq.as_f32();
 
-        self.ic1eq = 2.0 * v1 - self.ic1eq;
-        self.ic2eq = 2.0 * v2 - self.ic2eq;
+        let v3 = input - ic2;
+        let v1 = a1 * ic1 + a2 * v3;
+        let v2 = ic2 + a2 * ic1 + a3 * v3;
+
+        self.ic1eq = FilterState::new(2.0 * v1 - ic1);
+        self.ic2eq = FilterState::new(2.0 * v2 - ic2);
 
         match self.filter_type {
             FilterMode::Lowpass => v2,
@@ -265,8 +270,8 @@ impl PolyModule for Filter {
     }
 
     fn reset(&mut self) {
-        self.ic1eq = 0.0;
-        self.ic2eq = 0.0;
+        self.ic1eq = FilterState::ZERO;
+        self.ic2eq = FilterState::ZERO;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: f32) {

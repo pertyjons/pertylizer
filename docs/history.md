@@ -1,5 +1,18 @@
 # Version History
 
+## [0.34.2] - 2024
+### Improved - Fas 3 & 4: Type Hardening Complete
+- **Fas 3 - Arkitektur & Prestanda:** Verifierad - redan optimerad
+  - `PortName` (internad sträng) redan implementerad i `types/interned.rs`
+  - `EffectCommand` enum redan typat i `sequencer/effects.rs`
+  - HashMap-lookups använder `&str` utan allokeringar i audio-tråden
+- **Fas 4 - FilterState wrapper:**
+  - `Filter` (SVF) använder nu `FilterState` istället för råa `f32`
+  - `ic1eq` och `ic2eq` integrator-state är nu typsäkra
+  - Konsistent med `LadderFilter` som redan använde `FilterState`
+
+---
+
 ## [0.34.1] - 2024
 ### Improved - Fas 2: Sampling & Uppspelning
 - **types/sample.rs** - `Interpolation` enum utökad med GUI-stöd:
