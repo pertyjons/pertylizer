@@ -1,5 +1,20 @@
 # Version History
 
+## [0.34.8] - 2024
+### Improved - Auto Layout fyller hela vyn
+- **Algoritmen omskriven för att dynamiskt beräkna modulstorlek:**
+  - Modulbredden beräknas så att alla kolumner fyller tillgänglig bredd
+  - Modulhöjden beräknas så att alla rader (inklusive modulation) fyller tillgänglig höjd
+  - Minimumstorleks-begränsningar: 150x120 px
+- **Moduler håller sig nu inom vyn:**
+  - Canvas-rektangeln (exklusive sidopaneler och keyboard) används som begränsning
+  - Modulation placeras under huvudsignalvägen med 25px gap
+- **Förenklad API:**
+  - `calculate_layout()` tar nu `Rect` direkt istället för `LayoutConfig`
+  - Alla beräkningar sker internt baserat på tillgänglig yta
+
+---
+
 ## [0.34.7] - 2024
 ### Improved - Auto Layout toolbar och höjdberäkning
 - **Auto Layout-knappen ritas nu i foreground layer** - syns alltid överst, även när moduler dras över

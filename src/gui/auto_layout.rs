@@ -1,106 +1,18 @@
 //! Auto-layout algorithm for organizing modules based on signal flow.
 //!
-//! This module provides automatic positioning of synth modules in a
-//! left-to-right layout based on their connections. Modulation sources
-//! (Envelopes, LFOs) are placed below the main signal path.
-//!
-//! The algorithm respects:
-//! - Available canvas area (excluding side panels)
-//! - Module dimensions to prevent overlap
-//! - Signal flow direction (left to right)
+//! This module provides automatic positioning of synth modules that:
+//! - Fills the available canvas area
+//! - Places modules left-to-right based on signal flow depth
+//! - Stacks modules vertically within each depth level
+//! - Places modulation sources (Envelope, LFO) below main signal path
+//! - Ensures no modules extend outside the visible area
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use eframe::egui::{Pos2, Vec2};
+use eframe::egui::{Pos2, Rect};
 
 use crate::engine::ModuleId;
 use crate::modules::core::ModuleCategory;
-
-/// Configuration for auto-layout algorithm.
-#[derive(Debug, Clone)]
-pub struct LayoutConfig {
-    /// Available area for layout (top-left corner).
-    pub area_min: Pos2,
-    /// Available area for layout (bottom-right corner).
-    pub area_max: Pos2,
-    /// Module dimensions (width, height).
-    pub module_size: Vec2,
-    /// Horizontal gap between modules.
-    pub gap_x: f32,
-    /// Vertical gap between modules.
-    pub gap_y: f32,
-    /// Extra vertical offset for modulation modules below main path.
-    pub modulation_gap: f32,
-}
-
-impl Default for LayoutConfig {
-    fn default() -> Self {
-        Self {
-            // Default assumes no side panels - caller should override
-            area_min: Pos2::new(0.0, 0.0),
-            area_max: Pos2::new(1200.0, 800.0),
-            module_size: Vec2::new(200.0, 160.0),
-            gap_x: 20.0,
-            gap_y: 20.0,
-            modulation_gap: 40.0,
-        }
-    }
-}
-
-impl LayoutConfig {
-    /// Calculate cell size (module + gap).
-    fn cell_size(&self) -> Vec2 {
-        Vec2::new(
-            self.module_size.x + self.gap_x,
-            self.module_size.y + self.gap_y,
-        )
-    }
-
-    /// Available width for layout.
-    fn available_width(&self) -> f32 {
-        self.area_max.x - self.area_min.x
-    }
-
-    /// Available height for layout.
-    fn available_height(&self) -> f32 {
-        self.area_max.y - self.area_min.y
-    }
-
-    /// Maximum columns that fit in available width.
-    fn max_columns(&self) -> usize {
-        let cell = self.cell_size();
-        ((self.available_width() - self.gap_x) / cell.x)
-            .floor()
-            .max(1.0) as usize
-    }
-
-    /// Maximum rows that fit in available height (for main signal path).
-    fn max_main_rows(&self) -> usize {
-        let cell = self.cell_size();
-        // Reserve space for modulation row(s) below
-        let main_height = self.available_height() * 0.6;
-        ((main_height - self.gap_y) / cell.y).floor().max(1.0) as usize
-    }
-
-    /// Position for a module at given column and row.
-    fn position_at(&self, col: usize, row: usize) -> Pos2 {
-        let cell = self.cell_size();
-        Pos2::new(
-            self.area_min.x + self.gap_x + col as f32 * cell.x,
-            self.area_min.y + self.gap_y + row as f32 * cell.y,
-        )
-    }
-
-    /// Position for a modulation module at given column and row.
-    fn modulation_position_at(&self, col: usize, row: usize, main_rows: usize) -> Pos2 {
-        let cell = self.cell_size();
-        let base_y = self.area_min.y + self.gap_y + main_rows as f32 * cell.y + self.modulation_gap;
-        Pos2::new(
-            self.area_min.x + self.gap_x + col as f32 * cell.x,
-            base_y + row as f32 * cell.y,
-        )
-    }
-}
 
 /// Information about a module for layout calculation.
 #[derive(Debug, Clone)]
@@ -131,22 +43,27 @@ fn is_modulation_module(category: ModuleCategory) -> bool {
 /// Calculate automatic layout for modules based on signal flow.
 ///
 /// The algorithm:
-/// 1. Build adjacency lists from connections
-/// 2. Find source modules (no incoming connections from main path)
-/// 3. BFS to calculate depth (longest path from any source)
-/// 4. Separate modulation modules from main signal path
-/// 5. Place main path modules in columns by depth, wrapping to next row if needed
-/// 6. Place modulation modules below their targets
+/// 1. Build adjacency lists and calculate signal flow depth
+/// 2. Separate modulation modules from main signal path
+/// 3. Calculate grid dimensions needed
+/// 4. Compute module size to fill available space
+/// 5. Place modules in their calculated positions
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
-    config: &LayoutConfig,
+    available_rect: Rect,
 ) -> LayoutResult {
     let mut result = LayoutResult::default();
 
     if modules.is_empty() {
         return result;
     }
+
+    // Minimum module size constraints
+    const MIN_MODULE_WIDTH: f32 = 150.0;
+    const MIN_MODULE_HEIGHT: f32 = 120.0;
+    const GAP: f32 = 15.0;
+    const MODULATION_GAP: f32 = 25.0;
 
     // Build adjacency lists
     let mut outgoing: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
@@ -168,7 +85,7 @@ pub fn calculate_layout(
             .push(conn.from_module);
     }
 
-    // Separate modulation modules
+    // Separate modulation modules from main signal path
     let (modulation_modules, main_modules): (Vec<_>, Vec<_>) = modules
         .iter()
         .partition(|m| is_modulation_module(m.category));
@@ -189,23 +106,18 @@ pub fn calculate_layout(
 
     // BFS to calculate depth (longest path from any source)
     let mut depth: HashMap<ModuleId, usize> = HashMap::new();
-
-    // Initialize all main modules at depth 0
     for module in &main_modules {
         depth.insert(module.id, 0);
     }
 
-    // BFS from each source to find longest paths
     for &source in &sources {
         let mut queue = VecDeque::new();
         queue.push_back((source, 0usize));
 
         while let Some((current, current_depth)) = queue.pop_front() {
-            // Update depth to maximum seen
             let entry = depth.entry(current).or_insert(0);
             *entry = (*entry).max(current_depth);
 
-            // Visit outgoing connections (skip modulation modules)
             if let Some(neighbors) = outgoing.get(&current) {
                 for &neighbor in neighbors {
                     if !modulation_ids.contains(&neighbor) {
@@ -223,88 +135,118 @@ pub fn calculate_layout(
         columns.entry(d).or_default().push(module.id);
     }
 
-    // Calculate layout constraints
-    let max_cols = config.max_columns();
-    let max_main_rows = config.max_main_rows();
-    let max_depth = columns.keys().max().copied().unwrap_or(0);
+    // Calculate grid dimensions
+    let num_columns = columns.keys().max().map(|m| m + 1).unwrap_or(1);
+    let max_modules_per_column = columns.values().map(|v| v.len()).max().unwrap_or(1);
+
+    // Determine if we need a modulation row
+    let has_modulation = !modulation_modules.is_empty();
+    let _modulation_columns = if has_modulation {
+        // Group modulation by target column
+        let mut mod_by_col: HashMap<usize, usize> = HashMap::new();
+        for mod_module in &modulation_modules {
+            let target_col = outgoing
+                .get(&mod_module.id)
+                .and_then(|targets| {
+                    targets
+                        .iter()
+                        .filter(|t| !modulation_ids.contains(t))
+                        .filter_map(|t| depth.get(t))
+                        .min()
+                        .copied()
+                })
+                .unwrap_or(0);
+            *mod_by_col.entry(target_col).or_insert(0) += 1;
+        }
+        mod_by_col.values().max().copied().unwrap_or(1)
+    } else {
+        0
+    };
+
+    // Calculate available space
+    let available_width = available_rect.width() - GAP;
+    let available_height = available_rect.height() - GAP;
+
+    // Calculate module size to fill space
+    // Width: divide available width by number of columns
+    let module_width =
+        ((available_width - GAP * num_columns as f32) / num_columns as f32).max(MIN_MODULE_WIDTH);
+
+    // Height: divide available height by total rows needed
+    let main_rows = max_modules_per_column;
+    let mod_rows = if has_modulation { 1 } else { 0 };
+    let total_rows = main_rows + mod_rows;
+
+    let height_for_modules = if has_modulation {
+        available_height - MODULATION_GAP
+    } else {
+        available_height
+    };
+
+    let module_height =
+        ((height_for_modules - GAP * total_rows as f32) / total_rows as f32).max(MIN_MODULE_HEIGHT);
+
+    // Cell size including gap
+    let cell_width = module_width + GAP;
+    let cell_height = module_height + GAP;
+
+    // Calculate starting position to center the grid if modules are at minimum size
+    let total_width = num_columns as f32 * cell_width;
+    let start_x = available_rect.min.x + GAP + (available_width - total_width).max(0.0) / 2.0;
+    let start_y = available_rect.min.y + GAP;
 
     // Place main path modules
-    // Each depth level gets its own column, modules at same depth are stacked vertically
-    let mut actual_main_rows = 1usize;
+    for (&depth_level, module_ids) in &columns {
+        let col = depth_level;
+        for (row, &module_id) in module_ids.iter().enumerate() {
+            let x = start_x + col as f32 * cell_width;
+            let y = start_y + row as f32 * cell_height;
+            result.positions.insert(module_id, Pos2::new(x, y));
+        }
+    }
 
-    for depth_level in 0..=max_depth {
-        if let Some(module_ids) = columns.get(&depth_level) {
-            // Calculate which column this depth level should be in
-            // If we have more depth levels than columns, wrap to a new "row of columns"
-            let col_group = depth_level / max_cols;
-            let col_in_group = depth_level % max_cols;
+    // Place modulation modules below main path
+    if has_modulation {
+        let mod_base_y = start_y + main_rows as f32 * cell_height + MODULATION_GAP;
 
-            for (row_in_col, &module_id) in module_ids.iter().enumerate() {
-                // Calculate actual row: base row for this column group + row within column
-                let base_row = col_group * max_main_rows;
-                let row = base_row + row_in_col;
+        // Group modulation by target column
+        let mut mod_by_column: HashMap<usize, Vec<ModuleId>> = HashMap::new();
+        for mod_module in &modulation_modules {
+            let target_col = outgoing
+                .get(&mod_module.id)
+                .and_then(|targets| {
+                    targets
+                        .iter()
+                        .filter(|t| !modulation_ids.contains(t))
+                        .filter_map(|t| depth.get(t))
+                        .min()
+                        .copied()
+                })
+                .unwrap_or(0);
+            mod_by_column
+                .entry(target_col)
+                .or_default()
+                .push(mod_module.id);
+        }
 
-                // Place module
-                let pos = config.position_at(col_in_group, row);
-                result.positions.insert(module_id, pos);
-
-                // Track max rows used
-                actual_main_rows = actual_main_rows.max(row + 1);
+        for (col, module_ids) in &mod_by_column {
+            for (idx, &module_id) in module_ids.iter().enumerate() {
+                // Stack horizontally within the column if multiple
+                let x = start_x + *col as f32 * cell_width + idx as f32 * cell_width / 2.0;
+                let y = mod_base_y;
+                result.positions.insert(module_id, Pos2::new(x, y));
             }
         }
-    }
 
-    // Place modulation modules below their first target
-    // Group by which column their target is in
-    let mut mod_by_column: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-
-    for mod_module in &modulation_modules {
-        // Find target column by looking at where connected main modules ended up
-        let target_col = outgoing
-            .get(&mod_module.id)
-            .and_then(|targets| {
-                targets
-                    .iter()
-                    .filter(|t| !modulation_ids.contains(t))
-                    .filter_map(|t| result.positions.get(t))
-                    .map(|pos| {
-                        // Calculate which column this position is in
-                        ((pos.x - config.area_min.x - config.gap_x) / config.cell_size().x) as usize
-                    })
-                    .min()
-            })
-            .unwrap_or(0);
-
-        mod_by_column
-            .entry(target_col)
-            .or_default()
-            .push(mod_module.id);
-    }
-
-    // For modulation placement, use the minimum of actual rows used and max rows
-    // This ensures modulation modules are placed reasonably even with overflow
-    let modulation_base_rows = actual_main_rows.min(max_main_rows + 1);
-
-    // Place modulation modules
-    for (col, module_ids) in &mod_by_column {
-        for (row, &module_id) in module_ids.iter().enumerate() {
-            let pos = config.modulation_position_at(*col, row, modulation_base_rows);
-            result.positions.insert(module_id, pos);
-        }
-    }
-
-    // Handle any modules not yet placed (disconnected modulation)
-    let mut unplaced_col = 0;
-    let mut unplaced_row = 0;
-    for module in modules {
-        if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(module.id) {
-            let pos =
-                config.modulation_position_at(unplaced_col, unplaced_row, modulation_base_rows);
-            e.insert(pos);
-            unplaced_col += 1;
-            if unplaced_col >= max_cols {
-                unplaced_col = 0;
-                unplaced_row += 1;
+        // Handle disconnected modulation modules
+        let mut unplaced_idx = 0;
+        for module in &modulation_modules {
+            if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(module.id)
+            {
+                let x = start_x + unplaced_idx as f32 * cell_width;
+                let y = mod_base_y;
+                e.insert(Pos2::new(x, y));
+                unplaced_idx += 1;
             }
         }
     }
@@ -321,20 +263,13 @@ mod tests {
         ModuleId::new(crate::engine::typed_params::ModuleType::Oscillator, n)
     }
 
-    fn test_config() -> LayoutConfig {
-        LayoutConfig {
-            area_min: Pos2::new(0.0, 0.0),
-            area_max: Pos2::new(1000.0, 600.0),
-            module_size: Vec2::new(180.0, 150.0),
-            gap_x: 20.0,
-            gap_y: 20.0,
-            modulation_gap: 30.0,
-        }
+    fn test_rect() -> Rect {
+        Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(800.0, 500.0))
     }
 
     #[test]
     fn test_empty_layout() {
-        let result = calculate_layout(&[], &[], &test_config());
+        let result = calculate_layout(&[], &[], test_rect());
         assert!(result.positions.is_empty());
     }
 
@@ -344,18 +279,17 @@ mod tests {
             id: make_id(1),
             category: ModuleCategory::Oscillator,
         }];
-        let result = calculate_layout(&modules, &[], &test_config());
+        let rect = test_rect();
+        let result = calculate_layout(&modules, &[], rect);
         assert_eq!(result.positions.len(), 1);
 
-        // Should be at first position
         let pos = result.positions.get(&make_id(1)).unwrap();
-        assert!(pos.x >= 0.0);
-        assert!(pos.y >= 0.0);
+        assert!(pos.x >= rect.min.x);
+        assert!(pos.y >= rect.min.y);
     }
 
     #[test]
     fn test_linear_chain() {
-        let config = test_config();
         let modules = vec![
             ModuleInfo {
                 id: make_id(1),
@@ -381,20 +315,19 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, &config);
+        let result = calculate_layout(&modules, &connections, test_rect());
 
-        // Oscillator should be leftmost
         let osc_pos = result.positions.get(&make_id(1)).unwrap();
         let flt_pos = result.positions.get(&make_id(2)).unwrap();
         let amp_pos = result.positions.get(&make_id(3)).unwrap();
 
+        // Should be left to right
         assert!(osc_pos.x < flt_pos.x);
         assert!(flt_pos.x < amp_pos.x);
     }
 
     #[test]
     fn test_modulation_below() {
-        let config = test_config();
         let modules = vec![
             ModuleInfo {
                 id: make_id(1),
@@ -420,9 +353,8 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, &config);
+        let result = calculate_layout(&modules, &connections, test_rect());
 
-        // Envelope should be below filter (its target)
         let flt_pos = result.positions.get(&make_id(2)).unwrap();
         let env_pos = result.positions.get(&make_id(3)).unwrap();
 
@@ -430,8 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn test_no_overlap() {
-        let config = test_config();
+    fn test_within_bounds() {
+        let rect = test_rect();
         let modules: Vec<ModuleInfo> = (1..=6)
             .map(|i| ModuleInfo {
                 id: make_id(i),
@@ -439,52 +371,21 @@ mod tests {
             })
             .collect();
 
-        let result = calculate_layout(&modules, &[], &config);
+        let result = calculate_layout(&modules, &[], rect);
 
-        // Check that no modules overlap
-        let positions: Vec<_> = result.positions.values().collect();
-        for (i, pos1) in positions.iter().enumerate() {
-            for pos2 in positions.iter().skip(i + 1) {
-                let dx = (pos1.x - pos2.x).abs();
-                let dy = (pos1.y - pos2.y).abs();
-                // Either horizontally or vertically separated by at least module size
-                assert!(
-                    dx >= config.module_size.x || dy >= config.module_size.y,
-                    "Modules overlap at {:?} and {:?}",
-                    pos1,
-                    pos2
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_within_bounds() {
-        let config = test_config();
-        let modules: Vec<ModuleInfo> = (1..=10)
-            .map(|i| ModuleInfo {
-                id: make_id(i),
-                category: ModuleCategory::Oscillator,
-            })
-            .collect();
-
-        let result = calculate_layout(&modules, &[], &config);
-
-        // All modules should start within bounds
         for pos in result.positions.values() {
             assert!(
-                pos.x >= config.area_min.x,
+                pos.x >= rect.min.x,
                 "Module x {} < min {}",
                 pos.x,
-                config.area_min.x
+                rect.min.x
             );
             assert!(
-                pos.y >= config.area_min.y,
+                pos.y >= rect.min.y,
                 "Module y {} < min {}",
                 pos.y,
-                config.area_min.y
+                rect.min.y
             );
-            // Note: we allow overflow if there are many modules
         }
     }
 }

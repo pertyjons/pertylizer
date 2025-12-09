@@ -1074,7 +1074,7 @@ impl PatchEditor {
     ///
     /// `available_rect` should be the area available for modules (excluding side panels).
     pub fn apply_auto_layout(&mut self, available_rect: egui::Rect) {
-        use super::auto_layout::{LayoutConfig, LayoutConnection, ModuleInfo, calculate_layout};
+        use super::auto_layout::{LayoutConnection, ModuleInfo, calculate_layout};
 
         // Collect module info
         let modules: Vec<ModuleInfo> = self
@@ -1098,18 +1098,13 @@ impl PatchEditor {
             })
             .collect();
 
-        // Configure layout with available area
-        // Subtract canvas_offset to get positions relative to the canvas
-        let config = LayoutConfig {
-            area_min: available_rect.min - self.canvas_offset,
-            area_max: available_rect.max - self.canvas_offset,
-            module_size: Vec2::new(200.0, 180.0), // Approximate module size
-            gap_x: 20.0,
-            gap_y: 20.0,
-            modulation_gap: 40.0,
-        };
+        // Calculate layout rect relative to canvas (subtract offset)
+        let layout_rect = egui::Rect::from_min_max(
+            available_rect.min - self.canvas_offset,
+            available_rect.max - self.canvas_offset,
+        );
 
-        let result = calculate_layout(&modules, &connections, &config);
+        let result = calculate_layout(&modules, &connections, layout_rect);
 
         // Apply new positions and mark for repositioning
         for (module_id, position) in result.positions {
