@@ -241,9 +241,15 @@ pub fn calculate_layout(
         }
     }
 
-    // Place connected modulation modules (below their targets)
+    // Place connected modulation modules (below their targets, but within bounds)
     if has_modulation {
-        let mod_base_y = start_y + main_rows as f32 * cell_height;
+        // Modulation modules go below main signal path
+        // Calculate Y position that keeps them within bounds
+        // The modulation row is at index = main_rows (0-indexed, so after all main rows)
+        let mod_row_index = main_rows;
+        // Ensure the Y position + module_height stays within available_rect
+        let ideal_y = start_y + mod_row_index as f32 * cell_height;
+        let mod_base_y = ideal_y.min(max_y);
 
         // Group by target column
         let mut mod_by_column: HashMap<usize, Vec<ModuleId>> = HashMap::new();

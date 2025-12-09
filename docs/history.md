@@ -1,5 +1,14 @@
 # Version History
 
+## [0.34.11] - 2024
+### Fixed - Auto Layout: ADSR/Modulation-moduler håller sig inom vyn
+- **Korrigerad beräkning av modulation-radens Y-position:**
+  - `mod_row_index` sätts nu korrekt till `main_rows` (efter alla huvudmoduler)
+  - `mod_base_y` begränsas med `.min(max_y)` för att garantera att modulen håller sig inom canvas
+- **ADSR/Envelope-moduler överlappar inte längre pianot/keyboardet**
+
+---
+
 ## [0.34.10] - 2024
 ### Fixed - Auto Layout: Moduler håller sig garanterat inom vyn
 - **Modulhöjden anpassas nu automatiskt:**
