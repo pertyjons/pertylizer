@@ -18,8 +18,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::engine::typed_params::{LoopMode, ModuleType, Param, ReleaseMode, SamplePlayerParam};
 use crate::modules::core::*;
 use crate::types::{
-    Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, PlaybackDirection,
-    PlaybackPosition, PlaybackState, Sample, SampleRate, SampleValue, WaveformOverview,
+    Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, NoteReleaseState,
+    PlaybackDirection, PlaybackPosition, PlaybackState, Sample, SampleRate, SampleValue,
+    WaveformOverview,
 };
 
 // ============================================================================
@@ -89,7 +90,7 @@ pub struct SamplePlayer {
     playback_state: PlaybackState,
     current_note: Option<MidiNote>,
     current_velocity: NormalizedValue,
-    releasing: bool,
+    note_release_state: NoteReleaseState,
 
     // Config
     interpolation: Interpolation,
@@ -128,7 +129,7 @@ impl SamplePlayer {
             playback_state: PlaybackState::Stopped,
             current_note: None,
             current_velocity: NormalizedValue::new(1.0),
-            releasing: false,
+            note_release_state: NoteReleaseState::Held,
 
             // Config
             interpolation: Interpolation::Linear,
@@ -251,7 +252,7 @@ impl SamplePlayer {
         let end = self.end_frame() as f64;
 
         // When releasing, don't loop
-        if self.releasing {
+        if self.note_release_state.is_released() {
             if pos >= end || pos < start {
                 self.playback_state = PlaybackState::Stopped;
                 self.position = if pos >= end {
@@ -606,7 +607,7 @@ impl PolyModule for SamplePlayer {
         self.position = PlaybackPosition::new(self.start_frame() as f64);
         self.direction = PlaybackDirection::Forward;
         self.playback_state = PlaybackState::Stopped;
-        self.releasing = false;
+        self.note_release_state = NoteReleaseState::Held;
     }
 
     fn note_on(&mut self, note: MidiNote, velocity: f32) {
@@ -615,7 +616,7 @@ impl PolyModule for SamplePlayer {
         self.position = PlaybackPosition::new(self.start_frame() as f64);
         self.direction = PlaybackDirection::Forward;
         self.playback_state = PlaybackState::Playing;
-        self.releasing = false;
+        self.note_release_state = NoteReleaseState::Held;
     }
 
     fn note_off(&mut self) {
@@ -626,16 +627,16 @@ impl PolyModule for SamplePlayer {
                     self.playback_state = PlaybackState::Stopped;
                 } else {
                     // In loop mode, start releasing (will play to end)
-                    self.releasing = true;
+                    self.note_release_state = NoteReleaseState::Released;
                 }
             }
             ReleaseMode::PlayToEnd => {
                 // Disable looping and play to end
-                self.releasing = true;
+                self.note_release_state = NoteReleaseState::Released;
             }
             ReleaseMode::PlayToLoop => {
                 // Play to loop end, then stop
-                self.releasing = true;
+                self.note_release_state = NoteReleaseState::Released;
             }
         }
     }

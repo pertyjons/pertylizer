@@ -508,6 +508,66 @@ pub enum Interpolation {
 }
 
 impl Interpolation {
+    /// All available interpolation modes.
+    pub const ALL: [Self; 7] = [
+        Self::Nearest,
+        Self::Linear,
+        Self::Cubic,
+        Self::Hermite,
+        Self::Lagrange,
+        Self::Sinc8,
+        Self::Sinc16,
+    ];
+
+    /// Get display name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Nearest => "Nearest",
+            Self::Linear => "Linear",
+            Self::Cubic => "Cubic",
+            Self::Hermite => "Hermite",
+            Self::Lagrange => "Lagrange",
+            Self::Sinc8 => "Sinc 8",
+            Self::Sinc16 => "Sinc 16",
+        }
+    }
+
+    /// Get ID string.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Nearest => "nearest",
+            Self::Linear => "linear",
+            Self::Cubic => "cubic",
+            Self::Hermite => "hermite",
+            Self::Lagrange => "lagrange",
+            Self::Sinc8 => "sinc8",
+            Self::Sinc16 => "sinc16",
+        }
+    }
+
+    /// Get index of this mode.
+    #[must_use]
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&m| m == self).unwrap_or(0)
+    }
+
+    /// Create from index.
+    #[must_use]
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    /// Generate choice options for GUI.
+    #[must_use]
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+
     /// Get the number of samples needed before the current position.
     #[inline]
     pub const fn samples_before(self) -> usize {

@@ -1,5 +1,21 @@
 # Version History
 
+## [0.34.1] - 2024
+### Improved - Fas 2: Sampling & Uppspelning
+- **types/sample.rs** - `Interpolation` enum utökad med GUI-stöd:
+  - `ALL` konstant med alla 7 interpolationslägen
+  - `name()`, `id()`, `index()`, `from_index()` metoder
+  - `to_choices()` för GUI-dropdown
+- **types/state.rs** - `NoteReleaseState` enum tillagd:
+  - `Held` - Ton hålls, normal uppspelning med looping
+  - `Released` - Ton släppt, spelar till slut utan looping
+  - Metoder: `is_released()`, `is_held()`, `release()`, `hold()`
+- **SamplePlayer** - Refaktorerad med semantisk state:
+  - `note_release_state: NoteReleaseState` istället för `releasing: bool`
+  - Tydligare kodintention vid note-on/note-off hantering
+
+---
+
 ## [0.34.0] - 2024
 ### Added - Type Hardening: Semantic State Enums
 - **types/state.rs** - Ny modul för semantiska tillstånds-enums som eliminerar "Boolean Blindness"

@@ -471,6 +471,69 @@ impl From<LimitMode> for bool {
 }
 
 // ============================================================================
+// NOTE RELEASE STATE
+// ============================================================================
+
+/// Runtime state for note release in sample players and envelopes.
+///
+/// This is different from `ReleaseMode` which configures *how* to release.
+/// `NoteReleaseState` tracks *whether* we're currently in the release phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum NoteReleaseState {
+    /// Note is held - normal playback with looping.
+    #[default]
+    Held,
+    /// Note was released - playing to end, no looping.
+    Released,
+}
+
+impl NoteReleaseState {
+    /// Check if in release phase.
+    #[inline]
+    #[must_use]
+    pub const fn is_released(self) -> bool {
+        matches!(self, Self::Released)
+    }
+
+    /// Check if note is held.
+    #[inline]
+    #[must_use]
+    pub const fn is_held(self) -> bool {
+        matches!(self, Self::Held)
+    }
+
+    /// Trigger release.
+    #[inline]
+    #[must_use]
+    pub const fn release(self) -> Self {
+        Self::Released
+    }
+
+    /// Reset to held state.
+    #[inline]
+    #[must_use]
+    pub const fn hold(self) -> Self {
+        Self::Held
+    }
+}
+
+impl From<bool> for NoteReleaseState {
+    fn from(releasing: bool) -> Self {
+        if releasing {
+            Self::Released
+        } else {
+            Self::Held
+        }
+    }
+}
+
+impl From<NoteReleaseState> for bool {
+    fn from(state: NoteReleaseState) -> Self {
+        state.is_released()
+    }
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -552,5 +615,22 @@ mod tests {
         let limit = LimitMode::Enabled;
         assert!(limit.is_enabled());
         assert_eq!(limit.toggle(), LimitMode::Disabled);
+    }
+
+    #[test]
+    fn test_note_release_state() {
+        let held = NoteReleaseState::Held;
+        assert!(held.is_held());
+        assert!(!held.is_released());
+        assert_eq!(held.release(), NoteReleaseState::Released);
+
+        let released = NoteReleaseState::Released;
+        assert!(released.is_released());
+        assert!(!released.is_held());
+        assert_eq!(released.hold(), NoteReleaseState::Held);
+
+        // From bool
+        assert_eq!(NoteReleaseState::from(true), NoteReleaseState::Released);
+        assert_eq!(NoteReleaseState::from(false), NoteReleaseState::Held);
     }
 }
