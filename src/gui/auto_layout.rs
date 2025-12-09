@@ -229,39 +229,29 @@ pub fn calculate_layout(
     let max_depth = columns.keys().max().copied().unwrap_or(0);
 
     // Place main path modules
-    // If we have more depth levels than columns, we need to wrap
-    let mut current_col = 0;
-    let mut current_row = 0;
+    // Each depth level gets its own column, modules at same depth are stacked vertically
     let mut actual_main_rows = 1usize;
 
     for depth_level in 0..=max_depth {
         if let Some(module_ids) = columns.get(&depth_level) {
-            for &module_id in module_ids {
+            // Calculate which column this depth level should be in
+            // If we have more depth levels than columns, wrap to a new "row of columns"
+            let col_group = depth_level / max_cols;
+            let col_in_group = depth_level % max_cols;
+
+            for (row_in_col, &module_id) in module_ids.iter().enumerate() {
+                // Calculate actual row: base row for this column group + row within column
+                let base_row = col_group * max_main_rows;
+                let row = base_row + row_in_col;
+
                 // Place module
-                let pos = config.position_at(current_col, current_row);
+                let pos = config.position_at(col_in_group, row);
                 result.positions.insert(module_id, pos);
 
-                // Move to next column
-                current_col += 1;
-
-                // Wrap to next row if we exceed available columns
-                if current_col >= max_cols {
-                    current_col = 0;
-                    current_row += 1;
-                    actual_main_rows = actual_main_rows.max(current_row + 1);
-
-                    // If we're out of vertical space, just keep going (overflow)
-                    if current_row >= max_main_rows {
-                        // Could add scrolling support here in future
-                    }
-                }
+                // Track max rows used
+                actual_main_rows = actual_main_rows.max(row + 1);
             }
         }
-    }
-
-    // Track how many main rows we actually used
-    if current_col > 0 {
-        actual_main_rows = actual_main_rows.max(current_row + 1);
     }
 
     // Place modulation modules below their first target
@@ -291,10 +281,14 @@ pub fn calculate_layout(
             .push(mod_module.id);
     }
 
+    // For modulation placement, use the minimum of actual rows used and max rows
+    // This ensures modulation modules are placed reasonably even with overflow
+    let modulation_base_rows = actual_main_rows.min(max_main_rows + 1);
+
     // Place modulation modules
     for (col, module_ids) in &mod_by_column {
         for (row, &module_id) in module_ids.iter().enumerate() {
-            let pos = config.modulation_position_at(*col, row, actual_main_rows);
+            let pos = config.modulation_position_at(*col, row, modulation_base_rows);
             result.positions.insert(module_id, pos);
         }
     }
@@ -304,7 +298,8 @@ pub fn calculate_layout(
     let mut unplaced_row = 0;
     for module in modules {
         if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(module.id) {
-            let pos = config.modulation_position_at(unplaced_col, unplaced_row, actual_main_rows);
+            let pos =
+                config.modulation_position_at(unplaced_col, unplaced_row, modulation_base_rows);
             e.insert(pos);
             unplaced_col += 1;
             if unplaced_col >= max_cols {

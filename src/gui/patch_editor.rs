@@ -356,18 +356,6 @@ impl PatchEditor {
         // Store the canvas rect for auto-layout calculations
         result.canvas_rect = Some(canvas_rect);
 
-        // Toolbar overlay (top-left corner)
-        let toolbar_rect = Rect::from_min_size(
-            canvas_rect.min + Vec2::new(10.0, 10.0),
-            Vec2::new(120.0, 30.0),
-        );
-        let mut toolbar_ui = ui.new_child(egui::UiBuilder::new().max_rect(toolbar_rect));
-        toolbar_ui.horizontal(|ui| {
-            if ui.button("📐 Auto Layout").clicked() {
-                result.request_auto_layout = true;
-            }
-        });
-
         // Clear port positions for this frame
         self.port_positions.clear();
 
@@ -661,7 +649,35 @@ impl PatchEditor {
             self.pending_connection = None;
         }
 
+        // Draw toolbar in foreground layer (always on top)
+        self.draw_toolbar_foreground(ui, canvas_rect, &mut result);
+
         result
+    }
+
+    /// Draw the toolbar overlay in the foreground layer.
+    fn draw_toolbar_foreground(
+        &self,
+        ui: &mut Ui,
+        canvas_rect: Rect,
+        result: &mut PatchEditorResult,
+    ) {
+        use egui::{Area, Frame, Order};
+
+        Area::new(egui::Id::new("patch_toolbar"))
+            .order(Order::Foreground)
+            .fixed_pos(canvas_rect.min + Vec2::new(10.0, 10.0))
+            .show(ui.ctx(), |ui| {
+                Frame::popup(ui.style())
+                    .fill(theme().colors.bg_panel.gamma_multiply(0.95))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("📐 Auto Layout").clicked() {
+                                result.request_auto_layout = true;
+                            }
+                        });
+                    });
+            });
     }
 
     /// Draw ports section with clickable ports.

@@ -1,5 +1,18 @@
 # Version History
 
+## [0.34.7] - 2024
+### Improved - Auto Layout toolbar och höjdberäkning
+- **Auto Layout-knappen ritas nu i foreground layer** - syns alltid överst, även när moduler dras över
+- **Förbättrad layoutalgoritm:**
+  - Moduler på samma djup-nivå staplas nu vertikalt (samma kolumn)
+  - Djup-nivåer fortsätter till nästa kolumn
+  - Om kolumnerna tar slut, fortsätter layouten på en ny "rad av kolumner"
+- **Korrekt höjdhantering:**
+  - Modulationsmoduler placeras baserat på faktiskt antal rader som används
+  - Begränsning till `max_main_rows + 1` för att undvika att modulation hamnar för långt ner
+
+---
+
 ## [0.34.6] - 2024
 ### Improved - Auto Layout respekterar tillgängligt utrymme
 - **Algoritmen tar nu hänsyn till:**
