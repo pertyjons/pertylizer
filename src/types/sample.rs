@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{MidiNote, SampleRate};
 
+// ============================================================================
+// SAMPLE VALUE
+// ============================================================================
+
 /// A single audio sample value in the range -1.0 to 1.0.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -54,6 +58,12 @@ impl SampleValue {
     pub fn scale(self, factor: f32) -> Self {
         Self(self.0 * factor)
     }
+
+    /// Add another sample value.
+    #[inline]
+    pub fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
 }
 
 impl From<f32> for SampleValue {
@@ -67,6 +77,18 @@ impl From<SampleValue> for f32 {
         value.0
     }
 }
+
+impl std::ops::Add for SampleValue {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+// ============================================================================
+// SAMPLE INDEX
+// ============================================================================
 
 /// An integer index into sample data.
 #[derive(
@@ -104,6 +126,10 @@ impl From<SampleIndex> for usize {
         index.0
     }
 }
+
+// ============================================================================
+// PLAYBACK POSITION
+// ============================================================================
 
 /// A fractional position within sample data for interpolation.
 ///
@@ -172,6 +198,10 @@ impl From<PlaybackPosition> for f64 {
     }
 }
 
+// ============================================================================
+// PLAYBACK SPEED
+// ============================================================================
+
 /// Playback speed multiplier.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -225,6 +255,38 @@ impl From<PlaybackSpeed> for f32 {
     }
 }
 
+// ============================================================================
+// PLAYBACK STATE
+// ============================================================================
+
+/// Current playback state of a sample player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum PlaybackState {
+    /// Not playing.
+    #[default]
+    Stopped,
+    /// Currently playing.
+    Playing,
+}
+
+impl PlaybackState {
+    /// Check if currently playing.
+    #[inline]
+    pub const fn is_playing(self) -> bool {
+        matches!(self, Self::Playing)
+    }
+
+    /// Check if stopped.
+    #[inline]
+    pub const fn is_stopped(self) -> bool {
+        matches!(self, Self::Stopped)
+    }
+}
+
+// ============================================================================
+// CHANNEL MODE
+// ============================================================================
+
 /// Channel configuration for samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ChannelMode {
@@ -246,58 +308,9 @@ impl ChannelMode {
     }
 }
 
-/// A region within a sample for looping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LoopRegion {
-    /// Start index of the loop.
-    pub start: SampleIndex,
-    /// End index of the loop (exclusive).
-    pub end: SampleIndex,
-}
-
-impl LoopRegion {
-    /// Create a new loop region.
-    #[inline]
-    pub const fn new(start: SampleIndex, end: SampleIndex) -> Self {
-        Self { start, end }
-    }
-
-    /// Get the length of the loop region.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.end.0.saturating_sub(self.start.0)
-    }
-
-    /// Check if the region is empty.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-/// How the sample should loop (or not).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum LoopMode {
-    /// Play once and stop.
-    #[default]
-    OneShot,
-    /// Loop forward continuously.
-    Forward(LoopRegion),
-    /// Loop back and forth (ping-pong).
-    PingPong(LoopRegion),
-}
-
-/// Interpolation method for sample playback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-pub enum Interpolation {
-    /// No interpolation (nearest sample).
-    Nearest,
-    /// Linear interpolation between adjacent samples.
-    #[default]
-    Linear,
-    /// Cubic interpolation for smoother results.
-    Cubic,
-}
+// ============================================================================
+// PLAYBACK DIRECTION
+// ============================================================================
 
 /// Playback direction (for ping-pong looping).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -312,6 +325,7 @@ pub enum PlaybackDirection {
 impl PlaybackDirection {
     /// Reverse the direction.
     #[inline]
+    #[must_use]
     pub fn reverse(self) -> Self {
         match self {
             Self::Forward => Self::Backward,
@@ -329,13 +343,194 @@ impl PlaybackDirection {
     }
 }
 
+// ============================================================================
+// INTERPOLATION
+// ============================================================================
+
+/// Interpolation method for sample playback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Interpolation {
+    /// No interpolation (nearest sample). Fastest, lowest quality.
+    Nearest,
+    /// Linear interpolation between adjacent samples. Fast, decent quality.
+    #[default]
+    Linear,
+    /// Cubic interpolation (Catmull-Rom spline). Good quality.
+    Cubic,
+    /// 4-point Hermite interpolation. Similar to cubic, smoother.
+    Hermite,
+    /// 4-point Lagrange interpolation. Mathematical precision.
+    Lagrange,
+    /// 8-tap windowed Sinc (Lanczos). High quality.
+    Sinc8,
+    /// 16-tap windowed Sinc (Lanczos). Highest quality, slowest.
+    Sinc16,
+}
+
+impl Interpolation {
+    /// Get the number of samples needed before the current position.
+    #[inline]
+    pub const fn samples_before(self) -> usize {
+        match self {
+            Self::Nearest | Self::Linear => 0,
+            Self::Cubic | Self::Hermite | Self::Lagrange => 1,
+            Self::Sinc8 => 3,
+            Self::Sinc16 => 7,
+        }
+    }
+
+    /// Get the number of samples needed after the current position.
+    #[inline]
+    pub const fn samples_after(self) -> usize {
+        match self {
+            Self::Nearest => 0,
+            Self::Linear => 1,
+            Self::Cubic | Self::Hermite | Self::Lagrange => 2,
+            Self::Sinc8 => 4,
+            Self::Sinc16 => 8,
+        }
+    }
+}
+
+// ============================================================================
+// SAMPLE NAME
+// ============================================================================
+
+/// A sample name (typically from filename).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SampleName(pub String);
+
+impl SampleName {
+    /// Create a new sample name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    /// Get the name as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SampleName {
+    fn from(name: String) -> Self {
+        Self(name)
+    }
+}
+
+impl From<&str> for SampleName {
+    fn from(name: &str) -> Self {
+        Self(name.to_string())
+    }
+}
+
+impl std::fmt::Display for SampleName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// ============================================================================
+// WAVEFORM OVERVIEW
+// ============================================================================
+
+/// Pre-computed waveform overview for visualization.
+///
+/// Contains min/max peaks for efficient waveform display without
+/// reading all sample data every frame.
+#[derive(Debug, Clone)]
+pub struct WaveformOverview {
+    /// (min, max) pairs for each segment.
+    pub peaks: Vec<(SampleValue, SampleValue)>,
+    /// Number of source samples per peak.
+    pub samples_per_peak: usize,
+    /// Total number of frames in the source sample.
+    pub total_frames: usize,
+}
+
+impl WaveformOverview {
+    /// Generate a waveform overview from a sample.
+    ///
+    /// # Arguments
+    /// * `sample` - The source sample
+    /// * `num_peaks` - Number of peak segments to generate (typically 100-500)
+    #[must_use]
+    pub fn generate(sample: &Sample, num_peaks: usize) -> Self {
+        let frame_count = sample.len().as_usize();
+        let num_peaks = num_peaks.max(1);
+        let samples_per_peak = (frame_count / num_peaks).max(1);
+        let mut peaks = Vec::with_capacity(num_peaks);
+
+        for i in 0..num_peaks {
+            let start = i * samples_per_peak;
+            let end = ((i + 1) * samples_per_peak).min(frame_count);
+
+            if start >= frame_count {
+                peaks.push((SampleValue::ZERO, SampleValue::ZERO));
+                continue;
+            }
+
+            let mut min = SampleValue::MAX;
+            let mut max = SampleValue::MIN;
+
+            for j in start..end {
+                let (l, r) = sample.read(PlaybackPosition::new(j as f64), Interpolation::Nearest);
+                // Convert to mono for visualization
+                let mono = SampleValue::new((l.as_f32() + r.as_f32()) * 0.5);
+
+                if mono.as_f32() < min.as_f32() {
+                    min = mono;
+                }
+                if mono.as_f32() > max.as_f32() {
+                    max = mono;
+                }
+            }
+
+            peaks.push((min, max));
+        }
+
+        Self {
+            peaks,
+            samples_per_peak,
+            total_frames: frame_count,
+        }
+    }
+
+    /// Get the peak at a normalized position (0.0 to 1.0).
+    #[must_use]
+    pub fn peak_at(&self, position: f32) -> Option<(SampleValue, SampleValue)> {
+        if self.peaks.is_empty() {
+            return None;
+        }
+        let index = (position * self.peaks.len() as f32) as usize;
+        self.peaks.get(index.min(self.peaks.len() - 1)).copied()
+    }
+
+    /// Get the number of peaks.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.peaks.len()
+    }
+
+    /// Check if the overview is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.peaks.is_empty()
+    }
+}
+
+// ============================================================================
+// SAMPLE
+// ============================================================================
+
 /// An audio sample with metadata.
 ///
 /// Samples are immutable and can be safely shared across threads via `Arc`.
 #[derive(Debug, Clone)]
 pub struct Sample {
     /// Name of the sample (usually filename).
-    pub name: String,
+    pub name: SampleName,
     /// Audio data as sample values.
     pub data: Arc<[SampleValue]>,
     /// Channel configuration.
@@ -344,26 +539,29 @@ pub struct Sample {
     pub sample_rate: SampleRate,
     /// Root note (pitch at normal speed).
     pub root_note: MidiNote,
-    /// Loop mode.
-    pub loop_mode: LoopMode,
 }
 
 impl Sample {
     /// Create a new sample.
     pub fn new(
-        name: String,
+        name: impl Into<SampleName>,
         data: Vec<SampleValue>,
         channels: ChannelMode,
         sample_rate: SampleRate,
     ) -> Self {
         Self {
-            name,
+            name: name.into(),
             data: data.into(),
             channels,
             sample_rate,
             root_note: MidiNote::C4,
-            loop_mode: LoopMode::OneShot,
         }
+    }
+
+    /// Create a new sample with a specific root note.
+    pub fn with_root_note(mut self, root_note: MidiNote) -> Self {
+        self.root_note = root_note;
+        self
     }
 
     /// Get the length of the sample in frames (not individual samples).
@@ -376,6 +574,12 @@ impl Sample {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    /// Get the duration in seconds.
+    #[inline]
+    pub fn duration_seconds(&self) -> f32 {
+        self.len().as_usize() as f32 / self.sample_rate.as_f32()
     }
 
     /// Read a stereo sample at the given position with interpolation.
@@ -432,6 +636,10 @@ impl Sample {
                 s0.lerp(s1, frac)
             }
             Interpolation::Cubic => self.cubic_interp_mono(idx, position.fraction(), len),
+            Interpolation::Hermite => self.hermite_interp_mono(idx, position.fraction(), len),
+            Interpolation::Lagrange => self.lagrange_interp_mono(idx, position.fraction(), len),
+            Interpolation::Sinc8 => self.sinc_interp_mono(idx, position.fraction(), len, 4),
+            Interpolation::Sinc16 => self.sinc_interp_mono(idx, position.fraction(), len, 8),
         }
     }
 
@@ -482,10 +690,22 @@ impl Sample {
                 (l0.lerp(l1, frac), r0.lerp(r1, frac))
             }
             Interpolation::Cubic => self.cubic_interp_stereo(idx, position.fraction(), frame_count),
+            Interpolation::Hermite => {
+                self.hermite_interp_stereo(idx, position.fraction(), frame_count)
+            }
+            Interpolation::Lagrange => {
+                self.lagrange_interp_stereo(idx, position.fraction(), frame_count)
+            }
+            Interpolation::Sinc8 => {
+                self.sinc_interp_stereo(idx, position.fraction(), frame_count, 4)
+            }
+            Interpolation::Sinc16 => {
+                self.sinc_interp_stereo(idx, position.fraction(), frame_count, 8)
+            }
         }
     }
 
-    /// Cubic interpolation for mono samples.
+    /// Cubic interpolation (Catmull-Rom) for mono samples.
     fn cubic_interp_mono(&self, idx: usize, frac: f32, len: usize) -> SampleValue {
         let get = |i: isize| -> f32 {
             let clamped = i.clamp(0, (len - 1) as isize) as usize;
@@ -511,7 +731,7 @@ impl Sample {
         SampleValue(a0 * t3 + a1 * t2 + a2 * t + a3)
     }
 
-    /// Cubic interpolation for stereo samples.
+    /// Cubic interpolation (Catmull-Rom) for stereo samples.
     fn cubic_interp_stereo(
         &self,
         idx: usize,
@@ -549,6 +769,192 @@ impl Sample {
         (SampleValue(result[0]), SampleValue(result[1]))
     }
 
+    /// Hermite interpolation for mono samples.
+    fn hermite_interp_mono(&self, idx: usize, frac: f32, len: usize) -> SampleValue {
+        let get = |i: isize| -> f32 {
+            let clamped = i.clamp(0, (len - 1) as isize) as usize;
+            self.data[clamped].0
+        };
+
+        let idx = idx as isize;
+        let y0 = get(idx - 1);
+        let y1 = get(idx);
+        let y2 = get(idx + 1);
+        let y3 = get(idx + 2);
+
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        // Hermite interpolation coefficients
+        let c0 = y1;
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+        SampleValue(c0 + c1 * t + c2 * t2 + c3 * t3)
+    }
+
+    /// Hermite interpolation for stereo samples.
+    fn hermite_interp_stereo(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |i: isize, ch: usize| -> f32 {
+            let clamped = i.clamp(0, (frame_count - 1) as isize) as usize;
+            let data_idx = clamped * 2 + ch;
+            self.data.get(data_idx).map(|v| v.0).unwrap_or(0.0)
+        };
+
+        let idx = idx as isize;
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let mut result = [0.0f32; 2];
+
+        for ch in 0..2 {
+            let y0 = get(idx - 1, ch);
+            let y1 = get(idx, ch);
+            let y2 = get(idx + 1, ch);
+            let y3 = get(idx + 2, ch);
+
+            let c0 = y1;
+            let c1 = 0.5 * (y2 - y0);
+            let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+            let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+            result[ch] = c0 + c1 * t + c2 * t2 + c3 * t3;
+        }
+
+        (SampleValue(result[0]), SampleValue(result[1]))
+    }
+
+    /// Lagrange interpolation for mono samples.
+    fn lagrange_interp_mono(&self, idx: usize, frac: f32, len: usize) -> SampleValue {
+        let get = |i: isize| -> f32 {
+            let clamped = i.clamp(0, (len - 1) as isize) as usize;
+            self.data[clamped].0
+        };
+
+        let idx = idx as isize;
+        let t = frac;
+
+        let y0 = get(idx - 1);
+        let y1 = get(idx);
+        let y2 = get(idx + 1);
+        let y3 = get(idx + 2);
+
+        // 4-point Lagrange interpolation at points -1, 0, 1, 2
+        let l0 = (t * (t - 1.0) * (t - 2.0)) / -6.0;
+        let l1 = ((t + 1.0) * (t - 1.0) * (t - 2.0)) / 2.0;
+        let l2 = ((t + 1.0) * t * (t - 2.0)) / -2.0;
+        let l3 = ((t + 1.0) * t * (t - 1.0)) / 6.0;
+
+        SampleValue(y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3)
+    }
+
+    /// Lagrange interpolation for stereo samples.
+    fn lagrange_interp_stereo(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |i: isize, ch: usize| -> f32 {
+            let clamped = i.clamp(0, (frame_count - 1) as isize) as usize;
+            let data_idx = clamped * 2 + ch;
+            self.data.get(data_idx).map(|v| v.0).unwrap_or(0.0)
+        };
+
+        let idx = idx as isize;
+        let t = frac;
+
+        let l0 = (t * (t - 1.0) * (t - 2.0)) / -6.0;
+        let l1 = ((t + 1.0) * (t - 1.0) * (t - 2.0)) / 2.0;
+        let l2 = ((t + 1.0) * t * (t - 2.0)) / -2.0;
+        let l3 = ((t + 1.0) * t * (t - 1.0)) / 6.0;
+
+        let mut result = [0.0f32; 2];
+
+        for ch in 0..2 {
+            let y0 = get(idx - 1, ch);
+            let y1 = get(idx, ch);
+            let y2 = get(idx + 1, ch);
+            let y3 = get(idx + 2, ch);
+
+            result[ch] = y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3;
+        }
+
+        (SampleValue(result[0]), SampleValue(result[1]))
+    }
+
+    /// Sinc interpolation with Lanczos window for mono samples.
+    fn sinc_interp_mono(&self, idx: usize, frac: f32, len: usize, half_taps: usize) -> SampleValue {
+        let get = |i: isize| -> f32 {
+            let clamped = i.clamp(0, (len - 1) as isize) as usize;
+            self.data[clamped].0
+        };
+
+        let idx = idx as isize;
+        let mut sum = 0.0f32;
+        let mut weight_sum = 0.0f32;
+
+        let taps = half_taps as isize;
+        for i in -taps + 1..=taps {
+            let x = frac - i as f32;
+            let weight = lanczos_kernel(x, half_taps as f32);
+            sum += get(idx + i) * weight;
+            weight_sum += weight;
+        }
+
+        if weight_sum.abs() > 1e-10 {
+            SampleValue(sum / weight_sum)
+        } else {
+            SampleValue(get(idx))
+        }
+    }
+
+    /// Sinc interpolation with Lanczos window for stereo samples.
+    fn sinc_interp_stereo(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+        half_taps: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |i: isize, ch: usize| -> f32 {
+            let clamped = i.clamp(0, (frame_count - 1) as isize) as usize;
+            let data_idx = clamped * 2 + ch;
+            self.data.get(data_idx).map(|v| v.0).unwrap_or(0.0)
+        };
+
+        let idx = idx as isize;
+        let mut sum = [0.0f32; 2];
+        let mut weight_sum = 0.0f32;
+
+        let taps = half_taps as isize;
+        for i in -taps + 1..=taps {
+            let x = frac - i as f32;
+            let weight = lanczos_kernel(x, half_taps as f32);
+            for ch in 0..2 {
+                sum[ch] += get(idx + i, ch) * weight;
+            }
+            weight_sum += weight;
+        }
+
+        if weight_sum.abs() > 1e-10 {
+            (
+                SampleValue(sum[0] / weight_sum),
+                SampleValue(sum[1] / weight_sum),
+            )
+        } else {
+            (SampleValue(get(idx, 0)), SampleValue(get(idx, 1)))
+        }
+    }
+
     /// Calculate the pitch ratio to play at a given note.
     ///
     /// Returns the speed multiplier needed to transpose from root_note to target_note.
@@ -557,6 +963,24 @@ impl Sample {
         2.0f32.powf(semitone_diff / 12.0)
     }
 }
+
+/// Lanczos kernel for sinc interpolation.
+#[inline]
+fn lanczos_kernel(x: f32, a: f32) -> f32 {
+    if x.abs() < 1e-10 {
+        1.0
+    } else if x.abs() >= a {
+        0.0
+    } else {
+        let pi_x = std::f32::consts::PI * x;
+        let pi_x_a = pi_x / a;
+        (pi_x.sin() / pi_x) * (pi_x_a.sin() / pi_x_a)
+    }
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -569,6 +993,14 @@ mod tests {
 
         let mid = a.lerp(b, 0.5);
         assert!((mid.0 - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_sample_value_add() {
+        let a = SampleValue::new(0.3);
+        let b = SampleValue::new(0.5);
+        let sum = a + b;
+        assert!((sum.0 - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -586,6 +1018,24 @@ mod tests {
     }
 
     #[test]
+    fn test_playback_state() {
+        let state = PlaybackState::Stopped;
+        assert!(state.is_stopped());
+        assert!(!state.is_playing());
+
+        let state = PlaybackState::Playing;
+        assert!(state.is_playing());
+        assert!(!state.is_stopped());
+    }
+
+    #[test]
+    fn test_sample_name() {
+        let name = SampleName::new("test_sample");
+        assert_eq!(name.as_str(), "test_sample");
+        assert_eq!(format!("{name}"), "test_sample");
+    }
+
+    #[test]
     fn test_sample_read_mono() {
         let data: Vec<SampleValue> = vec![
             SampleValue::new(0.0),
@@ -593,12 +1043,7 @@ mod tests {
             SampleValue::new(1.0),
             SampleValue::new(0.5),
         ];
-        let sample = Sample::new(
-            "test".to_string(),
-            data,
-            ChannelMode::Mono,
-            SampleRate::CD_QUALITY,
-        );
+        let sample = Sample::new("test", data, ChannelMode::Mono, SampleRate::CD_QUALITY);
 
         let (l, r) = sample.read(PlaybackPosition::new(1.0), Interpolation::Nearest);
         assert!((l.0 - 0.5).abs() < 0.001);
@@ -608,7 +1053,7 @@ mod tests {
     #[test]
     fn test_sample_pitch_ratio() {
         let sample = Sample::new(
-            "test".to_string(),
+            "test",
             vec![SampleValue::ZERO],
             ChannelMode::Mono,
             SampleRate::CD_QUALITY,
@@ -621,5 +1066,30 @@ mod tests {
         // One octave up should give ratio 2.0
         let ratio = sample.pitch_ratio(MidiNote::new(72)); // C5
         assert!((ratio - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_waveform_overview() {
+        let data: Vec<SampleValue> = (0..1000)
+            .map(|i| SampleValue::new((i as f32 * 0.01).sin()))
+            .collect();
+        let sample = Sample::new("test", data, ChannelMode::Mono, SampleRate::CD_QUALITY);
+
+        let overview = WaveformOverview::generate(&sample, 100);
+        assert_eq!(overview.len(), 100);
+        assert!(!overview.is_empty());
+        assert_eq!(overview.total_frames, 1000);
+
+        // Check that we can get peaks
+        let peak = overview.peak_at(0.5);
+        assert!(peak.is_some());
+    }
+
+    #[test]
+    fn test_interpolation_samples() {
+        assert_eq!(Interpolation::Nearest.samples_before(), 0);
+        assert_eq!(Interpolation::Linear.samples_after(), 1);
+        assert_eq!(Interpolation::Sinc16.samples_before(), 7);
+        assert_eq!(Interpolation::Sinc16.samples_after(), 8);
     }
 }

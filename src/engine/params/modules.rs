@@ -66,6 +66,66 @@ impl LoopMode {
 }
 
 // ============================================================================
+// RELEASE MODE ENUM
+// ============================================================================
+
+/// Release behavior when note-off is received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum ReleaseMode {
+    /// Stop immediately on note-off.
+    #[default]
+    Immediate,
+    /// Play to end of sample (ignoring loop) - for drums.
+    PlayToEnd,
+    /// Play to loop_end, then stop.
+    PlayToLoop,
+}
+
+impl ReleaseMode {
+    pub const ALL: [Self; 3] = [Self::Immediate, Self::PlayToEnd, Self::PlayToLoop];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Immediate => "Immediate",
+            Self::PlayToEnd => "Play to End",
+            Self::PlayToLoop => "Play to Loop",
+        }
+    }
+
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::PlayToEnd => "play_to_end",
+            Self::PlayToLoop => "play_to_loop",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "immediate" => Some(Self::Immediate),
+            "play_to_end" => Some(Self::PlayToEnd),
+            "play_to_loop" => Some(Self::PlayToLoop),
+            _ => None,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    pub fn index(&self) -> usize {
+        Self::ALL.iter().position(|m| m == self).unwrap_or(0)
+    }
+
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+}
+
+// ============================================================================
 // AMPLIFIER PARAMETER ENUM (with typed values)
 // ============================================================================
 
@@ -213,8 +273,14 @@ pub enum SamplePlayerParam {
     LoopStart(NormalizedValue),
     /// Loop end position
     LoopEnd(NormalizedValue),
+    /// Loop crossfade time in milliseconds (0-50ms)
+    LoopCrossfade(Milliseconds),
     /// Output level
     Level(Gain),
+    /// Velocity sensitivity (0.0 = ignore, 1.0 = full)
+    VelocitySensitivity(NormalizedValue),
+    /// Release mode (what happens on note-off)
+    ReleaseMode(ReleaseMode),
 }
 
 impl SamplePlayerParam {
@@ -230,7 +296,10 @@ impl SamplePlayerParam {
             Self::LoopMode(_) => "Loop Mode",
             Self::LoopStart(_) => "Loop Start",
             Self::LoopEnd(_) => "Loop End",
+            Self::LoopCrossfade(_) => "Loop X-Fade",
             Self::Level(_) => "Level",
+            Self::VelocitySensitivity(_) => "Vel Sens",
+            Self::ReleaseMode(_) => "Release",
         }
     }
 
@@ -240,8 +309,11 @@ impl SamplePlayerParam {
             | Self::Start(v)
             | Self::End(v)
             | Self::LoopStart(v)
-            | Self::LoopEnd(v) => v.as_f32(),
+            | Self::LoopEnd(v)
+            | Self::VelocitySensitivity(v) => v.as_f32(),
             Self::LoopMode(m) => m.index() as f32,
+            Self::ReleaseMode(m) => m.index() as f32,
+            Self::LoopCrossfade(ms) => ms.as_f32(),
             Self::Level(g) => g.as_f32(),
         }
     }
@@ -256,7 +328,12 @@ impl SamplePlayerParam {
             }
             Self::LoopStart(_) => Self::LoopStart(NormalizedValue::new(value)),
             Self::LoopEnd(_) => Self::LoopEnd(NormalizedValue::new(value)),
+            Self::LoopCrossfade(_) => Self::LoopCrossfade(Milliseconds::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::VelocitySensitivity(_) => Self::VelocitySensitivity(NormalizedValue::new(value)),
+            Self::ReleaseMode(_) => {
+                Self::ReleaseMode(ReleaseMode::from_index(value as usize).unwrap_or_default())
+            }
         }
     }
 }

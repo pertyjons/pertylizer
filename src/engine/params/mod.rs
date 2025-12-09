@@ -33,7 +33,7 @@ pub use filters::{FilterMode, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
 pub use modules::{
     AmplifierParam, GranularParam, LevelMeterParam, LoopMode, MixerParam, OscilloscopeParam,
-    SamplePlayerParam,
+    ReleaseMode, SamplePlayerParam,
 };
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};

@@ -1,5 +1,23 @@
 # Version History
 
+## [0.33.21] - 2024
+### Improved - Enhanced Sample Player
+- **PlaybackState** - Ersatte `bool` med typat enum för tydligare state
+- **SampleName** - Newtype för sample-namn istället för rå `String`
+- **ReleaseMode** - Tre lägen: `Immediate`, `PlayToEnd`, `PlayToLoop` för flexibel note-off hantering
+- **Velocity Sensitivity** - Parameter för hur mycket velocity påverkar volym (0-100%)
+- **Nya interpolationer** - Hermite, Lagrange, Sinc8, Sinc16 för högkvalitativ uppspelning
+- **Loop Crossfade** - 0-50ms crossfade vid loop-punkter för klickfri looping
+- **Root Key Detection** - Automatisk detektion av grundton från filnamn (t.ex. "Piano_C3.wav")
+- **WaveformOverview** - Pre-beräknad waveform för effektiv visualisering
+- **PlaybackPositionBuffer** - Atomic position buffer för lock-free GUI-synk
+
+### Changed
+- Konsoliderade `LoopMode` - endast en definition i params/modules.rs
+- Tog bort `loop_mode` från `Sample` struct (hör till spelaren, inte samplen)
+
+---
+
 ## [0.33.20] - 2024
 ### Added - Sample Player & Sample Manager
 - **SamplePlayer** - Ny modul för uppspelning av WAV-samples

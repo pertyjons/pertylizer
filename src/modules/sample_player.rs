@@ -9,16 +9,63 @@
 //! - The `Sample` data is immutable and shared via `Arc`
 //! - No heap allocations in the audio thread
 //! - Sample loading happens in the GUI thread
+//! - Position buffer uses atomics for lock-free GUI updates
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::engine::typed_params::{LoopMode, ModuleType, Param, SamplePlayerParam};
+use crate::engine::typed_params::{LoopMode, ModuleType, Param, ReleaseMode, SamplePlayerParam};
 use crate::modules::core::*;
 use crate::types::{
-    Gain, Interpolation, MidiNote, NormalizedValue, PlaybackDirection, PlaybackPosition, Sample,
-    SampleRate,
+    Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, PlaybackDirection,
+    PlaybackPosition, PlaybackState, Sample, SampleRate, SampleValue, WaveformOverview,
 };
+
+// ============================================================================
+// PLAYBACK POSITION BUFFER
+// ============================================================================
+
+/// Lock-free buffer for sharing playback position with GUI.
+#[derive(Debug, Default)]
+pub struct PlaybackPositionBuffer {
+    /// Normalized position (0.0-1.0) stored as bits.
+    position: AtomicU32,
+}
+
+impl PlaybackPositionBuffer {
+    /// Create a new position buffer.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            position: AtomicU32::new(0.0f32.to_bits()),
+        }
+    }
+
+    /// Set the position (called from audio thread).
+    pub fn set(&self, position: f32) {
+        self.position
+            .store(position.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Get the position (called from GUI thread).
+    #[must_use]
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.position.load(Ordering::Relaxed))
+    }
+}
+
+impl Clone for PlaybackPositionBuffer {
+    fn clone(&self) -> Self {
+        Self {
+            position: AtomicU32::new(self.position.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+// ============================================================================
+// SAMPLE PLAYER
+// ============================================================================
 
 /// Sample player module for audio sample playback.
 #[derive(Clone)]
@@ -30,18 +77,27 @@ pub struct SamplePlayer {
     loop_mode: LoopMode,
     loop_start: NormalizedValue,
     loop_end: NormalizedValue,
+    loop_crossfade: Milliseconds,
     level: Gain,
+    velocity_sensitivity: NormalizedValue,
+    release_mode: ReleaseMode,
 
     // State
     sample: Option<Arc<Sample>>,
     position: PlaybackPosition,
     direction: PlaybackDirection,
-    playing: bool,
+    playback_state: PlaybackState,
     current_note: Option<MidiNote>,
+    current_velocity: NormalizedValue,
+    releasing: bool,
 
     // Config
     interpolation: Interpolation,
     sample_rate: SampleRate,
+
+    // Visualization
+    waveform_overview: Option<WaveformOverview>,
+    position_buffer: Arc<PlaybackPositionBuffer>,
 
     // Output buffers
     output_left: AudioBuffer,
@@ -50,6 +106,7 @@ pub struct SamplePlayer {
 
 impl SamplePlayer {
     /// Create a new sample player.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             // Parameters
@@ -59,18 +116,27 @@ impl SamplePlayer {
             loop_mode: LoopMode::Off,
             loop_start: NormalizedValue::new(0.0),
             loop_end: NormalizedValue::new(1.0),
+            loop_crossfade: Milliseconds::new(5.0),
             level: Gain::UNITY,
+            velocity_sensitivity: NormalizedValue::new(0.5),
+            release_mode: ReleaseMode::Immediate,
 
             // State
             sample: None,
             position: PlaybackPosition::ZERO,
             direction: PlaybackDirection::Forward,
-            playing: false,
+            playback_state: PlaybackState::Stopped,
             current_note: None,
+            current_velocity: NormalizedValue::new(1.0),
+            releasing: false,
 
             // Config
             interpolation: Interpolation::Linear,
             sample_rate: SampleRate::DVD_QUALITY,
+
+            // Visualization
+            waveform_overview: None,
+            position_buffer: Arc::new(PlaybackPositionBuffer::new()),
 
             // Output buffers
             output_left: AudioBuffer::new(256),
@@ -82,6 +148,8 @@ impl SamplePlayer {
     ///
     /// This is called from the engine when handling `LoadSample` command.
     pub fn load_sample(&mut self, sample: Arc<Sample>) {
+        // Generate waveform overview for visualization
+        self.waveform_overview = Some(WaveformOverview::generate(&sample, 200));
         self.sample = Some(sample);
         self.reset();
     }
@@ -89,8 +157,21 @@ impl SamplePlayer {
     /// Clear the loaded sample.
     pub fn clear_sample(&mut self) {
         self.sample = None;
-        self.playing = false;
+        self.waveform_overview = None;
+        self.playback_state = PlaybackState::Stopped;
         self.position = PlaybackPosition::ZERO;
+    }
+
+    /// Get the waveform overview for visualization.
+    #[must_use]
+    pub fn waveform_overview(&self) -> Option<&WaveformOverview> {
+        self.waveform_overview.as_ref()
+    }
+
+    /// Get the position buffer for GUI sync.
+    #[must_use]
+    pub fn position_buffer(&self) -> Arc<PlaybackPositionBuffer> {
+        Arc::clone(&self.position_buffer)
     }
 
     /// Get the sample length in frames.
@@ -125,6 +206,11 @@ impl SamplePlayer {
         ((self.loop_end.as_f32() * len as f32) as usize).min(len)
     }
 
+    /// Get crossfade length in samples.
+    fn crossfade_samples(&self) -> usize {
+        (self.loop_crossfade.as_f32() * self.sample_rate.as_f32() / 1000.0) as usize
+    }
+
     /// Calculate playback speed including pitch tracking.
     fn effective_speed(&self) -> f64 {
         let base_speed = self.speed.as_f32() as f64;
@@ -146,6 +232,13 @@ impl SamplePlayer {
         base_speed * pitch_ratio * rate_ratio
     }
 
+    /// Calculate effective level including velocity.
+    fn effective_level(&self) -> f32 {
+        let vel_factor =
+            1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.current_velocity.as_f32());
+        self.level.as_f32() * vel_factor
+    }
+
     /// Advance position and handle loop modes.
     fn advance_position(&mut self, speed: f64) {
         let delta = speed * self.direction.sign();
@@ -157,11 +250,24 @@ impl SamplePlayer {
         let start = self.start_frame() as f64;
         let end = self.end_frame() as f64;
 
+        // When releasing, don't loop
+        if self.releasing {
+            if pos >= end || pos < start {
+                self.playback_state = PlaybackState::Stopped;
+                self.position = if pos >= end {
+                    PlaybackPosition::new(end - 1.0)
+                } else {
+                    PlaybackPosition::new(start)
+                };
+            }
+            return;
+        }
+
         match self.loop_mode {
             LoopMode::Off => {
                 // Stop at end (or start if playing backward)
                 if pos >= end || pos < start {
-                    self.playing = false;
+                    self.playback_state = PlaybackState::Stopped;
                     self.position = if pos >= end {
                         PlaybackPosition::new(end - 1.0)
                     } else {
@@ -198,8 +304,48 @@ impl SamplePlayer {
         let pos = self
             .position
             .as_f64()
-            .clamp(0.0, (self.sample_len() - 1).max(0) as f64);
+            .clamp(0.0, (self.sample_len().saturating_sub(1)) as f64);
         self.position = PlaybackPosition::new(pos);
+    }
+
+    /// Read sample with loop crossfade.
+    fn read_with_crossfade(
+        &self,
+        sample: &Sample,
+        position: PlaybackPosition,
+    ) -> (SampleValue, SampleValue) {
+        let crossfade_samples = self.crossfade_samples();
+
+        // Only apply crossfade in loop modes
+        if self.loop_mode == LoopMode::Off || crossfade_samples == 0 {
+            return sample.read(position, self.interpolation);
+        }
+
+        let pos = position.as_f64();
+        let loop_start = self.loop_start_frame() as f64;
+        let loop_end = self.loop_end_frame() as f64;
+        let distance_to_end = loop_end - pos;
+
+        // Check if we're in the crossfade region
+        if distance_to_end < crossfade_samples as f64 && distance_to_end > 0.0 {
+            let fade_amount = (distance_to_end / crossfade_samples as f64) as f32;
+
+            // Read current position
+            let (l1, r1) = sample.read(position, self.interpolation);
+
+            // Read from loop start (offset by how far we are from loop end)
+            let loop_start_offset = crossfade_samples as f64 - distance_to_end;
+            let crossfade_pos = PlaybackPosition::new(loop_start + loop_start_offset);
+            let (l2, r2) = sample.read(crossfade_pos, self.interpolation);
+
+            // Crossfade
+            let left = l1.scale(fade_amount) + l2.scale(1.0 - fade_amount);
+            let right = r1.scale(fade_amount) + r2.scale(1.0 - fade_amount);
+
+            (left, right)
+        } else {
+            sample.read(position, self.interpolation)
+        }
     }
 }
 
@@ -282,6 +428,17 @@ impl Describable for SamplePlayer {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    Param::SamplePlayer(SamplePlayerParam::LoopCrossfade(Milliseconds::new(5.0))),
+                    "X-Fade",
+                )
+                .description("Loop crossfade time")
+                .range(0.0, 50.0)
+                .default(5.0)
+                .unit(ParameterUnit::Milliseconds)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     Param::SamplePlayer(SamplePlayerParam::Level(Gain::UNITY)),
                     "Level",
                 )
@@ -290,6 +447,28 @@ impl Describable for SamplePlayer {
                 .default(1.0)
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::SamplePlayer(SamplePlayerParam::VelocitySensitivity(
+                        NormalizedValue::new(0.5),
+                    )),
+                    "Vel Sens",
+                )
+                .description("Velocity sensitivity")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::choice(
+                    Param::SamplePlayer(SamplePlayerParam::ReleaseMode(ReleaseMode::Immediate)),
+                    "Release",
+                    ReleaseMode::to_choices(),
+                )
+                .description("Note-off behavior")
+                .widget(WidgetHint::Dropdown),
             )
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
@@ -315,6 +494,7 @@ impl PolyModule for SamplePlayer {
                 // No sample loaded - output silence
                 self.output_left.clear();
                 self.output_right.clear();
+                self.position_buffer.set(0.0);
 
                 if let Some(out_l) = outputs.get_mut("out_l") {
                     out_l.copy_from(&self.output_left);
@@ -330,11 +510,12 @@ impl PolyModule for SamplePlayer {
         };
 
         let speed = self.effective_speed();
-        let level = self.level.as_f32();
+        let level = self.effective_level();
+        let sample_len = self.sample_len();
 
         for i in 0..context.samples {
-            if self.playing {
-                let (left, right) = sample.read(self.position, self.interpolation);
+            if self.playback_state.is_playing() {
+                let (left, right) = self.read_with_crossfade(&sample, self.position);
                 self.output_left[i] = left.as_f32() * level;
                 self.output_right[i] = right.as_f32() * level;
                 self.advance_position(speed);
@@ -342,6 +523,12 @@ impl PolyModule for SamplePlayer {
                 self.output_left[i] = 0.0;
                 self.output_right[i] = 0.0;
             }
+        }
+
+        // Update position buffer for GUI (normalized 0.0-1.0)
+        if sample_len > 0 {
+            let normalized_pos = self.position.as_f64() / sample_len as f64;
+            self.position_buffer.set(normalized_pos as f32);
         }
 
         if let Some(out_l) = outputs.get_mut("out_l") {
@@ -367,7 +554,10 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::LoopMode(m) => self.loop_mode = m,
                 SamplePlayerParam::LoopStart(v) => self.loop_start = v,
                 SamplePlayerParam::LoopEnd(v) => self.loop_end = v,
+                SamplePlayerParam::LoopCrossfade(ms) => self.loop_crossfade = ms,
                 SamplePlayerParam::Level(g) => self.level = g,
+                SamplePlayerParam::VelocitySensitivity(v) => self.velocity_sensitivity = v,
+                SamplePlayerParam::ReleaseMode(m) => self.release_mode = m,
             }
         }
     }
@@ -381,7 +571,10 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::LoopMode(_) => self.loop_mode.index() as f32,
                 SamplePlayerParam::LoopStart(_) => self.loop_start.as_f32(),
                 SamplePlayerParam::LoopEnd(_) => self.loop_end.as_f32(),
+                SamplePlayerParam::LoopCrossfade(_) => self.loop_crossfade.as_f32(),
                 SamplePlayerParam::Level(_) => self.level.as_f32(),
+                SamplePlayerParam::VelocitySensitivity(_) => self.velocity_sensitivity.as_f32(),
+                SamplePlayerParam::ReleaseMode(_) => self.release_mode.index() as f32,
             })
         } else {
             None
@@ -396,7 +589,12 @@ impl PolyModule for SamplePlayer {
             Param::SamplePlayer(SamplePlayerParam::LoopMode(self.loop_mode)),
             Param::SamplePlayer(SamplePlayerParam::LoopStart(self.loop_start)),
             Param::SamplePlayer(SamplePlayerParam::LoopEnd(self.loop_end)),
+            Param::SamplePlayer(SamplePlayerParam::LoopCrossfade(self.loop_crossfade)),
             Param::SamplePlayer(SamplePlayerParam::Level(self.level)),
+            Param::SamplePlayer(SamplePlayerParam::VelocitySensitivity(
+                self.velocity_sensitivity,
+            )),
+            Param::SamplePlayer(SamplePlayerParam::ReleaseMode(self.release_mode)),
         ]
     }
 
@@ -407,20 +605,38 @@ impl PolyModule for SamplePlayer {
     fn reset(&mut self) {
         self.position = PlaybackPosition::new(self.start_frame() as f64);
         self.direction = PlaybackDirection::Forward;
-        self.playing = false;
+        self.playback_state = PlaybackState::Stopped;
+        self.releasing = false;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, velocity: f32) {
         self.current_note = Some(note);
+        self.current_velocity = NormalizedValue::new(velocity);
         self.position = PlaybackPosition::new(self.start_frame() as f64);
         self.direction = PlaybackDirection::Forward;
-        self.playing = true;
+        self.playback_state = PlaybackState::Playing;
+        self.releasing = false;
     }
 
     fn note_off(&mut self) {
-        // Stop playing unless we're in a loop mode
-        if self.loop_mode == LoopMode::Off {
-            self.playing = false;
+        match self.release_mode {
+            ReleaseMode::Immediate => {
+                // Stop immediately unless in a loop mode
+                if self.loop_mode == LoopMode::Off {
+                    self.playback_state = PlaybackState::Stopped;
+                } else {
+                    // In loop mode, start releasing (will play to end)
+                    self.releasing = true;
+                }
+            }
+            ReleaseMode::PlayToEnd => {
+                // Disable looping and play to end
+                self.releasing = true;
+            }
+            ReleaseMode::PlayToLoop => {
+                // Play to loop end, then stop
+                self.releasing = true;
+            }
         }
     }
 
@@ -432,7 +648,7 @@ impl PolyModule for SamplePlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ChannelMode, SampleValue};
+    use crate::types::ChannelMode;
 
     fn create_test_sample() -> Arc<Sample> {
         // Create a simple mono sine wave sample
@@ -441,7 +657,7 @@ mod tests {
             .collect();
 
         Arc::new(Sample::new(
-            "test".to_string(),
+            "test",
             data,
             ChannelMode::Mono,
             SampleRate::CD_QUALITY,
@@ -451,7 +667,7 @@ mod tests {
     #[test]
     fn test_sample_player_creation() {
         let player = SamplePlayer::new();
-        assert!(!player.playing);
+        assert!(player.playback_state.is_stopped());
         assert!(player.sample.is_none());
     }
 
@@ -463,6 +679,7 @@ mod tests {
         player.load_sample(sample);
         assert!(player.sample.is_some());
         assert_eq!(player.sample_len(), 1000);
+        assert!(player.waveform_overview.is_some());
     }
 
     #[test]
@@ -472,7 +689,7 @@ mod tests {
         player.load_sample(sample);
 
         player.note_on(MidiNote::C4, 1.0);
-        assert!(player.playing);
+        assert!(player.playback_state.is_playing());
     }
 
     #[test]
@@ -484,7 +701,30 @@ mod tests {
         player.note_on(MidiNote::C4, 1.0);
         player.note_off();
 
-        // Should stop since loop mode is Off
-        assert!(!player.playing);
+        // Should stop since loop mode is Off and release mode is Immediate
+        assert!(player.playback_state.is_stopped());
+    }
+
+    #[test]
+    fn test_velocity_sensitivity() {
+        let mut player = SamplePlayer::new();
+        player.velocity_sensitivity = NormalizedValue::new(1.0);
+        player.current_velocity = NormalizedValue::new(0.5);
+
+        // With full sensitivity and 0.5 velocity, level should be 0.5
+        assert!((player.effective_level() - 0.5).abs() < 0.001);
+
+        player.velocity_sensitivity = NormalizedValue::new(0.0);
+        // With no sensitivity, level should be 1.0
+        assert!((player.effective_level() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_position_buffer() {
+        let player = SamplePlayer::new();
+        let buffer = player.position_buffer();
+
+        buffer.set(0.5);
+        assert!((buffer.get() - 0.5).abs() < 0.001);
     }
 }
