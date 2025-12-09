@@ -1,5 +1,16 @@
 # Version History
 
+## [0.33.22] - 2024
+### Optimized - GUI Rendering with egui Shape Primitives
+- **Kablar** - Ersatte manuell Bézier-loop (32 segment × 3 lager) med `CubicBezierShape`
+- **Oscilloskop** - Ersatte ~200 `line_segment()` med en `Shape::line()`
+- **Waveform-väljare** - Ersatte 31 `line_segment()` per ikon med `Shape::line()`
+- **ADSR Envelope** - Ersatte 4 `line_segment()` med `Shape::line()`
+- **Draw Call Batching** - GPU kan nu rita alla punkter i en operation
+- **Automatisk LOD** - `CubicBezierShape` hanterar detaljnivå automatiskt
+
+---
+
 ## [0.33.21] - 2024
 ### Improved - Enhanced Sample Player
 - **PlaybackState** - Ersatte `bool` med typat enum för tydligare state

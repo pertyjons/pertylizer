@@ -1,6 +1,6 @@
 //! ADSR envelope visualization and editor widgets.
 
-use eframe::egui::{self, Color32, Pos2, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
@@ -40,12 +40,11 @@ pub fn draw_adsr_curve(
         Pos2::new(release_x, bottom),    // End of release
     ];
 
-    for i in 0..points.len() - 1 {
-        painter.line_segment(
-            [points[i], points[i + 1]],
-            Stroke::new(2.0, theme().colors.accent_cyan),
-        );
-    }
+    // Draw envelope as single optimized line shape
+    painter.add(Shape::line(
+        points.to_vec(),
+        Stroke::new(2.0, theme().colors.accent_cyan),
+    ));
 
     // Draw dots at key points
     for point in &points[1..4] {
@@ -164,13 +163,11 @@ impl<'a> EnvelopeEditor<'a> {
             Stroke::NONE,
         ));
 
-        // Lines
-        for i in 0..points.len() - 1 {
-            painter.line_segment(
-                [points[i], points[i + 1]],
-                Stroke::new(2.0, self.accent_color),
-            );
-        }
+        // Lines (single optimized line shape)
+        painter.add(Shape::line(
+            points.to_vec(),
+            Stroke::new(2.0, self.accent_color),
+        ));
 
         // Control points (draggable)
         let control_points = [

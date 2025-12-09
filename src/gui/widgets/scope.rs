@@ -1,6 +1,6 @@
 //! Oscilloscope display widget.
 
-use eframe::egui::{Color32, Pos2, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
@@ -58,9 +58,9 @@ pub fn draw_oscilloscope(
             }
         }
 
-        // Draw as connected line segments
-        for i in 0..points.len().saturating_sub(1) {
-            painter.line_segment([points[i], points[i + 1]], Stroke::new(1.5, color));
+        // Draw as single optimized line shape (batched GPU draw call)
+        if points.len() >= 2 {
+            painter.add(Shape::line(points, Stroke::new(1.5, color)));
         }
     } else {
         // No data - draw flat line

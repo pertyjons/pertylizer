@@ -1,6 +1,6 @@
 //! Waveform selector widget with visual preview.
 
-use eframe::egui::{self, Color32, Rect, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, Rect, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
@@ -172,9 +172,9 @@ impl<'a> WaveformSelector<'a> {
             points.push(egui::Pos2::new(x, y));
         }
 
-        // Draw the waveform line
-        for i in 0..points.len() - 1 {
-            painter.line_segment([points[i], points[i + 1]], Stroke::new(1.5, color));
+        // Draw the waveform as single optimized line shape
+        if points.len() >= 2 {
+            painter.add(Shape::line(points, Stroke::new(1.5, color)));
         }
     }
 }

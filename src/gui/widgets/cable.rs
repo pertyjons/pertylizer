@@ -1,5 +1,9 @@
 //! Cable drawing utilities with gravity, shadows, and theme colors.
+//!
+//! Uses `egui`'s `CubicBezierShape` for efficient GPU-batched rendering
+//! instead of manual line segment loops.
 
+use eframe::egui::epaint::CubicBezierShape;
 use eframe::egui::{Color32, Pos2, Stroke};
 
 use super::port::PortType;
@@ -17,8 +21,8 @@ pub fn cable_color(port_type: PortType, alpha: u8) -> Color32 {
 }
 
 /// Calculate bezier control points with gravity (sag).
-/// Returns (ctrl1, ctrl2) for a cubic bezier curve.
-fn bezier_control_points_with_sag(from: Pos2, to: Pos2, sag_factor: f32) -> (Pos2, Pos2) {
+/// Returns [from, ctrl1, ctrl2, to] for a cubic bezier curve.
+fn bezier_points_with_sag(from: Pos2, to: Pos2, sag_factor: f32) -> [Pos2; 4] {
     let dx = (to.x - from.x).abs();
     let dy = to.y - from.y;
 
@@ -36,10 +40,92 @@ fn bezier_control_points_with_sag(from: Pos2, to: Pos2, sag_factor: f32) -> (Pos
     let ctrl1 = Pos2::new(from.x + control_offset, from.y + sag_adjustment);
     let ctrl2 = Pos2::new(to.x - control_offset, to.y + sag_adjustment);
 
-    (ctrl1, ctrl2)
+    [from, ctrl1, ctrl2, to]
 }
 
-/// Evaluate cubic bezier at parameter t.
+/// Draw a cubic bezier cable using egui's optimized shape.
+#[inline]
+fn draw_bezier_shape(painter: &eframe::egui::Painter, points: [Pos2; 4], stroke: Stroke) {
+    painter.add(CubicBezierShape::from_points_stroke(
+        points,
+        false,
+        Color32::TRANSPARENT,
+        stroke,
+    ));
+}
+
+/// Draw a cable between two points with gravity (sag), shadow, and highlight.
+pub fn draw_cable(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
+    // Control points with 15% sag
+    let points = bezier_points_with_sag(from, to, 0.15);
+
+    // Shadow (offset down and slightly right)
+    let shadow_offset = Pos2::new(2.0, 3.0).to_vec2();
+    let shadow_points = [
+        points[0] + shadow_offset,
+        points[1] + shadow_offset,
+        points[2] + shadow_offset,
+        points[3] + shadow_offset,
+    ];
+    let shadow_color = Color32::from_rgba_unmultiplied(0, 0, 0, 50);
+    draw_bezier_shape(painter, shadow_points, Stroke::new(4.0, shadow_color));
+
+    // Main cable with semi-transparency
+    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 200);
+    draw_bezier_shape(painter, points, Stroke::new(3.0, cable_color));
+
+    // Subtle highlight (thinner, lighter line on top)
+    let highlight_offset = Pos2::new(0.0, -0.5).to_vec2();
+    let highlight_points = [
+        points[0] + highlight_offset,
+        points[1] + highlight_offset,
+        points[2] + highlight_offset,
+        points[3] + highlight_offset,
+    ];
+    let highlight_color = Color32::from_rgba_unmultiplied(255, 255, 255, 30);
+    draw_bezier_shape(painter, highlight_points, Stroke::new(1.0, highlight_color));
+}
+
+/// Draw a cable being dragged (less sag, no shadow for responsiveness).
+pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
+    // Control points with reduced sag (5%) for more responsive feel
+    let points = bezier_points_with_sag(from, to, 0.05);
+
+    // Semi-transparent cable, no shadow for cleaner dragging
+    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180);
+    draw_bezier_shape(painter, points, Stroke::new(3.0, cable_color));
+}
+
+/// Draw a highlighted cable (hovered or selected) with glow effect.
+pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: Pos2) {
+    let highlight_color = theme().colors.accent_red;
+
+    // Control points with standard sag
+    let points = bezier_points_with_sag(from, to, 0.15);
+
+    // Outer glow
+    let glow_color = Color32::from_rgba_unmultiplied(
+        highlight_color.r(),
+        highlight_color.g(),
+        highlight_color.b(),
+        60,
+    );
+    draw_bezier_shape(painter, points, Stroke::new(8.0, glow_color));
+
+    // Inner glow
+    let inner_glow = Color32::from_rgba_unmultiplied(
+        highlight_color.r(),
+        highlight_color.g(),
+        highlight_color.b(),
+        120,
+    );
+    draw_bezier_shape(painter, points, Stroke::new(5.0, inner_glow));
+
+    // Core cable
+    draw_bezier_shape(painter, points, Stroke::new(3.0, highlight_color));
+}
+
+/// Evaluate cubic bezier at parameter t (for hit testing).
 #[inline]
 fn bezier_point(from: Pos2, ctrl1: Pos2, ctrl2: Pos2, to: Pos2, t: f32) -> Pos2 {
     let t2 = t * t;
@@ -54,143 +140,16 @@ fn bezier_point(from: Pos2, ctrl1: Pos2, ctrl2: Pos2, to: Pos2, t: f32) -> Pos2 
     Pos2::new(x, y)
 }
 
-/// Draw a bezier cable with the given control points.
-fn draw_bezier_cable(
-    painter: &eframe::egui::Painter,
-    from: Pos2,
-    ctrl1: Pos2,
-    ctrl2: Pos2,
-    to: Pos2,
-    stroke: Stroke,
-) {
-    let segments = 32;
-    let mut prev = from;
-
-    for i in 1..=segments {
-        let t = i as f32 / segments as f32;
-        let curr = bezier_point(from, ctrl1, ctrl2, to, t);
-        painter.line_segment([prev, curr], stroke);
-        prev = curr;
-    }
-}
-
-/// Draw a cable between two points with gravity (sag), shadow, and optional highlight.
-pub fn draw_cable(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
-    // Control points with 15% sag
-    let (ctrl1, ctrl2) = bezier_control_points_with_sag(from, to, 0.15);
-
-    // Shadow (offset down and slightly right)
-    let shadow_offset = Pos2::new(2.0, 3.0);
-    let shadow_color = Color32::from_rgba_unmultiplied(0, 0, 0, 50);
-    draw_bezier_cable(
-        painter,
-        from + shadow_offset.to_vec2(),
-        ctrl1 + shadow_offset.to_vec2(),
-        ctrl2 + shadow_offset.to_vec2(),
-        to + shadow_offset.to_vec2(),
-        Stroke::new(4.0, shadow_color),
-    );
-
-    // Main cable with semi-transparency
-    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 200);
-    draw_bezier_cable(
-        painter,
-        from,
-        ctrl1,
-        ctrl2,
-        to,
-        Stroke::new(3.0, cable_color),
-    );
-
-    // Subtle highlight (thinner, lighter line on top)
-    let highlight_color = Color32::from_rgba_unmultiplied(255, 255, 255, 30);
-    draw_bezier_cable(
-        painter,
-        from + Pos2::new(0.0, -0.5).to_vec2(),
-        ctrl1 + Pos2::new(0.0, -0.5).to_vec2(),
-        ctrl2 + Pos2::new(0.0, -0.5).to_vec2(),
-        to + Pos2::new(0.0, -0.5).to_vec2(),
-        Stroke::new(1.0, highlight_color),
-    );
-}
-
-/// Draw a cable being dragged (less sag, no shadow for responsiveness).
-pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
-    // Control points with reduced sag (5%) for more responsive feel
-    let (ctrl1, ctrl2) = bezier_control_points_with_sag(from, to, 0.05);
-
-    // Semi-transparent cable, no shadow for cleaner dragging
-    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180);
-    draw_bezier_cable(
-        painter,
-        from,
-        ctrl1,
-        ctrl2,
-        to,
-        Stroke::new(3.0, cable_color),
-    );
-}
-
-/// Draw a highlighted cable (hovered or selected) with glow effect.
-pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: Pos2) {
-    let highlight_color = theme().colors.accent_red;
-
-    // Control points with standard sag
-    let (ctrl1, ctrl2) = bezier_control_points_with_sag(from, to, 0.15);
-
-    // Outer glow
-    let glow_color = Color32::from_rgba_unmultiplied(
-        highlight_color.r(),
-        highlight_color.g(),
-        highlight_color.b(),
-        60,
-    );
-    draw_bezier_cable(
-        painter,
-        from,
-        ctrl1,
-        ctrl2,
-        to,
-        Stroke::new(8.0, glow_color),
-    );
-
-    // Inner glow
-    let inner_glow = Color32::from_rgba_unmultiplied(
-        highlight_color.r(),
-        highlight_color.g(),
-        highlight_color.b(),
-        120,
-    );
-    draw_bezier_cable(
-        painter,
-        from,
-        ctrl1,
-        ctrl2,
-        to,
-        Stroke::new(5.0, inner_glow),
-    );
-
-    // Core cable
-    draw_bezier_cable(
-        painter,
-        from,
-        ctrl1,
-        ctrl2,
-        to,
-        Stroke::new(3.0, highlight_color),
-    );
-}
-
 /// Check if a point is near a bezier cable (for hit testing).
 /// Uses the same control points as draw_cable.
 pub fn point_near_cable(point: Pos2, from: Pos2, to: Pos2, threshold: f32) -> bool {
-    let (ctrl1, ctrl2) = bezier_control_points_with_sag(from, to, 0.15);
+    let [p0, p1, p2, p3] = bezier_points_with_sag(from, to, 0.15);
 
     // Sample points along the curve and check distance
     let segments = 16;
     for i in 0..=segments {
         let t = i as f32 / segments as f32;
-        let curve_point = bezier_point(from, ctrl1, ctrl2, to, t);
+        let curve_point = bezier_point(p0, p1, p2, p3, t);
         let dist = ((point.x - curve_point.x).powi(2) + (point.y - curve_point.y).powi(2)).sqrt();
         if dist < threshold {
             return true;
