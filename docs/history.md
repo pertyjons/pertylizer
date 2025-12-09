@@ -1,5 +1,29 @@
 # Version History
 
+## [0.34.4] - 2024
+### Added - Workspace GUI Navigation
+- **gui/app/state.rs** - Nya navigations-enums:
+  - `AppView` - Rack/Sequencer/Mixer vy-val med `icon()` och `label()` metoder
+  - `TopPanel` - None/Midi/Engine för expanderbara paneler (förberett för framtida funktionalitet)
+- **gui/views/layout.rs** - Top bar och drawer komponenter:
+  - `TopBarContext` struct för att skicka state till top bar
+  - `draw_top_bar()` - Komplett menybar med vy-flikar
+  - `draw_top_drawer()` - Expanderbar panel för MIDI/Engine (förberedd)
+- **gui/views/rack.rs** - Rack-vy komponent:
+  - `RackContext` struct för instrument rack state
+  - `draw_instrument_rack()` och `draw_empty_state()` funktioner
+- **gui/views/sequencer.rs** - Sequencer-vy (placeholder)
+- **gui/views/mixer.rs** - Mixer-vy (placeholder)
+
+### Changed - View Routing
+- **egui_backend.rs** - Vy-router implementerad:
+  - `active_view: AppView` fält i `SynthApp`
+  - Vy-flikar i menyraden (🎛️ Rack, 🎹 Sequencer, 🎚️ Mixer)
+  - Toolbar och instrument rack visas endast i Rack-vyn
+  - Match-statement för vy-routing i CentralPanel
+
+---
+
 ## [0.34.3] - 2024
 ### Improved - Prestandaoptimering & Slutfört Type Hardening
 

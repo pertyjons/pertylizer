@@ -23,6 +23,7 @@ use crate::engine::params::{
     PhaserParam, ReverbParam,
 };
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
+use crate::gui::app::state::AppView;
 use crate::gui::dialogs::{
     DialogState, LoadPatchResult, SavePatchResult, show_about_dialog, show_load_patch_dialog,
     show_save_patch_dialog, show_settings_dialog, show_status_toast,
@@ -215,6 +216,9 @@ struct SynthApp {
 
     // Master effects chain UI state
     master_effects: Vec<MasterEffectUiState>,
+
+    // Navigation state
+    active_view: AppView,
 }
 
 impl SynthApp {
@@ -288,6 +292,7 @@ impl SynthApp {
             active_instrument_id,
             next_instrument_id,
             master_effects: Vec::new(),
+            active_view: AppView::default(),
         }
     }
 
@@ -495,123 +500,144 @@ impl eframe::App for SynthApp {
                         RichText::new(format!("Patch: {}", self.current_patch_name))
                             .color(theme().colors.accent_cyan),
                     );
+                    ui.separator();
+
+                    // View selector tabs (rightmost, before status)
+                    for view in [AppView::Mixer, AppView::Sequencer, AppView::Rack] {
+                        let is_selected = self.active_view == view;
+                        let label = format!("{} {}", view.icon(), view.label());
+                        let text = if is_selected {
+                            RichText::new(label).color(theme().colors.accent_primary)
+                        } else {
+                            RichText::new(label).color(theme().colors.text_secondary)
+                        };
+                        if ui.selectable_label(is_selected, text).clicked() {
+                            self.active_view = view;
+                        }
+                    }
                 });
             });
         });
 
-        // Toolbar for adding modules
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(selection) = ModulePalette::show(ui) {
-                    match selection {
-                        PaletteSelection::Category(category) => {
-                            self.add_module_of_category(category);
-                        }
-                        PaletteSelection::MathOscillator => {
-                            self.add_math_oscillator_module();
-                        }
-                        PaletteSelection::SubOscillator => {
-                            self.add_sub_oscillator_module();
-                        }
-                        PaletteSelection::Noise => {
-                            self.add_noise_module();
-                        }
-                        PaletteSelection::Effect(effect_type) => {
-                            self.add_effect_module(effect_type);
-                        }
-                        PaletteSelection::Visualizer(viz_type) => {
-                            self.add_visualizer_module(viz_type);
-                        }
-                        PaletteSelection::StereoOutput => {
-                            self.add_stereo_output_module();
-                        }
-                        // Physical modeling
-                        PaletteSelection::KeyboardPanner => {
-                            self.add_keyboard_panner_module();
-                        }
-                        PaletteSelection::BodyResonance => {
-                            self.add_body_resonance_module();
-                        }
-                        PaletteSelection::MechanicalNoise => {
-                            self.add_mechanical_noise_module();
+        // Toolbar for adding modules (only show in Rack view)
+        if self.active_view == AppView::Rack {
+            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(selection) = ModulePalette::show(ui) {
+                        match selection {
+                            PaletteSelection::Category(category) => {
+                                self.add_module_of_category(category);
+                            }
+                            PaletteSelection::MathOscillator => {
+                                self.add_math_oscillator_module();
+                            }
+                            PaletteSelection::SubOscillator => {
+                                self.add_sub_oscillator_module();
+                            }
+                            PaletteSelection::Noise => {
+                                self.add_noise_module();
+                            }
+                            PaletteSelection::Effect(effect_type) => {
+                                self.add_effect_module(effect_type);
+                            }
+                            PaletteSelection::Visualizer(viz_type) => {
+                                self.add_visualizer_module(viz_type);
+                            }
+                            PaletteSelection::StereoOutput => {
+                                self.add_stereo_output_module();
+                            }
+                            // Physical modeling
+                            PaletteSelection::KeyboardPanner => {
+                                self.add_keyboard_panner_module();
+                            }
+                            PaletteSelection::BodyResonance => {
+                                self.add_body_resonance_module();
+                            }
+                            PaletteSelection::MechanicalNoise => {
+                                self.add_mechanical_noise_module();
+                            }
                         }
                     }
-                }
 
-                ui.separator();
+                    ui.separator();
 
-                // Glide/Portamento control
-                ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
-                let glide_response = ui.add(
-                    egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
-                        .suffix(" s")
-                        .fixed_decimals(2)
-                        .custom_formatter(|v, _| {
-                            if v < 0.001 {
-                                "Off".to_string()
-                            } else {
-                                format!("{:.2}s", v)
-                            }
-                        }),
-                );
-                if glide_response.changed() {
-                    self.handle
-                        .send(EngineCommand::SetGlideTime(crate::types::Seconds::new(
-                            self.glide_time,
-                        )));
-                }
+                    // Glide/Portamento control
+                    ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
+                    let glide_response = ui.add(
+                        egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
+                            .suffix(" s")
+                            .fixed_decimals(2)
+                            .custom_formatter(|v, _| {
+                                if v < 0.001 {
+                                    "Off".to_string()
+                                } else {
+                                    format!("{:.2}s", v)
+                                }
+                            }),
+                    );
+                    if glide_response.changed() {
+                        self.handle
+                            .send(EngineCommand::SetGlideTime(crate::types::Seconds::new(
+                                self.glide_time,
+                            )));
+                    }
 
-                ui.separator();
+                    ui.separator();
 
-                // Connection info (from active instrument's patch editor)
-                let conn_count = self.active_patch_editor_ref().connections().len();
-                let module_count = self.active_patch_editor_ref().module_ids().len();
-                ui.label(
-                    RichText::new(format!(
-                        "Modules: {} | Connections: {}",
-                        module_count, conn_count
-                    ))
-                    .color(theme().colors.text_dim),
-                );
+                    // Connection info (from active instrument's patch editor)
+                    let conn_count = self.active_patch_editor_ref().connections().len();
+                    let module_count = self.active_patch_editor_ref().module_ids().len();
+                    ui.label(
+                        RichText::new(format!(
+                            "Modules: {} | Connections: {}",
+                            module_count, conn_count
+                        ))
+                        .color(theme().colors.text_dim),
+                    );
+                });
             });
-        });
+        } // end if Rack view - toolbar
 
-        // Bottom panel with keyboard
+        // Bottom panel with keyboard (always visible)
         egui::TopBottomPanel::bottom("keyboard_panel")
             .min_height(120.0)
             .show(ctx, |ui| {
                 self.draw_keyboard(ui);
             });
 
-        // Left side panel with instrument rack
-        egui::SidePanel::left("instrument_rack_panel")
-            .min_width(320.0)
-            .max_width(400.0)
-            .show(ctx, |ui| {
-                show_instrument_rack(
-                    ui,
-                    &mut self.instruments,
-                    &mut self.active_instrument_id,
-                    &mut self.handle,
-                    &mut self.next_instrument_id,
-                );
-            });
+        // Side panels only visible in Rack view
+        if self.active_view == AppView::Rack {
+            // Left side panel with instrument rack
+            egui::SidePanel::left("instrument_rack_panel")
+                .min_width(320.0)
+                .max_width(400.0)
+                .show(ctx, |ui| {
+                    show_instrument_rack(
+                        ui,
+                        &mut self.instruments,
+                        &mut self.active_instrument_id,
+                        &mut self.handle,
+                        &mut self.next_instrument_id,
+                    );
+                });
 
-        // Right side panel with meters and master effects (resizable)
-        egui::SidePanel::right("meters_panel")
-            .min_width(140.0)
-            .default_width(180.0)
-            .max_width(300.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                self.draw_meters(ui);
-            });
+            // Right side panel with meters and master effects (resizable)
+            egui::SidePanel::right("meters_panel")
+                .min_width(140.0)
+                .default_width(180.0)
+                .max_width(300.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.draw_meters(ui);
+                });
+        }
 
-        // Main content - show the active instrument's patch editor
-        // Get active instrument id for engine commands
-        let active_id = self.active_instrument_id;
-
-        egui::CentralPanel::default().show(ctx, |ui| {
+        // Main content - view routing
+        match self.active_view {
+            AppView::Rack => {
+                // Rack view: show the active instrument's patch editor
+                let active_id = self.active_instrument_id;
+                egui::CentralPanel::default().show(ctx, |ui| {
             // Get the active instrument's patch editor
             #[allow(clippy::expect_used)]
             let patch_editor = self
@@ -731,7 +757,15 @@ impl eframe::App for SynthApp {
             if result.request_auto_layout {
                 patch_editor.apply_auto_layout();
             }
-        });
+                });
+            }
+            AppView::Sequencer => {
+                crate::gui::views::sequencer::show(ctx);
+            }
+            AppView::Mixer => {
+                crate::gui::views::mixer::show(ctx);
+            }
+        }
 
         // Dialogs
         self.show_dialogs(ctx);
