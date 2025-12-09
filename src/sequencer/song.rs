@@ -8,6 +8,7 @@ use super::ids::{PatternId, TrackId};
 use super::pattern::Pattern;
 use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
+use crate::types::{Bpm, Gain, Semitones};
 
 /// Tempo change event.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -15,7 +16,7 @@ pub struct TempoChange {
     /// Position of the tempo change.
     pub tick: Tick,
     /// New tempo in BPM.
-    pub bpm: f32,
+    pub bpm: Bpm,
 }
 
 /// Time signature change event.
@@ -37,9 +38,9 @@ pub struct PatternPlacement {
     /// Start position in the song.
     pub start: Tick,
     /// Transposition in semitones.
-    pub transpose: i8,
+    pub transpose: Semitones,
     /// Volume scaling (1.0 = normal).
-    pub gain: f32,
+    pub gain: Gain,
 }
 
 impl PatternPlacement {
@@ -49,20 +50,20 @@ impl PatternPlacement {
             pattern_id,
             track_id,
             start,
-            transpose: 0,
-            gain: 1.0,
+            transpose: Semitones::ZERO,
+            gain: Gain::UNITY,
         }
     }
 
     /// Set transposition (builder pattern).
-    pub fn with_transpose(mut self, semitones: i8) -> Self {
+    pub fn with_transpose(mut self, semitones: Semitones) -> Self {
         self.transpose = semitones;
         self
     }
 
     /// Set gain (builder pattern).
-    pub fn with_gain(mut self, gain: f32) -> Self {
-        self.gain = gain.max(0.0);
+    pub fn with_gain(mut self, gain: Gain) -> Self {
+        self.gain = gain;
         self
     }
 
@@ -95,7 +96,7 @@ pub struct Song {
     tempo_changes: Vec<TempoChange>,
     time_signature_changes: Vec<TimeSignatureChange>,
     /// Default tempo (BPM).
-    pub default_tempo: f32,
+    pub default_tempo: Bpm,
     /// Default time signature.
     pub default_time_signature: TimeSignature,
 }
@@ -113,7 +114,7 @@ impl Song {
             arrangement: Vec::new(),
             tempo_changes: Vec::new(),
             time_signature_changes: Vec::new(),
-            default_tempo: 120.0,
+            default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
         }
     }
@@ -125,8 +126,8 @@ impl Song {
     }
 
     /// Set the default tempo (builder pattern).
-    pub fn with_tempo(mut self, bpm: f32) -> Self {
-        self.default_tempo = bpm.clamp(20.0, 999.0);
+    pub fn with_tempo(mut self, bpm: Bpm) -> Self {
+        self.default_tempo = bpm;
         self
     }
 
@@ -299,20 +300,17 @@ impl Song {
     // === Tempo ===
 
     /// Set tempo at a position.
-    pub fn set_tempo_at(&mut self, tick: Tick, bpm: f32) {
+    pub fn set_tempo_at(&mut self, tick: Tick, bpm: Bpm) {
         // Remove existing at same tick
         self.tempo_changes.retain(|t| t.tick != tick);
 
-        let change = TempoChange {
-            tick,
-            bpm: bpm.clamp(20.0, 999.0),
-        };
+        let change = TempoChange { tick, bpm };
         let pos = self.tempo_changes.partition_point(|t| t.tick <= tick);
         self.tempo_changes.insert(pos, change);
     }
 
     /// Get tempo at a position.
-    pub fn tempo_at(&self, tick: Tick) -> f32 {
+    pub fn tempo_at(&self, tick: Tick) -> Bpm {
         self.tempo_changes
             .iter()
             .rev()
@@ -373,7 +371,7 @@ impl Song {
             // Time to this tempo change
             let ticks = change.tick.0 - current_tick.0;
             let beats = ticks as f64 / TICKS_PER_QUARTER as f64;
-            seconds += beats * 60.0 / current_tempo as f64;
+            seconds += beats * 60.0 / f64::from(current_tempo.as_f32());
 
             current_tick = change.tick;
             current_tempo = change.bpm;
@@ -382,12 +380,13 @@ impl Song {
         // Remaining ticks
         let remaining_ticks = target.0 - current_tick.0;
         let remaining_beats = remaining_ticks as f64 / TICKS_PER_QUARTER as f64;
-        seconds += remaining_beats * 60.0 / current_tempo as f64;
+        seconds += remaining_beats * 60.0 / f64::from(current_tempo.as_f32());
 
         seconds
     }
 
     /// Convert seconds to tick (handles tempo changes).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn seconds_to_tick(&self, target_seconds: f64) -> Tick {
         let mut seconds = 0.0;
         let mut current_tick = Tick(0);
@@ -396,12 +395,13 @@ impl Song {
         for change in &self.tempo_changes {
             let ticks = change.tick.0 - current_tick.0;
             let beats = ticks as f64 / TICKS_PER_QUARTER as f64;
-            let segment_seconds = beats * 60.0 / current_tempo as f64;
+            let tempo = f64::from(current_tempo.as_f32());
+            let segment_seconds = beats * 60.0 / tempo;
 
             if seconds + segment_seconds >= target_seconds {
                 // Target is in this segment
                 let remaining_seconds = target_seconds - seconds;
-                let remaining_beats = remaining_seconds * current_tempo as f64 / 60.0;
+                let remaining_beats = remaining_seconds * tempo / 60.0;
                 let remaining_ticks = (remaining_beats * TICKS_PER_QUARTER as f64) as u64;
                 return Tick(current_tick.0 + remaining_ticks);
             }
@@ -412,8 +412,9 @@ impl Song {
         }
 
         // Target is after all tempo changes
+        let tempo = f64::from(current_tempo.as_f32());
         let remaining_seconds = target_seconds - seconds;
-        let remaining_beats = remaining_seconds * current_tempo as f64 / 60.0;
+        let remaining_beats = remaining_seconds * tempo / 60.0;
         let remaining_ticks = (remaining_beats * TICKS_PER_QUARTER as f64) as u64;
         Tick(current_tick.0 + remaining_ticks)
     }
@@ -452,11 +453,11 @@ mod tests {
     fn test_song_creation() {
         let song = Song::new("Test Song")
             .with_author("Test Author")
-            .with_tempo(140.0);
+            .with_tempo(Bpm::new(140.0));
 
         assert_eq!(song.name, "Test Song");
         assert_eq!(song.author, "Test Author");
-        assert_eq!(song.default_tempo, 140.0);
+        assert_eq!(song.default_tempo, Bpm::new(140.0));
     }
 
     #[test]
@@ -505,7 +506,7 @@ mod tests {
     #[test]
     fn test_tick_to_seconds_with_tempo_change() {
         let mut song = Song::new("Test");
-        song.set_tempo_at(Tick(960), 240.0); // Double tempo after 1 beat
+        song.set_tempo_at(Tick(960), Bpm::new(240.0)); // Double tempo after 1 beat
 
         // First beat: 0.5 sec (120 BPM)
         // Second beat: 0.25 sec (240 BPM)
@@ -516,11 +517,11 @@ mod tests {
     #[test]
     fn test_tempo_at() {
         let mut song = Song::new("Test");
-        assert_eq!(song.tempo_at(Tick(0)), 120.0);
+        assert_eq!(song.tempo_at(Tick(0)), Bpm::new(120.0));
 
-        song.set_tempo_at(Tick(1000), 180.0);
-        assert_eq!(song.tempo_at(Tick(500)), 120.0);
-        assert_eq!(song.tempo_at(Tick(1500)), 180.0);
+        song.set_tempo_at(Tick(1000), Bpm::new(180.0));
+        assert_eq!(song.tempo_at(Tick(500)), Bpm::new(120.0));
+        assert_eq!(song.tempo_at(Tick(1500)), Bpm::new(180.0));
     }
 
     #[test]

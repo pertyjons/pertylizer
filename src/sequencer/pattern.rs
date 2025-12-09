@@ -7,6 +7,7 @@ use super::ids::{InstrumentId, NoteId, PatternId};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
+use crate::types::Semitones;
 
 /// Row resolution configuration for tracker view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,13 +244,16 @@ impl Pattern {
     }
 
     /// Transpose a note.
-    pub fn transpose_note(&mut self, id: NoteId, semitones: i8) -> bool {
-        if let Some(note) = self.note_mut(id) {
-            note.pitch = note.pitch.transpose(semitones);
-            true
-        } else {
-            false
+    ///
+    /// Returns false if the note doesn't exist or transposition would go out of range.
+    pub fn transpose_note(&mut self, id: NoteId, semitones: Semitones) -> bool {
+        if let Some(note) = self.note_mut(id)
+            && let Some(new_pitch) = note.pitch.transpose(semitones)
+        {
+            note.pitch = new_pitch;
+            return true;
         }
+        false
     }
 
     /// Quantize all notes to the row grid.
@@ -272,10 +276,14 @@ impl Pattern {
         self.notes.sort_by_key(|n| n.start);
     }
 
-    /// Transpose all notes.
-    pub fn transpose_all(&mut self, semitones: i8) {
+    /// Transpose all notes that can be transposed within valid range.
+    ///
+    /// Notes that would go out of range are left unchanged.
+    pub fn transpose_all(&mut self, semitones: Semitones) {
         for note in &mut self.notes {
-            note.pitch = note.pitch.transpose(semitones);
+            if let Some(new_pitch) = note.pitch.transpose(semitones) {
+                note.pitch = new_pitch;
+            }
         }
     }
 
@@ -331,7 +339,7 @@ impl Pattern {
         pattern_start: super::time::Tick,
         range_start: super::time::Tick,
         range_end: super::time::Tick,
-        transpose: i8,
+        transpose: Semitones,
         instrument_override: Option<InstrumentId>,
     ) -> Vec<super::events::SequencerEvent> {
         use super::events::SequencerEvent;
@@ -351,10 +359,8 @@ impl Pattern {
         for note in &self.notes {
             let instrument = instrument_override.unwrap_or(note.instrument);
 
-            // Transpose pitch
-            let transposed_midi =
-                (note.pitch.as_midi() as i16 + transpose as i16).clamp(0, 127) as u8;
-            let transposed_pitch = Pitch::new(transposed_midi).unwrap_or(note.pitch);
+            // Transpose pitch (keep original if out of range)
+            let transposed_pitch = note.pitch.transpose(transpose).unwrap_or(note.pitch);
 
             // NoteOn
             if note.start >= local_start && note.start < local_end {

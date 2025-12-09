@@ -1,5 +1,16 @@
 # Version History
 
+## [0.33.24] - 2024
+### Improved - Type Methods & Sequencer Types
+- **MidiNote::transpose** - Flyttade transponeringslogik till typen, returnerar `Option<MidiNote>`
+- **Pitch::transpose** - Sequencer-typ uppdaterad till `Semitones`, returnerar `Option<Pitch>`
+- **PatternPlacement** - `transpose` nu `Semitones`, `gain` nu `Gain`
+- **TempoChange/Song** - `bpm` och `default_tempo` nu `Bpm` istället för `f32`
+- **Pattern::generate_events** - Använder nu `Semitones` för transponering
+- **Instrument::transpose_note** - Delegerar nu till `MidiNote::transpose`
+
+---
+
 ## [0.33.23] - 2024
 ### Improved - Strict Type Hardening
 - **StereoBalance** - Ny typ för stereopanorering med constant-power gains

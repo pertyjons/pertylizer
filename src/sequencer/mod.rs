@@ -30,11 +30,12 @@
 //!
 //! ```rust
 //! use modular_synth::sequencer::*;
+//! use modular_synth::types::Bpm;
 //!
 //! // Create a new song
 //! let mut song = Song::new("My Song")
 //!     .with_author("Composer")
-//!     .with_tempo(140.0);
+//!     .with_tempo(Bpm::new(140.0));
 //!
 //! // Create a pattern (4 bars at standard resolution)
 //! let pattern_id = song.create_pattern(Duration::WHOLE * 4);

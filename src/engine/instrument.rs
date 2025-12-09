@@ -564,14 +564,8 @@ impl Instrument {
     ///
     /// Returns None if the transposed note would be outside valid MIDI range.
     #[inline]
-    #[allow(clippy::cast_possible_truncation)]
     pub fn transpose_note(&self, note: MidiNote) -> Option<MidiNote> {
-        let transposed = note.as_u8() as i16 + self.transpose.as_f32().round() as i16;
-        if (0..=127).contains(&transposed) {
-            Some(MidiNote::new(transposed as u8))
-        } else {
-            None
-        }
+        note.transpose(self.transpose)
     }
 
     /// Get the voice allocator.

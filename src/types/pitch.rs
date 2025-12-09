@@ -406,9 +406,17 @@ impl MidiNote {
     }
 
     /// Transpose by semitones.
+    ///
+    /// Returns `None` if the result would be outside valid MIDI range (0-127).
     #[inline]
-    pub fn transpose(self, semitones: i8) -> Self {
-        Self((self.0 as i16 + semitones as i16).clamp(0, 127) as u8)
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn transpose(self, semitones: Semitones) -> Option<Self> {
+        let transposed = self.0 as i16 + semitones.as_f32().round() as i16;
+        if (0..=127).contains(&transposed) {
+            Some(Self(transposed as u8))
+        } else {
+            None
+        }
     }
 
     /// Get the note name (e.g., "C4", "F#5").

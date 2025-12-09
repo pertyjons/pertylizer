@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::Semitones;
+
 /// MIDI-compatible pitch (0-127).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Pitch(u8);
@@ -44,10 +46,17 @@ impl Pitch {
         self.0
     }
 
-    /// Transpose by semitones, clamping to valid range.
-    pub fn transpose(&self, semitones: i8) -> Self {
-        let new_pitch = (self.0 as i16 + semitones as i16).clamp(0, 127) as u8;
-        Pitch(new_pitch)
+    /// Transpose by semitones.
+    ///
+    /// Returns `None` if the result would be outside valid MIDI range (0-127).
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn transpose(&self, semitones: Semitones) -> Option<Self> {
+        let transposed = self.0 as i16 + semitones.as_f32().round() as i16;
+        if (0..=127).contains(&transposed) {
+            Some(Self(transposed as u8))
+        } else {
+            None
+        }
     }
 }
 
@@ -231,15 +240,15 @@ mod tests {
     #[test]
     fn test_pitch_transpose() {
         let c4 = Pitch::new(60).unwrap();
-        assert_eq!(c4.transpose(12).as_midi(), 72); // C5
-        assert_eq!(c4.transpose(-12).as_midi(), 48); // C3
+        assert_eq!(c4.transpose(Semitones::new(12.0)).unwrap().as_midi(), 72); // C5
+        assert_eq!(c4.transpose(Semitones::new(-12.0)).unwrap().as_midi(), 48); // C3
 
-        // Test clamping
+        // Test out-of-range returns None
         let high = Pitch::new(120).unwrap();
-        assert_eq!(high.transpose(20).as_midi(), 127);
+        assert!(high.transpose(Semitones::new(20.0)).is_none());
 
         let low = Pitch::new(10).unwrap();
-        assert_eq!(low.transpose(-20).as_midi(), 0);
+        assert!(low.transpose(Semitones::new(-20.0)).is_none());
     }
 
     #[test]

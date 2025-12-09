@@ -15,7 +15,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::sequencer::{InstrumentId, Pitch, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
-use crate::types::{SampleCount, SampleRate};
+use crate::types::{Bpm, SampleCount, SampleRate};
 
 /// Playback state of the sequencer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,7 +59,7 @@ pub struct SequencerEngine {
     /// Active notes that need NoteOff events.
     active_notes: Vec<ActiveNote>,
     /// Cached tempo (BPM) to avoid locking song every sample.
-    cached_tempo: f32,
+    cached_tempo: Bpm,
     /// Whether we're looping.
     looping: bool,
     /// Loop start position.
@@ -78,7 +78,7 @@ impl SequencerEngine {
             tick_accumulator: 0.0,
             sample_rate,
             active_notes: Vec::new(),
-            cached_tempo: 120.0,
+            cached_tempo: Bpm::new(120.0),
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -87,7 +87,10 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let cached_tempo = song.read().map(|s| s.default_tempo).unwrap_or(120.0);
+        let cached_tempo = song
+            .read()
+            .map(|s| s.default_tempo)
+            .unwrap_or(Bpm::new(120.0));
 
         Self {
             song,
@@ -192,7 +195,7 @@ impl SequencerEngine {
         // Calculate how many ticks to advance
         // Formula: delta_ticks = (samples / sample_rate) * (bpm / 60) * TICKS_PER_QUARTER
         let seconds = samples.as_usize() as f64 / self.sample_rate.as_f32() as f64;
-        let beats = seconds * self.cached_tempo as f64 / 60.0;
+        let beats = seconds * f64::from(self.cached_tempo.as_f32()) / 60.0;
         let delta_ticks = beats * TICKS_PER_QUARTER as f64;
 
         self.tick_accumulator += delta_ticks;
@@ -261,8 +264,9 @@ impl SequencerEngine {
                         continue;
                     }
 
-                    // Apply transposition from placement
-                    let transposed_pitch = note.pitch.transpose(placement.transpose);
+                    // Apply transposition from placement (keep original if out of range)
+                    let transposed_pitch =
+                        note.pitch.transpose(placement.transpose).unwrap_or(note.pitch);
 
                     // Calculate end tick if duration is known
                     let end_tick = note
@@ -380,7 +384,7 @@ mod tests {
     use crate::sequencer::{Duration, InstrumentId, PatternTick, Velocity};
 
     fn create_test_song() -> Song {
-        let mut song = Song::new("Test").with_tempo(120.0);
+        let mut song = Song::new("Test").with_tempo(Bpm::new(120.0));
 
         // Create a pattern with one note
         let pattern_id = song.create_pattern(Duration::WHOLE);
