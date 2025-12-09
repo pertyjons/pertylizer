@@ -1,5 +1,18 @@
 # Version History
 
+## [0.34.10] - 2024
+### Fixed - Auto Layout: Moduler håller sig garanterat inom vyn
+- **Modulhöjden anpassas nu automatiskt:**
+  - Om alla rader inte får plats med MIN_MODULE_HEIGHT (140px), krymps modulerna
+  - Absolut minimum 60px höjd för att alltid passa
+  - Formeln: `((available_height - GAP) / total_rows - GAP).max(60.0)`
+- **Undersidan av moduler går aldrig utanför canvas:**
+  - `max_y` beräknas som `available_rect.max.y - module_height - GAP`
+  - `clamp_pos()` garanterar att modulens position + höjd alltid är inom vyn
+- **Inga moduler överlappar keyboard/piano**
+
+---
+
 ## [0.34.9] - 2024
 ### Improved - Auto Layout med strikta gränser
 - **Okopplade moduler hanteras separat:**

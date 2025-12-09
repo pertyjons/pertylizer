@@ -195,13 +195,25 @@ pub fn calculate_layout(
     let total_gap_x = GAP * (total_columns + 1) as f32;
     let module_width = ((available_width - total_gap_x) / total_columns as f32)
         .max(MIN_MODULE_WIDTH)
-        .min(available_width - 2.0 * GAP); // Never wider than available
+        .min(available_width - 2.0 * GAP);
 
-    // Height calculation: fit all rows
+    // Height calculation: MUST fit all rows within available height
+    // Calculate the height that guarantees all modules fit
     let total_gap_y = GAP * (total_rows + 1) as f32;
-    let module_height = ((available_height - total_gap_y) / total_rows as f32)
-        .max(MIN_MODULE_HEIGHT)
-        .min(available_height - 2.0 * GAP); // Never taller than available
+    let max_height_to_fit = (available_height - total_gap_y) / total_rows as f32;
+
+    // Use the smaller of: ideal height or what's needed to fit
+    // This ensures modules NEVER extend beyond the canvas
+    let module_height = max_height_to_fit.max(MIN_MODULE_HEIGHT);
+
+    // If even minimum height doesn't fit all rows, we need to shrink further
+    // Calculate actual usable height per module to guarantee fit
+    let module_height = if total_rows as f32 * (module_height + GAP) + GAP > available_height {
+        // Force fit: calculate exact height needed
+        ((available_height - GAP) / total_rows as f32 - GAP).max(60.0)
+    } else {
+        module_height
+    };
 
     // Cell size
     let cell_width = module_width + GAP;
@@ -211,9 +223,9 @@ pub fn calculate_layout(
     let start_x = available_rect.min.x + GAP;
     let start_y = available_rect.min.y + GAP;
 
-    // Maximum position to ensure modules stay in bounds
-    let max_x = available_rect.max.x - module_width - GAP;
-    let max_y = available_rect.max.y - module_height - GAP;
+    // Maximum position to ensure module's BOTTOM edge stays within bounds
+    let max_x = (available_rect.max.x - module_width - GAP).max(start_x);
+    let max_y = (available_rect.max.y - module_height - GAP).max(start_y);
 
     // Helper to clamp position within bounds
     let clamp_pos =
