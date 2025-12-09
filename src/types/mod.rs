@@ -34,6 +34,7 @@ mod frequency;
 mod interned;
 mod normalized;
 mod pitch;
+mod sample;
 mod samples;
 mod time;
 
@@ -43,6 +44,7 @@ pub use frequency::*;
 pub use interned::PortName;
 pub use normalized::*;
 pub use pitch::*;
+pub use sample::*;
 pub use samples::*;
 pub use time::*;
 

@@ -162,14 +162,21 @@ impl<'a> Knob<'a> {
             let p0 = center + Vec2::new(a0.cos(), a0.sin()) * inner_radius;
             let p1 = center + Vec2::new(a1.cos(), a1.sin()) * inner_radius;
 
-            painter.line_segment([p0, p1], Stroke::new(t.style.knob_arc_width, self.accent_color));
+            painter.line_segment(
+                [p0, p1],
+                Stroke::new(t.style.knob_arc_width, self.accent_color),
+            );
         }
 
         // Indicator dot at the edge
         let indicator_radius = radius - 8.0;
         let indicator_pos =
             center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
-        painter.circle_filled(indicator_pos, t.style.knob_indicator_size, t.colors.text_primary);
+        painter.circle_filled(
+            indicator_pos,
+            t.style.knob_indicator_size,
+            t.colors.text_primary,
+        );
 
         // Value text in center of knob
         let value_text = self.format_value();

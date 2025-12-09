@@ -250,7 +250,10 @@ fn draw_meter_bar(
 
         let segment_rect = Rect::from_min_size(
             Pos2::new(rect.left() + t.style.border_width, y + gap),
-            Vec2::new(rect.width() - t.style.border_width * 2.0, segment_height - gap * 2.0),
+            Vec2::new(
+                rect.width() - t.style.border_width * 2.0,
+                segment_height - gap * 2.0,
+            ),
         );
 
         let color = if level <= rms_norm {
@@ -269,7 +272,10 @@ fn draw_meter_bar(
         painter.rect_filled(
             Rect::from_min_size(
                 Pos2::new(rect.left() + t.style.border_width, peak_y),
-                Vec2::new(rect.width() - t.style.border_width * 2.0, t.style.border_width_thick),
+                Vec2::new(
+                    rect.width() - t.style.border_width * 2.0,
+                    t.style.border_width_thick,
+                ),
             ),
             0.0,
             t.colors.text_primary,

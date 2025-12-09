@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.33.19"
+version = "0.33.20"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"
@@ -38,6 +38,9 @@ serde_json = "1.0"
 
 # File system paths
 dirs = "6.0"
+
+# WAV file reading for samples
+hound = "3.5"
 
 # GUI - egui (optional)
 eframe = { version = "0.33", optional = true, default-features = false, features = [

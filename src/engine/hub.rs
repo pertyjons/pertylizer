@@ -360,6 +360,9 @@ impl EngineHub {
             EngineCommand::Reset => perms.can_modify_topology,
             EngineCommand::SetBypass { .. } => perms.can_modify_params,
             EngineCommand::SetEffectEnabled { .. } => perms.can_modify_params,
+
+            // Sample loading
+            EngineCommand::LoadSample { .. } => perms.can_modify_params,
         }
     }
 

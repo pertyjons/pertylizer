@@ -528,6 +528,16 @@ impl Clone for EngineCommand {
                 instrument_id: *instrument_id,
                 solo: *solo,
             },
+            // Sample loading (Arc can be cloned)
+            EngineCommand::LoadSample {
+                instrument_id,
+                module_id,
+                sample,
+            } => EngineCommand::LoadSample {
+                instrument_id: *instrument_id,
+                module_id: *module_id,
+                sample: std::sync::Arc::clone(sample),
+            },
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
             EngineCommand::AddInstrument { .. } => {
                 panic!("AddInstrument cannot be cloned - instrument instances are unique")

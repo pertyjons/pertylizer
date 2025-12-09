@@ -2,8 +2,8 @@
 
 use eframe::egui::{Color32, Pos2, Stroke};
 
-use crate::gui::theme::theme;
 use super::port::PortType;
+use crate::gui::theme::theme;
 
 /// Get cable color from theme based on port type.
 pub fn cable_color(port_type: PortType, alpha: u8) -> Color32 {
@@ -121,7 +121,14 @@ pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2
 
     // Semi-transparent cable, no shadow for cleaner dragging
     let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180);
-    draw_bezier_cable(painter, from, ctrl1, ctrl2, to, Stroke::new(3.0, cable_color));
+    draw_bezier_cable(
+        painter,
+        from,
+        ctrl1,
+        ctrl2,
+        to,
+        Stroke::new(3.0, cable_color),
+    );
 }
 
 /// Draw a highlighted cable (hovered or selected) with glow effect.
@@ -138,7 +145,14 @@ pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: P
         highlight_color.b(),
         60,
     );
-    draw_bezier_cable(painter, from, ctrl1, ctrl2, to, Stroke::new(8.0, glow_color));
+    draw_bezier_cable(
+        painter,
+        from,
+        ctrl1,
+        ctrl2,
+        to,
+        Stroke::new(8.0, glow_color),
+    );
 
     // Inner glow
     let inner_glow = Color32::from_rgba_unmultiplied(

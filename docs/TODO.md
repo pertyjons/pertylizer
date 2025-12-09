@@ -20,7 +20,7 @@
 *Mål: Göra synten rolig och musikalisk att använda.*
 
 6.  **Sampling & Audio Assets** (Från nuvarande P3)
-    * [ ] `SampleManager` och `SamplePlayer`-modul. Detta öppnar upp för trummor och texturer.
+    * [x] ~~`SampleManager` och `SamplePlayer`-modul. Detta öppnar upp för trummor och texturer.~~ *(0.33.20: SamplePlayer med pitch tracking, loop modes, interpolation)*
 7.  **Patch Browser & Taggar** (Nytt - UX)
     * [ ] Byt ut fil-dialogen mot en inbyggd browser med tag-filtrering (Bass, Pad, FX).
 8.  **Makro-system & Mod Matrix** (Nytt - Ljuddesign)

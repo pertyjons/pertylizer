@@ -112,12 +112,12 @@ PLAYING TIPS:
         ModuleBuilder::new(1, ModuleType::Envelope)
             .position(250.0, 50.0)
             .param_f("attack", 0.003) // Near-instant attack
-            .param_f("decay", 2.5)    // Long natural decay
-            .param_f("sustain", 0.0)  // No sustain plateau (piano-like)
+            .param_f("decay", 2.5) // Long natural decay
+            .param_f("sustain", 0.0) // No sustain plateau (piano-like)
             .param_f("release", 0.35) // Release when key up
             .param_f("velocity_sensitivity", 0.8) // Velocity affects amplitude
             .param_f("attack_curve", -0.3)
-            .param_f("decay_curve", -0.4)  // Natural exponential decay
+            .param_f("decay_curve", -0.4) // Natural exponential decay
             .param_f("release_curve", -0.3)
             .build(),
     );
@@ -126,8 +126,8 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 250.0)
-            .param_f("attack", 0.001)  // Instant
-            .param_f("decay", 0.2)     // Quick decay for percussive feel
+            .param_f("attack", 0.001) // Instant
+            .param_f("decay", 0.2) // Quick decay for percussive feel
             .param_f("sustain", 0.0)
             .param_f("release", 0.15)
             .param_f("velocity_sensitivity", 0.7) // Velocity opens filter more
@@ -141,8 +141,8 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(3, ModuleType::Envelope)
             .position(250.0, 450.0)
-            .param_f("attack", 0.001)  // Instant
-            .param_f("decay", 0.012)   // ~12ms click
+            .param_f("attack", 0.001) // Instant
+            .param_f("decay", 0.012) // ~12ms click
             .param_f("sustain", 0.0)
             .param_f("release", 0.008)
             .param_f("velocity_sensitivity", 0.6) // Harder = more click
@@ -161,10 +161,10 @@ PLAYING TIPS:
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 200.0)
             .filter_mode("lowpass")
-            .param_f("cutoff", 2000.0)     // Base cutoff
-            .param_f("resonance", 0.05)    // Very low resonance (piano is not resonant)
-            .param_f("env_amount", 0.7)    // Envelope opens filter for attack
-            .param_f("key_tracking", 0.6)  // Higher notes = brighter
+            .param_f("cutoff", 2000.0) // Base cutoff
+            .param_f("resonance", 0.05) // Very low resonance (piano is not resonant)
+            .param_f("env_amount", 0.7) // Envelope opens filter for attack
+            .param_f("key_tracking", 0.6) // Higher notes = brighter
             .build(),
     );
 
@@ -204,10 +204,10 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::KeyboardPanner)
             .position(750.0, 200.0)
-            .param_f("spread", 0.6)     // 60% stereo spread
-            .param_f("center", 60.0)    // Middle C as center
-            .param_f("curve", 0.0)      // Linear panning
-            .param_f("invert", 0.0)     // Normal: low=left, high=right
+            .param_f("spread", 0.6) // 60% stereo spread
+            .param_f("center", 60.0) // Middle C as center
+            .param_f("curve", 0.0) // Linear panning
+            .param_f("invert", 0.0) // Normal: low=left, high=right
             .build(),
     );
 
@@ -236,14 +236,14 @@ PLAYING TIPS:
     // --- Main signal chain ---
     patch.add_connection("mix-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
-    patch.add_connection("amp-1", "out", "kbp-1", "in");  // VCA -> Keyboard Panner
+    patch.add_connection("amp-1", "out", "kbp-1", "in"); // VCA -> Keyboard Panner
 
     // --- Stereo output from panner ---
     patch.add_connection("kbp-1", "out_l", "out-1", "in_l");
     patch.add_connection("kbp-1", "out_r", "out-1", "in_r");
 
     // --- Modulation ---
-    patch.add_connection("env-1", "out", "amp-1", "cv");        // Volume envelope
+    patch.add_connection("env-1", "out", "amp-1", "cv"); // Volume envelope
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv"); // Filter envelope
 
     patch

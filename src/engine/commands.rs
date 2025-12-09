@@ -487,6 +487,21 @@ pub enum EngineCommand {
         effect_type: EffectType,
         enabled: bool,
     },
+
+    // === Sample control ===
+    /// Load a sample into a SamplePlayer module.
+    ///
+    /// The sample is pre-loaded in the GUI thread via SampleManager and sent
+    /// as an Arc<Sample> for thread-safe sharing. No file I/O happens in the
+    /// audio thread.
+    LoadSample {
+        /// Target instrument (None for global modules).
+        instrument_id: Option<InstrumentId>,
+        /// The SamplePlayer module to load the sample into.
+        module_id: ModuleId,
+        /// The pre-loaded sample data.
+        sample: std::sync::Arc<crate::types::Sample>,
+    },
 }
 
 /// Type of visualizer to add.
@@ -880,6 +895,16 @@ impl std::fmt::Debug for EngineCommand {
                 .field("instrument_id", instrument_id)
                 .field("effect_type", effect_type)
                 .field("enabled", enabled)
+                .finish(),
+            Self::LoadSample {
+                instrument_id,
+                module_id,
+                sample,
+            } => f
+                .debug_struct("LoadSample")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
+                .field("sample", &sample.name)
                 .finish(),
         }
     }

@@ -157,7 +157,8 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     );
     style.visuals.widgets.hovered.bg_fill = hovered_bg;
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, colors.text_primary);
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, colors.accent_primary.gamma_multiply(0.5));
+    style.visuals.widgets.hovered.bg_stroke =
+        Stroke::new(1.0, colors.accent_primary.gamma_multiply(0.5));
 
     style.visuals.widgets.active.bg_fill = colors.accent_primary;
     style.visuals.widgets.active.fg_stroke = Stroke::new(2.0, colors.bg_dark);
@@ -496,10 +497,7 @@ impl eframe::App for SynthApp {
                     learn_state,
                 } => {
                     // Update the instrument's UI state with the learned key range
-                    if let Some(inst) = self
-                        .instruments
-                        .iter_mut()
-                        .find(|i| i.id == instrument_id)
+                    if let Some(inst) = self.instruments.iter_mut().find(|i| i.id == instrument_id)
                     {
                         inst.key_range = key_range;
                         inst.learn_state = learn_state;

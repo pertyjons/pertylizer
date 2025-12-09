@@ -17,8 +17,8 @@ use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    PortDirection, PortType, cable_color, draw_cable, draw_cable_dragging,
-    draw_cable_highlighted, point_near_cable,
+    PortDirection, PortType, cable_color, draw_cable, draw_cable_dragging, draw_cable_highlighted,
+    point_near_cable,
 };
 
 /// Module connectivity status for visualization.
@@ -1035,7 +1035,7 @@ impl PatchEditor {
 
     /// Apply automatic layout to modules based on signal flow.
     pub fn apply_auto_layout(&mut self) {
-        use super::auto_layout::{calculate_layout, LayoutConfig, LayoutConnection, ModuleInfo};
+        use super::auto_layout::{LayoutConfig, LayoutConnection, ModuleInfo, calculate_layout};
 
         // Collect module info
         let modules: Vec<ModuleInfo> = self
@@ -1603,4 +1603,3 @@ fn convert_port_type(port_type: crate::modules::core::PortType) -> PortType {
         crate::modules::core::PortType::Midi => PortType::Midi,
     }
 }
-

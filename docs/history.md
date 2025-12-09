@@ -1,5 +1,24 @@
 # Version History
 
+## [0.33.20] - 2024
+### Added - Sample Player & Sample Manager
+- **SamplePlayer** - Ny modul för uppspelning av WAV-samples
+  - Pitch tracking (transponerar automatiskt baserat på spelade noter)
+  - Loop modes: Off, Forward, Backward, PingPong
+  - Start/End positions för sample trimming
+  - Loop Start/End för preciserad loop-region
+  - Speed-kontroll (0.1x - 4.0x)
+  - Interpolation: Nearest, Linear, Cubic (Catmull-Rom)
+  - Stereo och mono-samples stöds
+- **SampleManager** - GUI-thread sample loader med caching
+  - Laddar WAV-filer (8/16/24/32-bit int, 32-bit float)
+  - Cache förhindrar dubbel-laddning av samma fil
+  - Thread-safe via `Arc<Sample>`
+- **Nya typer** - `SampleValue`, `PlaybackPosition`, `SampleIndex`, `PlaybackSpeed`, `ChannelMode`, `Interpolation`, `PlaybackDirection`
+- **hound** - Nytt beroende för WAV-läsning
+
+---
+
 ## [0.33.19] - 2024
 ### Added - Improved Cables & Auto-Layout
 - **Kablar med gravitation** - Kablar hänger nedåt med naturlig "sag" (15% av avståndet)

@@ -56,6 +56,13 @@ impl LoopMode {
     pub fn index(&self) -> usize {
         Self::ALL.iter().position(|m| m == self).unwrap_or(0)
     }
+
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
 }
 
 // ============================================================================

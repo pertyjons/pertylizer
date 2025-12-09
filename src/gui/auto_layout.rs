@@ -94,8 +94,14 @@ pub fn calculate_layout(
     }
 
     for conn in connections {
-        outgoing.entry(conn.from_module).or_default().push(conn.to_module);
-        incoming.entry(conn.to_module).or_default().push(conn.from_module);
+        outgoing
+            .entry(conn.from_module)
+            .or_default()
+            .push(conn.to_module);
+        incoming
+            .entry(conn.to_module)
+            .or_default()
+            .push(conn.from_module);
     }
 
     // Separate modulation modules
@@ -183,7 +189,10 @@ pub fn calculate_layout(
             })
             .unwrap_or(0);
 
-        mod_by_column.entry(target_col).or_default().push(mod_module.id);
+        mod_by_column
+            .entry(target_col)
+            .or_default()
+            .push(mod_module.id);
     }
 
     // Place modulation modules
@@ -208,6 +217,7 @@ pub fn calculate_layout(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
