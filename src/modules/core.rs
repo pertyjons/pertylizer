@@ -133,8 +133,20 @@ impl<'a> InputPorts<'a> {
     ///
     /// Returns `None` if no input is connected to this port.
     /// O(n) linear search, but n is typically 1-4 ports.
+    ///
+    /// Uses direct `u32` comparison via `PortName` for maximum speed
+    /// (no string comparison, no locking).
     #[inline]
-    pub fn get(&self, name: &str) -> Option<&AudioBuffer> {
+    pub fn get(&self, name: PortName) -> Option<&AudioBuffer> {
+        self.0.iter().find(|(n, _)| *n == name).map(|(_, buf)| *buf)
+    }
+
+    /// Get an input buffer by port name string (convenience method).
+    ///
+    /// **Note:** For hot paths, prefer `get(PortName::IN)` with constants.
+    /// This method is provided for backwards compatibility.
+    #[inline]
+    pub fn get_str(&self, name: &str) -> Option<&AudioBuffer> {
         self.0
             .iter()
             .find(|(n, _)| n.as_str() == name)

@@ -14,7 +14,8 @@ use crate::dsp::oscillators::poly_blep;
 use crate::engine::typed_params::{FmMode, ModuleType, OscillatorParam, Param};
 use crate::modules::core::*;
 use crate::types::{
-    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Semitones,
+    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
+    Semitones,
 };
 
 /// A band-limited oscillator.
@@ -235,12 +236,12 @@ impl PolyModule for Oscillator {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let fm_input = inputs.get("fm");
-        let pm_input = inputs.get("pm");
+        let fm_input = inputs.get(PortName::FM);
+        let pm_input = inputs.get(PortName::PM);
         #[allow(clippy::similar_names)]
         // pm = phase mod, pwm = pulse width mod - different concepts
-        let pwm_input = inputs.get("pwm");
-        let sync_input = inputs.get("sync");
+        let pwm_input = inputs.get(PortName::PWM);
+        let sync_input = inputs.get(PortName::SYNC);
 
         let mut prev_sync = 0.0f32;
 

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{EnvelopeParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, MidiNote, NormalizedValue, SampleRate, Seconds};
+use crate::types::{BipolarValue, MidiNote, NormalizedValue, PortName, SampleRate, Seconds};
 
 /// Envelope stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -282,8 +282,8 @@ impl PolyModule for Envelope {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let gate_input = inputs.get("gate");
-        let velocity_input = inputs.get("velocity");
+        let gate_input = inputs.get(PortName::GATE);
+        let velocity_input = inputs.get(PortName::VELOCITY);
         let mut prev_gate = 0.0f32;
 
         for i in 0..context.samples {

@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::engine::typed_params::{LfoParam, LfoWaveform, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
-    BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, RetriggerMode, SampleRate, SyncMode,
+    BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode, SampleRate,
+    SyncMode,
 };
 
 /// LFO output mode.
@@ -150,8 +151,8 @@ impl PolyModule for Lfo {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let retrigger_input = inputs.get("retrigger");
-        let rate_cv = inputs.get("rate_cv");
+        let retrigger_input = inputs.get(PortName::intern("retrigger"));
+        let rate_cv = inputs.get(PortName::RATE_CV);
         let mut prev_retrigger = 0.0f32;
 
         for i in 0..context.samples {

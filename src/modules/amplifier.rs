@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, ClipMode, Gain, MidiNote, SampleRate};
+use crate::types::{
+    BipolarValue, ClipMode, Gain, LimitMode, MidiNote, MuteState, PortName, SampleRate,
+};
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
@@ -96,9 +98,9 @@ impl PolyModule for Amplifier {
         self.output_left.resize(context.samples);
         self.output_right.resize(context.samples);
 
-        let audio_in = inputs.get("in");
-        let cv_in = inputs.get("cv");
-        let pan_cv = inputs.get("pan_cv");
+        let audio_in = inputs.get(PortName::IN);
+        let cv_in = inputs.get(PortName::CV);
+        let pan_cv = inputs.get(PortName::PAN_CV);
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
@@ -182,8 +184,8 @@ impl PolyModule for Amplifier {
 pub struct Mixer {
     levels: [Gain; 8],
     master_level: Gain,
-    mute: bool,
-    limit: bool,
+    mute_state: MuteState,
+    limit_mode: LimitMode,
     output_buffer: AudioBuffer,
 }
 
@@ -192,8 +194,8 @@ impl Mixer {
         Self {
             levels: [Gain::UNITY; 8],
             master_level: Gain::UNITY,
-            mute: false,
-            limit: false,
+            mute_state: MuteState::Unmuted,
+            limit_mode: LimitMode::Disabled,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -242,10 +244,11 @@ impl PolyModule for Mixer {
         self.output_buffer.resize(context.samples);
         self.output_buffer.clear();
 
-        if !self.mute {
+        if self.mute_state.is_unmuted() {
             for i in 1..=8 {
                 let key = format!("in{i}");
-                if let Some(input) = inputs.get(&key) {
+                // Use get_str for dynamic port names (not in hot path)
+                if let Some(input) = inputs.get_str(&key) {
                     let level = self.levels[i - 1].as_f32();
                     for j in 0..context.samples {
                         self.output_buffer[j] += input[j] * level;
@@ -268,8 +271,8 @@ impl PolyModule for Mixer {
                 MixerParam::Input2(l) => self.levels[1] = l,
                 MixerParam::Input3(l) => self.levels[2] = l,
                 MixerParam::Input4(l) => self.levels[3] = l,
-                MixerParam::Mute(m) => self.mute = m,
-                MixerParam::Limit(l) => self.limit = l,
+                MixerParam::Mute(m) => self.mute_state = MuteState::from(m),
+                MixerParam::Limit(l) => self.limit_mode = LimitMode::from(l),
             }
         }
     }
@@ -283,14 +286,14 @@ impl PolyModule for Mixer {
                 MixerParam::Input3(_) => self.levels[2].as_f32(),
                 MixerParam::Input4(_) => self.levels[3].as_f32(),
                 MixerParam::Mute(_) => {
-                    if self.mute {
+                    if self.mute_state.is_muted() {
                         1.0
                     } else {
                         0.0
                     }
                 }
                 MixerParam::Limit(_) => {
-                    if self.limit {
+                    if self.limit_mode.is_enabled() {
                         1.0
                     } else {
                         0.0
@@ -309,8 +312,8 @@ impl PolyModule for Mixer {
             Param::Mixer(MixerParam::Input2(self.levels[1])),
             Param::Mixer(MixerParam::Input3(self.levels[2])),
             Param::Mixer(MixerParam::Input4(self.levels[3])),
-            Param::Mixer(MixerParam::Mute(self.mute)),
-            Param::Mixer(MixerParam::Limit(self.limit)),
+            Param::Mixer(MixerParam::Mute(self.mute_state.is_muted())),
+            Param::Mixer(MixerParam::Limit(self.limit_mode.is_enabled())),
         ]
     }
 

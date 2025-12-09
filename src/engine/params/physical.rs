@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BipolarValue, Gain, Hertz, MidiNote, Milliseconds, NormalizedValue};
+use crate::types::{BipolarValue, Gain, Hertz, MidiNote, Milliseconds, NormalizedValue, Polarity};
 
 // ============================================================================
 // KEYBOARD PANNER PARAMETERS
@@ -22,8 +22,8 @@ pub enum KeyboardPannerParam {
     CenterNote(MidiNote),
     /// Pan curve shape (-1.0 to 1.0, 0 = linear)
     Curve(BipolarValue),
-    /// Invert panning direction
-    Invert(bool),
+    /// Invert panning direction (polarity)
+    Invert(Polarity),
 }
 
 impl KeyboardPannerParam {
@@ -45,8 +45,8 @@ impl KeyboardPannerParam {
             Self::Spread(v) => v.as_f32(),
             Self::CenterNote(n) => f32::from(n.as_u8()),
             Self::Curve(c) => c.as_f32(),
-            Self::Invert(b) => {
-                if *b {
+            Self::Invert(p) => {
+                if p.is_inverted() {
                     1.0
                 } else {
                     0.0
@@ -60,7 +60,7 @@ impl KeyboardPannerParam {
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
             Self::CenterNote(_) => Self::CenterNote(MidiNote::new(value.clamp(0.0, 127.0) as u8)),
             Self::Curve(_) => Self::Curve(BipolarValue::new(value)),
-            Self::Invert(_) => Self::Invert(value > 0.5),
+            Self::Invert(_) => Self::Invert(Polarity::from(value > 0.5)),
         }
     }
 }

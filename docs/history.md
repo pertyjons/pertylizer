@@ -1,5 +1,38 @@
 # Version History
 
+## [0.34.3] - 2024
+### Improved - Prestandaoptimering & Slutfört Type Hardening
+
+**Del 1: InternPool optimering (prestandakritisk)**
+- `PortName` har nu **compile-time konstanter** (`PortName::IN`, `PortName::OUT`, etc.)
+- **Ingen låsning krävs** för standardportnamn i ljudtråden
+- 23 fördefinierade port-IDn: `IN`, `OUT`, `IN_L`, `IN_R`, `OUT_L`, `OUT_R`, `FREQ`, `FREQ_CV`, `GATE`, `CUTOFF_CV`, `RESONANCE_CV`, `PWM`, `FM`, `PM`, `SYNC`, `LEVEL`, `PAN`, `RATE_CV`, `CV`, `PAN_CV`, `LEFT`, `RIGHT`, `VELOCITY`
+- Gamla metoder (`input()`, `output()`, etc.) är deprecated
+
+**Del 2: InputPorts::get optimering**
+- `InputPorts::get(name: PortName)` - direkt `u32`-jämförelse, **O(1) utan strängjämförelse**
+- `InputPorts::get_str(name: &str)` - convenience-metod för dynamiska portnamn
+- Alla moduler uppdaterade att använda `PortName::*` konstanter
+
+**Del 3: Nya state enums**
+- `FreezeState` - `Unfrozen`/`Frozen` för reverb/oscilloscope freeze
+- `Polarity` - `Normal`/`Inverted` med `multiplier()` metod
+- `TempoSyncState` - alias för `SyncMode`
+
+**Del 4: Modulmigrering bool → enum**
+- `KeyboardPanner`: `invert: bool` → `polarity: Polarity`
+- `Delay`: `tempo_sync: bool` → `tempo_sync: TempoSyncState`
+- `Mixer`: `mute: bool` → `mute_state: MuteState`, `limit: bool` → `limit_mode: LimitMode`
+
+**Del 5: Parametrar uppdaterade**
+- `KeyboardPannerParam::Invert(Polarity)` istället för `bool`
+- Alla `as_f32()` och `with_f32()` metoder uppdaterade
+
+**Del 6: SamplePlayer (redan optimerad)**
+- `Arc::clone` sker redan innan for-loopen - korrekt implementerad
+
+---
+
 ## [0.34.2] - 2024
 ### Improved - Fas 3 & 4: Type Hardening Complete
 - **Fas 3 - Arkitektur & Prestanda:** Verifierad - redan optimerad

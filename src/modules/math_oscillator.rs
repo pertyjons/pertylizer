@@ -12,7 +12,7 @@ use std::f32::consts::TAU;
 use crate::engine::typed_params::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
-    BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate,
+    BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
 };
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
@@ -470,9 +470,9 @@ impl PolyModule for MathOscillator {
         self.output_buffer.resize(context.samples);
 
         // Get modulation inputs
-        let fm_input = inputs.get("fm");
-        let mod_a = inputs.get("param_a");
-        let mod_b = inputs.get("param_b");
+        let fm_input = inputs.get(PortName::FM);
+        let mod_a = inputs.get(PortName::intern("param_a"));
+        let mod_b = inputs.get(PortName::intern("param_b"));
 
         for i in 0..context.samples {
             // Apply FM

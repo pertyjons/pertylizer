@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
-    Amplitude, BipolarValue, Decibels, Gain, LimitMode, MidiNote, MuteState, StereoSample,
+    Amplitude, BipolarValue, Decibels, Gain, LimitMode, MidiNote, MuteState, PortName, StereoSample,
 };
 
 /// Stereo output module - the final destination in the audio graph.
@@ -212,9 +212,9 @@ impl PolyModule for StereoOutput {
         }
 
         // Get input buffers
-        let mono_in = inputs.get("in");
-        let left_in = inputs.get("in_l");
-        let right_in = inputs.get("in_r");
+        let mono_in = inputs.get(PortName::IN);
+        let left_in = inputs.get(PortName::IN_L);
+        let right_in = inputs.get(PortName::IN_R);
 
         // Calculate pan coefficients
         let (pan_l, pan_r) = self.pan_coefficients();
@@ -314,8 +314,14 @@ impl PolyModule for StereoOutput {
     fn get_param(&self, param: &Param) -> Option<f32> {
         match param {
             Param::Mixer(MixerParam::Master(_)) => Some(self.master_level.as_f32()),
-            Param::Mixer(MixerParam::Mute(_)) => Some(if self.mute_state.is_muted() { 1.0 } else { 0.0 }),
-            Param::Mixer(MixerParam::Limit(_)) => Some(if self.limit_mode.is_enabled() { 1.0 } else { 0.0 }),
+            Param::Mixer(MixerParam::Mute(_)) => {
+                Some(if self.mute_state.is_muted() { 1.0 } else { 0.0 })
+            }
+            Param::Mixer(MixerParam::Limit(_)) => Some(if self.limit_mode.is_enabled() {
+                1.0
+            } else {
+                0.0
+            }),
             Param::Amplifier(AmplifierParam::Pan(_)) => Some(self.pan.as_f32()),
             _ => None,
         }

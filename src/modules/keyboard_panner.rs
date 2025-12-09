@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use crate::engine::typed_params::{KeyboardPannerParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
-    BipolarValue, MidiNote, NormalizedValue, SampleRate, StereoBalance, StereoSample,
+    BipolarValue, MidiNote, NormalizedValue, Polarity, PortName, SampleRate, StereoBalance,
+    StereoSample,
 };
 
 /// Keyboard panner with configurable spread and center.
@@ -18,7 +19,7 @@ pub struct KeyboardPanner {
     spread: NormalizedValue,
     center_note: MidiNote,
     curve: BipolarValue,
-    invert: bool,
+    polarity: Polarity,
 
     // Current pan position
     current_pan: StereoBalance,
@@ -37,7 +38,7 @@ impl KeyboardPanner {
             spread: NormalizedValue::new(0.5),
             center_note: MidiNote::C4,
             curve: BipolarValue::CENTER,
-            invert: false,
+            polarity: Polarity::Normal,
 
             current_pan: StereoBalance::CENTER,
 
@@ -72,12 +73,7 @@ impl KeyboardPanner {
 
         // Apply spread
         let spread = self.spread.as_f32();
-        let mut pan = curved * spread;
-
-        // Invert if needed
-        if self.invert {
-            pan = -pan;
-        }
+        let pan = curved * spread * self.polarity.multiplier();
 
         self.current_pan = StereoBalance::new(pan);
     }
@@ -139,7 +135,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::KeyboardPanner(KeyboardPannerParam::Invert(false)),
+                    Param::KeyboardPanner(KeyboardPannerParam::Invert(Polarity::Normal)),
                     "Invert",
                 )
                 .description("Invert panning direction")
@@ -165,7 +161,7 @@ impl PolyModule for KeyboardPanner {
         self.output_left.resize(context.samples);
         self.output_right.resize(context.samples);
 
-        let input = inputs.get("in");
+        let input = inputs.get(PortName::IN);
 
         for i in 0..context.samples {
             let input_sample = input.map_or(0.0, |buf| buf[i]);
@@ -188,7 +184,7 @@ impl PolyModule for KeyboardPanner {
                 KeyboardPannerParam::Spread(v) => self.spread = v,
                 KeyboardPannerParam::CenterNote(n) => self.center_note = n,
                 KeyboardPannerParam::Curve(c) => self.curve = c,
-                KeyboardPannerParam::Invert(b) => self.invert = b,
+                KeyboardPannerParam::Invert(p) => self.polarity = p,
             }
         }
     }
@@ -200,7 +196,7 @@ impl PolyModule for KeyboardPanner {
                 KeyboardPannerParam::CenterNote(_) => f32::from(self.center_note.as_u8()),
                 KeyboardPannerParam::Curve(_) => self.curve.as_f32(),
                 KeyboardPannerParam::Invert(_) => {
-                    if self.invert {
+                    if self.polarity.is_inverted() {
                         1.0
                     } else {
                         0.0
@@ -217,7 +213,7 @@ impl PolyModule for KeyboardPanner {
             Param::KeyboardPanner(KeyboardPannerParam::Spread(self.spread)),
             Param::KeyboardPanner(KeyboardPannerParam::CenterNote(self.center_note)),
             Param::KeyboardPanner(KeyboardPannerParam::Curve(self.curve)),
-            Param::KeyboardPanner(KeyboardPannerParam::Invert(self.invert)),
+            Param::KeyboardPanner(KeyboardPannerParam::Invert(self.polarity)),
         ]
     }
 

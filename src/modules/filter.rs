@@ -10,7 +10,9 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{FilterMode, FilterParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, SampleRate};
+use crate::types::{
+    BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate,
+};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
@@ -204,9 +206,9 @@ impl PolyModule for Filter {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let audio_in = inputs.get("in");
-        let cutoff_cv = inputs.get("cutoff_cv");
-        let res_cv = inputs.get("res_cv");
+        let audio_in = inputs.get(PortName::IN);
+        let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
+        let res_cv = inputs.get(PortName::RESONANCE_CV);
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
@@ -420,8 +422,8 @@ impl PolyModule for LadderFilter {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let audio_in = inputs.get("in");
-        let cutoff_cv = inputs.get("cutoff_cv");
+        let audio_in = inputs.get(PortName::IN);
+        let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
 
         for i in 0..context.samples {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);

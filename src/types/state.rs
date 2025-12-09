@@ -113,11 +113,7 @@ impl MuteState {
 
 impl From<bool> for MuteState {
     fn from(muted: bool) -> Self {
-        if muted {
-            Self::Muted
-        } else {
-            Self::Unmuted
-        }
+        if muted { Self::Muted } else { Self::Unmuted }
     }
 }
 
@@ -169,11 +165,7 @@ impl SoloState {
 
 impl From<bool> for SoloState {
     fn from(solo: bool) -> Self {
-        if solo {
-            Self::Solo
-        } else {
-            Self::Normal
-        }
+        if solo { Self::Solo } else { Self::Normal }
     }
 }
 
@@ -413,11 +405,7 @@ impl ClipMode {
 // For backwards compatibility with existing bool-based code
 impl From<bool> for ClipMode {
     fn from(soft_clip: bool) -> Self {
-        if soft_clip {
-            Self::Soft
-        } else {
-            Self::Off
-        }
+        if soft_clip { Self::Soft } else { Self::Off }
     }
 }
 
@@ -469,6 +457,137 @@ impl From<LimitMode> for bool {
         mode.is_enabled()
     }
 }
+
+// ============================================================================
+// FREEZE STATE
+// ============================================================================
+
+/// Whether something is frozen (paused) or running.
+///
+/// Used for reverb freeze, oscilloscope freeze, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum FreezeState {
+    /// Running normally.
+    #[default]
+    Unfrozen,
+    /// Frozen/paused state.
+    Frozen,
+}
+
+impl FreezeState {
+    /// Check if frozen.
+    #[inline]
+    #[must_use]
+    pub const fn is_frozen(self) -> bool {
+        matches!(self, Self::Frozen)
+    }
+
+    /// Check if unfrozen (running).
+    #[inline]
+    #[must_use]
+    pub const fn is_unfrozen(self) -> bool {
+        matches!(self, Self::Unfrozen)
+    }
+
+    /// Toggle between frozen and unfrozen.
+    #[inline]
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Frozen => Self::Unfrozen,
+            Self::Unfrozen => Self::Frozen,
+        }
+    }
+}
+
+impl From<bool> for FreezeState {
+    fn from(frozen: bool) -> Self {
+        if frozen { Self::Frozen } else { Self::Unfrozen }
+    }
+}
+
+impl From<FreezeState> for bool {
+    fn from(state: FreezeState) -> Self {
+        state.is_frozen()
+    }
+}
+
+// ============================================================================
+// POLARITY
+// ============================================================================
+
+/// Signal polarity (normal or inverted).
+///
+/// Used for inverting modulation, panning direction, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Polarity {
+    /// Normal polarity.
+    #[default]
+    Normal,
+    /// Inverted polarity (signal * -1).
+    Inverted,
+}
+
+impl Polarity {
+    /// Check if inverted.
+    #[inline]
+    #[must_use]
+    pub const fn is_inverted(self) -> bool {
+        matches!(self, Self::Inverted)
+    }
+
+    /// Check if normal (not inverted).
+    #[inline]
+    #[must_use]
+    pub const fn is_normal(self) -> bool {
+        matches!(self, Self::Normal)
+    }
+
+    /// Toggle between normal and inverted.
+    #[inline]
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Normal => Self::Inverted,
+            Self::Inverted => Self::Normal,
+        }
+    }
+
+    /// Get the multiplier for this polarity.
+    #[inline]
+    #[must_use]
+    pub const fn multiplier(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Inverted => -1.0,
+        }
+    }
+}
+
+impl From<bool> for Polarity {
+    fn from(inverted: bool) -> Self {
+        if inverted {
+            Self::Inverted
+        } else {
+            Self::Normal
+        }
+    }
+}
+
+impl From<Polarity> for bool {
+    fn from(polarity: Polarity) -> Self {
+        polarity.is_inverted()
+    }
+}
+
+// ============================================================================
+// TEMPO SYNC STATE
+// ============================================================================
+
+/// Whether tempo sync is enabled for delay/LFO/etc.
+///
+/// Alias for `SyncMode` for backwards compatibility and clearer naming.
+pub type TempoSyncState = SyncMode;
 
 // ============================================================================
 // NOTE RELEASE STATE

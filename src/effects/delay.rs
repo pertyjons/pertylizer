@@ -11,7 +11,7 @@ use crate::engine::typed_params::{DelayMode, DelayParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
     BeatDivision, Bpm, BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds,
-    StereoSample,
+    StereoSample, TempoSyncState,
 };
 
 /// Maximum delay time in seconds.
@@ -28,7 +28,7 @@ pub struct Delay {
     high_cut: Hertz,
 
     // Tempo sync
-    tempo_sync: bool,
+    tempo_sync: TempoSyncState,
     sync_division: BeatDivision,
 
     // Delay buffers
@@ -54,7 +54,7 @@ impl Delay {
             feedback: NormalizedValue::new(0.4),
             mix: NormalizedValue::CENTER,
             high_cut: Hertz::new(8000.0),
-            tempo_sync: false,
+            tempo_sync: TempoSyncState::Free,
             sync_division: BeatDivision::QUARTER,
             buffer_left: vec![0.0; buffer_size],
             buffer_right: vec![0.0; buffer_size],
@@ -187,7 +187,7 @@ impl AudioEffect for Delay {
         self.resize_buffers();
 
         // Calculate effective delay time (synced or manual)
-        let effective_time = if self.tempo_sync {
+        let effective_time = if self.tempo_sync.is_tempo_sync() {
             self.synced_delay_time(context.tempo.as_f32())
         } else {
             self.time_left
@@ -195,7 +195,7 @@ impl AudioEffect for Delay {
 
         let delay_samples_left = (effective_time.as_f32() * self.sample_rate.as_f32())
             .min((self.buffer_left.len() - 1) as f32);
-        let delay_samples_right = if self.tempo_sync {
+        let delay_samples_right = if self.tempo_sync.is_tempo_sync() {
             delay_samples_left
         } else {
             (self.time_right.as_f32() * self.sample_rate.as_f32())
@@ -331,7 +331,7 @@ impl AudioEffect for Delay {
                     let freq = 200.0 + d.as_f32() * (20000.0 - 200.0);
                     self.high_cut = Hertz::new(freq);
                 }
-                DelayParam::TempoSync(s) => self.tempo_sync = s,
+                DelayParam::TempoSync(s) => self.tempo_sync = TempoSyncState::from(s),
                 DelayParam::SyncDivision(d) => self.sync_division = d,
             }
         }
@@ -351,7 +351,7 @@ impl AudioEffect for Delay {
                     (self.high_cut.as_f32() - 200.0) / (20000.0 - 200.0)
                 }
                 DelayParam::TempoSync(_) => {
-                    if self.tempo_sync {
+                    if self.tempo_sync.is_tempo_sync() {
                         1.0
                     } else {
                         0.0
@@ -375,7 +375,7 @@ impl AudioEffect for Delay {
             Param::Delay(DelayParam::Damping(NormalizedValue::new(
                 (self.high_cut.as_f32() - 200.0) / (20000.0 - 200.0),
             ))),
-            Param::Delay(DelayParam::TempoSync(self.tempo_sync)),
+            Param::Delay(DelayParam::TempoSync(self.tempo_sync.is_tempo_sync())),
             Param::Delay(DelayParam::SyncDivision(self.sync_division)),
         ]
     }

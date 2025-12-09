@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{BodyResonanceParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{FilterState, Hertz, MidiNote, NormalizedValue, SampleRate};
+use crate::types::{FilterState, Hertz, MidiNote, NormalizedValue, PortName, SampleRate};
 
 /// Body resonance simulator using bandpass filters.
 #[derive(Clone)]
@@ -166,7 +166,7 @@ impl PolyModule for BodyResonance {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples);
 
-        let input = inputs.get("in");
+        let input = inputs.get(PortName::IN);
         let base_freq = self.frequency.as_f32();
         let q = 0.5 + self.resonance.as_f32() * 10.0; // Q from 0.5 to 10.5
         let size = self.size.as_f32();
