@@ -66,6 +66,9 @@ pub mod instrument_rack;
 pub mod input;
 
 #[cfg(feature = "gui-egui")]
+pub mod views;
+
+#[cfg(feature = "gui-egui")]
 pub mod app;
 
 #[cfg(feature = "gui-egui")]
