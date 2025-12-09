@@ -117,7 +117,7 @@ impl TrackerCell {
         // Effects
         for i in 0..config.effect_columns as usize {
             if let Some(effect) = self.effects.get(i) {
-                parts.push(format_effect(effect));
+                parts.push(format_effect_command(effect));
             } else {
                 parts.push("...".to_string());
             }
@@ -249,7 +249,7 @@ impl TrackerViewConfig {
 }
 
 /// Format an effect command as a tracker string.
-fn format_effect(effect: &EffectCommand) -> String {
+pub fn format_effect_command(effect: &EffectCommand) -> String {
     match effect {
         EffectCommand::Arpeggio { x, y } => format!("0{:X}{:X}", x, y),
         EffectCommand::PortamentoUp(speed) => format!("1{:02X}", speed),
@@ -465,10 +465,13 @@ mod tests {
     #[test]
     fn test_effect_formatting() {
         assert_eq!(
-            format_effect(&EffectCommand::Arpeggio { x: 3, y: 7 }),
+            format_effect_command(&EffectCommand::Arpeggio { x: 3, y: 7 }),
             "037"
         );
-        assert_eq!(format_effect(&EffectCommand::PortamentoUp(15)), "10F");
-        assert_eq!(format_effect(&EffectCommand::SetVolume(64)), "C40");
+        assert_eq!(
+            format_effect_command(&EffectCommand::PortamentoUp(15)),
+            "10F"
+        );
+        assert_eq!(format_effect_command(&EffectCommand::SetVolume(64)), "C40");
     }
 }

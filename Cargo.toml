@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.34.11"
+version = "0.35.0"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"
@@ -11,7 +11,7 @@ default-run = "modular-synth"
 [features]
 default = ["gui-egui"]
 gui-console = []
-gui-egui = ["dep:eframe", "dep:egui"]
+gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras"]
 
 [dependencies]
 # Audio I/O
@@ -51,6 +51,7 @@ eframe = { version = "0.33", optional = true, default-features = false, features
     "x11",
 ] }
 egui = { version = "0.33", optional = true }
+egui_extras = { version = "0.33", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"

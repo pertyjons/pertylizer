@@ -219,6 +219,9 @@ struct SynthApp {
 
     // Navigation state
     active_view: AppView,
+
+    // Tracker/Sequencer view state
+    tracker_state: crate::sequencer::view::TrackerViewState,
 }
 
 impl SynthApp {
@@ -293,6 +296,7 @@ impl SynthApp {
             next_instrument_id,
             master_effects: Vec::new(),
             active_view: AppView::default(),
+            tracker_state: crate::sequencer::view::TrackerViewState::default(),
         }
     }
 
@@ -762,7 +766,10 @@ impl eframe::App for SynthApp {
                 });
             }
             AppView::Sequencer => {
-                crate::gui::views::sequencer::show(ctx);
+                // Show sequencer view with tracker state
+                // TODO: Add Song to engine state when sequencer is fully implemented
+                let _result =
+                    crate::gui::views::sequencer::show(ctx, &mut self.tracker_state, None);
             }
             AppView::Mixer => {
                 crate::gui::views::mixer::show(ctx);

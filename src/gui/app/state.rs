@@ -6,6 +6,9 @@ use crate::engine::ModuleId;
 use crate::gui::patch_editor::EffectType;
 use serde::{Deserialize, Serialize};
 
+// Re-export TrackerViewState for convenience
+pub use crate::sequencer::view::TrackerViewState;
+
 // ============================================================================
 // NAVIGATION STATE
 // ============================================================================

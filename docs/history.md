@@ -1,5 +1,30 @@
 # Version History
 
+## [0.35.0] - 2025
+### Added - Tracker View (FastTracker II-inspirerad sequencer)
+- **Ny TrackerViewState (`src/sequencer/view/state.rs`):**
+  - Stark typ `RowIndex` för typsäker rad-navigering
+  - `TrackerColumn` enum: Note, Instrument, Volume, EffectType, EffectValue
+  - `TrackerViewState` med: cursor_row, cursor_track, cursor_column, octave, step_size, etc.
+  - Hjälpmetoder: `cursor_down/up/left/right`, `ensure_cursor_visible`, `octave_up/down`
+
+- **Tracker Grid Rendering (`src/sequencer/view/render.rs`):**
+  - Använder `egui_extras::TableBuilder` för virtuell scrollning
+  - `draw_tracker_grid()` - renderar pattern med färgkodade celler
+  - `TrackerColors` - anpassningsbara färger för tracker-vyn
+  - Stöd för Note, Instrument, Volume och Effect-kolumner
+
+- **Sequencer View (`src/gui/views/sequencer.rs`):**
+  - Toolbar med: Transport (⏮▶⏹⏺), Octave-väljare (F1/F2), Step-väljare, Follow-toggle
+  - Full tangentbordsnavigering: Piltangenter, Home/End, PageUp/Down, Tab
+  - Piano-tangentbordslayout för noter: Z=C, S=C#, X=D... Q=C+1, W=D+1, etc.
+  - Placeholder för "No Song" med kortkommandon
+
+- **Beroenden:**
+  - Lagt till `egui_extras = "0.33"` för TableBuilder
+
+---
+
 ## [0.34.11] - 2025
 ### Fixed - Auto Layout: ADSR/Modulation-moduler håller sig inom vyn
 - **Korrigerad beräkning av modulation-radens Y-position:**
