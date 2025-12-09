@@ -4,14 +4,14 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, Gain, MidiNote, SampleRate};
+use crate::types::{BipolarValue, ClipMode, Gain, MidiNote, SampleRate};
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
 pub struct Amplifier {
     level: Gain,
     pan: BipolarValue,
-    soft_clip: bool,
+    clip_mode: ClipMode,
     sample_rate: SampleRate,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
@@ -22,7 +22,7 @@ impl Amplifier {
         Self {
             level: Gain::UNITY,
             pan: BipolarValue::CENTER,
-            soft_clip: false,
+            clip_mode: ClipMode::Off,
             sample_rate: SampleRate::DVD_QUALITY,
             output_left: AudioBuffer::new(256),
             output_right: AudioBuffer::new(256),
@@ -36,8 +36,12 @@ impl Amplifier {
     }
 
     #[inline]
-    fn soft_clip(x: f32) -> f32 {
-        x.tanh()
+    fn apply_clip(x: f32, mode: ClipMode) -> f32 {
+        match mode {
+            ClipMode::Off => x,
+            ClipMode::Soft => x.tanh(),
+            ClipMode::Hard => x.clamp(-1.0, 1.0),
+        }
     }
 }
 
@@ -109,16 +113,11 @@ impl PolyModule for Amplifier {
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
 
-            let mut left = input * effective_level.as_f32() * pan_left.as_f32();
-            let mut right = input * effective_level.as_f32() * pan_right.as_f32();
+            let left = input * effective_level.as_f32() * pan_left.as_f32();
+            let right = input * effective_level.as_f32() * pan_right.as_f32();
 
-            if self.soft_clip {
-                left = Self::soft_clip(left);
-                right = Self::soft_clip(right);
-            }
-
-            self.output_left[i] = left;
-            self.output_right[i] = right;
+            self.output_left[i] = Self::apply_clip(left, self.clip_mode);
+            self.output_right[i] = Self::apply_clip(right, self.clip_mode);
         }
 
         if let Some(left) = outputs.get_mut("left") {

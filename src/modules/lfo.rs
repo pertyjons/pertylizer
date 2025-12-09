@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{LfoParam, LfoWaveform, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, SampleRate};
+use crate::types::{
+    BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, RetriggerMode, SampleRate, SyncMode,
+};
 
 /// LFO output mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,9 +27,9 @@ pub struct Lfo {
     sample_rate: SampleRate,
     sh_value: f32,
     sh_trigger_prev: f32,
-    tempo_sync: bool,
+    sync_mode: SyncMode,
     sync_division: BeatDivision,
-    retrigger: bool,
+    retrigger_mode: RetriggerMode,
     output_buffer: AudioBuffer,
 }
 
@@ -43,9 +45,9 @@ impl Lfo {
             sample_rate: SampleRate::DVD_QUALITY,
             sh_value: 0.0,
             sh_trigger_prev: 0.0,
-            tempo_sync: false,
+            sync_mode: SyncMode::Free,
             sync_division: BeatDivision::QUARTER,
-            retrigger: false,
+            retrigger_mode: RetriggerMode::Continue,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -161,7 +163,7 @@ impl PolyModule for Lfo {
                 prev_retrigger = val;
             }
 
-            let base_rate = if self.tempo_sync {
+            let base_rate = if self.sync_mode.is_tempo_sync() {
                 Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
             } else {
                 self.rate
@@ -190,9 +192,9 @@ impl PolyModule for Lfo {
                 LfoParam::Rate(r) => self.rate = Hertz::new(r.as_f32().clamp(0.01, 50.0)),
                 LfoParam::Depth(d) => self.depth = d,
                 LfoParam::Phase(p) => self.phase_offset = p,
-                LfoParam::TempoSync(s) => self.tempo_sync = s,
+                LfoParam::TempoSync(s) => self.sync_mode = SyncMode::from(s),
                 LfoParam::SyncDivision(d) => self.sync_division = d,
-                LfoParam::Retrigger(r) => self.retrigger = r,
+                LfoParam::Retrigger(r) => self.retrigger_mode = RetriggerMode::from(r),
             }
         }
     }
@@ -205,7 +207,7 @@ impl PolyModule for Lfo {
                 LfoParam::Depth(_) => self.depth.as_f32(),
                 LfoParam::Phase(_) => self.phase_offset.as_f32(),
                 LfoParam::TempoSync(_) => {
-                    if self.tempo_sync {
+                    if self.sync_mode.is_tempo_sync() {
                         1.0
                     } else {
                         0.0
@@ -213,7 +215,7 @@ impl PolyModule for Lfo {
                 }
                 LfoParam::SyncDivision(_) => self.sync_division.as_f32(),
                 LfoParam::Retrigger(_) => {
-                    if self.retrigger {
+                    if self.retrigger_mode.should_retrigger() {
                         1.0
                     } else {
                         0.0
@@ -231,9 +233,9 @@ impl PolyModule for Lfo {
             Param::Lfo(LfoParam::Rate(self.rate)),
             Param::Lfo(LfoParam::Depth(self.depth)),
             Param::Lfo(LfoParam::Phase(self.phase_offset)),
-            Param::Lfo(LfoParam::TempoSync(self.tempo_sync)),
+            Param::Lfo(LfoParam::TempoSync(self.sync_mode.is_tempo_sync())),
             Param::Lfo(LfoParam::SyncDivision(self.sync_division)),
-            Param::Lfo(LfoParam::Retrigger(self.retrigger)),
+            Param::Lfo(LfoParam::Retrigger(self.retrigger_mode.should_retrigger())),
         ]
     }
 

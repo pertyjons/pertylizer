@@ -40,7 +40,8 @@
       "Bash(timeout 5 cargo run:*)",
       "Bash(timeout 3 cargo run:*)",
       "Bash(echo:*)",
-      "Bash(perl:*)"
+      "Bash(perl:*)",
+      "Bash(wc:*)"
     ],
     "deny": [],
     "ask": []

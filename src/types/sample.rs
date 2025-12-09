@@ -344,6 +344,146 @@ impl PlaybackDirection {
 }
 
 // ============================================================================
+// LOOP MODE
+// ============================================================================
+
+/// Loop modes for sample playback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum LoopMode {
+    #[default]
+    Off,
+    Forward,
+    Backward,
+    PingPong,
+}
+
+impl LoopMode {
+    pub const ALL: [Self; 4] = [Self::Off, Self::Forward, Self::Backward, Self::PingPong];
+
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Forward => "Forward",
+            Self::Backward => "Backward",
+            Self::PingPong => "Ping-Pong",
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Forward => "forward",
+            Self::Backward => "backward",
+            Self::PingPong => "ping_pong",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "off" => Some(Self::Off),
+            "forward" => Some(Self::Forward),
+            "backward" => Some(Self::Backward),
+            "ping_pong" => Some(Self::PingPong),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    #[must_use]
+    pub fn index(&self) -> usize {
+        Self::ALL.iter().position(|m| m == self).unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+
+    /// Check if looping is enabled.
+    #[inline]
+    #[must_use]
+    pub const fn is_looping(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+// ============================================================================
+// RELEASE MODE
+// ============================================================================
+
+/// Release behavior when note-off is received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum ReleaseMode {
+    /// Stop immediately on note-off.
+    #[default]
+    Immediate,
+    /// Play to end of sample (ignoring loop) - for drums.
+    PlayToEnd,
+    /// Play to loop_end, then stop.
+    PlayToLoop,
+}
+
+impl ReleaseMode {
+    pub const ALL: [Self; 3] = [Self::Immediate, Self::PlayToEnd, Self::PlayToLoop];
+
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Immediate => "Immediate",
+            Self::PlayToEnd => "Play to End",
+            Self::PlayToLoop => "Play to Loop",
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::PlayToEnd => "play_to_end",
+            Self::PlayToLoop => "play_to_loop",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "immediate" => Some(Self::Immediate),
+            "play_to_end" => Some(Self::PlayToEnd),
+            "play_to_loop" => Some(Self::PlayToLoop),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    #[must_use]
+    pub fn index(&self) -> usize {
+        Self::ALL.iter().position(|m| m == self).unwrap_or(0)
+    }
+
+    #[must_use]
+    pub fn to_choices() -> Vec<crate::modules::core::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| crate::modules::core::ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+}
+
+// ============================================================================
 // INTERPOLATION
 // ============================================================================
 

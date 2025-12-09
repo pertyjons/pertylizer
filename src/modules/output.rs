@@ -11,7 +11,9 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{Amplitude, BipolarValue, Decibels, Gain, MidiNote, StereoSample};
+use crate::types::{
+    Amplitude, BipolarValue, Decibels, Gain, LimitMode, MidiNote, MuteState, StereoSample,
+};
 
 /// Stereo output module - the final destination in the audio graph.
 ///
@@ -27,8 +29,8 @@ pub struct StereoOutput {
     master_level: Gain,
     /// Master pan (-1.0 = left, 0.0 = center, 1.0 = right)
     pan: BipolarValue,
-    /// Enable soft limiting
-    limit_enabled: bool,
+    /// Limiter mode
+    limit_mode: LimitMode,
     /// Limiter threshold in dB (typically -0.1 to -3.0)
     limit_threshold: Decibels,
     /// Current peak level (left)
@@ -38,7 +40,7 @@ pub struct StereoOutput {
     /// Output buffer (interleaved stereo)
     output_buffer: Vec<f32>,
     /// Mute state
-    muted: bool,
+    mute_state: MuteState,
 }
 
 impl StereoOutput {
@@ -47,12 +49,12 @@ impl StereoOutput {
         Self {
             master_level: Gain::new(0.8),
             pan: BipolarValue::CENTER,
-            limit_enabled: true,
+            limit_mode: LimitMode::Enabled,
             limit_threshold: Decibels::new(-0.3),
             peak_l: Amplitude::ZERO,
             peak_r: Amplitude::ZERO,
             output_buffer: Vec::new(),
-            muted: false,
+            mute_state: MuteState::Unmuted,
         }
     }
 
@@ -78,17 +80,17 @@ impl StereoOutput {
 
     /// Get mute state.
     pub fn is_muted(&self) -> bool {
-        self.muted
+        self.mute_state.is_muted()
     }
 
     /// Set mute state.
     pub fn set_muted(&mut self, muted: bool) {
-        self.muted = muted;
+        self.mute_state = MuteState::from(muted);
     }
 
     /// Apply soft limiting to a single channel.
     fn soft_limit_channel(&self, sample: f32) -> f32 {
-        if !self.limit_enabled {
+        if !self.limit_mode.is_enabled() {
             return sample.clamp(-1.0, 1.0);
         }
 
@@ -238,7 +240,7 @@ impl PolyModule for StereoOutput {
             };
 
             // Process stereo sample
-            let processed = if self.muted {
+            let processed = if self.mute_state.is_muted() {
                 StereoSample::ZERO
             } else {
                 // Apply master level with pan
@@ -297,10 +299,10 @@ impl PolyModule for StereoOutput {
                 self.master_level = Gain::new(g.as_f32().clamp(0.0, 1.0));
             }
             Param::Mixer(MixerParam::Mute(m)) => {
-                self.muted = m;
+                self.mute_state = MuteState::from(m);
             }
             Param::Mixer(MixerParam::Limit(l)) => {
-                self.limit_enabled = l;
+                self.limit_mode = LimitMode::from(l);
             }
             Param::Amplifier(AmplifierParam::Pan(p)) => {
                 self.pan = p;
@@ -312,8 +314,8 @@ impl PolyModule for StereoOutput {
     fn get_param(&self, param: &Param) -> Option<f32> {
         match param {
             Param::Mixer(MixerParam::Master(_)) => Some(self.master_level.as_f32()),
-            Param::Mixer(MixerParam::Mute(_)) => Some(if self.muted { 1.0 } else { 0.0 }),
-            Param::Mixer(MixerParam::Limit(_)) => Some(if self.limit_enabled { 1.0 } else { 0.0 }),
+            Param::Mixer(MixerParam::Mute(_)) => Some(if self.mute_state.is_muted() { 1.0 } else { 0.0 }),
+            Param::Mixer(MixerParam::Limit(_)) => Some(if self.limit_mode.is_enabled() { 1.0 } else { 0.0 }),
             Param::Amplifier(AmplifierParam::Pan(_)) => Some(self.pan.as_f32()),
             _ => None,
         }
@@ -322,8 +324,8 @@ impl PolyModule for StereoOutput {
     fn get_params(&self) -> Vec<Param> {
         vec![
             Param::Mixer(MixerParam::Master(self.master_level)),
-            Param::Mixer(MixerParam::Mute(self.muted)),
-            Param::Mixer(MixerParam::Limit(self.limit_enabled)),
+            Param::Mixer(MixerParam::Mute(self.mute_state.is_muted())),
+            Param::Mixer(MixerParam::Limit(self.limit_mode.is_enabled())),
             Param::Amplifier(AmplifierParam::Pan(self.pan)),
         ]
     }
@@ -360,8 +362,8 @@ mod tests {
         let output = StereoOutput::new();
         assert!((output.master_level.as_f32() - 0.8).abs() < 0.001);
         assert!((output.pan.as_f32() - 0.0).abs() < 0.001);
-        assert!(output.limit_enabled);
-        assert!(!output.muted);
+        assert!(output.limit_mode.is_enabled());
+        assert!(!output.mute_state.is_muted());
     }
 
     #[test]

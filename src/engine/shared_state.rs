@@ -12,6 +12,7 @@ use parking_lot::RwLock;
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
 use super::typed_params::{ModuleType, Param};
+use crate::types::{BypassState, MuteState, SoloState};
 
 /// Atomic f32 wrapper for lock-free meter access.
 #[derive(Debug)]
@@ -172,11 +173,11 @@ pub struct ModuleStateSnapshot {
     /// Module name.
     pub name: String,
     /// Whether module is bypassed.
-    pub bypassed: bool,
+    pub bypass_state: BypassState,
     /// Whether module is muted.
-    pub muted: bool,
+    pub mute_state: MuteState,
     /// Whether module is soloed.
-    pub solo: bool,
+    pub solo_state: SoloState,
     /// Connectivity status.
     pub connectivity: ModuleConnectivityStatus,
     /// Current parameter values (each Param contains both type and value).
@@ -198,9 +199,9 @@ impl ModuleStateSnapshot {
             id,
             module_type,
             name,
-            bypassed: false,
-            muted: false,
-            solo: false,
+            bypass_state: BypassState::Active,
+            mute_state: MuteState::Unmuted,
+            solo_state: SoloState::Normal,
             connectivity: ModuleConnectivityStatus::Disconnected,
             parameters: Vec::new(),
             input_connection_counts: HashMap::new(),

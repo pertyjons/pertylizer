@@ -36,6 +36,7 @@ mod normalized;
 mod pitch;
 mod sample;
 mod samples;
+mod state;
 mod time;
 
 pub use amplitude::*;
@@ -46,6 +47,7 @@ pub use normalized::*;
 pub use pitch::*;
 pub use sample::*;
 pub use samples::*;
+pub use state::*;
 pub use time::*;
 
 /// Trait for types that can be clamped to a valid range.

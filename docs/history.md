@@ -1,5 +1,36 @@
 # Version History
 
+## [0.34.0] - 2024
+### Added - Type Hardening: Semantic State Enums
+- **types/state.rs** - Ny modul för semantiska tillstånds-enums som eliminerar "Boolean Blindness"
+  - `EnableState` - Enabled/Disabled
+  - `MuteState` - Unmuted/Muted
+  - `SoloState` - Normal/Solo
+  - `BypassState` - Active/Bypassed
+  - `SyncMode` - Free/TempoSync
+  - `RetriggerMode` - Continue/Retrigger
+  - `ClipMode` - Off/Soft/Hard
+  - `LimitMode` - Enabled/Disabled
+- **types/sample.rs** - Flyttade `LoopMode` och `ReleaseMode` från engine/params/modules.rs
+  - Tillhör nu types-modulen där sampling-relaterade typer samlas
+  - Bakåtkompatibla re-exports i engine/params/modules.rs
+
+### Changed - Module Refactoring with State Enums
+- **SharedEngineState** - `ModuleStateSnapshot` använder nu:
+  - `bypass_state: BypassState` istället för `bypassed: bool`
+  - `mute_state: MuteState` istället för `muted: bool`
+  - `solo_state: SoloState` istället för `solo: bool`
+- **Amplifier** - `clip_mode: ClipMode` istället för `soft_clip: bool`
+  - Stöd för Off, Soft (tanh), och Hard clipping
+- **LFO** - Använder nu:
+  - `sync_mode: SyncMode` istället för `tempo_sync: bool`
+  - `retrigger_mode: RetriggerMode` istället för `retrigger: bool`
+- **StereoOutput** - Använder nu:
+  - `mute_state: MuteState` istället för `muted: bool`
+  - `limit_mode: LimitMode` istället för `limit_enabled: bool`
+
+---
+
 ## [0.33.27] - 2024
 ### Improved - GUI Views Module
 - **gui/views/** - Ny modul för återanvändbara GUI-komponenter
