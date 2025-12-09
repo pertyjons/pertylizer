@@ -1,6 +1,6 @@
 # Version History
 
-## [0.34.11] - 2024
+## [0.34.11] - 2025
 ### Fixed - Auto Layout: ADSR/Modulation-moduler håller sig inom vyn
 - **Korrigerad beräkning av modulation-radens Y-position:**
   - `mod_row_index` sätts nu korrekt till `main_rows` (efter alla huvudmoduler)
@@ -9,7 +9,7 @@
 
 ---
 
-## [0.34.10] - 2024
+## [0.34.10] - 2025
 ### Fixed - Auto Layout: Moduler håller sig garanterat inom vyn
 - **Modulhöjden anpassas nu automatiskt:**
   - Om alla rader inte får plats med MIN_MODULE_HEIGHT (140px), krymps modulerna
@@ -22,7 +22,7 @@
 
 ---
 
-## [0.34.9] - 2024
+## [0.34.9] - 2025
 ### Improved - Auto Layout med strikta gränser
 - **Okopplade moduler hanteras separat:**
   - Moduler utan kopplingar placeras nu i högra kolumnen
@@ -41,7 +41,7 @@
 
 ---
 
-## [0.34.8] - 2024
+## [0.34.8] - 2025
 ### Improved - Auto Layout fyller hela vyn
 - **Algoritmen omskriven för att dynamiskt beräkna modulstorlek:**
   - Modulbredden beräknas så att alla kolumner fyller tillgänglig bredd
@@ -56,7 +56,7 @@
 
 ---
 
-## [0.34.7] - 2024
+## [0.34.7] - 2025
 ### Improved - Auto Layout toolbar och höjdberäkning
 - **Auto Layout-knappen ritas nu i foreground layer** - syns alltid överst, även när moduler dras över
 - **Förbättrad layoutalgoritm:**
@@ -69,7 +69,7 @@
 
 ---
 
-## [0.34.6] - 2024
+## [0.34.6] - 2025
 ### Improved - Auto Layout respekterar tillgängligt utrymme
 - **Algoritmen tar nu hänsyn till:**
   - Den tillgängliga canvas-ytan (exklusive sidopaneler)
@@ -86,7 +86,7 @@
 
 ---
 
-## [0.34.5] - 2024
+## [0.34.5] - 2025
 ### Fixed - Auto Layout-knappen fungerar nu
 - **Problemet:** Auto Layout-knappen uppdaterade interna positioner men egui:s `Window`-widget ignorerade detta eftersom `default_pos()` bara sätter positionen första gången fönstret ritas.
 - **Lösningen:** Lade till `needs_reposition: HashSet<ModuleId>` i `PatchEditor` som markerar moduler som behöver omplaceras. När en modul är markerad används `current_pos()` istället för `default_pos()`, vilket tvingar fönstret till den nya positionen.
@@ -94,7 +94,7 @@
 
 ---
 
-## [0.34.4] - 2024
+## [0.34.4] - 2025
 ### Added - Workspace GUI Navigation
 - **gui/app/state.rs** - Nya navigations-enums:
   - `AppView` - Rack/Sequencer/Mixer vy-val med `icon()` och `label()` metoder
@@ -118,7 +118,7 @@
 
 ---
 
-## [0.34.3] - 2024
+## [0.34.3] - 2025
 ### Improved - Prestandaoptimering & Slutfört Type Hardening
 
 **Del 1: InternPool optimering (prestandakritisk)**
@@ -151,7 +151,7 @@
 
 ---
 
-## [0.34.2] - 2024
+## [0.34.2] - 2025
 ### Improved - Fas 3 & 4: Type Hardening Complete
 - **Fas 3 - Arkitektur & Prestanda:** Verifierad - redan optimerad
   - `PortName` (internad sträng) redan implementerad i `types/interned.rs`
@@ -164,7 +164,7 @@
 
 ---
 
-## [0.34.1] - 2024
+## [0.34.1] - 2025
 ### Improved - Fas 2: Sampling & Uppspelning
 - **types/sample.rs** - `Interpolation` enum utökad med GUI-stöd:
   - `ALL` konstant med alla 7 interpolationslägen
@@ -180,7 +180,7 @@
 
 ---
 
-## [0.34.0] - 2024
+## [0.34.0] - 2025
 ### Added - Type Hardening: Semantic State Enums
 - **types/state.rs** - Ny modul för semantiska tillstånds-enums som eliminerar "Boolean Blindness"
   - `EnableState` - Enabled/Disabled
@@ -211,7 +211,7 @@
 
 ---
 
-## [0.33.27] - 2024
+## [0.33.27] - 2025
 ### Improved - GUI Views Module
 - **gui/views/** - Ny modul för återanvändbara GUI-komponenter
   - `views/master_effects.rs` - `MasterEffectParams` och `MasterEffectUiState` typer
@@ -220,7 +220,7 @@
 
 ---
 
-## [0.33.26] - 2024
+## [0.33.26] - 2025
 ### Improved - Code Organization Refactoring
 - **gui/input.rs** - Ny modul för keyboard input hantering
   - Extraherade `KEY_MAP` konstant och `handle_keyboard_input()` från egui_backend.rs
@@ -240,7 +240,7 @@
 
 ---
 
-## [0.33.25] - 2024
+## [0.33.25] - 2025
 ### Added - StereoSample Type & DSP Module
 - **StereoSample** - Ny typ i `types/audio.rs` för stereo-samples
   - Ersätter `(f32, f32)` och `[f32; 2]` för stereosignaler
@@ -260,7 +260,7 @@
 
 ---
 
-## [0.33.24] - 2024
+## [0.33.24] - 2025
 ### Improved - Type Methods & Sequencer Types
 - **MidiNote::transpose** - Flyttade transponeringslogik till typen, returnerar `Option<MidiNote>`
 - **Pitch::transpose** - Sequencer-typ uppdaterad till `Semitones`, returnerar `Option<Pitch>`
@@ -271,7 +271,7 @@
 
 ---
 
-## [0.33.23] - 2024
+## [0.33.23] - 2025
 ### Improved - Strict Type Hardening
 - **StereoBalance** - Ny typ för stereopanorering med constant-power gains
 - **KeyboardPanner** - Använder nu `MidiNote`, `BipolarValue`, `StereoBalance` istället för primitiver
@@ -284,7 +284,7 @@
 
 ---
 
-## [0.33.22] - 2024
+## [0.33.22] - 2025
 ### Optimized - GUI Rendering with egui Shape Primitives
 - **Kablar** - Ersatte manuell Bézier-loop (32 segment × 3 lager) med `CubicBezierShape`
 - **Oscilloskop** - Ersatte ~200 `line_segment()` med en `Shape::line()`
@@ -295,7 +295,7 @@
 
 ---
 
-## [0.33.21] - 2024
+## [0.33.21] - 2025
 ### Improved - Enhanced Sample Player
 - **PlaybackState** - Ersatte `bool` med typat enum för tydligare state
 - **SampleName** - Newtype för sample-namn istället för rå `String`
@@ -313,7 +313,7 @@
 
 ---
 
-## [0.33.20] - 2024
+## [0.33.20] - 2025
 ### Added - Sample Player & Sample Manager
 - **SamplePlayer** - Ny modul för uppspelning av WAV-samples
   - Pitch tracking (transponerar automatiskt baserat på spelade noter)
@@ -332,7 +332,7 @@
 
 ---
 
-## [0.33.19] - 2024
+## [0.33.19] - 2025
 ### Added - Improved Cables & Auto-Layout
 - **Kablar med gravitation** - Kablar hänger nedåt med naturlig "sag" (15% av avståndet)
 - **Skuggor** - Svart skugga under kablar för djupkänsla
@@ -346,7 +346,7 @@
 
 ---
 
-## [0.33.18] - 2024
+## [0.33.18] - 2025
 ### Fixed - Parameter Routing for Arbitrary Modules
 - **SetModuleParameter** används nu för alla voice-moduler istället för SetVoiceParameter
 - Fixar parameter-routing för moduler utanför PolyModule enum (env-3, amp-2, sub-1, nse-1, kbp-1, etc)
@@ -356,7 +356,7 @@
 
 ---
 
-## [0.33.17] - 2024
+## [0.33.17] - 2025
 ### Changed - Physical Modeling Cleanup
 - **Removed** StringResonator, ResonatorBank, VelocityMapper (fungerade inte korrekt)
 - **KeyboardPanner** - Not-baserad stereopanorering nu registrerad i GUI-menyn
@@ -367,7 +367,7 @@
 
 ---
 
-## [0.33.16] - 2024
+## [0.33.16] - 2025
 ### Added - Physical Modeling Modules
 - **StringResonator** - Karplus-Strong string synthesis med inharmonicitet och dämpning
 - **ResonatorBank** - Sympatisk resonans med 1-12 avstämbara strängar
@@ -379,7 +379,7 @@
 
 ---
 
-## [0.33.15] - 2024
+## [0.33.15] - 2025
 ### Added - Keyboard Splitting & MIDI Learn
 - **KeyRange** - Ny typ för att definiera vilka noter ett instrument svarar på (keyboard splitting)
 - **LearnState** - State machine för MIDI learn (Idle, WaitingForLowNote, WaitingForHighNote)
@@ -390,7 +390,7 @@
 
 ---
 
-## [0.33.14] - 2024
+## [0.33.14] - 2025
 ### Improved - GUI Styling & Theme Consistency
 - **Master FX Sliders** - Bättre synlighet med mörkare bakgrund och tydlig kontrast
 - **WidgetStyle** - Nya fält: knob_arc_segments, slider_rail_height, slider_handle_radius
@@ -399,7 +399,7 @@
 
 ---
 
-## [0.33.13] - 2024
+## [0.33.13] - 2025
 ### Added - Attenuverters for CV Inputs
 - **Filter CutoffMod** - Ny "CV Amt" parameter (-1.0 till +1.0) för cutoff CV
 - **Oscillator FmAmount** - Ny "FM Amt" parameter (-1.0 till +1.0) för FM input
@@ -407,263 +407,263 @@
 
 ---
 
-## [0.33.12] - 2024
+## [0.33.12] - 2025
 ### Added - Theme System
 - 8 färgteman: Dark, Light, Vintage, Neon, Studio, Dracula, Monokai, Solarized Dark
 - Tema-väljare i Settings, WidgetStyle för konsistent styling
 
 ---
 
-## [0.33.11] - 2024
+## [0.33.11] - 2025
 ### Changed - InputPorts Refactor
 - `PolyModule::process()` använder `InputPorts` wrapper istället för HashMap
 - Eliminerar HashMap-allokering per audio frame
 
 ---
 
-## [0.33.10] - 2024
+## [0.33.10] - 2025
 ### Fixed - Realtime Audio Allocations
 - Eliminerade `AudioBuffer::new()` i audio thread (~187 allok/sek)
 - `Connection` använder `PortName` (Copy) istället för String
 
 ---
 
-## [0.33.9] - 2024
+## [0.33.9] - 2025
 ### Added - Bypass-knappar
 - Power-knapp (⏻) i varje moduls header, bypassade moduler dimmas till 40%
 
 ---
 
-## [0.33.8] - 2024
+## [0.33.8] - 2025
 ### Added - Master FX Parameters
 - Resizable sidopanel, fullständiga parameterkontroller för alla 8 effekttyper
 
 ---
 
-## [0.33.7] - 2024
+## [0.33.7] - 2025
 ### Added - Master FX Sidebar
 - Kollapsbar effektlista i sidopanelen med bypass/remove per effekt
 
 ---
 
-## [0.33.6] - 2024
+## [0.33.6] - 2025
 ### Added - Mixer & Master Bus
 - Solo-knapp, global master effects chain, soft clipper per instrument
 
 ---
 
-## [0.33.5] - 2024
+## [0.33.5] - 2025
 ### Fixed - Eliminated unwrap/expect
 - Fixade 112 Clippy-varningar för unwrap/expect i produktionskod
 
 ---
 
-## [0.33.4] - 2024
+## [0.33.4] - 2025
 ### Maintenance
 - Rensade 29 onödiga clippy allows, uppdaterade 15 beroenden
 
 ---
 
-## [0.33.3] - 2024
+## [0.33.3] - 2025
 ### Refactored - Clippy Pedantic
 - Konfigurerade ~70 pedantic/nursery lints för synth-lämpliga undantag
 
 ---
 
-## [0.33.2] - 2024
+## [0.33.2] - 2025
 ### Refactored - Best Practices
 - `#[must_use]` på transformationsmetoder, tog bort global `#![allow(dead_code)]`
 - Konverterade error-typer till thiserror, reducerade unsafe från 5 till 1 block
 
 ---
 
-## [0.33.1] - 2024
+## [0.33.1] - 2025
 ### Refactored - Idiomatic Iterators
 - Konverterade for-loopar till iteratorer utanför hot path, behöll for-loopar i DSP
 
 ---
 
-## [0.33.0] - 2024
+## [0.33.0] - 2025
 ### Added - Type System Extensions
 - `PortName` interning för zero-allocation, `FilterState` DSP-metoder
 - `Hertz`, `NormalizedValue`, `MidiChannel`, `BeatDivision` extensions
 
 ---
 
-## [0.32.25] - 2024
+## [0.32.25] - 2025
 ### Fixed - Instrument Channel Isolation
 - Standardinstrument använder CH1 istället för OMNI
 - Real-time safe sequencer (pre-allokerad event buffer)
 
 ---
 
-## [0.32.24] - 2024
+## [0.32.24] - 2025
 ### Refactored - DSP Type Hardening
 - `FilterState` i Reverb/Phaser, `Hertz::to_tan_coeff()`, `Milliseconds::to_samples()`
 
 ---
 
-## [0.32.23] - 2024
+## [0.32.23] - 2025
 ### Fixed - PatchEditor GUI ID Collision
 - Window ID inkluderar instrument_id för unika GUI-identifierare
 - LadderFilter och NoiseGenerator använder `FilterState`
 
 ---
 
-## [0.32.22] - 2024
+## [0.32.22] - 2025
 ### Refactored - Total Type Hardening
 - `MidiNote` för PolyModule/EngineCommand, `SamplePosition`/`SampleCount` i Voice
 - `BufferIndex` i Flanger/Chorus, `NormalizedValue` i SequencerTrack
 
 ---
 
-## [0.32.21] - 2024
+## [0.32.21] - 2025
 ### Refactored - Type Safety and Enums
 - `ModuleType::is_voice_module()`, unified `EffectChain` med `ChainSlot`
 - Data-bärande `VoiceState` enum (Idle/Active/Releasing/Stealing)
 
 ---
 
-## [0.32.20] - 2024
+## [0.32.20] - 2025
 ### Refactored - Per-Instrument Effects
 - Flyttade effekter från global MasterBus till per-instrument EffectChain
 
 ---
 
-## [0.32.19] - 2024
+## [0.32.19] - 2025
 ### Refactored - Per-Instrument PatchEditor
 - Varje instrument äger sin egen PatchEditor, patch-laddning per instrument
 
 ---
 
-## [0.32.18] - 2024
+## [0.32.18] - 2025
 ### Refactored - Per-Instrument Voice Architecture
 - `voice_graph` ägs av Instrument istället för SynthEngine
 
 ---
 
-## [0.32.17] - 2024
+## [0.32.17] - 2025
 ### Refactored - Architectural Terminology
 - Renamed: RackView→PatchEditor, VoiceModule→PolyModule, EffectModule→AudioEffect
 - SynthPart→Instrument, EffectChain→MasterBus
 
 ---
 
-## [0.32.16] - 2024
+## [0.32.16] - 2025
 ### Added - Part Manager UI
 - Multi-instrument support med Part Manager panel, MIDI-kanal per part
 
 ---
 
-## [0.32.15] - 2024
+## [0.32.15] - 2025
 ### Improved - Knob Widget
 - Värde visas i knob-cirkeln, centraliserad formatering i ParameterUnit
 - Custom "Share Tech Mono" font
 
 ---
 
-## [0.32.14] - 2024
+## [0.32.14] - 2025
 ### Added - MIDI Input Support
 - Hardware MIDI via midir med GUI port-väljare, velocity visualization
 - Type-safe MIDI parsing, pitch bend, mod wheel, aftertouch
 
 ---
 
-## [0.32.13] - 2024
+## [0.32.13] - 2025
 ### Fixed - Stereo Output Parameters
 - ModuleCategory::Output tillagd i parameter change handling
 
 ---
 
-## [0.32.12] - 2024
+## [0.32.12] - 2025
 ### Removed - Performance Panel
 - Tog bort GUI-komponenten, behöll engine-kommandona för framtida MIDI
 
 ---
 
-## [0.32.11] - 2024
+## [0.32.11] - 2025
 ### Fixed - Real-time Parameter Updates
 - `SetModuleParameter` uppdaterar nu voice_template + alla aktiva voices
 - Tog bort 29 ogiltiga oscilloskop-kopplingar från patches
 
 ---
 
-## [0.32.10] - 2024
+## [0.32.10] - 2025
 ### Fixed - Critical Audio Routing
 - StereoOutput klassificeras som voice module, partiella inputs fungerar
 - `ClearAllModules` rensar voice_template
 
 ---
 
-## [0.32.9] - 2024
+## [0.32.9] - 2025
 ### Added - Dynamic Module Routing
 - Moduler routas automatiskt till rätt graf baserat på typ
 
 ---
 
-## [0.32.8] - 2024
+## [0.32.8] - 2025
 ### Refactored - Unified Voice/Graph
 - Voice äger ModuleGraph istället för hårdkodad modullista (~400 rader borttaget)
 
 ---
 
-## [0.32.7] - 2024
+## [0.32.7] - 2025
 ### Refactored - Unified Param Architecture
 - `Param` enum med inbakade typade värden, tog bort `TypedValue`
 
 ---
 
-## [0.32.6] - 2024
+## [0.32.6] - 2025
 ### Fixed - Dropdown Parameter Sync
 - Dropdown-handlers skickar rätt TypedValue-variant
 
 ---
 
-## [0.32.5] - 2024
+## [0.32.5] - 2025
 ### Added - Domain Types for Effects
 - `Ratio` (kompression), `BeatDivision` (tempo-sync), `VoiceCount`
 
 ---
 
-## [0.32.4] - 2024
+## [0.32.4] - 2025
 ### Fixed - Waveform Selection
 - GUI skickar TypedValue::Waveform, tog bort noise från Oscillator (använd NoiseGenerator)
 
 ---
 
-## [0.32.3] - 2024
+## [0.32.3] - 2025
 ### Fixed - CV Modulation Drift
 - LadderFilter, LFO, Oscillator använder effective values utan att modifiera parametrar
 
 ---
 
-## [0.32.2] - 2024
+## [0.32.2] - 2025
 ### Fixed - GUI/Engine Sync
 - Startup använder patch_bridge::load_patch() för synkronisering
 
 ---
 
-## [0.32.1] - 2024
+## [0.32.1] - 2025
 ### Fixed - Ghost Sound Bug
 - ClearAllModules inaktiverar parts
 
 ---
 
-## [0.32.0] - 2024
+## [0.32.0] - 2025
 ### Added - Type Safety & GUI
 - Type-safe public APIs med Hertz, Cents, Gain, NormalizedValue
 - "New Patch" i File-menyn
 
 ---
 
-## [0.31.0] - 2024
+## [0.31.0] - 2025
 ### Added - GUI Module Support
 - SubOscillator och NoiseGenerator i module palette
 - 3 nya example patches
 
 ---
 
-## [0.30.0] - 2024
+## [0.30.0] - 2025
 ### Added - DSP Improvements
 - Envelope curves (attack_curve, decay_curve, release_curve)
 - SubOscillator modul (sine, square, -1/-2 oktav)
@@ -671,119 +671,119 @@
 
 ---
 
-## [0.29.0] - 2024
+## [0.29.0] - 2025
 ### Refactored - Modular Patch Structure
 - 16 patches extraherade till individuella filer i src/patches/
 
 ---
 
-## [0.28.1] - 2024
+## [0.28.1] - 2025
 ### Added - Performance Fixes
 - Velocity mapping till engine, tempo sync för Delay och LFO
 - Module connectivity visualization (Connected/Orphaned/Disconnected)
 
 ---
 
-## [0.28.0] - 2024
+## [0.28.0] - 2025
 ### Added - Performance Panel
 - Pitch bend (spring-back), mod wheel, velocity mapping knobs
 
 ---
 
-## [0.27.0] - 2024
+## [0.27.0] - 2025
 ### Added - Enhanced Oscilloscope & LFO Tempo Sync
 - Oscilloskop med waveform history, time division, trigger modes
 - LFO tempo sync med beat divisions
 
 ---
 
-## [0.26.0] - 2024
+## [0.26.0] - 2025
 ### Added - Engine Events & CPU Tracking
 - EngineEvent system med prioriterad kanal
 - CPU usage tracking per modul
 
 ---
 
-## [0.25.0] - 2024
+## [0.25.0] - 2025
 ### Added - Effect Bypass & Master Volume
 - Effect bypass per slot, master volume control
 
 ---
 
-## [0.24.0] - 2024
+## [0.24.0] - 2025
 ### Refactored - Hub Architecture
 - EventHub för GUI-engine kommunikation, ersatte direkt polling
 
 ---
 
-## [0.23.0] - 2024
+## [0.23.0] - 2025
 ### Added - Visual States & Animations
 - ModuleVisualState för visuell feedback, cable animations
 
 ---
 
-## [0.22.0] - 2024
+## [0.22.0] - 2025
 ### Added - Sequencer Engine
 - SequencerEngine med transport, looping, note events
 
 ---
 
-## [0.21.0] - 2024
+## [0.21.0] - 2025
 ### Added - Sequencer Data Model
 - Song, Pattern, Note, Track, Automation strukturer
 
 ---
 
-## [0.20.0] - 2024
+## [0.20.0] - 2025
 ### Added - Effect Chain & Visualizers
 - MasterBus med insert effects och visualizers
 
 ---
 
-## [0.19.0] - 2024
+## [0.19.0] - 2025
 ### Added - Oscilloscope Widget
 - Real-time waveform display i GUI
 
 ---
 
-## [0.18.0] - 2024
+## [0.18.0] - 2025
 ### Added - Level Meter Widget
 - VU-meter med peak hold och gradient
 
 ---
 
-## [0.17.0] - 2024
+## [0.17.0] - 2025
 ### Added - Patch Save/Load
 - JSON-baserat patch-format med ModuleBuilder API
 
 ---
 
-## [0.16.0] - 2024
+## [0.16.0] - 2025
 ### Added - Voice Allocator
 - Polyfoni med voice stealing, mono/poly modes
 
 ---
 
-## [0.13.2] - 2024
+## [0.13.2] - 2025
 ### Fixed - Command Queue Overflow
 - Ökade COMMAND_BUFFER_SIZE, DroppedModule wrapper
 
 ---
 
-## [0.13.1] - 2024
+## [0.13.1] - 2025
 ### Added - Pink Noise & Linear FM
 - Pink noise (Voss-McCartney), Linear FM mode, velocity sensitivity
 
 ---
 
-## [0.13.0] - 2024
+## [0.13.0] - 2025
 ### Added - Math Oscillator
 - 18 algoritmer: SineFM, TanChaos, SuperSaw, WaveFolder, Lorenz, KarplusStrong, etc.
 - 6 nya example patches
 
 ---
 
-## [0.12.0] - 2024
+## [0.12.0] - 2025
 ### Initial Release
 - Moduler: Oscillator, Filter, Envelope, LFO, Amplifier, Mixer
 - Effekter: Delay, Reverb, Distortion, Chorus, Phaser, Flanger, Compressor, EQ
