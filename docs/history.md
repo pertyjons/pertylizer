@@ -1,5 +1,14 @@
 # Version History
 
+## [0.33.27] - 2024
+### Improved - GUI Views Module
+- **gui/views/** - Ny modul för återanvändbara GUI-komponenter
+  - `views/master_effects.rs` - `MasterEffectParams` och `MasterEffectUiState` typer
+  - `views/meters.rs` - `draw_meter()` och `draw_meter_horizontal()` funktioner
+  - Reducerade egui_backend.rs från 2698 till 2482 rader (~216 rader flyttade)
+
+---
+
 ## [0.33.26] - 2024
 ### Improved - Code Organization Refactoring
 - **gui/input.rs** - Ny modul för keyboard input hantering
