@@ -1,5 +1,25 @@
 # Version History
 
+## [0.33.25] - 2024
+### Added - StereoSample Type & DSP Module
+- **StereoSample** - Ny typ i `types/audio.rs` för stereo-samples
+  - Ersätter `(f32, f32)` och `[f32; 2]` för stereosignaler
+  - Metoder: `new()`, `from_mono()`, `apply_gain()`, `apply_pan()`, `to_mono()`, `mix()`, `soft_clip()`, `hard_clip()`, `peak()`
+  - Implementerar `Add`, `Sub`, `Mul<f32>`, `From<(f32, f32)>`, `From<[f32; 2]>`
+- **src/dsp/** - Ny modul för återanvändbara DSP-primitiver
+  - `dsp/oscillators.rs` - `poly_blep()` och `poly_blep_integrated()` för band-limiterade vågformer
+  - `dsp/filters.rs` - `SvfCoeffs` och `BiquadCoeffs` för filterberäkningar
+  - `dsp/delay.rs` - `DelayLine` och `InterpolatedDelayLine` för delay-effekter
+
+### Improved - Module Refactoring
+- **KeyboardPanner** - Använder nu `StereoSample::apply_pan()` internt
+- **StereoOutput** - Refaktorerad att använda `StereoSample` för beräkningar
+- **Delay effect** - Använder nu `StereoSample` för stereobearbetning
+- **Reverb effect** - Använder nu `StereoSample` för stereobearbetning
+- **Oscillator** - Använder nu `dsp::oscillators::poly_blep()` istället för lokal metod
+
+---
+
 ## [0.33.24] - 2024
 ### Improved - Type Methods & Sequencer Types
 - **MidiNote::transpose** - Flyttade transponeringslogik till typen, returnerar `Option<MidiNote>`

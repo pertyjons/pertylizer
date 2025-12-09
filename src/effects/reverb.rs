@@ -8,7 +8,7 @@
 
 use crate::engine::typed_params::{ModuleType, Param, ReverbParam};
 use crate::modules::core::*;
-use crate::types::{FilterState, NormalizedValue, SampleRate, Seconds};
+use crate::types::{FilterState, NormalizedValue, SampleRate, Seconds, StereoSample};
 
 /// Comb filter for reverb.
 struct CombFilter {
@@ -297,26 +297,26 @@ impl AudioEffect for Reverb {
         let pre_delay_samples = ((self.pre_delay.as_f32() * self.sample_rate.as_f32()) as usize)
             .min(self.pre_delay_buffer.len() - 1);
 
+        let mix = self.mix.as_f32();
+
         // Process assuming interleaved stereo
         let channels = 2;
         for frame in 0..context.samples {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
+            // Get input as stereo sample
+            let dry = if idx_r < input.len() {
+                StereoSample::new(input[idx_l], input[idx_r])
+            } else if idx_l < input.len() {
+                StereoSample::from_mono(input[idx_l])
             } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
+                StereoSample::ZERO
             };
 
-            // Pre-delay
+            // Pre-delay (works on mono sum)
             let pre_delayed = if pre_delay_samples > 0 {
-                let mono_in = (in_l + in_r) * 0.5;
+                let mono_in = dry.to_mono();
                 let read_idx = (self.pre_delay_index + self.pre_delay_buffer.len()
                     - pre_delay_samples)
                     % self.pre_delay_buffer.len();
@@ -325,39 +325,41 @@ impl AudioEffect for Reverb {
                 self.pre_delay_index = (self.pre_delay_index + 1) % self.pre_delay_buffer.len();
                 delayed
             } else {
-                (in_l + in_r) * 0.5
+                dry.to_mono()
             };
 
             // Sum parallel comb filters
-            let mut wet_l = 0.0f32;
-            let mut wet_r = 0.0f32;
+            let mut wet = StereoSample::ZERO;
 
             for comb in &mut self.combs_l {
-                wet_l += comb.process(pre_delayed);
+                wet.left += comb.process(pre_delayed);
             }
             for comb in &mut self.combs_r {
-                wet_r += comb.process(pre_delayed);
+                wet.right += comb.process(pre_delayed);
             }
 
             // Normalize
-            wet_l *= 0.25;
-            wet_r *= 0.25;
+            wet = wet * 0.25;
 
             // Series allpass filters
             for ap in &mut self.allpasses_l {
-                wet_l = ap.process(wet_l);
+                wet.left = ap.process(wet.left);
             }
             for ap in &mut self.allpasses_r {
-                wet_r = ap.process(wet_r);
+                wet.right = ap.process(wet.right);
             }
 
-            // Mix
-            let mix = self.mix.as_f32();
+            // Mix dry/wet
+            let result = StereoSample::new(
+                dry.left * (1.0 - mix) + wet.left * mix,
+                dry.right * (1.0 - mix) + wet.right * mix,
+            );
+
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
+                output[idx_l] = result.left;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
+                output[idx_r] = result.right;
             }
         }
     }

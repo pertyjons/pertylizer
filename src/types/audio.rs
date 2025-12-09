@@ -545,6 +545,185 @@ impl std::fmt::Display for StereoBalance {
     }
 }
 
+// ============================================================================
+// STEREO SAMPLE
+// ============================================================================
+
+/// A single stereo audio sample with left and right channels.
+///
+/// This type replaces `(f32, f32)` and `[f32; 2]` for stereo signals,
+/// providing better ergonomics and type safety.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StereoSample {
+    /// Left channel sample value.
+    pub left: f32,
+    /// Right channel sample value.
+    pub right: f32,
+}
+
+impl StereoSample {
+    /// Silence (both channels zero).
+    pub const ZERO: Self = Self {
+        left: 0.0,
+        right: 0.0,
+    };
+
+    /// Create a new stereo sample from left and right values.
+    #[inline]
+    pub const fn new(left: f32, right: f32) -> Self {
+        Self { left, right }
+    }
+
+    /// Create a stereo sample from a mono source (both channels equal).
+    #[inline]
+    pub const fn from_mono(mono: f32) -> Self {
+        Self {
+            left: mono,
+            right: mono,
+        }
+    }
+
+    /// Apply a gain factor to both channels.
+    #[inline]
+    pub fn apply_gain(self, gain: f32) -> Self {
+        Self {
+            left: self.left * gain,
+            right: self.right * gain,
+        }
+    }
+
+    /// Apply separate gains to left and right channels.
+    #[inline]
+    pub fn apply_stereo_gain(self, left_gain: f32, right_gain: f32) -> Self {
+        Self {
+            left: self.left * left_gain,
+            right: self.right * right_gain,
+        }
+    }
+
+    /// Apply panning using a StereoBalance.
+    #[inline]
+    pub fn apply_pan(self, pan: StereoBalance) -> Self {
+        let (left_gain, right_gain) = pan.gains();
+        self.apply_stereo_gain(left_gain, right_gain)
+    }
+
+    /// Convert to mono by averaging left and right channels.
+    #[inline]
+    pub fn to_mono(self) -> f32 {
+        (self.left + self.right) * 0.5
+    }
+
+    /// Mix with another stereo sample.
+    #[inline]
+    pub fn mix(self, other: Self) -> Self {
+        Self {
+            left: self.left + other.left,
+            right: self.right + other.right,
+        }
+    }
+
+    /// Soft clip both channels to prevent harsh clipping.
+    #[inline]
+    pub fn soft_clip(self) -> Self {
+        Self {
+            left: self.left.tanh(),
+            right: self.right.tanh(),
+        }
+    }
+
+    /// Hard clip both channels to [-1, 1].
+    #[inline]
+    pub fn hard_clip(self) -> Self {
+        Self {
+            left: self.left.clamp(-1.0, 1.0),
+            right: self.right.clamp(-1.0, 1.0),
+        }
+    }
+
+    /// Get peak amplitude (max of absolute values).
+    #[inline]
+    pub fn peak(self) -> f32 {
+        self.left.abs().max(self.right.abs())
+    }
+}
+
+impl std::ops::Add for StereoSample {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            left: self.left + rhs.left,
+            right: self.right + rhs.right,
+        }
+    }
+}
+
+impl std::ops::AddAssign for StereoSample {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.left += rhs.left;
+        self.right += rhs.right;
+    }
+}
+
+impl std::ops::Sub for StereoSample {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            left: self.left - rhs.left,
+            right: self.right - rhs.right,
+        }
+    }
+}
+
+impl std::ops::Mul<f32> for StereoSample {
+    type Output = Self;
+
+    #[inline]
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self {
+            left: self.left * rhs,
+            right: self.right * rhs,
+        }
+    }
+}
+
+impl std::ops::MulAssign<f32> for StereoSample {
+    #[inline]
+    fn mul_assign(&mut self, rhs: f32) {
+        self.left *= rhs;
+        self.right *= rhs;
+    }
+}
+
+impl From<(f32, f32)> for StereoSample {
+    fn from((left, right): (f32, f32)) -> Self {
+        Self { left, right }
+    }
+}
+
+impl From<StereoSample> for (f32, f32) {
+    fn from(sample: StereoSample) -> Self {
+        (sample.left, sample.right)
+    }
+}
+
+impl From<[f32; 2]> for StereoSample {
+    fn from([left, right]: [f32; 2]) -> Self {
+        Self { left, right }
+    }
+}
+
+impl From<StereoSample> for [f32; 2] {
+    fn from(sample: StereoSample) -> Self {
+        [sample.left, sample.right]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,5 +827,111 @@ mod tests {
         assert_eq!(format!("{}", StereoBalance::CENTER), "C");
         assert_eq!(format!("{}", StereoBalance::LEFT), "L100%");
         assert_eq!(format!("{}", StereoBalance::RIGHT), "R100%");
+    }
+
+    #[test]
+    fn test_stereo_sample_new() {
+        let sample = StereoSample::new(0.5, -0.5);
+        assert!((sample.left - 0.5).abs() < 0.001);
+        assert!((sample.right - (-0.5)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_from_mono() {
+        let sample = StereoSample::from_mono(0.7);
+        assert!((sample.left - 0.7).abs() < 0.001);
+        assert!((sample.right - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_apply_gain() {
+        let sample = StereoSample::new(1.0, 0.5);
+        let gained = sample.apply_gain(0.5);
+        assert!((gained.left - 0.5).abs() < 0.001);
+        assert!((gained.right - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_apply_pan() {
+        let sample = StereoSample::from_mono(1.0);
+
+        // Pan full left
+        let left_panned = sample.apply_pan(StereoBalance::LEFT);
+        assert!(left_panned.left > 0.99);
+        assert!(left_panned.right < 0.01);
+
+        // Pan full right
+        let right_panned = sample.apply_pan(StereoBalance::RIGHT);
+        assert!(right_panned.left < 0.01);
+        assert!(right_panned.right > 0.99);
+    }
+
+    #[test]
+    fn test_stereo_sample_to_mono() {
+        let sample = StereoSample::new(0.8, 0.4);
+        let mono = sample.to_mono();
+        assert!((mono - 0.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_mix() {
+        let a = StereoSample::new(0.3, 0.5);
+        let b = StereoSample::new(0.2, 0.1);
+        let mixed = a.mix(b);
+        assert!((mixed.left - 0.5).abs() < 0.001);
+        assert!((mixed.right - 0.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_hard_clip() {
+        let sample = StereoSample::new(1.5, -2.0);
+        let clipped = sample.hard_clip();
+        assert!((clipped.left - 1.0).abs() < 0.001);
+        assert!((clipped.right - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_peak() {
+        let sample = StereoSample::new(0.3, -0.8);
+        assert!((sample.peak() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_add() {
+        let a = StereoSample::new(0.3, 0.4);
+        let b = StereoSample::new(0.1, 0.2);
+        let sum = a + b;
+        assert!((sum.left - 0.4).abs() < 0.001);
+        assert!((sum.right - 0.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_mul() {
+        let sample = StereoSample::new(0.5, 0.8);
+        let scaled = sample * 2.0;
+        assert!((scaled.left - 1.0).abs() < 0.001);
+        assert!((scaled.right - 1.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_from_tuple() {
+        let sample: StereoSample = (0.5, 0.7).into();
+        assert!((sample.left - 0.5).abs() < 0.001);
+        assert!((sample.right - 0.7).abs() < 0.001);
+
+        let tuple: (f32, f32) = sample.into();
+        assert!((tuple.0 - 0.5).abs() < 0.001);
+        assert!((tuple.1 - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_sample_from_array() {
+        let sample: StereoSample = [0.3, 0.9].into();
+        assert!((sample.left - 0.3).abs() < 0.001);
+        assert!((sample.right - 0.9).abs() < 0.001);
+
+        let arr: [f32; 2] = sample.into();
+        assert!((arr[0] - 0.3).abs() < 0.001);
+        assert!((arr[1] - 0.9).abs() < 0.001);
     }
 }

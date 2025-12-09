@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{AmplifierParam, MixerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{Amplitude, BipolarValue, Decibels, Gain, MidiNote};
+use crate::types::{Amplitude, BipolarValue, Decibels, Gain, MidiNote, StereoSample};
 
 /// Stereo output module - the final destination in the audio graph.
 ///
@@ -86,8 +86,8 @@ impl StereoOutput {
         self.muted = muted;
     }
 
-    /// Apply soft limiting to prevent harsh clipping.
-    fn soft_limit(&self, sample: f32) -> f32 {
+    /// Apply soft limiting to a single channel.
+    fn soft_limit_channel(&self, sample: f32) -> f32 {
         if !self.limit_enabled {
             return sample.clamp(-1.0, 1.0);
         }
@@ -104,6 +104,15 @@ impl StereoOutput {
         } else {
             sample
         }
+    }
+
+    /// Apply soft limiting to a stereo sample.
+    #[inline]
+    fn soft_limit_stereo(&self, sample: StereoSample) -> StereoSample {
+        StereoSample::new(
+            self.soft_limit_channel(sample.left),
+            self.soft_limit_channel(sample.right),
+        )
     }
 
     /// Calculate pan coefficients (equal power panning).
@@ -215,40 +224,39 @@ impl PolyModule for StereoOutput {
         // Process each sample
         for i in 0..context.samples {
             // Get input samples - handle partial connections
-            let (mut left, mut right) = match (left_in, right_in, mono_in) {
+            let input = match (left_in, right_in, mono_in) {
                 // Full stereo input
-                (Some(l), Some(r), _) => (l[i], r[i]),
+                (Some(l), Some(r), _) => StereoSample::new(l[i], r[i]),
                 // Only left input - duplicate to both channels
-                (Some(l), None, _) => (l[i], l[i]),
+                (Some(l), None, _) => StereoSample::from_mono(l[i]),
                 // Only right input - duplicate to both channels
-                (None, Some(r), _) => (r[i], r[i]),
+                (None, Some(r), _) => StereoSample::from_mono(r[i]),
                 // Mono input - duplicate to both channels
-                (None, None, Some(m)) => (m[i], m[i]),
+                (None, None, Some(m)) => StereoSample::from_mono(m[i]),
                 // No input - silence
-                (None, None, None) => (0.0, 0.0),
+                (None, None, None) => StereoSample::ZERO,
             };
 
-            // Apply mute
-            if self.muted {
-                left = 0.0;
-                right = 0.0;
+            // Process stereo sample
+            let processed = if self.muted {
+                StereoSample::ZERO
             } else {
                 // Apply master level with pan
-                left *= self.master_level.as_f32() * pan_l.as_f32();
-                right *= self.master_level.as_f32() * pan_r.as_f32();
-
+                let gained = input.apply_stereo_gain(
+                    self.master_level.as_f32() * pan_l.as_f32(),
+                    self.master_level.as_f32() * pan_r.as_f32(),
+                );
                 // Apply soft limiting
-                left = self.soft_limit(left);
-                right = self.soft_limit(right);
-            }
+                self.soft_limit_stereo(gained)
+            };
 
             // Store in interleaved output buffer
-            self.output_buffer[i * 2] = left;
-            self.output_buffer[i * 2 + 1] = right;
+            self.output_buffer[i * 2] = processed.left;
+            self.output_buffer[i * 2 + 1] = processed.right;
 
             // Track peaks
-            peak_l.update_peak(left);
-            peak_r.update_peak(right);
+            peak_l.update_peak(processed.left);
+            peak_r.update_peak(processed.right);
         }
 
         // Update peak meters with decay
@@ -273,11 +281,12 @@ impl PolyModule for StereoOutput {
 
         // Also write to "out" port if present (mono compatibility)
         if let Some(out_buf) = outputs.get_mut("out") {
-            // Convert stereo to mono for graph routing (sum and normalize)
             for i in 0..context.samples.min(out_buf.len()) {
-                let left = self.output_buffer[i * 2];
-                let right = self.output_buffer.get(i * 2 + 1).copied().unwrap_or(left);
-                out_buf[i] = (left + right) * 0.5;
+                let stereo = StereoSample::new(
+                    self.output_buffer[i * 2],
+                    self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0),
+                );
+                out_buf[i] = stereo.to_mono();
             }
         }
     }
@@ -360,12 +369,18 @@ mod tests {
         let output = StereoOutput::new();
 
         // Values below threshold should pass through
-        assert!((output.soft_limit(0.5) - 0.5).abs() < 0.01);
+        assert!((output.soft_limit_channel(0.5) - 0.5).abs() < 0.01);
 
         // Values above 1.0 should be limited
-        let limited = output.soft_limit(2.0);
+        let limited = output.soft_limit_channel(2.0);
         assert!(limited <= 1.0);
         assert!(limited > 0.9);
+
+        // Test stereo limiting
+        let stereo = StereoSample::new(2.0, -2.0);
+        let limited_stereo = output.soft_limit_stereo(stereo);
+        assert!(limited_stereo.left <= 1.0 && limited_stereo.left > 0.9);
+        assert!(limited_stereo.right >= -1.0 && limited_stereo.right < -0.9);
     }
 
     #[test]

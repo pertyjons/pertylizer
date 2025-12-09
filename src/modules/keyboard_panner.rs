@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{KeyboardPannerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{BipolarValue, MidiNote, NormalizedValue, SampleRate, StereoBalance};
+use crate::types::{
+    BipolarValue, MidiNote, NormalizedValue, SampleRate, StereoBalance, StereoSample,
+};
 
 /// Keyboard panner with configurable spread and center.
 #[derive(Clone)]
@@ -80,10 +82,10 @@ impl KeyboardPanner {
         self.current_pan = StereoBalance::new(pan);
     }
 
-    /// Get left and right gains from pan position using constant power panning.
+    /// Apply current pan to a mono sample, returning stereo.
     #[inline]
-    fn pan_gains(&self) -> (f32, f32) {
-        self.current_pan.gains()
+    fn apply_pan(&self, mono: f32) -> StereoSample {
+        StereoSample::from_mono(mono).apply_pan(self.current_pan)
     }
 }
 
@@ -164,12 +166,12 @@ impl PolyModule for KeyboardPanner {
         self.output_right.resize(context.samples);
 
         let input = inputs.get("in");
-        let (left_gain, right_gain) = self.pan_gains();
 
         for i in 0..context.samples {
             let input_sample = input.map_or(0.0, |buf| buf[i]);
-            self.output_left[i] = input_sample * left_gain;
-            self.output_right[i] = input_sample * right_gain;
+            let stereo = self.apply_pan(input_sample);
+            self.output_left[i] = stereo.left;
+            self.output_right[i] = stereo.right;
         }
 
         if let Some(out_l) = outputs.get_mut("out_l") {

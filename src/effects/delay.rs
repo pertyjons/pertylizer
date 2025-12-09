@@ -11,6 +11,7 @@ use crate::engine::typed_params::{DelayMode, DelayParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
     BeatDivision, Bpm, BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds,
+    StereoSample,
 };
 
 /// Maximum delay time in seconds.
@@ -211,66 +212,75 @@ impl AudioEffect for Delay {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
+            // Get input as stereo sample
+            let dry = if idx_r < input.len() {
+                StereoSample::new(input[idx_l], input[idx_r])
+            } else if idx_l < input.len() {
+                StereoSample::from_mono(input[idx_l])
             } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
+                StereoSample::ZERO
             };
 
             // Read from delay buffers
-            let delayed_l =
-                Self::read_interpolated(&self.buffer_left, self.write_pos, delay_samples_left);
-            let delayed_r =
-                Self::read_interpolated(&self.buffer_right, self.write_pos, delay_samples_right);
+            let delayed = StereoSample::new(
+                Self::read_interpolated(&self.buffer_left, self.write_pos, delay_samples_left),
+                Self::read_interpolated(&self.buffer_right, self.write_pos, delay_samples_right),
+            );
 
             // Apply feedback filtering
-            let fb_l = Self::lowpass(
-                delayed_l,
-                &mut self.filter_left,
-                self.high_cut,
-                self.sample_rate,
-            );
-            let fb_r = Self::lowpass(
-                delayed_r,
-                &mut self.filter_right,
-                self.high_cut,
-                self.sample_rate,
+            let fb = StereoSample::new(
+                Self::lowpass(
+                    delayed.left,
+                    &mut self.filter_left,
+                    self.high_cut,
+                    self.sample_rate,
+                ),
+                Self::lowpass(
+                    delayed.right,
+                    &mut self.filter_right,
+                    self.high_cut,
+                    self.sample_rate,
+                ),
             );
 
             // Calculate feedback signal based on mode
-            let (write_l, write_r) = match self.mode {
+            let write = match self.mode {
                 DelayMode::Mono => {
-                    let mono_in = (in_l + in_r) * 0.5;
-                    let mono_fb = (fb_l + fb_r) * 0.5;
-                    let write = mono_in + mono_fb * feedback;
-                    (write, write)
+                    let mono_in = dry.to_mono();
+                    let mono_fb = fb.to_mono();
+                    StereoSample::from_mono(mono_in + mono_fb * feedback)
                 }
-                DelayMode::Stereo => (in_l + fb_l * feedback, in_r + fb_r * feedback),
-                DelayMode::PingPong => (in_l + fb_r * feedback, in_r + fb_l * feedback),
+                DelayMode::Stereo => StereoSample::new(
+                    dry.left + fb.left * feedback,
+                    dry.right + fb.right * feedback,
+                ),
+                DelayMode::PingPong => StereoSample::new(
+                    dry.left + fb.right * feedback,
+                    dry.right + fb.left * feedback,
+                ),
             };
 
             // Soft limit feedback to prevent runaway
-            let write_l = write_l.tanh();
-            let write_r = write_r.tanh();
+            let write = write.soft_clip();
 
             // Write to delay buffers
-            self.buffer_left[self.write_pos.as_usize()] = write_l;
-            self.buffer_right[self.write_pos.as_usize()] = write_r;
+            self.buffer_left[self.write_pos.as_usize()] = write.left;
+            self.buffer_right[self.write_pos.as_usize()] = write.right;
 
             // Advance write position
             self.write_pos = self.write_pos.advance(len);
 
             // Mix dry/wet
+            let wet = StereoSample::new(
+                dry.left * (1.0 - mix) + delayed.left * mix,
+                dry.right * (1.0 - mix) + delayed.right * mix,
+            );
+
             if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + delayed_l * mix;
+                output[idx_l] = wet.left;
             }
             if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + delayed_r * mix;
+                output[idx_r] = wet.right;
             }
         }
     }

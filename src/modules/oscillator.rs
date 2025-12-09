@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
+use crate::dsp::oscillators::poly_blep;
 use crate::engine::typed_params::{FmMode, ModuleType, OscillatorParam, Param};
 use crate::modules::core::*;
 use crate::types::{
@@ -63,20 +64,6 @@ impl Oscillator {
         Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult)
     }
 
-    /// PolyBLEP correction for band-limited waveforms.
-    #[inline]
-    fn poly_blep(&self, t: f32, dt: f32) -> f32 {
-        if t < dt {
-            let t = t / dt;
-            2.0 * t - t * t - 1.0
-        } else if t > 1.0 - dt {
-            let t = (t - 1.0) / dt;
-            t * t + 2.0 * t + 1.0
-        } else {
-            0.0
-        }
-    }
-
     /// Generate a single sample with optional frequency and phase modulation.
     #[inline]
     fn generate_sample(
@@ -104,20 +91,20 @@ impl Oscillator {
             Waveform::Triangle => Phase::new_unchecked(phase).triangle(),
             Waveform::Sawtooth => {
                 let mut saw = Phase::new_unchecked(phase).sawtooth();
-                saw -= self.poly_blep(phase, dt);
+                saw -= poly_blep(phase, dt);
                 saw
             }
             Waveform::Square => {
                 let mut sq = Phase::new_unchecked(phase).pulse(NormalizedValue::CENTER);
-                sq += self.poly_blep(phase, dt);
-                sq -= self.poly_blep((phase + 0.5).rem_euclid(1.0), dt);
+                sq += poly_blep(phase, dt);
+                sq -= poly_blep((phase + 0.5).rem_euclid(1.0), dt);
                 sq
             }
             Waveform::Pulse => {
                 let mut pulse = Phase::new_unchecked(phase).pulse(effective_pulse_width);
                 let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
-                pulse += self.poly_blep(phase, dt);
-                pulse -= self.poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
+                pulse += poly_blep(phase, dt);
+                pulse -= poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse
             }
         };

@@ -150,6 +150,7 @@
 #![allow(clippy::field_reassign_with_default)] // Default::default() + assign
 
 pub mod audio;
+pub mod dsp;
 pub mod effects;
 pub mod engine;
 pub mod gui;
