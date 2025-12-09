@@ -27,6 +27,7 @@ use crate::gui::dialogs::{
     DialogState, LoadPatchResult, SavePatchResult, show_about_dialog, show_load_patch_dialog,
     show_save_patch_dialog, show_settings_dialog, show_status_toast,
 };
+use crate::gui::input::handle_keyboard_input;
 use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
@@ -41,7 +42,7 @@ use crate::modules::{
     NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
 };
 use crate::patch::{Patch, example_patches};
-use crate::types::{MidiNote, NormalizedValue};
+use crate::types::NormalizedValue;
 use crate::visualizers::{LevelMeter, Oscilloscope};
 
 /// Egui-based GUI backend.
@@ -509,7 +510,7 @@ impl eframe::App for SynthApp {
         }
 
         // Handle keyboard input
-        self.handle_keyboard_input(ctx);
+        self.process_keyboard_input(ctx);
 
         // Request continuous repaint for meters
         ctx.request_repaint();
@@ -1474,7 +1475,7 @@ impl SynthApp {
         }
     }
 
-    fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+    fn process_keyboard_input(&mut self, ctx: &egui::Context) {
         // Get the MIDI channel for the active instrument
         let active_channel = self
             .instruments
@@ -1483,74 +1484,13 @@ impl SynthApp {
             .map(|p| p.channel)
             .unwrap_or(MidiChannel::CH1);
 
-        let key_map: &[(egui::Key, u8)] = &[
-            // Lower row: Z-M = C3-B3
-            (egui::Key::Z, 48),
-            (egui::Key::S, 49),
-            (egui::Key::X, 50),
-            (egui::Key::D, 51),
-            (egui::Key::C, 52),
-            (egui::Key::V, 53),
-            (egui::Key::G, 54),
-            (egui::Key::B, 55),
-            (egui::Key::H, 56),
-            (egui::Key::N, 57),
-            (egui::Key::J, 58),
-            (egui::Key::M, 59),
-            // Upper row: Q-P = C4-E5
-            (egui::Key::Q, 60),
-            (egui::Key::Num2, 61),
-            (egui::Key::W, 62),
-            (egui::Key::Num3, 63),
-            (egui::Key::E, 64),
-            (egui::Key::R, 65),
-            (egui::Key::Num5, 66),
-            (egui::Key::T, 67),
-            (egui::Key::Num6, 68),
-            (egui::Key::Y, 69),
-            (egui::Key::Num7, 70),
-            (egui::Key::U, 71),
-            (egui::Key::I, 72),
-        ];
-
-        let octave_offset = self.keyboard.octave_offset();
-
-        ctx.input(|input| {
-            for (key, base_note) in key_map {
-                let note_i32 = *base_note as i32 + octave_offset * 12;
-                if !(0..=127).contains(&note_i32) {
-                    continue; // Skip invalid notes
-                }
-                let note = note_i32 as u8;
-
-                if input.key_pressed(*key)
-                    && !self.pressed_keys.get(&note).copied().unwrap_or(false)
-                {
-                    self.handle.note_on_channel(
-                        MidiNote::new(note),
-                        NormalizedValue::new(0.8),
-                        active_channel,
-                    );
-                    self.pressed_keys.insert(note, true);
-                    // Visual feedback will come from NoteTriggered engine event
-                }
-
-                if input.key_released(*key) {
-                    self.handle
-                        .note_off_channel(MidiNote::new(note), active_channel);
-                    self.pressed_keys.insert(note, false);
-                    // Visual feedback will come from NoteReleased event from engine
-                }
-            }
-
-            // Octave shift via keyboard
-            if input.key_pressed(egui::Key::Minus) && octave_offset > -2 {
-                self.keyboard.set_octave_offset(octave_offset - 1);
-            }
-            if input.key_pressed(egui::Key::Plus) && octave_offset < 4 {
-                self.keyboard.set_octave_offset(octave_offset + 1);
-            }
-        });
+        handle_keyboard_input(
+            ctx,
+            &mut self.handle,
+            &mut self.keyboard,
+            &mut self.pressed_keys,
+            active_channel,
+        );
     }
 
     fn show_dialogs(&mut self, ctx: &egui::Context) {

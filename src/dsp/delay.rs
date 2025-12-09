@@ -237,10 +237,7 @@ mod tests {
 
     #[test]
     fn test_delay_from_time() {
-        let delay = DelayLine::from_max_time(
-            Seconds::new(1.0),
-            SampleRate::DVD_QUALITY,
-        );
+        let delay = DelayLine::from_max_time(Seconds::new(1.0), SampleRate::DVD_QUALITY);
         // 1 second at 48kHz should be 48000 samples
         assert_eq!(delay.len(), 48000);
     }

@@ -339,7 +339,7 @@ impl AudioEffect for Reverb {
             }
 
             // Normalize
-            wet = wet * 0.25;
+            wet *= 0.25;
 
             // Series allpass filters
             for ap in &mut self.allpasses_l {

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::audio::{AudioCallbackContext, AudioProcessor, StreamInfo};
-use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId};
+use crate::engine::commands::{EngineCommand, EngineEvent, ModuleId, PortId};
 use crate::engine::effect_chain::{EffectChain, EffectSlot};
 use crate::engine::graph::ModuleGraph;
 use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
@@ -556,629 +556,730 @@ impl SynthEngine {
         }
     }
 
-    /// Handle a single command.
+    /// Handle a single command by dispatching to specialized handlers.
     fn handle_command(&mut self, command: EngineCommand) {
         match command {
-            // === Instrument management commands ===
+            // Instrument management
             EngineCommand::AddInstrument { instrument } => {
-                self.instruments.push(instrument);
+                self.handle_add_instrument(instrument);
             }
-
             EngineCommand::RemoveInstrument { instrument_id } => {
-                // Find and remove the instrument, sending it back to main thread for dropping
-                // This is real-time safe: no deallocation happens on the audio thread
-                if let Some(idx) = self
-                    .instruments
-                    .iter()
-                    .position(|p| p.id() == instrument_id)
-                {
-                    let instrument = self.instruments.swap_remove(idx);
-                    // Send to main thread for dropping - ignore if queue is full
-                    let _ = self.instrument_return_producer.try_push(instrument);
-                }
+                self.handle_remove_instrument(instrument_id);
             }
-
             EngineCommand::SetInstrumentParameter {
                 instrument_id,
                 param,
             } => {
-                use crate::engine::commands::InstrumentParam;
-                if let Some(instrument) = self
-                    .instruments
-                    .iter_mut()
-                    .find(|p| p.id() == instrument_id)
-                {
-                    match param {
-                        InstrumentParam::Volume(vol) => instrument.set_volume(vol),
-                        InstrumentParam::Pan(pan) => instrument.set_pan(pan),
-                        InstrumentParam::GlideTime(time) => {
-                            instrument.allocator_mut().set_glide_time(time)
-                        }
-                        InstrumentParam::AllocationMode(mode) => {
-                            instrument.allocator_mut().set_mode(mode)
-                        }
-                        InstrumentParam::StealingStrategy(strategy) => {
-                            instrument.allocator_mut().set_stealing(strategy)
-                        }
-                        InstrumentParam::MaxVoices(_) => {
-                            // Cannot change max voices at runtime without reallocating
-                            // This would require recreating the allocator
-                        }
-                        InstrumentParam::VelocityAmpSensitivity(sens) => {
-                            instrument.set_velocity_amp_sensitivity(sens);
-                        }
-                        InstrumentParam::VelocityFilterSensitivity(sens) => {
-                            instrument.set_velocity_filter_sensitivity(sens);
-                        }
-                        InstrumentParam::Solo(solo) => {
-                            instrument.set_solo(solo);
-                        }
-                        InstrumentParam::KeyRange(range) => {
-                            instrument.set_key_range(range);
-                        }
-                        InstrumentParam::Transpose(semitones) => {
-                            instrument.set_transpose(semitones);
-                        }
-                        InstrumentParam::LearnState(state) => {
-                            instrument.set_learn_state(state);
-                        }
-                    }
-                }
+                self.handle_set_instrument_param(instrument_id, param);
             }
-
             EngineCommand::SetInstrumentMidiChannel {
                 instrument_id,
                 channel,
             } => {
-                if let Some(instrument) = self
-                    .instruments
-                    .iter_mut()
-                    .find(|p| p.id() == instrument_id)
-                {
-                    instrument.set_midi_channel(channel);
-                }
+                self.handle_set_instrument_channel(instrument_id, channel);
             }
-
             EngineCommand::SetInstrumentEnabled {
                 instrument_id,
                 enabled,
             } => {
-                if let Some(instrument) = self
-                    .instruments
-                    .iter_mut()
-                    .find(|p| p.id() == instrument_id)
-                {
-                    instrument.set_enabled(enabled);
-                }
+                self.handle_set_instrument_enabled(instrument_id, enabled);
             }
-
             EngineCommand::SetInstrumentSolo {
                 instrument_id,
                 solo,
             } => {
-                if let Some(instrument) = self
-                    .instruments
-                    .iter_mut()
-                    .find(|p| p.id() == instrument_id)
-                {
-                    instrument.set_solo(solo);
-                }
+                self.handle_set_instrument_solo(instrument_id, solo);
             }
 
-            // === Note control - route to instruments by channel ===
+            // Note control
             EngineCommand::NoteOn {
                 note,
                 velocity,
                 channel,
             } => {
-                // Route to all instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                let velocity_f32 = velocity.as_f32();
-                let mut note_triggered = false;
-
-                for instrument in &mut self.instruments {
-                    if !instrument.responds_to_channel(channel_raw) {
-                        continue;
-                    }
-
-                    // Check if instrument is in learn mode - if so, learn the note
-                    // instead of playing it
-                    if instrument.handle_note_learn(note) {
-                        // Note was captured for learning - emit event to update GUI
-                        let _ = self.event_producer.try_push(EngineEvent::KeyRangeLearned {
-                            instrument_id: instrument.id(),
-                            key_range: instrument.key_range(),
-                            learn_state: instrument.learn_state(),
-                        });
-                        continue; // Don't play the note, it was for learning
-                    }
-
-                    // Normal note handling - check key range and play
-                    if instrument.note_on(note, velocity_f32).is_some() {
-                        note_triggered = true;
-                    }
-                }
-                // Also trigger note on in the modular graph
-                if self.use_modular_routing {
-                    self.module_graph.note_on(note, velocity_f32);
-                    note_triggered = true;
-                }
-
-                // Emit NoteTriggered event for GUI feedback
-                if note_triggered {
-                    let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
-                        note,
-                        velocity: velocity_f32,
-                        channel,
-                    });
-                }
+                self.handle_note_on(note, velocity, channel);
             }
-
             EngineCommand::NoteOff { note, channel } => {
-                // Route to all instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                for instrument in &mut self.instruments {
-                    if instrument.responds_to_channel(channel_raw) {
-                        instrument.note_off(note);
-                    }
-                }
-                // Also trigger note off in the modular graph
-                if self.use_modular_routing {
-                    self.module_graph.note_off();
-                }
-
-                // Emit NoteReleased event for GUI feedback
-                let _ = self
-                    .event_producer
-                    .try_push(EngineEvent::NoteReleased { note, channel });
+                self.handle_note_off(note, channel);
             }
-
             EngineCommand::AllNotesOff => {
-                // Release notes on all instruments
-                for instrument in &mut self.instruments {
-                    instrument.all_notes_off();
-                }
-                if self.use_modular_routing {
-                    self.module_graph.reset();
-                }
-
-                // Emit AllNotesReleased event for GUI feedback
-                let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+                self.handle_all_notes_off();
             }
 
+            // MIDI controllers
             EngineCommand::PitchBend { value, channel } => {
-                // Apply pitch bend to all voices in instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                self.instruments
-                    .iter_mut()
-                    .filter(|inst| inst.responds_to_channel(channel_raw))
-                    .for_each(|inst| {
-                        inst.allocator_mut()
-                            .voices_mut()
-                            .iter_mut()
-                            .for_each(|voice| voice.pitch_bend = value)
-                    });
+                self.handle_pitch_bend(value, channel);
             }
-
             EngineCommand::ModWheel { value, channel } => {
-                // Apply mod wheel to all voices in instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                self.instruments
-                    .iter_mut()
-                    .filter(|inst| inst.responds_to_channel(channel_raw))
-                    .for_each(|inst| {
-                        inst.allocator_mut()
-                            .voices_mut()
-                            .iter_mut()
-                            .for_each(|voice| voice.mod_wheel = value)
-                    });
+                self.handle_mod_wheel(value, channel);
             }
-
             EngineCommand::Aftertouch { value, channel } => {
-                // Apply channel aftertouch to all voices in instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                self.instruments
-                    .iter_mut()
-                    .filter(|inst| inst.responds_to_channel(channel_raw))
-                    .for_each(|inst| {
-                        inst.allocator_mut()
-                            .voices_mut()
-                            .iter_mut()
-                            .for_each(|voice| voice.aftertouch = value)
-                    });
+                self.handle_aftertouch(value, channel);
             }
-
             EngineCommand::PolyAftertouch {
                 note,
                 value,
                 channel,
             } => {
-                // Apply poly aftertouch to specific note in instruments that respond to this channel
-                let channel_raw = channel.as_zero_indexed();
-                self.instruments
-                    .iter_mut()
-                    .filter(|inst| inst.responds_to_channel(channel_raw))
-                    .for_each(|inst| {
-                        inst.allocator_mut()
-                            .voices_mut()
-                            .iter_mut()
-                            .filter(|voice| voice.note() == Some(note))
-                            .for_each(|voice| voice.aftertouch = value)
-                    });
+                self.handle_poly_aftertouch(note, value, channel);
             }
 
+            // Global parameters
             EngineCommand::SetMasterVolume(vol) => {
-                // Clamp gain to reasonable range
-                self.master_volume = vol.as_f32().clamp(0.0, 2.0);
-                self.state.master_volume.store(self.master_volume);
+                self.handle_set_master_volume(vol);
             }
-
             EngineCommand::SetGlideTime(time) => {
-                // Clamp to reasonable range: 0-5 second instruments
-                let time_secs = Seconds::new(time.as_f32().clamp(0.0, 5.0));
-                // Apply to all instruments
-                for instrument in &mut self.instruments {
-                    instrument.allocator_mut().set_glide_time(time_secs);
-                }
+                self.handle_set_glide_time(time);
             }
 
+            // Voice/module parameters
             EngineCommand::SetVoiceParameter {
                 instrument_id,
                 target,
                 param,
             } => {
-                // Get the ModuleId from the PolyModule enum
-                let module_id = target.module_id();
-
-                // Find the target instrument and update its voice graph and voices
-                if let Some(instrument) = self
-                    .instruments
-                    .iter_mut()
-                    .find(|i| i.id() == instrument_id)
-                {
-                    // Update the instrument's voice graph (so new voices get the new value)
-                    instrument.voice_graph_mut().set_param(module_id, param);
-
-                    // Apply to all existing voices in this instrument
-                    for voice in instrument.allocator_mut().voices_mut() {
-                        voice.graph.set_param(module_id, param);
-                    }
-                }
+                self.handle_set_voice_param(instrument_id, target, param);
             }
-
             EngineCommand::SetModuleParameter {
                 instrument_id,
                 module_id,
                 param,
             } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Target a specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            instrument.voice_graph_mut().set_param(module_id, param);
-
-                            // Apply to all existing voices in this instrument
-                            for voice in instrument.allocator_mut().voices_mut() {
-                                voice.graph.set_param(module_id, param);
-                            }
-                        }
-                    }
-                    None => {
-                        // Global module: update the global graph (master bus)
-                        self.module_graph.set_param(module_id, param);
-                    }
-                }
+                self.handle_set_module_param(instrument_id, module_id, param);
             }
 
+            // Reset/clear
             EngineCommand::Reset => {
-                // Panic all instruments and reset their effect chains
-                for instrument in &mut self.instruments {
-                    instrument.panic();
-                    instrument.effect_chain_mut().reset();
-                }
-                // Reset master effects
-                self.master_effects.reset();
+                self.handle_reset();
             }
-
             EngineCommand::ClearAllModules => {
-                // Clear all modules for patch loading - panic and disable all instruments
-                // to prevent "ghost sound" from hardcoded voice templates
-                for instrument in &mut self.instruments {
-                    instrument.panic();
-                    instrument.set_enabled(false);
-                    // Clear each instrument's voice graph
-                    instrument.voice_graph_mut().clear();
-                    // Clear each instrument's effect chain
-                    instrument.effect_chain_mut().clear();
-                    // Rebuild voices with the cleared graph
-                    instrument.rebuild_voices();
-                }
-                // Clear master effects
-                self.master_effects.clear();
-                self.module_graph.clear();
-                self.use_modular_routing = false;
+                self.handle_clear_all_modules();
             }
 
+            // Effects
             EngineCommand::SetBypass { module, bypass } => {
-                // SetBypass doesn't have instrument_id - apply to first instrument that has the effect
-                // TODO: Consider adding instrument_id to SetBypass in the future
-                for instrument in &mut self.instruments {
-                    if let Some(slot) = instrument
-                        .effect_chain_mut()
-                        .find_effect_by_type(module.module_type)
-                    {
-                        slot.enabled = !bypass;
-                        break;
-                    }
-                }
+                self.handle_set_bypass(module, bypass);
             }
-
             EngineCommand::SetEffectParameter {
                 instrument_id,
                 effect_type,
                 param,
             } => {
-                // Convert EffectType to ModuleType and find the effect
-                let mt = effect_type.to_module_type();
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
-                            slot.effect.set_param(param);
-                            slot.enabled = true;
-                        }
-                    }
-                    None => {
-                        // Target master bus effect chain
-                        if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
-                            slot.effect.set_param(param);
-                            slot.enabled = true;
-                        }
-                    }
-                }
+                self.handle_set_effect_param(instrument_id, effect_type, param);
             }
-
             EngineCommand::SetEffectEnabled {
                 instrument_id,
                 effect_type,
                 enabled,
             } => {
-                let mt = effect_type.to_module_type();
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
-                            slot.enabled = enabled;
-                        }
-                    }
-                    None => {
-                        // Target master bus effect chain
-                        if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
-                            slot.enabled = enabled;
-                        }
-                    }
-                }
+                self.handle_set_effect_enabled(instrument_id, effect_type, enabled);
             }
-
             EngineCommand::AddVisualizer {
                 instrument_id,
                 id,
                 visualizer_type,
                 buffer,
             } => {
-                use crate::engine::commands::VisualizerType;
-                use crate::modules::AudioEffect;
-
-                let visualizer: Box<dyn AudioEffect> = match visualizer_type {
-                    VisualizerType::Oscilloscope => Box::new(Oscilloscope::new()),
-                    VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
-                };
-
-                match instrument_id {
-                    Some(inst_id) => {
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            instrument
-                                .effect_chain_mut()
-                                .add_visualizer(id, visualizer, buffer);
-                        }
-                    }
-                    None => {
-                        // Add visualizer to master bus
-                        self.master_effects.add_visualizer(id, visualizer, buffer);
-                    }
-                }
+                self.handle_add_visualizer(instrument_id, id, visualizer_type, buffer);
             }
-
-            EngineCommand::RemoveVisualizer { instrument_id, id } => match instrument_id {
-                Some(inst_id) => {
-                    if let Some(instrument) =
-                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                    {
-                        instrument.effect_chain_mut().remove_visualizer(id);
-                    }
-                }
-                None => {
-                    // Remove visualizer from master bus
-                    self.master_effects.remove_visualizer(id);
-                }
-            },
-
+            EngineCommand::RemoveVisualizer { instrument_id, id } => {
+                self.handle_remove_visualizer(instrument_id, id);
+            }
             EngineCommand::AddEffectInstance {
                 instrument_id,
                 id,
                 effect,
-            } => match instrument_id {
-                Some(inst_id) => {
-                    if let Some(instrument) =
-                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                    {
-                        instrument
-                            .effect_chain_mut()
-                            .add_effect(id, effect, self.sample_rate);
-                    }
-                }
-                None => {
-                    // Add effect to master bus
-                    self.master_effects.add_effect(id, effect, self.sample_rate);
-                }
-            },
+            } => {
+                self.handle_add_effect_instance(instrument_id, id, effect);
+            }
+            EngineCommand::RemoveEffect { instrument_id, id } => {
+                self.handle_remove_effect(instrument_id, id);
+            }
 
-            EngineCommand::RemoveEffect { instrument_id, id } => match instrument_id {
-                Some(inst_id) => {
-                    if let Some(instrument) =
-                        self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                    {
-                        instrument.effect_chain_mut().remove_effect(id);
-                    }
-                }
-                None => {
-                    // Remove effect from master bus
-                    self.master_effects.remove_effect(id);
-                }
-            },
-
-            // === Modular routing commands ===
+            // Modular routing
             EngineCommand::AddModuleInstance {
                 instrument_id,
                 id,
                 module,
             } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Add to specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            instrument.voice_graph_mut().add_module_with_id(id, module);
-                            // Rebuild this instrument's voices with the updated graph
-                            instrument.rebuild_voices();
-                        }
-                    }
-                    None => {
-                        // Global module: add to global graph (master bus)
-                        self.module_graph.add_module_with_id(id, module);
-                        self.use_modular_routing = true;
-                    }
-                }
+                self.handle_add_module_instance(instrument_id, id, module);
             }
-
             EngineCommand::RemoveModule { instrument_id, id } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Remove from specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            instrument.voice_graph_mut().remove_module(id);
-                            // Rebuild this instrument's voices with the updated graph
-                            instrument.rebuild_voices();
-                        }
-                    }
-                    None => {
-                        // Remove from global graph and send back to main thread for dropping
-                        if let Some(module) = self.module_graph.remove_module_and_return(id) {
-                            let _ = self.return_producer.try_push(DroppedModule(module));
-                        }
-                    }
-                }
+                self.handle_remove_module(instrument_id, id);
             }
-
             EngineCommand::Connect {
                 instrument_id,
                 from,
                 to,
             } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Connect in specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            if let Err(e) = instrument.voice_graph_mut().connect(
-                                from.module,
-                                &from.port,
-                                to.module,
-                                &to.port,
-                            ) {
-                                eprintln!(
-                                    "Voice graph connection failed: {:?}:{} -> {:?}:{} - {}",
-                                    from.module, from.port, to.module, to.port, e
-                                );
-                            } else {
-                                // Success: rebuild this instrument's voices
-                                instrument.rebuild_voices();
-                            }
-                        }
-                    }
-                    None => {
-                        // Connect in global graph
-                        if let Err(e) =
-                            self.module_graph
-                                .connect(from.module, &from.port, to.module, &to.port)
-                        {
-                            eprintln!(
-                                "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
-                                from.module, from.port, to.module, to.port, e
-                            );
-                        }
-                    }
-                }
+                self.handle_connect(instrument_id, from, to);
             }
-
             EngineCommand::Disconnect {
                 instrument_id,
                 from,
                 to,
             } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Disconnect in specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                            && instrument.voice_graph_mut().disconnect(
-                                from.module,
-                                &from.port,
-                                to.module,
-                                &to.port,
-                            )
-                        {
-                            // Rebuild this instrument's voices
-                            instrument.rebuild_voices();
-                        }
-                    }
-                    None => {
-                        // Disconnect in global graph
-                        self.module_graph
-                            .disconnect(from.module, &from.port, to.module, &to.port);
-                    }
-                }
+                self.handle_disconnect(instrument_id, from, to);
             }
-
             EngineCommand::DisconnectAll {
                 instrument_id,
                 module,
             } => {
-                match instrument_id {
-                    Some(inst_id) => {
-                        // Disconnect all in specific instrument's voice graph
-                        if let Some(instrument) =
-                            self.instruments.iter_mut().find(|i| i.id() == inst_id)
-                        {
-                            instrument.voice_graph_mut().disconnect_all(module);
-                            // Rebuild this instrument's voices
-                            instrument.rebuild_voices();
-                        }
-                    }
-                    None => {
-                        // Disconnect all in global graph
-                        self.module_graph.disconnect_all(module);
-                    }
-                }
+                self.handle_disconnect_all(instrument_id, module);
             }
 
             _ => {}
+        }
+    }
+
+    // ========================================================================
+    // Instrument management handlers
+    // ========================================================================
+
+    fn handle_add_instrument(&mut self, instrument: Box<Instrument>) {
+        self.instruments.push(instrument);
+    }
+
+    fn handle_remove_instrument(&mut self, instrument_id: InstrumentId) {
+        if let Some(idx) = self
+            .instruments
+            .iter()
+            .position(|p| p.id() == instrument_id)
+        {
+            let instrument = self.instruments.swap_remove(idx);
+            let _ = self.instrument_return_producer.try_push(instrument);
+        }
+    }
+
+    fn handle_set_instrument_param(
+        &mut self,
+        instrument_id: InstrumentId,
+        param: crate::engine::commands::InstrumentParam,
+    ) {
+        use crate::engine::commands::InstrumentParam;
+
+        let Some(instrument) = self
+            .instruments
+            .iter_mut()
+            .find(|p| p.id() == instrument_id)
+        else {
+            return;
+        };
+
+        match param {
+            InstrumentParam::Volume(vol) => instrument.set_volume(vol),
+            InstrumentParam::Pan(pan) => instrument.set_pan(pan),
+            InstrumentParam::GlideTime(time) => instrument.allocator_mut().set_glide_time(time),
+            InstrumentParam::AllocationMode(mode) => instrument.allocator_mut().set_mode(mode),
+            InstrumentParam::StealingStrategy(strategy) => {
+                instrument.allocator_mut().set_stealing(strategy)
+            }
+            InstrumentParam::MaxVoices(_) => {
+                // Cannot change max voices at runtime without reallocating
+            }
+            InstrumentParam::VelocityAmpSensitivity(sens) => {
+                instrument.set_velocity_amp_sensitivity(sens);
+            }
+            InstrumentParam::VelocityFilterSensitivity(sens) => {
+                instrument.set_velocity_filter_sensitivity(sens);
+            }
+            InstrumentParam::Solo(solo) => instrument.set_solo(solo),
+            InstrumentParam::KeyRange(range) => instrument.set_key_range(range),
+            InstrumentParam::Transpose(semitones) => instrument.set_transpose(semitones),
+            InstrumentParam::LearnState(state) => instrument.set_learn_state(state),
+        }
+    }
+
+    fn handle_set_instrument_channel(&mut self, instrument_id: InstrumentId, channel: MidiChannel) {
+        if let Some(instrument) = self
+            .instruments
+            .iter_mut()
+            .find(|p| p.id() == instrument_id)
+        {
+            instrument.set_midi_channel(channel);
+        }
+    }
+
+    fn handle_set_instrument_enabled(&mut self, instrument_id: InstrumentId, enabled: bool) {
+        if let Some(instrument) = self
+            .instruments
+            .iter_mut()
+            .find(|p| p.id() == instrument_id)
+        {
+            instrument.set_enabled(enabled);
+        }
+    }
+
+    fn handle_set_instrument_solo(&mut self, instrument_id: InstrumentId, solo: bool) {
+        if let Some(instrument) = self
+            .instruments
+            .iter_mut()
+            .find(|p| p.id() == instrument_id)
+        {
+            instrument.set_solo(solo);
+        }
+    }
+
+    // ========================================================================
+    // Note control handlers
+    // ========================================================================
+
+    fn handle_note_on(&mut self, note: MidiNote, velocity: NormalizedValue, channel: MidiChannel) {
+        let channel_raw = channel.as_zero_indexed();
+        let velocity_f32 = velocity.as_f32();
+        let mut note_triggered = false;
+
+        for instrument in &mut self.instruments {
+            if !instrument.responds_to_channel(channel_raw) {
+                continue;
+            }
+
+            // Check learn mode
+            if instrument.handle_note_learn(note) {
+                let _ = self.event_producer.try_push(EngineEvent::KeyRangeLearned {
+                    instrument_id: instrument.id(),
+                    key_range: instrument.key_range(),
+                    learn_state: instrument.learn_state(),
+                });
+                continue;
+            }
+
+            if instrument.note_on(note, velocity_f32).is_some() {
+                note_triggered = true;
+            }
+        }
+
+        if self.use_modular_routing {
+            self.module_graph.note_on(note, velocity_f32);
+            note_triggered = true;
+        }
+
+        if note_triggered {
+            let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
+                note,
+                velocity: velocity_f32,
+                channel,
+            });
+        }
+    }
+
+    fn handle_note_off(&mut self, note: MidiNote, channel: MidiChannel) {
+        let channel_raw = channel.as_zero_indexed();
+        for instrument in &mut self.instruments {
+            if instrument.responds_to_channel(channel_raw) {
+                instrument.note_off(note);
+            }
+        }
+
+        if self.use_modular_routing {
+            self.module_graph.note_off();
+        }
+
+        let _ = self
+            .event_producer
+            .try_push(EngineEvent::NoteReleased { note, channel });
+    }
+
+    fn handle_all_notes_off(&mut self) {
+        for instrument in &mut self.instruments {
+            instrument.all_notes_off();
+        }
+
+        if self.use_modular_routing {
+            self.module_graph.reset();
+        }
+
+        let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+    }
+
+    // ========================================================================
+    // MIDI controller handlers
+    // ========================================================================
+
+    fn handle_pitch_bend(&mut self, value: crate::types::BipolarValue, channel: MidiChannel) {
+        let channel_raw = channel.as_zero_indexed();
+        self.instruments
+            .iter_mut()
+            .filter(|inst| inst.responds_to_channel(channel_raw))
+            .for_each(|inst| {
+                inst.allocator_mut()
+                    .voices_mut()
+                    .iter_mut()
+                    .for_each(|voice| voice.pitch_bend = value)
+            });
+    }
+
+    fn handle_mod_wheel(&mut self, value: NormalizedValue, channel: MidiChannel) {
+        let channel_raw = channel.as_zero_indexed();
+        self.instruments
+            .iter_mut()
+            .filter(|inst| inst.responds_to_channel(channel_raw))
+            .for_each(|inst| {
+                inst.allocator_mut()
+                    .voices_mut()
+                    .iter_mut()
+                    .for_each(|voice| voice.mod_wheel = value)
+            });
+    }
+
+    fn handle_aftertouch(&mut self, value: NormalizedValue, channel: MidiChannel) {
+        let channel_raw = channel.as_zero_indexed();
+        self.instruments
+            .iter_mut()
+            .filter(|inst| inst.responds_to_channel(channel_raw))
+            .for_each(|inst| {
+                inst.allocator_mut()
+                    .voices_mut()
+                    .iter_mut()
+                    .for_each(|voice| voice.aftertouch = value)
+            });
+    }
+
+    fn handle_poly_aftertouch(
+        &mut self,
+        note: MidiNote,
+        value: NormalizedValue,
+        channel: MidiChannel,
+    ) {
+        let channel_raw = channel.as_zero_indexed();
+        self.instruments
+            .iter_mut()
+            .filter(|inst| inst.responds_to_channel(channel_raw))
+            .for_each(|inst| {
+                inst.allocator_mut()
+                    .voices_mut()
+                    .iter_mut()
+                    .filter(|voice| voice.note() == Some(note))
+                    .for_each(|voice| voice.aftertouch = value)
+            });
+    }
+
+    // ========================================================================
+    // Global parameter handlers
+    // ========================================================================
+
+    fn handle_set_master_volume(&mut self, vol: Gain) {
+        self.master_volume = vol.as_f32().clamp(0.0, 2.0);
+        self.state.master_volume.store(self.master_volume);
+    }
+
+    fn handle_set_glide_time(&mut self, time: Seconds) {
+        let time_secs = Seconds::new(time.as_f32().clamp(0.0, 5.0));
+        for instrument in &mut self.instruments {
+            instrument.allocator_mut().set_glide_time(time_secs);
+        }
+    }
+
+    // ========================================================================
+    // Voice/module parameter handlers
+    // ========================================================================
+
+    fn handle_set_voice_param(
+        &mut self,
+        instrument_id: InstrumentId,
+        target: crate::engine::commands::PolyModule,
+        param: Param,
+    ) {
+        let module_id = target.module_id();
+
+        if let Some(instrument) = self
+            .instruments
+            .iter_mut()
+            .find(|i| i.id() == instrument_id)
+        {
+            instrument.voice_graph_mut().set_param(module_id, param);
+            for voice in instrument.allocator_mut().voices_mut() {
+                voice.graph.set_param(module_id, param);
+            }
+        }
+    }
+
+    fn handle_set_module_param(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        param: Param,
+    ) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.voice_graph_mut().set_param(module_id, param);
+                    for voice in instrument.allocator_mut().voices_mut() {
+                        voice.graph.set_param(module_id, param);
+                    }
+                }
+            }
+            None => {
+                self.module_graph.set_param(module_id, param);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Reset/clear handlers
+    // ========================================================================
+
+    fn handle_reset(&mut self) {
+        for instrument in &mut self.instruments {
+            instrument.panic();
+            instrument.effect_chain_mut().reset();
+        }
+        self.master_effects.reset();
+    }
+
+    fn handle_clear_all_modules(&mut self) {
+        for instrument in &mut self.instruments {
+            instrument.panic();
+            instrument.set_enabled(false);
+            instrument.voice_graph_mut().clear();
+            instrument.effect_chain_mut().clear();
+            instrument.rebuild_voices();
+        }
+        self.master_effects.clear();
+        self.module_graph.clear();
+        self.use_modular_routing = false;
+    }
+
+    // ========================================================================
+    // Effect handlers
+    // ========================================================================
+
+    fn handle_set_bypass(&mut self, module: ModuleId, bypass: bool) {
+        for instrument in &mut self.instruments {
+            if let Some(slot) = instrument
+                .effect_chain_mut()
+                .find_effect_by_type(module.module_type)
+            {
+                slot.enabled = !bypass;
+                break;
+            }
+        }
+    }
+
+    fn handle_set_effect_param(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        effect_type: crate::engine::commands::EffectType,
+        param: Param,
+    ) {
+        let mt = effect_type.to_module_type();
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                    slot.effect.set_param(param);
+                    slot.enabled = true;
+                }
+            }
+            None => {
+                if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                    slot.effect.set_param(param);
+                    slot.enabled = true;
+                }
+            }
+        }
+    }
+
+    fn handle_set_effect_enabled(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        effect_type: crate::engine::commands::EffectType,
+        enabled: bool,
+    ) {
+        let mt = effect_type.to_module_type();
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                    slot.enabled = enabled;
+                }
+            }
+            None => {
+                if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                    slot.enabled = enabled;
+                }
+            }
+        }
+    }
+
+    fn handle_add_visualizer(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        id: ModuleId,
+        visualizer_type: crate::engine::commands::VisualizerType,
+        buffer: Arc<VisualizationBuffer>,
+    ) {
+        use crate::engine::commands::VisualizerType;
+        use crate::modules::AudioEffect;
+
+        let visualizer: Box<dyn AudioEffect> = match visualizer_type {
+            VisualizerType::Oscilloscope => Box::new(Oscilloscope::new()),
+            VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
+        };
+
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument
+                        .effect_chain_mut()
+                        .add_visualizer(id, visualizer, buffer);
+                }
+            }
+            None => {
+                self.master_effects.add_visualizer(id, visualizer, buffer);
+            }
+        }
+    }
+
+    fn handle_remove_visualizer(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.effect_chain_mut().remove_visualizer(id);
+                }
+            }
+            None => {
+                self.master_effects.remove_visualizer(id);
+            }
+        }
+    }
+
+    fn handle_add_effect_instance(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        id: ModuleId,
+        effect: Box<dyn crate::modules::AudioEffect>,
+    ) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument
+                        .effect_chain_mut()
+                        .add_effect(id, effect, self.sample_rate);
+                }
+            }
+            None => {
+                self.master_effects.add_effect(id, effect, self.sample_rate);
+            }
+        }
+    }
+
+    fn handle_remove_effect(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.effect_chain_mut().remove_effect(id);
+                }
+            }
+            None => {
+                self.master_effects.remove_effect(id);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Modular routing handlers
+    // ========================================================================
+
+    fn handle_add_module_instance(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        id: ModuleId,
+        module: Box<dyn PolyModuleTrait>,
+    ) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.voice_graph_mut().add_module_with_id(id, module);
+                    instrument.rebuild_voices();
+                }
+            }
+            None => {
+                self.module_graph.add_module_with_id(id, module);
+                self.use_modular_routing = true;
+            }
+        }
+    }
+
+    fn handle_remove_module(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.voice_graph_mut().remove_module(id);
+                    instrument.rebuild_voices();
+                }
+            }
+            None => {
+                if let Some(module) = self.module_graph.remove_module_and_return(id) {
+                    let _ = self.return_producer.try_push(DroppedModule(module));
+                }
+            }
+        }
+    }
+
+    fn handle_connect(&mut self, instrument_id: Option<InstrumentId>, from: PortId, to: PortId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    if let Err(e) = instrument.voice_graph_mut().connect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    ) {
+                        eprintln!(
+                            "Voice graph connection failed: {:?}:{} -> {:?}:{} - {}",
+                            from.module, from.port, to.module, to.port, e
+                        );
+                    } else {
+                        instrument.rebuild_voices();
+                    }
+                }
+            }
+            None => {
+                if let Err(e) =
+                    self.module_graph
+                        .connect(from.module, &from.port, to.module, &to.port)
+                {
+                    eprintln!(
+                        "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
+                        from.module, from.port, to.module, to.port, e
+                    );
+                }
+            }
+        }
+    }
+
+    fn handle_disconnect(&mut self, instrument_id: Option<InstrumentId>, from: PortId, to: PortId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id)
+                    && instrument.voice_graph_mut().disconnect(
+                        from.module,
+                        &from.port,
+                        to.module,
+                        &to.port,
+                    )
+                {
+                    instrument.rebuild_voices();
+                }
+            }
+            None => {
+                self.module_graph
+                    .disconnect(from.module, &from.port, to.module, &to.port);
+            }
+        }
+    }
+
+    fn handle_disconnect_all(&mut self, instrument_id: Option<InstrumentId>, module: ModuleId) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.voice_graph_mut().disconnect_all(module);
+                    instrument.rebuild_voices();
+                }
+            }
+            None => {
+                self.module_graph.disconnect_all(module);
+            }
         }
     }
 

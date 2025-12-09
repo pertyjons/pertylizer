@@ -461,7 +461,8 @@ pub fn show_instrument_rack(
                                         .size(t.fonts.size_small),
                                 );
 
-                                let mut transpose = instruments[idx].transpose.as_f32().round() as i32;
+                                let mut transpose =
+                                    instruments[idx].transpose.as_f32().round() as i32;
                                 let response = ui.add(
                                     egui::DragValue::new(&mut transpose)
                                         .range(-24..=24)
@@ -470,7 +471,8 @@ pub fn show_instrument_rack(
                                 );
 
                                 if response.changed() {
-                                    let new_transpose = Semitones::new(transpose.clamp(-24, 24) as f32);
+                                    let new_transpose =
+                                        Semitones::new(transpose.clamp(-24, 24) as f32);
                                     instruments[idx].transpose = new_transpose;
                                     handle.send(EngineCommand::SetInstrumentParameter {
                                         instrument_id,

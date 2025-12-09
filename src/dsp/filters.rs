@@ -219,22 +219,14 @@ mod tests {
 
     #[test]
     fn test_svf_coeffs() {
-        let coeffs = SvfCoeffs::new(
-            Hertz::new(1000.0),
-            0.5,
-            SampleRate::DVD_QUALITY,
-        );
+        let coeffs = SvfCoeffs::new(Hertz::new(1000.0), 0.5, SampleRate::DVD_QUALITY);
         assert!(coeffs.g > 0.0);
         assert!(coeffs.a1 > 0.0);
     }
 
     #[test]
     fn test_svf_process() {
-        let coeffs = SvfCoeffs::new(
-            Hertz::new(1000.0),
-            0.5,
-            SampleRate::DVD_QUALITY,
-        );
+        let coeffs = SvfCoeffs::new(Hertz::new(1000.0), 0.5, SampleRate::DVD_QUALITY);
         let mut ic1eq = 0.0;
         let mut ic2eq = 0.0;
 
@@ -246,11 +238,7 @@ mod tests {
 
     #[test]
     fn test_biquad_lowpass() {
-        let coeffs = BiquadCoeffs::lowpass(
-            Hertz::new(1000.0),
-            0.707,
-            SampleRate::DVD_QUALITY,
-        );
+        let coeffs = BiquadCoeffs::lowpass(Hertz::new(1000.0), 0.707, SampleRate::DVD_QUALITY);
         let mut z1 = 0.0;
         let mut z2 = 0.0;
 
@@ -262,11 +250,7 @@ mod tests {
 
     #[test]
     fn test_biquad_highpass() {
-        let coeffs = BiquadCoeffs::highpass(
-            Hertz::new(1000.0),
-            0.707,
-            SampleRate::DVD_QUALITY,
-        );
+        let coeffs = BiquadCoeffs::highpass(Hertz::new(1000.0), 0.707, SampleRate::DVD_QUALITY);
         let mut z1 = 0.0;
         let mut z2 = 0.0;
 

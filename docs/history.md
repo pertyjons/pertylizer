@@ -1,5 +1,25 @@
 # Version History
 
+## [0.33.26] - 2024
+### Improved - Code Organization Refactoring
+- **gui/input.rs** - Ny modul för keyboard input hantering
+  - Extraherade `KEY_MAP` konstant och `handle_keyboard_input()` från egui_backend.rs
+  - `KeyboardInputState` struct för att samla input state innan mutation
+  - Reducerade egui_backend.rs med ~65 rader
+- **SynthEngine command handlers** - Refaktorerade 620-raders `handle_command()` match-block
+  - Extraherade 30+ handler-metoder grupperade i kategorier:
+    - Instrument management (add, remove, set params, channel, enabled, solo)
+    - Note control (note on, note off, all notes off)
+    - MIDI controllers (pitch bend, mod wheel, aftertouch, poly aftertouch)
+    - Global parameters (master volume, glide time)
+    - Voice/module parameters (set voice param, set module param)
+    - Reset/clear (reset, clear all modules)
+    - Effects (bypass, effect param, enabled, visualizers, add/remove effect)
+    - Modular routing (add/remove module, connect, disconnect)
+  - Tydligare kodseparation och enklare underhåll
+
+---
+
 ## [0.33.25] - 2024
 ### Added - StereoSample Type & DSP Module
 - **StereoSample** - Ny typ i `types/audio.rs` för stereo-samples

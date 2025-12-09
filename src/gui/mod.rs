@@ -63,6 +63,9 @@ pub mod auto_layout;
 pub mod instrument_rack;
 
 #[cfg(feature = "gui-egui")]
+pub mod input;
+
+#[cfg(feature = "gui-egui")]
 pub mod app;
 
 #[cfg(feature = "gui-egui")]

@@ -265,8 +265,10 @@ impl SequencerEngine {
                     }
 
                     // Apply transposition from placement (keep original if out of range)
-                    let transposed_pitch =
-                        note.pitch.transpose(placement.transpose).unwrap_or(note.pitch);
+                    let transposed_pitch = note
+                        .pitch
+                        .transpose(placement.transpose)
+                        .unwrap_or(note.pitch);
 
                     // Calculate end tick if duration is known
                     let end_tick = note
