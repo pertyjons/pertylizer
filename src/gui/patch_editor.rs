@@ -353,6 +353,9 @@ impl PatchEditor {
         // Draw grid
         self.draw_grid(ui, canvas_rect);
 
+        // Store the canvas rect for auto-layout calculations
+        result.canvas_rect = Some(canvas_rect);
+
         // Toolbar overlay (top-left corner)
         let toolbar_rect = Rect::from_min_size(
             canvas_rect.min + Vec2::new(10.0, 10.0),
@@ -1052,7 +1055,9 @@ impl PatchEditor {
     }
 
     /// Apply automatic layout to modules based on signal flow.
-    pub fn apply_auto_layout(&mut self) {
+    ///
+    /// `available_rect` should be the area available for modules (excluding side panels).
+    pub fn apply_auto_layout(&mut self, available_rect: egui::Rect) {
         use super::auto_layout::{LayoutConfig, LayoutConnection, ModuleInfo, calculate_layout};
 
         // Collect module info
@@ -1077,8 +1082,17 @@ impl PatchEditor {
             })
             .collect();
 
-        // Calculate layout
-        let config = LayoutConfig::default();
+        // Configure layout with available area
+        // Subtract canvas_offset to get positions relative to the canvas
+        let config = LayoutConfig {
+            area_min: available_rect.min - self.canvas_offset,
+            area_max: available_rect.max - self.canvas_offset,
+            module_size: Vec2::new(200.0, 180.0), // Approximate module size
+            gap_x: 20.0,
+            gap_y: 20.0,
+            modulation_gap: 40.0,
+        };
+
         let result = calculate_layout(&modules, &connections, &config);
 
         // Apply new positions and mark for repositioning
@@ -1113,6 +1127,8 @@ pub struct PatchEditorResult {
     pub connections_to_remove: Vec<Connection>,
     /// Request auto-layout of modules.
     pub request_auto_layout: bool,
+    /// The available canvas area (for auto-layout calculations).
+    pub canvas_rect: Option<egui::Rect>,
     /// Bypass state toggles (module_id, new_bypass_state).
     /// true = bypassed (module is off), false = active (module is on).
     pub bypass_toggles: Vec<(ModuleId, bool)>,

@@ -1,7 +1,24 @@
 # Version History
 
+## [0.34.6] - 2024
+### Improved - Auto Layout respekterar tillgängligt utrymme
+- **Algoritmen tar nu hänsyn till:**
+  - Den tillgängliga canvas-ytan (exklusive sidopaneler)
+  - Modulernas storlek (200x180 px)
+  - Gap mellan moduler (20 px)
+  - Radbrytning när kolumner inte får plats
+- **Nya konfigurations-parametrar:**
+  - `area_min`, `area_max` - Tillgänglig layoutyta
+  - `module_size` - Modulstorlek för beräkningar
+  - `gap_x`, `gap_y` - Avstånd mellan moduler
+  - `modulation_gap` - Extra avstånd till modulations-raden
+- **Moduler överlappar inte längre** - algoritmen placerar moduler i ett rutnät
+- **Canvas-rect skickas nu till layoutfunktionen** för korrekt placering
+
+---
+
 ## [0.34.5] - 2024
-### Fixed - Auto Layout fungerar nu korrekt
+### Fixed - Auto Layout-knappen fungerar nu
 - **Problemet:** Auto Layout-knappen uppdaterade interna positioner men egui:s `Window`-widget ignorerade detta eftersom `default_pos()` bara sätter positionen första gången fönstret ritas.
 - **Lösningen:** Lade till `needs_reposition: HashSet<ModuleId>` i `PatchEditor` som markerar moduler som behöver omplaceras. När en modul är markerad används `current_pos()` istället för `default_pos()`, vilket tvingar fönstret till den nya positionen.
 - Auto Layout fungerar nu som förväntat - moduler flyttas till sina beräknade positioner baserat på signalflödet.
