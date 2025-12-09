@@ -20,7 +20,7 @@ use crate::engine::graph::ModuleGraph;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, SampleCount};
+use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, SampleCount, Semitones};
 
 // ============================================================================
 // Key Range & Learn State Types
@@ -361,7 +361,7 @@ pub struct Instrument {
     /// Notes outside this range are ignored.
     key_range: KeyRange,
     /// Transpose offset in semitones (-24 to +24).
-    transpose: i8,
+    transpose: Semitones,
     /// MIDI learn state machine.
     learn_state: LearnState,
     /// The module graph defining this instrument's voice architecture.
@@ -408,7 +408,7 @@ impl Instrument {
             name: name.into(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
-            transpose: 0,
+            transpose: Semitones::ZERO,
             learn_state: LearnState::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(AllocatorConfig::default()),
@@ -437,7 +437,7 @@ impl Instrument {
             name: name.into(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
-            transpose: 0,
+            transpose: Semitones::ZERO,
             learn_state: LearnState::default(),
             voice_graph: ModuleGraph::new(),
             allocator: VoiceAllocator::new(config),
@@ -500,7 +500,7 @@ impl Instrument {
 
     /// Get the transpose offset in semitones.
     #[inline]
-    pub fn transpose(&self) -> i8 {
+    pub fn transpose(&self) -> Semitones {
         self.transpose
     }
 
@@ -508,8 +508,8 @@ impl Instrument {
     ///
     /// Clamped to -24..=24 (two octaves up or down).
     #[inline]
-    pub fn set_transpose(&mut self, semitones: i8) {
-        self.transpose = semitones.clamp(-24, 24);
+    pub fn set_transpose(&mut self, semitones: Semitones) {
+        self.transpose = Semitones::new(semitones.as_f32().clamp(-24.0, 24.0));
     }
 
     /// Get the current learn state.
@@ -564,8 +564,9 @@ impl Instrument {
     ///
     /// Returns None if the transposed note would be outside valid MIDI range.
     #[inline]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn transpose_note(&self, note: MidiNote) -> Option<MidiNote> {
-        let transposed = note.as_u8() as i16 + self.transpose as i16;
+        let transposed = note.as_u8() as i16 + self.transpose.as_f32().round() as i16;
         if (0..=127).contains(&transposed) {
             Some(MidiNote::new(transposed as u8))
         } else {

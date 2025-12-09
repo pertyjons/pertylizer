@@ -7,19 +7,19 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{KeyboardPannerParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{MidiNote, NormalizedValue, SampleRate};
+use crate::types::{BipolarValue, MidiNote, NormalizedValue, SampleRate, StereoBalance};
 
 /// Keyboard panner with configurable spread and center.
 #[derive(Clone)]
 pub struct KeyboardPanner {
     // Parameters
     spread: NormalizedValue,
-    center_note: u8,
-    curve: f32,
+    center_note: MidiNote,
+    curve: BipolarValue,
     invert: bool,
 
-    // Current pan position (-1.0 to 1.0)
-    current_pan: f32,
+    // Current pan position
+    current_pan: StereoBalance,
 
     // Sample rate
     sample_rate: SampleRate,
@@ -33,11 +33,11 @@ impl KeyboardPanner {
     pub fn new() -> Self {
         Self {
             spread: NormalizedValue::new(0.5),
-            center_note: 60, // Middle C
-            curve: 0.0,
+            center_note: MidiNote::C4,
+            curve: BipolarValue::CENTER,
             invert: false,
 
-            current_pan: 0.0,
+            current_pan: StereoBalance::CENTER,
 
             sample_rate: SampleRate::DVD_QUALITY,
             output_left: AudioBuffer::new(256),
@@ -48,20 +48,21 @@ impl KeyboardPanner {
     /// Calculate pan position from MIDI note.
     fn calculate_pan(&mut self, note: MidiNote) {
         let note_val = note.as_u8() as f32;
-        let center = self.center_note as f32;
+        let center = self.center_note.as_u8() as f32;
 
         // Normalize to -1.0 to 1.0 range based on keyboard position
         // Typical piano range is 21 (A0) to 108 (C8)
         let normalized = (note_val - center) / 44.0; // 44 semitones = ~4 octaves each side
 
         // Apply curve
-        let curved = if self.curve.abs() > 0.01 {
-            if self.curve > 0.0 {
+        let curve = self.curve.as_f32();
+        let curved = if curve.abs() > 0.01 {
+            if curve > 0.0 {
                 // Exponential curve (more center, less extremes)
-                normalized.signum() * normalized.abs().powf(1.0 + self.curve)
+                normalized.signum() * normalized.abs().powf(1.0 + curve)
             } else {
                 // Logarithmic curve (less center, more extremes)
-                normalized.signum() * normalized.abs().powf(1.0 / (1.0 - self.curve))
+                normalized.signum() * normalized.abs().powf(1.0 / (1.0 - curve))
             }
         } else {
             normalized
@@ -76,17 +77,13 @@ impl KeyboardPanner {
             pan = -pan;
         }
 
-        self.current_pan = pan.clamp(-1.0, 1.0);
+        self.current_pan = StereoBalance::new(pan);
     }
 
     /// Get left and right gains from pan position using constant power panning.
     #[inline]
     fn pan_gains(&self) -> (f32, f32) {
-        // Constant power panning using sin/cos
-        let angle = (self.current_pan + 1.0) * 0.25 * std::f32::consts::PI;
-        let left = angle.cos();
-        let right = angle.sin();
-        (left, right)
+        self.current_pan.gains()
     }
 }
 
@@ -118,7 +115,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::KeyboardPanner(KeyboardPannerParam::CenterNote(60)),
+                    Param::KeyboardPanner(KeyboardPannerParam::CenterNote(MidiNote::C4)),
                     "Center",
                 )
                 .description("Center note for panning (MIDI note)")
@@ -129,7 +126,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::KeyboardPanner(KeyboardPannerParam::Curve(0.0)),
+                    Param::KeyboardPanner(KeyboardPannerParam::Curve(BipolarValue::CENTER)),
                     "Curve",
                 )
                 .description("Pan curve shape (-1 to 1)")
@@ -187,8 +184,8 @@ impl PolyModule for KeyboardPanner {
         if let Param::KeyboardPanner(p) = param {
             match p {
                 KeyboardPannerParam::Spread(v) => self.spread = v,
-                KeyboardPannerParam::CenterNote(n) => self.center_note = n.clamp(0, 127),
-                KeyboardPannerParam::Curve(c) => self.curve = c.clamp(-1.0, 1.0),
+                KeyboardPannerParam::CenterNote(n) => self.center_note = n,
+                KeyboardPannerParam::Curve(c) => self.curve = c,
                 KeyboardPannerParam::Invert(b) => self.invert = b,
             }
         }
@@ -198,8 +195,8 @@ impl PolyModule for KeyboardPanner {
         if let Param::KeyboardPanner(p) = param {
             Some(match p {
                 KeyboardPannerParam::Spread(_) => self.spread.as_f32(),
-                KeyboardPannerParam::CenterNote(_) => f32::from(self.center_note),
-                KeyboardPannerParam::Curve(_) => self.curve,
+                KeyboardPannerParam::CenterNote(_) => f32::from(self.center_note.as_u8()),
+                KeyboardPannerParam::Curve(_) => self.curve.as_f32(),
                 KeyboardPannerParam::Invert(_) => {
                     if self.invert {
                         1.0
@@ -227,7 +224,7 @@ impl PolyModule for KeyboardPanner {
     }
 
     fn reset(&mut self) {
-        self.current_pan = 0.0;
+        self.current_pan = StereoBalance::CENTER;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: f32) {

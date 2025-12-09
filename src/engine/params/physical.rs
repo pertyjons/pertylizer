@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Gain, Hertz, Milliseconds, NormalizedValue};
+use crate::types::{BipolarValue, Gain, Hertz, MidiNote, Milliseconds, NormalizedValue};
 
 // ============================================================================
 // KEYBOARD PANNER PARAMETERS
@@ -18,10 +18,10 @@ use crate::types::{Gain, Hertz, Milliseconds, NormalizedValue};
 pub enum KeyboardPannerParam {
     /// Pan spread amount (0.0 = mono, 1.0 = full stereo)
     Spread(NormalizedValue),
-    /// Center note (MIDI note number where pan is centered)
-    CenterNote(u8),
+    /// Center note (MIDI note where pan is centered)
+    CenterNote(MidiNote),
     /// Pan curve shape (-1.0 to 1.0, 0 = linear)
-    Curve(f32),
+    Curve(BipolarValue),
     /// Invert panning direction
     Invert(bool),
 }
@@ -43,8 +43,8 @@ impl KeyboardPannerParam {
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::Spread(v) => v.as_f32(),
-            Self::CenterNote(n) => f32::from(*n),
-            Self::Curve(c) => *c,
+            Self::CenterNote(n) => f32::from(n.as_u8()),
+            Self::Curve(c) => c.as_f32(),
             Self::Invert(b) => {
                 if *b {
                     1.0
@@ -58,8 +58,8 @@ impl KeyboardPannerParam {
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
-            Self::CenterNote(_) => Self::CenterNote(value.clamp(0.0, 127.0) as u8),
-            Self::Curve(_) => Self::Curve(value.clamp(-1.0, 1.0)),
+            Self::CenterNote(_) => Self::CenterNote(MidiNote::new(value.clamp(0.0, 127.0) as u8)),
+            Self::Curve(_) => Self::Curve(BipolarValue::new(value)),
             Self::Invert(_) => Self::Invert(value > 0.5),
         }
     }

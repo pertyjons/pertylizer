@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::engine::typed_params::{BodyResonanceParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{Hertz, MidiNote, NormalizedValue, SampleRate};
+use crate::types::{FilterState, Hertz, MidiNote, NormalizedValue, SampleRate};
 
 /// Body resonance simulator using bandpass filters.
 #[derive(Clone)]
@@ -19,10 +19,10 @@ pub struct BodyResonance {
     brightness: NormalizedValue,
     mix: NormalizedValue,
 
-    // Filter states (three resonant modes)
-    filter1_state: [f32; 2],
-    filter2_state: [f32; 2],
-    filter3_state: [f32; 2],
+    // Filter states (three resonant modes, each with 2 state variables)
+    filter1_state: [FilterState; 2],
+    filter2_state: [FilterState; 2],
+    filter3_state: [FilterState; 2],
 
     // Sample rate
     sample_rate: SampleRate,
@@ -40,9 +40,9 @@ impl BodyResonance {
             brightness: NormalizedValue::new(0.5),
             mix: NormalizedValue::new(0.3),
 
-            filter1_state: [0.0; 2],
-            filter2_state: [0.0; 2],
-            filter3_state: [0.0; 2],
+            filter1_state: [FilterState::ZERO; 2],
+            filter2_state: [FilterState::ZERO; 2],
+            filter3_state: [FilterState::ZERO; 2],
 
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(256),
@@ -52,7 +52,7 @@ impl BodyResonance {
     /// Process through a resonant bandpass filter (state variable filter).
     #[inline]
     fn process_resonator(
-        state: &mut [f32; 2],
+        state: &mut [FilterState; 2],
         input: f32,
         freq: f32,
         q: f32,
@@ -72,9 +72,9 @@ impl BodyResonance {
         let b2 = -alpha;
 
         // Direct form II transposed
-        let output = (b0 / a0) * input + state[0];
-        state[0] = (b2 / a0) * input - (a1 / a0) * output + state[1];
-        state[1] = -(a2 / a0) * output;
+        let output = (b0 / a0) * input + state[0].as_f32();
+        state[0] = FilterState::new((b2 / a0) * input - (a1 / a0) * output + state[1].as_f32());
+        state[1] = FilterState::new(-(a2 / a0) * output);
 
         output
     }
@@ -243,9 +243,9 @@ impl PolyModule for BodyResonance {
     }
 
     fn reset(&mut self) {
-        self.filter1_state = [0.0; 2];
-        self.filter2_state = [0.0; 2];
-        self.filter3_state = [0.0; 2];
+        self.filter1_state = [FilterState::ZERO; 2];
+        self.filter2_state = [FilterState::ZERO; 2];
+        self.filter3_state = [FilterState::ZERO; 2];
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: f32) {

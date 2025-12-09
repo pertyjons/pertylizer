@@ -10,7 +10,7 @@ use crate::engine::{
     EngineCommand, EngineHandle, InstrumentParam,
     instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel},
 };
-use crate::types::{BipolarValue, Gain, MidiNote};
+use crate::types::{BipolarValue, Gain, MidiNote, Semitones};
 use eframe::egui::{self, RichText, Ui};
 
 /// GUI state for a single instrument.
@@ -42,7 +42,7 @@ pub struct InstrumentUiState {
     /// Key range for keyboard splitting (which notes this instrument responds to).
     pub key_range: KeyRange,
     /// Transpose offset in semitones (-24 to +24).
-    pub transpose: i8,
+    pub transpose: Semitones,
     /// MIDI learn state for key range assignment.
     pub learn_state: LearnState,
 }
@@ -60,7 +60,7 @@ impl Default for InstrumentUiState {
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
             key_range: KeyRange::FULL,
-            transpose: 0,
+            transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
         }
     }
@@ -80,7 +80,7 @@ impl InstrumentUiState {
             stored_volume: Gain::UNITY,
             patch_editor: PatchEditor::new(),
             key_range: KeyRange::FULL,
-            transpose: 0,
+            transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
         }
     }
@@ -461,7 +461,7 @@ pub fn show_instrument_rack(
                                         .size(t.fonts.size_small),
                                 );
 
-                                let mut transpose = i32::from(instruments[idx].transpose);
+                                let mut transpose = instruments[idx].transpose.as_f32().round() as i32;
                                 let response = ui.add(
                                     egui::DragValue::new(&mut transpose)
                                         .range(-24..=24)
@@ -470,7 +470,7 @@ pub fn show_instrument_rack(
                                 );
 
                                 if response.changed() {
-                                    let new_transpose = transpose.clamp(-24, 24) as i8;
+                                    let new_transpose = Semitones::new(transpose.clamp(-24, 24) as f32);
                                     instruments[idx].transpose = new_transpose;
                                     handle.send(EngineCommand::SetInstrumentParameter {
                                         instrument_id,

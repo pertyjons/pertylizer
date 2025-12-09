@@ -435,6 +435,116 @@ impl std::fmt::Display for VoiceCount {
     }
 }
 
+// ============================================================================
+// STEREO BALANCE
+// ============================================================================
+
+/// Stereo balance/pan position (-1.0 = full left, 0.0 = center, +1.0 = full right).
+///
+/// This is a specialized wrapper around `BipolarValue` for stereo positioning.
+/// It provides convenience methods for pan-specific calculations.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+pub struct StereoBalance(pub super::BipolarValue);
+
+impl StereoBalance {
+    /// Create a new stereo balance.
+    #[inline]
+    pub fn new(value: f32) -> Self {
+        Self(super::BipolarValue::new(value))
+    }
+
+    /// Full left (-1.0).
+    pub const LEFT: Self = Self(super::BipolarValue::MIN);
+
+    /// Center (0.0).
+    pub const CENTER: Self = Self(super::BipolarValue::CENTER);
+
+    /// Full right (+1.0).
+    pub const RIGHT: Self = Self(super::BipolarValue::MAX);
+
+    /// Get the raw value.
+    #[inline]
+    pub fn as_f32(self) -> f32 {
+        self.0.as_f32()
+    }
+
+    /// Get the underlying BipolarValue.
+    #[inline]
+    pub fn as_bipolar(self) -> super::BipolarValue {
+        self.0
+    }
+
+    /// Calculate left and right gains using constant power panning.
+    ///
+    /// Returns (left_gain, right_gain) where both are in 0.0-1.0 range.
+    #[inline]
+    #[must_use]
+    pub fn gains(self) -> (f32, f32) {
+        // Constant power panning using sin/cos
+        let angle = (self.0.as_f32() + 1.0) * 0.25 * std::f32::consts::PI;
+        let left = angle.cos();
+        let right = angle.sin();
+        (left, right)
+    }
+
+    /// Calculate left and right gains using linear panning.
+    ///
+    /// Returns (left_gain, right_gain) where both are in 0.0-1.0 range.
+    #[inline]
+    #[must_use]
+    pub fn linear_gains(self) -> (f32, f32) {
+        let pan = self.0.as_f32();
+        let left = (1.0 - pan) * 0.5;
+        let right = (1.0 + pan) * 0.5;
+        (left, right)
+    }
+
+    /// Clamp to valid range.
+    #[inline]
+    pub fn clamp(self) -> Self {
+        Self::new(self.0.as_f32())
+    }
+}
+
+impl From<super::BipolarValue> for StereoBalance {
+    fn from(value: super::BipolarValue) -> Self {
+        Self(value)
+    }
+}
+
+impl From<StereoBalance> for super::BipolarValue {
+    fn from(balance: StereoBalance) -> Self {
+        balance.0
+    }
+}
+
+impl From<f32> for StereoBalance {
+    fn from(value: f32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<StereoBalance> for f32 {
+    fn from(balance: StereoBalance) -> Self {
+        balance.as_f32()
+    }
+}
+
+impl std::fmt::Display for StereoBalance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = self.0.as_f32();
+        if value < -0.01 {
+            write!(f, "L{:.0}%", -value * 100.0)
+        } else if value > 0.01 {
+            write!(f, "R{:.0}%", value * 100.0)
+        } else {
+            write!(f, "C")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,5 +623,30 @@ mod tests {
         // Above threshold - saturated
         let v2 = FilterState::soft_saturate(1.5, 0.8);
         assert!(v2 < 1.5 && v2 > 0.8);
+    }
+
+    #[test]
+    fn test_stereo_balance() {
+        let center = StereoBalance::CENTER;
+        let (l, r) = center.gains();
+        // At center, both should be equal (constant power = sqrt(0.5) ≈ 0.707)
+        assert!((l - r).abs() < 0.001);
+
+        let left = StereoBalance::LEFT;
+        let (l, r) = left.gains();
+        assert!(l > 0.99); // Full left
+        assert!(r < 0.01); // No right
+
+        let right = StereoBalance::RIGHT;
+        let (l, r) = right.gains();
+        assert!(l < 0.01); // No left
+        assert!(r > 0.99); // Full right
+    }
+
+    #[test]
+    fn test_stereo_balance_display() {
+        assert_eq!(format!("{}", StereoBalance::CENTER), "C");
+        assert_eq!(format!("{}", StereoBalance::LEFT), "L100%");
+        assert_eq!(format!("{}", StereoBalance::RIGHT), "R100%");
     }
 }

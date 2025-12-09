@@ -5,7 +5,7 @@
 
 use crate::engine::typed_params::{ModuleType, OscilloscopeParam, Param};
 use crate::modules::core::*;
-use crate::types::{Gain, NormalizedValue, Seconds};
+use crate::types::{Gain, NormalizedValue, SampleRate, Seconds};
 
 use super::VisualizationBuffer;
 
@@ -22,9 +22,9 @@ pub struct Oscilloscope {
     /// Is the display frozen.
     frozen: bool,
     /// Wet/dry mix (always 1.0 for pass-through).
-    mix: f32,
+    mix: NormalizedValue,
     /// Sample rate.
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl Oscilloscope {
@@ -35,8 +35,8 @@ impl Oscilloscope {
             gain: Gain::UNITY,
             trigger_level: NormalizedValue::CENTER,
             frozen: false,
-            mix: 1.0,
-            sample_rate: 48000.0,
+            mix: NormalizedValue::MAX,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
@@ -129,7 +129,7 @@ impl Describable for Oscilloscope {
 
 impl AudioEffect for Oscilloscope {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate.as_f32();
+        self.sample_rate = context.sample_rate;
 
         // Pass-through: copy input to output
         output.copy_from_slice(input);
@@ -194,11 +194,11 @@ impl AudioEffect for Oscilloscope {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix;
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn tail_samples(&self) -> usize {

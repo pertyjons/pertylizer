@@ -1,5 +1,18 @@
 # Version History
 
+## [0.33.23] - 2024
+### Improved - Strict Type Hardening
+- **StereoBalance** - Ny typ för stereopanorering med constant-power gains
+- **KeyboardPanner** - Använder nu `MidiNote`, `BipolarValue`, `StereoBalance` istället för primitiver
+- **BodyResonance** - Filterstate arrays använder nu `FilterState` istället för `f32`
+- **Instrument transpose** - Använder nu `Semitones` istället för `i8`
+- **InstrumentParam::Transpose** - Uppdaterad till `Semitones`
+- **Oscilloscope** - `mix` och `sample_rate` använder nu `NormalizedValue` och `SampleRate`
+- **LevelMeter** - `mix` och `sample_rate` använder nu `NormalizedValue` och `SampleRate`
+- **GUI InstrumentUiState** - `transpose` använder nu `Semitones`
+
+---
+
 ## [0.33.22] - 2024
 ### Optimized - GUI Rendering with egui Shape Primitives
 - **Kablar** - Ersatte manuell Bézier-loop (32 segment × 3 lager) med `CubicBezierShape`

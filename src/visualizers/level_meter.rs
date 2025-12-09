@@ -5,7 +5,7 @@
 
 use crate::engine::typed_params::{LevelMeterParam, ModuleType, Param};
 use crate::modules::core::*;
-use crate::types::{NormalizedValue, Seconds};
+use crate::types::{NormalizedValue, SampleRate, Seconds};
 
 use super::VisualizationBuffer;
 
@@ -20,9 +20,9 @@ pub struct LevelMeter {
     /// Show RMS or peak.
     show_rms: bool,
     /// Wet/dry mix (always 1.0 for pass-through).
-    mix: f32,
+    mix: NormalizedValue,
     /// Sample rate.
-    sample_rate: f32,
+    sample_rate: SampleRate,
 }
 
 impl LevelMeter {
@@ -32,8 +32,8 @@ impl LevelMeter {
             peak_hold_time: Seconds::new(1.0),
             decay_rate: NormalizedValue::CENTER,
             show_rms: true,
-            mix: 1.0,
-            sample_rate: 48000.0,
+            mix: NormalizedValue::MAX,
+            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
@@ -106,7 +106,7 @@ impl Describable for LevelMeter {
 
 impl AudioEffect for LevelMeter {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate.as_f32();
+        self.sample_rate = context.sample_rate;
 
         // Pass-through: copy input to output
         output.copy_from_slice(input);
@@ -167,11 +167,11 @@ impl AudioEffect for LevelMeter {
     }
 
     fn set_mix(&mut self, mix: f32) {
-        self.mix = mix;
+        self.mix = NormalizedValue::new(mix);
     }
 
     fn get_mix(&self) -> f32 {
-        self.mix
+        self.mix.as_f32()
     }
 
     fn tail_samples(&self) -> usize {

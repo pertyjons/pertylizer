@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use super::typed_params::{ModuleType, Param};
-use crate::types::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds};
+use crate::types::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones};
 
 /// Unique identifier for a module instance.
 ///
@@ -595,7 +595,7 @@ pub enum InstrumentParam {
     /// Key range for keyboard splitting.
     KeyRange(KeyRange),
     /// Transpose offset in semitones (-24 to +24).
-    Transpose(i8),
+    Transpose(Semitones),
     /// MIDI learn state machine.
     LearnState(LearnState),
 }
