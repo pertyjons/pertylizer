@@ -1,5 +1,13 @@
 # Version History
 
+## [0.34.5] - 2024
+### Fixed - Auto Layout fungerar nu korrekt
+- **Problemet:** Auto Layout-knappen uppdaterade interna positioner men egui:s `Window`-widget ignorerade detta eftersom `default_pos()` bara sätter positionen första gången fönstret ritas.
+- **Lösningen:** Lade till `needs_reposition: HashSet<ModuleId>` i `PatchEditor` som markerar moduler som behöver omplaceras. När en modul är markerad används `current_pos()` istället för `default_pos()`, vilket tvingar fönstret till den nya positionen.
+- Auto Layout fungerar nu som förväntat - moduler flyttas till sina beräknade positioner baserat på signalflödet.
+
+---
+
 ## [0.34.4] - 2024
 ### Added - Workspace GUI Navigation
 - **gui/app/state.rs** - Nya navigations-enums:

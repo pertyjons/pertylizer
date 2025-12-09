@@ -73,6 +73,9 @@ pub struct PatchEditor {
     connectivity: HashMap<ModuleId, ModuleConnectivity>,
     /// Module bypass state (true = bypassed/off, false = active/on).
     bypassed: HashMap<ModuleId, bool>,
+    /// Modules that need to be repositioned (after auto-layout).
+    /// When a module is in this set, we use current_pos() instead of default_pos().
+    needs_reposition: HashSet<ModuleId>,
 }
 
 impl PatchEditor {
@@ -90,6 +93,7 @@ impl PatchEditor {
             z_order: Vec::new(),
             connectivity: HashMap::new(),
             bypassed: HashMap::new(),
+            needs_reposition: HashSet::new(),
         }
     }
 
@@ -438,15 +442,24 @@ impl PatchEditor {
                         .gamma_multiply(opacity),
                 );
 
+            // Check if this module needs repositioning (after auto-layout)
+            let needs_reposition = self.needs_reposition.contains(&module_id);
+
             let window = egui::Window::new(&descriptor.name)
                 .id(window_id)
                 .open(&mut open)
                 .collapsible(true)
                 .resizable(true)
-                .default_pos(panel_position + self.canvas_offset)
                 .min_width(180.0)
                 .min_height(100.0)
                 .frame(frame);
+
+            // Use current_pos for forced repositioning, default_pos for normal operation
+            let window = if needs_reposition {
+                window.current_pos(panel_position + self.canvas_offset)
+            } else {
+                window.default_pos(panel_position + self.canvas_offset)
+            };
 
             // Get processing info for this module
             let proc_position = processing_order.get(&module_id).copied();
@@ -600,6 +613,11 @@ impl PatchEditor {
             // Handle window close (delete module)
             if !open {
                 result.modules_to_remove.push(module_id);
+            }
+
+            // Clear reposition flag after this module has been drawn
+            if needs_reposition {
+                self.needs_reposition.remove(&module_id);
             }
         }
 
@@ -1063,10 +1081,12 @@ impl PatchEditor {
         let config = LayoutConfig::default();
         let result = calculate_layout(&modules, &connections, &config);
 
-        // Apply new positions
+        // Apply new positions and mark for repositioning
         for (module_id, position) in result.positions {
             if let Some(panel) = self.panels.get_mut(&module_id) {
                 panel.position = position;
+                // Mark this module to use current_pos() on next frame
+                self.needs_reposition.insert(module_id);
             }
         }
     }
