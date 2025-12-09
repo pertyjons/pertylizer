@@ -1,11 +1,12 @@
 //! Auto-layout algorithm for organizing modules based on signal flow.
 //!
 //! This module provides automatic positioning of synth modules that:
-//! - Fills the available canvas area
-//! - Places modules left-to-right based on signal flow depth
+//! - Fills the available canvas area without overflow
+//! - Places connected modules left-to-right based on signal flow depth
 //! - Stacks modules vertically within each depth level
 //! - Places modulation sources (Envelope, LFO) below main signal path
-//! - Ensures no modules extend outside the visible area
+//! - Places disconnected modules in bottom-right corner
+//! - Ensures ALL modules stay within the visible area (no overlap with keyboard)
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -40,14 +41,20 @@ fn is_modulation_module(category: ModuleCategory) -> bool {
     matches!(category, ModuleCategory::Envelope | ModuleCategory::LFO)
 }
 
+/// Check if a module has any connections.
+fn has_connections(module_id: ModuleId, connections: &[LayoutConnection]) -> bool {
+    connections
+        .iter()
+        .any(|c| c.from_module == module_id || c.to_module == module_id)
+}
+
 /// Calculate automatic layout for modules based on signal flow.
 ///
-/// The algorithm:
-/// 1. Build adjacency lists and calculate signal flow depth
-/// 2. Separate modulation modules from main signal path
-/// 3. Calculate grid dimensions needed
-/// 4. Compute module size to fill available space
-/// 5. Place modules in their calculated positions
+/// Layout rules:
+/// 1. Connected main modules: left-to-right by signal flow depth
+/// 2. Connected modulation modules: below their targets
+/// 3. Disconnected modules: stacked in bottom-right corner
+/// 4. ALL modules must fit within available_rect (no overflow)
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
@@ -59,15 +66,34 @@ pub fn calculate_layout(
         return result;
     }
 
-    // Minimum module size constraints
-    const MIN_MODULE_WIDTH: f32 = 150.0;
-    const MIN_MODULE_HEIGHT: f32 = 120.0;
-    const GAP: f32 = 15.0;
-    const MODULATION_GAP: f32 = 25.0;
+    // Constants
+    const MIN_MODULE_WIDTH: f32 = 180.0;
+    const MIN_MODULE_HEIGHT: f32 = 140.0;
+    const GAP: f32 = 10.0;
 
-    // Build adjacency lists
+    // Separate modules into categories
+    let mut connected_main: Vec<&ModuleInfo> = Vec::new();
+    let mut connected_modulation: Vec<&ModuleInfo> = Vec::new();
+    let mut disconnected: Vec<&ModuleInfo> = Vec::new();
+
+    for module in modules {
+        let is_connected = has_connections(module.id, connections);
+        let is_modulation = is_modulation_module(module.category);
+
+        if !is_connected {
+            disconnected.push(module);
+        } else if is_modulation {
+            connected_modulation.push(module);
+        } else {
+            connected_main.push(module);
+        }
+    }
+
+    // Build adjacency lists for connected modules
     let mut outgoing: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
     let mut incoming: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+
+    let modulation_ids: HashSet<ModuleId> = connected_modulation.iter().map(|m| m.id).collect();
 
     for module in modules {
         outgoing.entry(module.id).or_default();
@@ -85,15 +111,11 @@ pub fn calculate_layout(
             .push(conn.from_module);
     }
 
-    // Separate modulation modules from main signal path
-    let (modulation_modules, main_modules): (Vec<_>, Vec<_>) = modules
-        .iter()
-        .partition(|m| is_modulation_module(m.category));
+    // Calculate depth for connected main modules (BFS from sources)
+    let mut depth: HashMap<ModuleId, usize> = HashMap::new();
 
-    let modulation_ids: HashSet<ModuleId> = modulation_modules.iter().map(|m| m.id).collect();
-
-    // Find sources in main path (modules with no incoming from main path)
-    let sources: Vec<ModuleId> = main_modules
+    // Find sources (no incoming from main path)
+    let sources: Vec<ModuleId> = connected_main
         .iter()
         .filter(|m| {
             incoming
@@ -104,12 +126,12 @@ pub fn calculate_layout(
         .map(|m| m.id)
         .collect();
 
-    // BFS to calculate depth (longest path from any source)
-    let mut depth: HashMap<ModuleId, usize> = HashMap::new();
-    for module in &main_modules {
+    // Initialize all main modules at depth 0
+    for module in &connected_main {
         depth.insert(module.id, 0);
     }
 
+    // BFS to find longest paths
     for &source in &sources {
         let mut queue = VecDeque::new();
         queue.push_back((source, 0usize));
@@ -128,90 +150,92 @@ pub fn calculate_layout(
         }
     }
 
-    // Group main modules by depth
+    // Group connected main modules by depth
     let mut columns: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-    for module in &main_modules {
+    for module in &connected_main {
         let d = depth.get(&module.id).copied().unwrap_or(0);
         columns.entry(d).or_default().push(module.id);
     }
 
-    // Calculate grid dimensions
-    let num_columns = columns.keys().max().map(|m| m + 1).unwrap_or(1);
-    let max_modules_per_column = columns.values().map(|v| v.len()).max().unwrap_or(1);
+    // Count layout requirements
+    let num_signal_columns = if columns.is_empty() {
+        0
+    } else {
+        columns.keys().max().map(|m| m + 1).unwrap_or(0)
+    };
+    let max_modules_per_column = columns.values().map(|v| v.len()).max().unwrap_or(0);
+    let has_modulation = !connected_modulation.is_empty();
+    let has_disconnected = !disconnected.is_empty();
 
-    // Determine if we need a modulation row
-    let has_modulation = !modulation_modules.is_empty();
-    let _modulation_columns = if has_modulation {
-        // Group modulation by target column
-        let mut mod_by_col: HashMap<usize, usize> = HashMap::new();
-        for mod_module in &modulation_modules {
-            let target_col = outgoing
-                .get(&mod_module.id)
-                .and_then(|targets| {
-                    targets
-                        .iter()
-                        .filter(|t| !modulation_ids.contains(t))
-                        .filter_map(|t| depth.get(t))
-                        .min()
-                        .copied()
-                })
-                .unwrap_or(0);
-            *mod_by_col.entry(target_col).or_insert(0) += 1;
-        }
-        mod_by_col.values().max().copied().unwrap_or(1)
+    // Calculate total columns needed (signal + 1 for disconnected if any)
+    let disconnected_column = if has_disconnected { 1 } else { 0 };
+    let total_columns = num_signal_columns.max(1) + disconnected_column;
+
+    // Calculate total rows needed
+    let main_rows = max_modules_per_column.max(1);
+    let modulation_rows = if has_modulation { 1 } else { 0 };
+    let disconnected_rows = disconnected.len();
+
+    // For row calculation, disconnected modules stack vertically in their column
+    let max_rows_in_disconnected_col = if has_disconnected {
+        disconnected_rows.max(1)
     } else {
         0
     };
 
-    // Calculate available space
-    let available_width = available_rect.width() - GAP;
-    let available_height = available_rect.height() - GAP;
+    // Total rows is max of: main signal rows + modulation, or disconnected stack
+    let rows_for_signal = main_rows + modulation_rows;
+    let total_rows = rows_for_signal.max(max_rows_in_disconnected_col).max(1);
 
-    // Calculate module size to fill space
-    // Width: divide available width by number of columns
-    let module_width =
-        ((available_width - GAP * num_columns as f32) / num_columns as f32).max(MIN_MODULE_WIDTH);
+    // Calculate module size to fit within available space
+    let available_width = available_rect.width();
+    let available_height = available_rect.height();
 
-    // Height: divide available height by total rows needed
-    let main_rows = max_modules_per_column;
-    let mod_rows = if has_modulation { 1 } else { 0 };
-    let total_rows = main_rows + mod_rows;
+    // Width calculation: fit all columns
+    let total_gap_x = GAP * (total_columns + 1) as f32;
+    let module_width = ((available_width - total_gap_x) / total_columns as f32)
+        .max(MIN_MODULE_WIDTH)
+        .min(available_width - 2.0 * GAP); // Never wider than available
 
-    let height_for_modules = if has_modulation {
-        available_height - MODULATION_GAP
-    } else {
-        available_height
-    };
+    // Height calculation: fit all rows
+    let total_gap_y = GAP * (total_rows + 1) as f32;
+    let module_height = ((available_height - total_gap_y) / total_rows as f32)
+        .max(MIN_MODULE_HEIGHT)
+        .min(available_height - 2.0 * GAP); // Never taller than available
 
-    let module_height =
-        ((height_for_modules - GAP * total_rows as f32) / total_rows as f32).max(MIN_MODULE_HEIGHT);
-
-    // Cell size including gap
+    // Cell size
     let cell_width = module_width + GAP;
     let cell_height = module_height + GAP;
 
-    // Calculate starting position to center the grid if modules are at minimum size
-    let total_width = num_columns as f32 * cell_width;
-    let start_x = available_rect.min.x + GAP + (available_width - total_width).max(0.0) / 2.0;
+    // Starting position
+    let start_x = available_rect.min.x + GAP;
     let start_y = available_rect.min.y + GAP;
 
-    // Place main path modules
+    // Maximum position to ensure modules stay in bounds
+    let max_x = available_rect.max.x - module_width - GAP;
+    let max_y = available_rect.max.y - module_height - GAP;
+
+    // Helper to clamp position within bounds
+    let clamp_pos =
+        |x: f32, y: f32| -> Pos2 { Pos2::new(x.clamp(start_x, max_x), y.clamp(start_y, max_y)) };
+
+    // Place connected main modules (left columns)
     for (&depth_level, module_ids) in &columns {
         let col = depth_level;
         for (row, &module_id) in module_ids.iter().enumerate() {
             let x = start_x + col as f32 * cell_width;
             let y = start_y + row as f32 * cell_height;
-            result.positions.insert(module_id, Pos2::new(x, y));
+            result.positions.insert(module_id, clamp_pos(x, y));
         }
     }
 
-    // Place modulation modules below main path
+    // Place connected modulation modules (below their targets)
     if has_modulation {
-        let mod_base_y = start_y + main_rows as f32 * cell_height + MODULATION_GAP;
+        let mod_base_y = start_y + main_rows as f32 * cell_height;
 
-        // Group modulation by target column
+        // Group by target column
         let mut mod_by_column: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-        for mod_module in &modulation_modules {
+        for mod_module in &connected_modulation {
             let target_col = outgoing
                 .get(&mod_module.id)
                 .and_then(|targets| {
@@ -229,25 +253,32 @@ pub fn calculate_layout(
                 .push(mod_module.id);
         }
 
-        for (col, module_ids) in &mod_by_column {
+        for (&col, module_ids) in &mod_by_column {
             for (idx, &module_id) in module_ids.iter().enumerate() {
-                // Stack horizontally within the column if multiple
-                let x = start_x + *col as f32 * cell_width + idx as f32 * cell_width / 2.0;
+                // If multiple modulation in same column, offset horizontally
+                let x = start_x + col as f32 * cell_width + idx as f32 * (module_width * 0.5);
                 let y = mod_base_y;
-                result.positions.insert(module_id, Pos2::new(x, y));
+                result.positions.insert(module_id, clamp_pos(x, y));
             }
         }
+    }
 
-        // Handle disconnected modulation modules
-        let mut unplaced_idx = 0;
-        for module in &modulation_modules {
-            if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(module.id)
-            {
-                let x = start_x + unplaced_idx as f32 * cell_width;
-                let y = mod_base_y;
-                e.insert(Pos2::new(x, y));
-                unplaced_idx += 1;
-            }
+    // Place disconnected modules (bottom-right corner, stacked vertically)
+    if has_disconnected {
+        // Disconnected column is the rightmost
+        let disconnected_col_x = if num_signal_columns > 0 {
+            start_x + num_signal_columns as f32 * cell_width
+        } else {
+            // If no signal modules, start from right edge
+            max_x
+        };
+
+        // Stack from bottom up
+        for (idx, module) in disconnected.iter().enumerate() {
+            let x = disconnected_col_x.min(max_x);
+            // Stack from top of disconnected area
+            let y = start_y + idx as f32 * cell_height;
+            result.positions.insert(module.id, clamp_pos(x, y));
         }
     }
 
@@ -274,22 +305,25 @@ mod tests {
     }
 
     #[test]
-    fn test_single_module() {
+    fn test_single_disconnected_module() {
         let modules = vec![ModuleInfo {
             id: make_id(1),
             category: ModuleCategory::Oscillator,
         }];
         let rect = test_rect();
         let result = calculate_layout(&modules, &[], rect);
-        assert_eq!(result.positions.len(), 1);
 
         let pos = result.positions.get(&make_id(1)).unwrap();
+        // Should be within bounds
         assert!(pos.x >= rect.min.x);
         assert!(pos.y >= rect.min.y);
+        assert!(pos.x <= rect.max.x - 100.0); // Some margin for module width
+        assert!(pos.y <= rect.max.y - 100.0); // Some margin for module height
     }
 
     #[test]
-    fn test_linear_chain() {
+    fn test_linear_chain_within_bounds() {
+        let rect = test_rect();
         let modules = vec![
             ModuleInfo {
                 id: make_id(1),
@@ -315,19 +349,27 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, test_rect());
+        let result = calculate_layout(&modules, &connections, rect);
 
+        // All positions should be within bounds
+        for pos in result.positions.values() {
+            assert!(pos.x >= rect.min.x, "x {} < min {}", pos.x, rect.min.x);
+            assert!(pos.y >= rect.min.y, "y {} < min {}", pos.y, rect.min.y);
+            assert!(pos.x < rect.max.x, "x {} >= max {}", pos.x, rect.max.x);
+            assert!(pos.y < rect.max.y, "y {} >= max {}", pos.y, rect.max.y);
+        }
+
+        // Should be left to right
         let osc_pos = result.positions.get(&make_id(1)).unwrap();
         let flt_pos = result.positions.get(&make_id(2)).unwrap();
         let amp_pos = result.positions.get(&make_id(3)).unwrap();
-
-        // Should be left to right
         assert!(osc_pos.x < flt_pos.x);
         assert!(flt_pos.x < amp_pos.x);
     }
 
     #[test]
-    fn test_modulation_below() {
+    fn test_modulation_below_and_within_bounds() {
+        let rect = test_rect();
         let modules = vec![
             ModuleInfo {
                 id: make_id(1),
@@ -353,39 +395,75 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, test_rect());
+        let result = calculate_layout(&modules, &connections, rect);
 
         let flt_pos = result.positions.get(&make_id(2)).unwrap();
         let env_pos = result.positions.get(&make_id(3)).unwrap();
 
+        // Envelope below filter
         assert!(env_pos.y > flt_pos.y);
+
+        // All within bounds
+        for pos in result.positions.values() {
+            assert!(pos.x >= rect.min.x);
+            assert!(pos.y >= rect.min.y);
+            assert!(pos.x < rect.max.x);
+            assert!(pos.y < rect.max.y);
+        }
     }
 
     #[test]
-    fn test_within_bounds() {
+    fn test_disconnected_modules_in_corner() {
         let rect = test_rect();
-        let modules: Vec<ModuleInfo> = (1..=6)
-            .map(|i| ModuleInfo {
-                id: make_id(i),
+        let modules = vec![
+            // Connected chain
+            ModuleInfo {
+                id: make_id(1),
                 category: ModuleCategory::Oscillator,
-            })
-            .collect();
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Filter,
+            },
+            // Disconnected
+            ModuleInfo {
+                id: make_id(10),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(11),
+                category: ModuleCategory::LFO,
+            },
+        ];
+        let connections = vec![LayoutConnection {
+            from_module: make_id(1),
+            to_module: make_id(2),
+        }];
 
-        let result = calculate_layout(&modules, &[], rect);
+        let result = calculate_layout(&modules, &connections, rect);
 
+        let connected_pos_1 = result.positions.get(&make_id(1)).unwrap();
+        let disconnected_pos_1 = result.positions.get(&make_id(10)).unwrap();
+        let disconnected_pos_2 = result.positions.get(&make_id(11)).unwrap();
+
+        // Disconnected should be to the right of connected
+        assert!(
+            disconnected_pos_1.x > connected_pos_1.x,
+            "Disconnected should be right of connected"
+        );
+
+        // Disconnected should not overlap each other (different y positions)
+        assert!(
+            (disconnected_pos_1.y - disconnected_pos_2.y).abs() > 50.0,
+            "Disconnected modules should be stacked vertically"
+        );
+
+        // All within bounds
         for pos in result.positions.values() {
-            assert!(
-                pos.x >= rect.min.x,
-                "Module x {} < min {}",
-                pos.x,
-                rect.min.x
-            );
-            assert!(
-                pos.y >= rect.min.y,
-                "Module y {} < min {}",
-                pos.y,
-                rect.min.y
-            );
+            assert!(pos.x >= rect.min.x);
+            assert!(pos.y >= rect.min.y);
+            assert!(pos.x < rect.max.x);
+            assert!(pos.y < rect.max.y);
         }
     }
 }

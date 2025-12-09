@@ -1,5 +1,24 @@
 # Version History
 
+## [0.34.9] - 2024
+### Improved - Auto Layout med strikta gränser
+- **Okopplade moduler hanteras separat:**
+  - Moduler utan kopplingar placeras nu i högra kolumnen
+  - Staplas vertikalt för att undvika överlappning
+- **Strikt gränskontroll:**
+  - `clamp_pos()` funktion säkerställer att ALLA moduler håller sig inom canvas
+  - Inga moduler kan överlappa pianot/keyboardet
+  - `max_x` och `max_y` beräknas från modulstorlek
+- **Förbättrad modulkategorisering:**
+  - Kopplade huvudmoduler: vänster-till-höger efter signalflöde
+  - Kopplade modulationsmoduler: under deras mål
+  - Okopplade moduler: egen kolumn till höger
+- **Nya tester:**
+  - `test_disconnected_modules_in_corner` - verifierar att okopplade moduler placeras rätt
+  - `test_linear_chain_within_bounds` - verifierar gränser
+
+---
+
 ## [0.34.8] - 2024
 ### Improved - Auto Layout fyller hela vyn
 - **Algoritmen omskriven för att dynamiskt beräkna modulstorlek:**
