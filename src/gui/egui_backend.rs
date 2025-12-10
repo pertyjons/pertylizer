@@ -25,8 +25,9 @@ use crate::engine::params::{
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use crate::gui::app::state::AppView;
 use crate::gui::dialogs::{
-    DialogState, LoadPatchResult, SavePatchResult, show_about_dialog, show_load_patch_dialog,
-    show_save_patch_dialog, show_settings_dialog, show_status_toast,
+    DialogState, ImportSongResult, LoadPatchResult, SavePatchResult, show_about_dialog,
+    show_import_song_dialog, show_load_patch_dialog, show_save_patch_dialog, show_settings_dialog,
+    show_status_toast,
 };
 use crate::gui::input::handle_keyboard_input;
 use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
@@ -39,6 +40,8 @@ use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
+use crate::io::import;
+use crate::sequencer::Song;
 use crate::modules::{
     Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
     NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
@@ -222,6 +225,9 @@ struct SynthApp {
 
     // Tracker/Sequencer view state
     tracker_state: crate::sequencer::view::TrackerViewState,
+
+    // Loaded song for sequencer
+    song: Option<Song>,
 }
 
 impl SynthApp {
@@ -297,6 +303,7 @@ impl SynthApp {
             master_effects: Vec::new(),
             active_view: AppView::default(),
             tracker_state: crate::sequencer::view::TrackerViewState::default(),
+            song: None,
         }
     }
 
@@ -409,6 +416,11 @@ impl eframe::App for SynthApp {
                             }
                         }
                     });
+                    ui.separator();
+                    if ui.button("🎵 Import Song...").clicked() {
+                        self.dialog_state.show_import_song = true;
+                        ui.close();
+                    }
                     ui.separator();
                     if ui.button("⚙ Settings...").clicked() {
                         self.dialog_state.show_settings = true;
@@ -766,10 +778,12 @@ impl eframe::App for SynthApp {
                 });
             }
             AppView::Sequencer => {
-                // Show sequencer view with tracker state
-                // TODO: Add Song to engine state when sequencer is fully implemented
-                let _result =
-                    crate::gui::views::sequencer::show(ctx, &mut self.tracker_state, None);
+                // Show sequencer view with tracker state and loaded song
+                let _result = crate::gui::views::sequencer::show(
+                    ctx,
+                    &mut self.tracker_state,
+                    self.song.as_ref(),
+                );
             }
             AppView::Mixer => {
                 crate::gui::views::mixer::show(ctx);
@@ -1440,6 +1454,18 @@ impl SynthApp {
             SavePatchResult::Cancelled | SavePatchResult::None => {}
         }
 
+        // Import song dialog
+        match show_import_song_dialog(
+            ctx,
+            &mut self.dialog_state.show_import_song,
+            &mut self.dialog_state.import_song_path,
+        ) {
+            ImportSongResult::Import(path) => {
+                self.import_song_file(&path);
+            }
+            ImportSongResult::Cancelled | ImportSongResult::None => {}
+        }
+
         // Status message toast
         show_status_toast(ctx, &mut self.dialog_state);
     }
@@ -1469,6 +1495,38 @@ impl SynthApp {
             &mut self.glide_time,
             active_id,
         );
+    }
+
+    /// Import a song from a tracker file (MOD, XM, S3M).
+    fn import_song_file(&mut self, path: &std::path::Path) {
+        match import::import_song(path) {
+            Ok(imported) => {
+                // Set the active pattern for the tracker view
+                let first_pattern_id = imported.song.patterns().next().map(|p| p.id);
+                self.tracker_state.active_pattern = first_pattern_id;
+
+                // Store the song
+                self.song = Some(imported.song);
+
+                // Show success status
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let sample_count = imported.samples.len();
+                self.dialog_state.set_status(format!(
+                    "Imported: {} ({} samples)",
+                    file_name, sample_count
+                ));
+
+                // Switch to sequencer view to show the imported song
+                self.active_view = AppView::Sequencer;
+            }
+            Err(e) => {
+                self.dialog_state
+                    .set_status(format!("Import failed: {e}"));
+            }
+        }
     }
 
     /// Reset the active instrument to a new empty patch.

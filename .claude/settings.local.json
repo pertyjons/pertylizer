@@ -48,7 +48,9 @@
       "Bash(uniq:*)",
       "Bash(for name in \"FilterType\" \"InstrumentId\" \"InstrumentParam\" \"MeterState\" \"ModuleType\" \"Port\" \"PortDirection\" \"PortType\" \"SampleRate\" \"TransportState\" \"VisualizerType\" \"Bpm\")",
       "Bash(do)",
-      "Bash(done)"
+      "Bash(done)",
+      "WebFetch(domain:codeberg.org)",
+      "Bash(cargo doc:*)"
     ],
     "deny": [],
     "ask": []

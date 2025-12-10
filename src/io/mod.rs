@@ -4,7 +4,9 @@
 //! - File system operations for patches and settings
 //! - MIDI input handling via midir
 //! - Sample loading and caching
+//! - Song import from tracker files (MOD, XM, S3M, IT)
 
+pub mod import;
 mod midi;
 mod patch_manager;
 mod sample_manager;

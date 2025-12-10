@@ -1,5 +1,54 @@
 # Version History
 
+## [0.41.0] - 2025
+### Added - Tracker Import (MOD/XM/S3M)
+
+Import av klassiska tracker-filer direkt i synthen.
+
+#### Import-arkitektur (`src/io/import/`)
+
+- **`SongImporter` trait** - Utökningsbar arkitektur för filformat:
+  - `name()` - Importernamn
+  - `extensions()` - Stödda filändelser
+  - `can_import()` - Formatdetektering
+  - `import()` - Returnerar `ImportResult<ImportedSong>`
+
+- **`ImportedSong`** - Resultat med:
+  - `song: Song` - Konverterade patterns och arrangement
+  - `samples: Vec<Arc<Sample>>` - Extraherade samples
+
+- **`ImportError`** enum - Typade fel (NotFound, Io, UnsupportedFormat, Parse, InvalidData)
+
+#### Tracker-loader (`src/io/import/tracker.rs`)
+
+- **`TrackerImporter`** - Stöd för MOD, XM, S3M via `xmrs` crate
+- **Sample-konvertering**:
+  - 8-bit: `i8 / 128.0` → `SampleValue`
+  - 16-bit: `i16 / 32768.0` → `SampleValue`
+  - Stereo och float-format stöds
+- **Pattern-konvertering**:
+  - xmrs `TrackUnit` → interna `Note`
+  - Beräknar ticks per rad baserat på tracker-speed
+  - Hanterar `Pitch::None` och `Pitch::Off` (keyoff)
+  - Sätter `RowResolution` för korrekt tracker-visning
+- **Tempo-hantering**: Använder modulens `default_bpm` och `default_tempo`
+
+#### GUI-integration
+
+- **File → Import Song...** menyval
+- **Import Song-dialog** (`src/gui/dialogs.rs`):
+  - Sökvägs-inmatning
+  - Validering (filen måste finnas)
+  - Stödda format visas (.mod, .xm, .s3m)
+- **Automatisk vy-växling** till Sequencer efter import
+- **Status-toast** visar filnamn och antal samples
+
+#### Beroenden
+
+- `xmrs = { version = "0.9", features = ["std", "import"] }`
+
+---
+
 ## [0.40.0] - 2025
 ### Added - The Hybrid Tracker
 

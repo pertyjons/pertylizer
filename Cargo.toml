@@ -1,6 +1,6 @@
 [package]
 name = "modular-synth"
-version = "0.40.0"
+version = "0.41.0"
 edition = "2024"
 rust-version = "1.91"
 description = "A modular synthesizer with abstract audio backend"
@@ -41,6 +41,9 @@ dirs = "6.0"
 
 # WAV file reading for samples
 hound = "3.5"
+
+# Tracker module import (MOD, XM, S3M)
+xmrs = { version = "0.9", features = ["std", "import"] }
 
 # GUI - egui (optional)
 eframe = { version = "0.33", optional = true, default-features = false, features = [

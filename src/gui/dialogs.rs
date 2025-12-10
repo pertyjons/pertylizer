@@ -20,6 +20,10 @@ pub struct DialogState {
     pub show_load_patch: bool,
     /// Show save patch dialog.
     pub show_save_patch: bool,
+    /// Show import song dialog.
+    pub show_import_song: bool,
+    /// Path for importing song.
+    pub import_song_path: String,
     /// Name for saving patch.
     pub patch_save_name: String,
     /// Status message with timestamp.
@@ -65,6 +69,16 @@ pub enum SavePatchResult {
     None,
     /// User wants to save with the given name.
     Save(String),
+    /// User cancelled.
+    Cancelled,
+}
+
+/// Result from showing the import song dialog.
+pub enum ImportSongResult {
+    /// No action taken.
+    None,
+    /// User wants to import from the given path.
+    Import(std::path::PathBuf),
     /// User cancelled.
     Cancelled,
 }
@@ -258,6 +272,66 @@ pub fn show_save_patch_dialog(
                     *open = false;
                 }
             });
+        });
+
+    result
+}
+
+/// Show the import song dialog.
+///
+/// Returns the action the user wants to take.
+pub fn show_import_song_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    path: &mut String,
+) -> ImportSongResult {
+    if !*open {
+        return ImportSongResult::None;
+    }
+
+    let mut result = ImportSongResult::None;
+
+    egui::Window::new("Import Song")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label("Import a tracker file (MOD, XM, S3M):");
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Path:");
+                ui.add(egui::TextEdit::singleline(path).desired_width(300.0));
+            });
+
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Supported formats: .mod, .xm, .s3m")
+                    .small()
+                    .color(theme().colors.text_dim),
+            );
+
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                let path_valid = !path.trim().is_empty()
+                    && std::path::Path::new(path.trim()).exists();
+                if ui
+                    .add_enabled(path_valid, egui::Button::new("Import"))
+                    .clicked()
+                {
+                    result = ImportSongResult::Import(std::path::PathBuf::from(path.trim()));
+                    *open = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    result = ImportSongResult::Cancelled;
+                    *open = false;
+                }
+            });
+
+            if !path.trim().is_empty() && !std::path::Path::new(path.trim()).exists() {
+                ui.add_space(4.0);
+                ui.label(RichText::new("File not found").color(theme().colors.accent_red));
+            }
         });
 
     result
