@@ -75,7 +75,7 @@ pub use events::{EventSorting, SequencerEvent};
 pub use ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::Note;
-pub use pattern::{Pattern, RowResolution};
+pub use pattern::{Pattern, RowResolution, TrackCell, TrackerGrid};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};

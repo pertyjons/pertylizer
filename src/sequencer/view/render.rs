@@ -2,6 +2,15 @@
 //!
 //! This module handles the visual rendering of the tracker grid with virtual scrolling
 //! for performance with large patterns.
+//!
+//! ## View Adapter Pattern
+//!
+//! The rendering is separated from data via `CellRenderer`:
+//! - GUI never reads `TrackCell` directly
+//! - All text formatting goes through `render_cell_text()`
+//! - Returns `Cow<str>` to avoid allocations for static strings
+
+use std::borrow::Cow;
 
 #[cfg(feature = "gui-egui")]
 use eframe::egui::{self, Color32, RichText, Ui};
@@ -10,7 +19,127 @@ use egui_extras::{Column, TableBuilder};
 
 use super::state::{TrackerColumn, TrackerViewState};
 use super::tracker::TrackerViewConfig;
+use crate::sequencer::pattern::TrackCell;
 use crate::sequencer::song::Song;
+
+// ============================================================================
+// Cell Renderer - View Adapter for TrackCell
+// ============================================================================
+
+/// Column type for rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnType {
+    /// Row index column.
+    RowIdx,
+    /// Note column (C-4, D#5, ---, ===).
+    Note,
+    /// Instrument number column (00-FF).
+    Instrument,
+    /// Volume column (00-40).
+    Volume,
+    /// Effect type column (0-F).
+    EffectType,
+    /// Effect value column (00-FF).
+    EffectValue,
+}
+
+/// Static strings for empty cells (avoids allocations).
+mod static_strings {
+    pub const EMPTY_NOTE: &str = "---";
+    pub const NOTE_OFF: &str = "===";
+    pub const EMPTY_INST: &str = "..";
+    pub const EMPTY_VOL: &str = "..";
+    pub const EMPTY_EFFECT: &str = "...";
+}
+
+/// Render cell text based on column type.
+///
+/// Returns `Cow::Borrowed` for static strings (empty, note-off) to avoid allocations.
+/// Returns `Cow::Owned` only when dynamic formatting is needed.
+#[must_use]
+pub fn render_cell_text(cell: &TrackCell, col: ColumnType) -> Cow<'static, str> {
+    match (cell, col) {
+        // Empty cell
+        (TrackCell::Empty, ColumnType::Note) => Cow::Borrowed(static_strings::EMPTY_NOTE),
+        (TrackCell::Empty, ColumnType::Instrument) => Cow::Borrowed(static_strings::EMPTY_INST),
+        (TrackCell::Empty, ColumnType::Volume) => Cow::Borrowed(static_strings::EMPTY_VOL),
+        (TrackCell::Empty, ColumnType::EffectType | ColumnType::EffectValue) => {
+            Cow::Borrowed(static_strings::EMPTY_EFFECT)
+        }
+
+        // Note-off
+        (TrackCell::NoteOff, ColumnType::Note) => Cow::Borrowed(static_strings::NOTE_OFF),
+        (TrackCell::NoteOff, _) => Cow::Borrowed(static_strings::EMPTY_INST),
+
+        // Note cell
+        (TrackCell::Note { pitch, .. }, ColumnType::Note) => Cow::Owned(format_pitch(*pitch)),
+        (TrackCell::Note { instrument, .. }, ColumnType::Instrument) => {
+            Cow::Owned(format!("{instrument:02X}"))
+        }
+        (TrackCell::Note { velocity, .. }, ColumnType::Volume) => {
+            // Convert normalized velocity (0.0-1.0) to tracker volume (00-40)
+            let vol = (velocity.as_f32() * 64.0) as u8;
+            Cow::Owned(format!("{vol:02X}"))
+        }
+        (TrackCell::Note { .. }, ColumnType::EffectType | ColumnType::EffectValue) => {
+            Cow::Borrowed(static_strings::EMPTY_EFFECT)
+        }
+
+        // Effect cell
+        (TrackCell::Effect { command, value }, ColumnType::Note) => {
+            Cow::Owned(format!("{command:X}{value:02X}"))
+        }
+        (TrackCell::Effect { .. }, _) => Cow::Borrowed(static_strings::EMPTY_INST),
+
+        // Row index (handled separately, but included for completeness)
+        (_, ColumnType::RowIdx) => Cow::Borrowed(""),
+    }
+}
+
+/// Format a pitch as a tracker string (e.g., "C-4", "C#5").
+fn format_pitch(pitch: crate::sequencer::pitch::Pitch) -> String {
+    let note_names = [
+        "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-",
+    ];
+    let note_idx = (pitch.as_midi() % 12) as usize;
+    let octave = pitch.octave();
+    format!("{}{}", note_names[note_idx], octave)
+}
+
+/// Format a row number.
+#[must_use]
+pub fn format_row_number(row: u16, hex: bool) -> Cow<'static, str> {
+    if hex {
+        Cow::Owned(format!("{row:02X}"))
+    } else {
+        Cow::Owned(format!("{row:3}"))
+    }
+}
+
+/// Get the color for a cell based on its type and cursor state.
+#[cfg(feature = "gui-egui")]
+#[must_use]
+pub fn cell_color(
+    cell: &TrackCell,
+    col: ColumnType,
+    is_cursor: bool,
+    colors: &TrackerColors,
+) -> Color32 {
+    if is_cursor {
+        return Color32::WHITE;
+    }
+
+    match (cell, col) {
+        (TrackCell::Empty, _) => colors.empty,
+        (TrackCell::NoteOff, ColumnType::Note) => colors.note_off,
+        (TrackCell::NoteOff, _) => colors.empty,
+        (TrackCell::Note { .. }, ColumnType::Note) => colors.note,
+        (TrackCell::Note { .. }, ColumnType::Instrument) => colors.instrument,
+        (TrackCell::Note { .. }, ColumnType::Volume) => colors.volume,
+        (TrackCell::Note { .. }, _) => colors.effect,
+        (TrackCell::Effect { .. }, _) => colors.effect,
+    }
+}
 
 /// Colors for the tracker display.
 #[cfg(feature = "gui-egui")]
@@ -379,4 +508,195 @@ pub fn draw_no_pattern(ui: &mut Ui) {
             );
         });
     });
+}
+
+// ============================================================================
+// New TrackCell-based rendering (uses View Adapter pattern)
+// ============================================================================
+
+/// Draw a single TrackCell using the View Adapter.
+///
+/// This is the new rendering function that uses `render_cell_text()` and `cell_color()`
+/// from the View Adapter to avoid direct coupling between GUI and data.
+#[cfg(feature = "gui-egui")]
+pub fn draw_track_cell(
+    ui: &mut Ui,
+    cell: &TrackCell,
+    config: &TrackerViewConfig,
+    colors: &TrackerColors,
+    is_cursor: bool,
+    cursor_column: TrackerColumn,
+) {
+    // Note column
+    let note_is_cursor = is_cursor && cursor_column == TrackerColumn::Note;
+    let note_text = render_cell_text(cell, ColumnType::Note);
+    let note_color = cell_color(cell, ColumnType::Note, note_is_cursor, colors);
+    ui.label(
+        RichText::new(note_text.as_ref())
+            .color(note_color)
+            .monospace(),
+    );
+
+    // Instrument column
+    if config.show_instrument {
+        let inst_is_cursor = is_cursor && cursor_column == TrackerColumn::Instrument;
+        let inst_text = render_cell_text(cell, ColumnType::Instrument);
+        let inst_color = cell_color(cell, ColumnType::Instrument, inst_is_cursor, colors);
+        ui.label(
+            RichText::new(inst_text.as_ref())
+                .color(inst_color)
+                .monospace(),
+        );
+    }
+
+    // Volume column
+    if config.show_volume {
+        let vol_is_cursor = is_cursor && cursor_column == TrackerColumn::Volume;
+        let vol_text = render_cell_text(cell, ColumnType::Volume);
+        let vol_color = cell_color(cell, ColumnType::Volume, vol_is_cursor, colors);
+        ui.label(
+            RichText::new(vol_text.as_ref())
+                .color(vol_color)
+                .monospace(),
+        );
+    }
+
+    // Effect columns
+    for _ in 0..config.effect_columns {
+        let effect_is_cursor = is_cursor
+            && (cursor_column == TrackerColumn::EffectType
+                || cursor_column == TrackerColumn::EffectValue);
+        let effect_text = render_cell_text(cell, ColumnType::EffectType);
+        let effect_color = cell_color(cell, ColumnType::EffectType, effect_is_cursor, colors);
+        ui.label(
+            RichText::new(effect_text.as_ref())
+                .color(effect_color)
+                .monospace(),
+        );
+    }
+}
+
+/// Draw the tracker grid using TrackerGrid directly.
+///
+/// This is the optimized version that reads from TrackerGrid
+/// instead of converting to TrackerRow first.
+#[cfg(feature = "gui-egui")]
+pub fn draw_tracker_grid_from_pattern(
+    ui: &mut Ui,
+    state: &mut TrackerViewState,
+    pattern: &mut crate::sequencer::pattern::Pattern,
+    config: &TrackerViewConfig,
+) -> bool {
+    let colors = TrackerColors::default();
+    let grid = pattern.grid();
+    let num_rows = grid.rows as usize;
+
+    if num_rows == 0 {
+        ui.centered_and_justified(|ui| {
+            ui.label(RichText::new("Empty pattern").color(colors.empty));
+        });
+        return false;
+    }
+
+    // Calculate visible rows
+    let available_height = ui.available_height();
+    let visible_rows = (available_height / ROW_HEIGHT) as usize;
+
+    // Ensure cursor is visible
+    state.ensure_cursor_visible(visible_rows);
+
+    let num_tracks = grid.tracks as usize;
+    let interaction = false;
+
+    // Build the table with virtual scrolling
+    TableBuilder::new(ui)
+        .striped(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::exact(30.0)) // Row number
+        .columns(
+            Column::exact(calculate_track_width(config)),
+            num_tracks.min(state.visible_tracks),
+        )
+        .header(ROW_HEIGHT, |mut header| {
+            header.col(|ui| {
+                ui.label(RichText::new("Row").color(colors.row_number).small());
+            });
+            for track_idx in 0..num_tracks.min(state.visible_tracks) {
+                header.col(|ui| {
+                    let track_num = state.first_visible_track + track_idx;
+                    ui.label(
+                        RichText::new(format!("Track {}", track_num + 1))
+                            .color(colors.row_number)
+                            .small(),
+                    );
+                });
+            }
+        })
+        .body(|body| {
+            body.rows(ROW_HEIGHT, num_rows, |mut row| {
+                let row_idx = row.index();
+                let is_cursor_row = state.cursor_row.get() == row_idx;
+                // Highlight every 4th row (beat marker)
+                let is_highlight = config.should_highlight(row_idx as u16);
+
+                // Row number column
+                row.col(|ui| {
+                    let bg = if is_cursor_row {
+                        colors.cursor_row
+                    } else if is_highlight {
+                        colors.row_highlight
+                    } else {
+                        colors.background
+                    };
+
+                    let rect = ui.available_rect_before_wrap();
+                    ui.painter().rect_filled(rect, 0.0, bg);
+
+                    let row_text = format_row_number(row_idx as u16, config.hex_row_numbers);
+                    ui.label(
+                        RichText::new(row_text.as_ref())
+                            .color(colors.row_number)
+                            .monospace(),
+                    );
+                });
+
+                // Track columns
+                for track_idx in 0..num_tracks.min(state.visible_tracks) {
+                    row.col(|ui| {
+                        let actual_track = state.first_visible_track + track_idx;
+                        let is_cursor_track = state.cursor_track == actual_track;
+
+                        let bg = if is_cursor_row && is_cursor_track {
+                            colors.cursor_cell
+                        } else if is_cursor_row {
+                            colors.cursor_row
+                        } else if is_highlight {
+                            colors.row_highlight
+                        } else {
+                            colors.background
+                        };
+
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(rect, 0.0, bg);
+
+                        // Get cell from grid
+                        let cell = grid.get(row_idx as u16, actual_track as u8);
+
+                        // Draw cell using View Adapter
+                        ui.horizontal(|ui| {
+                            draw_track_cell(
+                                ui,
+                                &cell,
+                                config,
+                                &colors,
+                                is_cursor_row && is_cursor_track,
+                                state.cursor_column,
+                            );
+                        });
+                    });
+                }
+            });
+        });
+
+    interaction
 }

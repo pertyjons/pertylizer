@@ -40,7 +40,9 @@
 12. **Undo / Redo** (Nytt - UX)
     * [ ] Implementera Command-historik för `PatchEditor`. Kritiskt när man bygger komplexa patchar.
 13. **Sequencer GUI & Transport** (Från nuvarande P5)
-    * [ ] Bygg Play/Stop-knappar och en visuell Tracker/Piano Roll.
+    * [x] ~~Tracker View med View Adapter-arkitektur~~ *(0.40.0: TrackCell, TrackerGrid, virtual scrolling)*
+    * [ ] Piano Roll-vy (använder samma View Adapter)
+    * [ ] Play/Stop/Record-knappar i transport
 14. **Generativa Moduler** (Nytt - Kreativitet)
     * [ ] Euclidean Sequencer, Turing Machine, Random Gates.
 15. **Projekt-filer (.msproject)** (Från nuvarande Övrigt)

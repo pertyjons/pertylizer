@@ -1,5 +1,61 @@
 # Version History
 
+## [0.40.0] - 2025
+### Added - The Hybrid Tracker
+
+En modern tracker-arkitektur med View Adapter-mönster för framtida Piano Roll-stöd.
+
+#### Datastruktur (`src/sequencer/pattern.rs`)
+
+- **`TrackCell` enum** - Cell-baserad representation för tracker-style editing:
+  - `Empty` - Tom cell
+  - `Note { pitch, instrument, velocity }` - Not-event
+  - `NoteOff` - Not-avstängning (`===`)
+  - `Effect { command, value }` - Effekt-cell
+
+- **`TrackerGrid`** - Grid-baserad lagring (rows × tracks):
+  - `get()` / `set()` / `clear()` - Cell-operationer
+  - `resize()` - Dynamisk storlek
+  - `effects()` - Effekt-kolumner per cell
+
+- **Pattern dual representation**:
+  - `notes: Vec<Note>` - Piano roll-format (start, duration)
+  - `grid: Option<TrackerGrid>` - Tracker-format (lazy-initialized)
+  - `sync_grid_from_notes()` / `sync_notes_from_grid()` - Synkronisering
+
+#### View Adapter (`src/sequencer/view/render.rs`)
+
+- **`ColumnType`** enum: `RowIdx`, `Note`, `Instrument`, `Volume`, `EffectType`, `EffectValue`
+- **`render_cell_text()`** - Returnerar `Cow<'static, str>` för noll-allokering på statiska strängar
+- **`cell_color()`** - Färgbestämning baserat på cell-typ och cursor
+- **`draw_track_cell()`** - Ny rendering via View Adapter
+- **`draw_tracker_grid_from_pattern()`** - Optimerad rendering direkt från TrackerGrid
+
+#### Input & Fokus (`src/sequencer/view/input.rs`)
+
+- **`TrackerCommand`** enum - Engine-kommunikation (SetNote, SetNoteOff, ClearCell, etc.)
+- **`TrackerCursor`** - Cursor-position (row, track, column)
+- **`key_to_semitone()`** - Piano-keyboard layout (Z=C, S=C#, Q=C+12)
+- **`hex_char_to_value()`** - Hex-inmatning för instrument/volym
+
+#### Prestanda
+
+- Virtual scrolling via `egui_extras::TableBuilder`
+- `Cow<str>` för statiska strängar (---,  ===, ..) undviker heap-allokering
+- Beat-markering var 4:e rad
+
+#### Nya tester
+
+- `test_track_cell_creation`
+- `test_tracker_grid_basic`
+- `test_tracker_grid_resize`
+- `test_pattern_grid_sync`
+- `test_pattern_set_cell`
+- `test_grid_note_off_handling`
+- Input-tester: `test_key_to_semitone`, `test_to_midi_note`, `test_hex_char_to_value`
+
+---
+
 ## [0.39.0] - 2025
 ### Changed - Eliminera Duplicerade Typnamn
 
