@@ -16,16 +16,16 @@ mod audio_safety {
         AudioBuffer, AudioEffect, Envelope, Filter, InputPorts, Oscillator, PolyModule,
         ProcessContext,
     };
-    use crate::types::{Bpm, MidiNote, PortName, SampleRate};
+    use crate::types::{BeatPosition, Bpm, MidiNote, PortName, SampleCount, SampleRate, Velocity};
     use std::collections::HashMap;
 
     fn make_context(samples: usize) -> ProcessContext {
         ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
-            samples,
+            samples: SampleCount::new(samples),
             tempo: Bpm::DEFAULT,
             is_playing: false,
-            position_beats: 0.0,
+            position_beats: BeatPosition::ZERO,
         }
     }
 
@@ -118,7 +118,7 @@ mod audio_safety {
         outputs.insert("out".to_string(), AudioBuffer::new(256));
 
         // Trigger note on
-        env.note_on(MidiNote::C4, 1.0);
+        env.note_on(MidiNote::C4, Velocity::MAX);
 
         for _ in 0..50 {
             env.process(inputs, &mut outputs, &context);
@@ -149,7 +149,7 @@ mod audio_safety {
     #[test]
     fn test_delay_no_nan() {
         let mut delay = Delay::new();
-        delay.set_sample_rate(48000.0);
+        delay.set_sample_rate(SampleRate::new(48000.0));
         let context = make_context(256);
 
         let mut input = vec![0.0f32; 512];
@@ -168,7 +168,7 @@ mod audio_safety {
     #[test]
     fn test_reverb_no_nan() {
         let mut reverb = Reverb::new();
-        reverb.set_sample_rate(48000.0);
+        reverb.set_sample_rate(SampleRate::new(48000.0));
         let context = make_context(256);
 
         let mut input = vec![0.0f32; 512];
@@ -187,7 +187,7 @@ mod audio_safety {
     #[test]
     fn test_chorus_no_nan() {
         let mut chorus = Chorus::new();
-        chorus.set_sample_rate(48000.0);
+        chorus.set_sample_rate(SampleRate::new(48000.0));
         let context = make_context(256);
 
         let mut input = vec![0.0f32; 512];
@@ -205,7 +205,7 @@ mod audio_safety {
     #[test]
     fn test_distortion_no_nan() {
         let mut dist = Distortion::new();
-        dist.set_sample_rate(48000.0);
+        dist.set_sample_rate(SampleRate::new(48000.0));
         let context = make_context(256);
 
         let mut input = vec![0.0f32; 512];

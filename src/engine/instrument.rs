@@ -20,7 +20,7 @@ use crate::engine::graph::ModuleGraph;
 use crate::engine::voice::VoiceState;
 use crate::engine::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use crate::modules::{AudioBuffer, ProcessContext};
-use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, SampleCount, Semitones};
+use crate::types::{BipolarValue, Gain, MidiNote, NormalizedValue, Semitones};
 
 // ============================================================================
 // Key Range & Learn State Types
@@ -775,12 +775,13 @@ impl Instrument {
         }
 
         let samples = context.samples;
+        let sample_count = samples.as_usize();
         let mut active_count = 0u32;
 
         // Ensure internal buffers are sized correctly
-        self.voice_left.resize(samples);
-        self.voice_right.resize(samples);
-        self.effect_buffer.resize(samples * 2); // Interleaved stereo
+        self.voice_left.resize(sample_count);
+        self.voice_right.resize(sample_count);
+        self.effect_buffer.resize(sample_count * 2); // Interleaved stereo
 
         // Clear instrument buffers for accumulation
         self.voice_left.clear();
@@ -792,8 +793,8 @@ impl Instrument {
         let mut temp_right = std::mem::take(&mut self.temp_voice_right);
 
         // Resize temp buffers if needed (no allocation if capacity is sufficient)
-        temp_left.resize(samples);
-        temp_right.resize(samples);
+        temp_left.resize(sample_count);
+        temp_right.resize(sample_count);
 
         // Process each voice in this instrument and sum into voice_left/voice_right
         for voice in self.allocator.voices_mut() {
@@ -804,9 +805,9 @@ impl Instrument {
             active_count += 1;
 
             // Update glide and increment age
-            let delta_time = samples as f32 / context.sample_rate.as_f32();
+            let delta_time = sample_count as f32 / context.sample_rate.as_f32();
             voice.glide.update(delta_time);
-            voice.age = voice.age + SampleCount::new(samples);
+            voice.age = voice.age + samples;
 
             // Handle stealing fade-out completion
             if let VoiceState::Stealing { fade_counter, .. } = voice.state
@@ -829,8 +830,8 @@ impl Instrument {
                 fade_total,
             } = voice.state
             {
-                let fade_samples = fade_counter.min(samples);
-                for i in 0..samples {
+                let fade_samples = fade_counter.min(sample_count);
+                for i in 0..sample_count {
                     let fade = if i < fade_samples {
                         (fade_counter - i) as f32 / fade_total as f32
                     } else {
@@ -840,7 +841,7 @@ impl Instrument {
                     temp_right[i] *= fade;
                 }
                 // Update the fade counter in the state
-                let new_counter = fade_counter.saturating_sub(samples);
+                let new_counter = fade_counter.saturating_sub(sample_count);
                 voice.state = VoiceState::Stealing {
                     fade_counter: new_counter,
                     fade_total,
@@ -848,7 +849,7 @@ impl Instrument {
             }
 
             // Sum into instrument buffers
-            for i in 0..samples {
+            for i in 0..sample_count {
                 self.voice_left[i] += temp_left[i];
                 self.voice_right[i] += temp_right[i];
             }
@@ -859,10 +860,10 @@ impl Instrument {
         self.temp_voice_right = temp_right;
 
         // Advance allocator time
-        self.allocator.advance_time(SampleCount::new(samples));
+        self.allocator.advance_time(samples);
 
         // Interleave voice_left/voice_right into effect_buffer (L, R, L, R, ...)
-        for i in 0..samples {
+        for i in 0..sample_count {
             self.effect_buffer[i * 2] = self.voice_left[i];
             self.effect_buffer[i * 2 + 1] = self.voice_right[i];
         }
@@ -878,7 +879,7 @@ impl Instrument {
         // Mix processed effect_buffer into main output with volume/pan and soft clipping
         // Soft clipping is applied per-instrument to prevent individual instruments
         // from causing harsh clipping when mixed together
-        for i in 0..samples {
+        for i in 0..sample_count {
             let left = soft_clip(self.effect_buffer[i * 2] * left_gain);
             let right = soft_clip(self.effect_buffer[i * 2 + 1] * right_gain);
             output[i * 2] += left;

@@ -21,7 +21,7 @@ use crate::engine::typed_params::{ModuleType, OscillatorParam, Param};
 use crate::modules::core::{AudioBuffer, ProcessContext};
 use crate::types::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
-    Semitones,
+    Semitones, Velocity,
 };
 
 /// Maximum buffer size we support.
@@ -53,7 +53,7 @@ pub enum VoiceState {
         /// MIDI note number
         note: MidiNote,
         /// Note velocity (type-safe normalized value 0.0-1.0)
-        velocity: NormalizedValue,
+        velocity: Velocity,
         /// When this voice was triggered (type-safe sample position)
         start_time: SamplePosition,
     },
@@ -63,7 +63,7 @@ pub enum VoiceState {
         /// MIDI note number (kept for potential re-trigger or display)
         note: MidiNote,
         /// Original velocity (kept for release velocity calculations)
-        velocity: NormalizedValue,
+        velocity: Velocity,
         /// Original start time (type-safe sample position)
         start_time: SamplePosition,
     },
@@ -107,7 +107,7 @@ impl VoiceState {
 
     /// Get the velocity if the voice is playing.
     #[inline]
-    pub fn velocity(&self) -> Option<NormalizedValue> {
+    pub fn velocity(&self) -> Option<Velocity> {
         match self {
             Self::Active { velocity, .. } | Self::Releasing { velocity, .. } => Some(*velocity),
             _ => None,
@@ -390,7 +390,7 @@ impl Voice {
     }
 
     /// Trigger note on with type-safe velocity.
-    pub fn note_on(&mut self, note: MidiNote, velocity: NormalizedValue, time: SamplePosition) {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
         let target_freq = Self::note_to_freq(note);
 
         // Start glide from current position if we have a glide time and were already active
@@ -414,7 +414,7 @@ impl Voice {
         self.age = SampleCount::ZERO;
 
         // Notify all modules in the graph
-        self.graph.note_on(note, velocity.as_f32());
+        self.graph.note_on(note, velocity);
     }
 
     /// Change pitch without retriggering (for legato mode).
@@ -489,7 +489,7 @@ impl Voice {
 
     /// Get the velocity of this voice, if playing.
     #[inline]
-    pub fn velocity(&self) -> Option<NormalizedValue> {
+    pub fn velocity(&self) -> Option<Velocity> {
         self.state.velocity()
     }
 
@@ -519,7 +519,7 @@ impl Voice {
         let samples = context.samples;
 
         // Get velocity from state (defaults to 1.0 if not playing - shouldn't happen)
-        let velocity = self.state.velocity().unwrap_or(NormalizedValue::MAX);
+        let velocity = self.state.velocity().unwrap_or(Velocity::MAX);
 
         // === Calculate frequency with pitch bend using strong types ===
         let base_freq = Hertz::new(self.glide.get_frequency());
@@ -532,7 +532,7 @@ impl Voice {
         self.graph.set_oscillator_frequency(freq);
 
         // Ensure buffers are sized correctly
-        self.mono_buffer.resize(samples);
+        self.mono_buffer.resize(samples.as_usize());
         self.mono_buffer.clear();
 
         // Process the entire graph
@@ -577,7 +577,7 @@ impl Voice {
         let amp_sens = self.expression.velocity_to_amp.as_f32();
         let amp_scale = (1.0 - amp_sens) + amp_sens * velocity.as_f32();
 
-        for i in 0..samples {
+        for i in 0..samples.as_usize() {
             left_out[i] *= amp_scale;
             right_out[i] *= amp_scale;
         }

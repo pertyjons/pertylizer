@@ -234,7 +234,7 @@ impl PolyModule for Oscillator {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let fm_input = inputs.get(PortName::FM);
         let pm_input = inputs.get(PortName::PM);
@@ -245,7 +245,7 @@ impl PolyModule for Oscillator {
 
         let mut prev_sync = 0.0f32;
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let fm = fm_input
                 .map(|f| f[i] * self.fm_amount.as_f32())
                 .unwrap_or(0.0);
@@ -333,14 +333,14 @@ impl PolyModule for Oscillator {
         self.phase = Phase::ZERO;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.set_note(note);
     }
 
     fn note_off(&mut self) {}
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

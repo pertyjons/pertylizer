@@ -166,16 +166,16 @@ impl AudioEffect for LevelMeter {
         self.buffer.reset_peaks();
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
-    fn tail_samples(&self) -> usize {
-        0 // No tail - pass-through
+    fn tail_samples(&self) -> SampleCount {
+        SampleCount::ZERO // No tail - pass-through
     }
 
     fn module_type(&self) -> ModuleType {

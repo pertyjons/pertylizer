@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::engine::commands::ModuleId;
 use crate::engine::params::ModuleType;
-use crate::modules::{AudioBuffer, AudioEffect, ProcessContext};
+use crate::modules::{AudioBuffer, AudioEffect, ProcessContext, SampleRate};
 use crate::visualizers::VisualizationBuffer;
 
 /// Effect slot in the effect chain.
@@ -129,7 +129,12 @@ impl EffectChain {
     }
 
     /// Add an effect instance to the end of the chain.
-    pub fn add_effect(&mut self, id: ModuleId, mut effect: Box<dyn AudioEffect>, sample_rate: f32) {
+    pub fn add_effect(
+        &mut self,
+        id: ModuleId,
+        mut effect: Box<dyn AudioEffect>,
+        sample_rate: SampleRate,
+    ) {
         effect.set_sample_rate(sample_rate);
         let module_type = effect.module_type();
 
@@ -203,7 +208,7 @@ impl EffectChain {
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
     /// Effects modify the signal; visualizers only capture it without modification.
     pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext) {
-        self.working_buffer.resize(context.samples * 2);
+        self.working_buffer.resize(context.samples.as_usize() * 2);
 
         for slot in &mut self.slots {
             match slot {

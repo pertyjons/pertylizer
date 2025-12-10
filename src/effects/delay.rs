@@ -10,8 +10,8 @@
 use crate::engine::typed_params::{DelayMode, DelayParam, ModuleType, Param};
 use crate::modules::core::*;
 use crate::types::{
-    BeatDivision, Bpm, BufferIndex, FilterState, Hertz, NormalizedValue, SampleRate, Seconds,
-    StereoSample, TempoSyncState,
+    BeatDivision, Bpm, BufferIndex, FilterState, Hertz, NormalizedValue, SampleCount, SampleRate,
+    Seconds, StereoSample, TempoSyncState,
 };
 
 /// Maximum delay time in seconds.
@@ -208,7 +208,7 @@ impl AudioEffect for Delay {
 
         // Process assuming interleaved stereo
         let channels = 2;
-        for frame in 0..context.samples {
+        for frame in 0..context.samples.as_usize() {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
@@ -293,18 +293,18 @@ impl AudioEffect for Delay {
         self.write_pos = BufferIndex::ZERO;
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
-    fn tail_samples(&self) -> usize {
+    fn tail_samples(&self) -> SampleCount {
         let decay_time =
             self.time_left.as_f32() * (1.0 / (1.0 - self.feedback.as_f32())).ln() / 3.0;
-        (decay_time * self.sample_rate.as_f32()) as usize
+        SampleCount::new((decay_time * self.sample_rate.as_f32()) as usize)
     }
 
     fn set_param(&mut self, param: Param) {
@@ -405,7 +405,7 @@ mod tests {
 
         let context = ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
-            samples: 256,
+            samples: SampleCount::new(256),
             ..Default::default()
         };
 

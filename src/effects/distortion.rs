@@ -185,12 +185,12 @@ impl AudioEffect for Distortion {
         self.filter_state = 0.0;
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
     fn set_param(&mut self, param: Param) {
@@ -255,7 +255,7 @@ mod tests {
 
             let context = ProcessContext {
                 sample_rate: SampleRate::DVD_QUALITY,
-                samples: 100,
+                samples: SampleCount::new(100),
                 ..Default::default()
             };
 

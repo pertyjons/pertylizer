@@ -280,13 +280,13 @@ impl PolyModule for Envelope {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let gate_input = inputs.get(PortName::GATE);
         let velocity_input = inputs.get(PortName::VELOCITY);
         let mut prev_gate = 0.0f32;
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
                 if gate_val > 0.5 && prev_gate <= 0.5 {
@@ -361,8 +361,8 @@ impl PolyModule for Envelope {
         self.level = NormalizedValue::MIN;
     }
 
-    fn note_on(&mut self, _note: MidiNote, velocity: f32) {
-        self.trigger(velocity);
+    fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
+        self.trigger(velocity.as_f32());
     }
 
     fn note_off(&mut self) {

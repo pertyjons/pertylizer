@@ -158,12 +158,12 @@ impl PolyModule for KeyboardPanner {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_left.resize(context.samples);
-        self.output_right.resize(context.samples);
+        self.output_left.resize(context.samples.as_usize());
+        self.output_right.resize(context.samples.as_usize());
 
         let input = inputs.get(PortName::IN);
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let input_sample = input.map_or(0.0, |buf| buf[i]);
             let stereo = self.apply_pan(input_sample);
             self.output_left[i] = stereo.left;
@@ -225,7 +225,7 @@ impl PolyModule for KeyboardPanner {
         self.current_pan = StereoBalance::CENTER;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.calculate_pan(note);
     }
 
@@ -233,8 +233,8 @@ impl PolyModule for KeyboardPanner {
         // Keep current pan position
     }
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

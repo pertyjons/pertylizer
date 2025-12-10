@@ -95,14 +95,14 @@ impl PolyModule for Amplifier {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_left.resize(context.samples);
-        self.output_right.resize(context.samples);
+        self.output_left.resize(context.samples.as_usize());
+        self.output_right.resize(context.samples.as_usize());
 
         let audio_in = inputs.get(PortName::IN);
         let cv_in = inputs.get(PortName::CV);
         let pan_cv = inputs.get(PortName::PAN_CV);
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
             let cv = cv_in.map(|b| b[i]).unwrap_or(1.0);
             let effective_level = self.level * cv.max(0.0);
@@ -129,7 +129,7 @@ impl PolyModule for Amplifier {
             right.copy_from(&self.output_right);
         }
         if let Some(out) = outputs.get_mut("out") {
-            for i in 0..context.samples {
+            for i in 0..context.samples.as_usize() {
                 out[i] = (self.output_left[i] + self.output_right[i]) * 0.5;
             }
         }
@@ -171,7 +171,7 @@ impl PolyModule for Amplifier {
         self.output_right.clear();
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -241,7 +241,7 @@ impl PolyModule for Mixer {
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
         self.output_buffer.clear();
 
         if self.mute_state.is_unmuted() {
@@ -250,7 +250,7 @@ impl PolyModule for Mixer {
                 // Use get_str for dynamic port names (not in hot path)
                 if let Some(input) = inputs.get_str(&key) {
                     let level = self.levels[i - 1].as_f32();
-                    for j in 0..context.samples {
+                    for j in 0..context.samples.as_usize() {
                         self.output_buffer[j] += input[j] * level;
                     }
                 }
@@ -325,7 +325,7 @@ impl PolyModule for Mixer {
         self.output_buffer.clear();
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

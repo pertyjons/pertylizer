@@ -11,7 +11,9 @@ use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
 use crate::engine::typed_params::{ModuleType as TypedModuleType, Param};
-use crate::types::{Bpm, MidiNote, SampleRate, ValueRange};
+pub use crate::types::{
+    BeatPosition, Bpm, MidiNote, NormalizedValue, SampleCount, SampleRate, ValueRange, Velocity,
+};
 
 // ============================================================================
 // Buffer types
@@ -175,24 +177,24 @@ impl<'a> InputPorts<'a> {
 pub struct ProcessContext {
     /// Sample rate (type-safe Hz).
     pub sample_rate: SampleRate,
-    /// Number of samples to process.
-    pub samples: usize,
+    /// Number of samples to process (type-safe).
+    pub samples: SampleCount,
     /// Current tempo (type-safe BPM).
     pub tempo: Bpm,
     /// Is transport playing.
     pub is_playing: bool,
-    /// Current position in beats.
-    pub position_beats: f64,
+    /// Current position in beats (type-safe).
+    pub position_beats: BeatPosition,
 }
 
 impl Default for ProcessContext {
     fn default() -> Self {
         Self {
             sample_rate: SampleRate::DVD_QUALITY,
-            samples: 256,
+            samples: SampleCount::new(256),
             tempo: Bpm::DEFAULT,
             is_playing: false,
-            position_beats: 0.0,
+            position_beats: BeatPosition::ZERO,
         }
     }
 }
@@ -791,14 +793,14 @@ pub trait PolyModule: Describable + Send {
     fn reset(&mut self);
 
     /// Trigger note on.
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
 
     /// Trigger note off.
     fn note_off(&mut self) {}
 
     /// Set the sample rate for this module.
     /// Called when the module is added to a graph or when the sample rate changes.
-    fn set_sample_rate(&mut self, _sample_rate: f32) {
+    fn set_sample_rate(&mut self, _sample_rate: SampleRate) {
         // Default implementation does nothing.
         // Override in modules that need sample rate (oscillators, filters, etc.)
     }
@@ -832,19 +834,19 @@ pub trait AudioEffect: Describable + Send {
     /// Reset the effect state (clear delay lines, etc.).
     fn reset(&mut self);
 
-    /// Set wet/dry mix.
-    fn set_mix(&mut self, mix: f32);
+    /// Set wet/dry mix (0.0 = dry, 1.0 = wet).
+    fn set_mix(&mut self, mix: NormalizedValue);
 
     /// Get current mix.
-    fn get_mix(&self) -> f32;
+    fn get_mix(&self) -> NormalizedValue;
 
     /// Get the tail length in samples (for reverbs, delays).
-    fn tail_samples(&self) -> usize {
-        0
+    fn tail_samples(&self) -> SampleCount {
+        SampleCount::ZERO
     }
 
     /// Set the sample rate for this effect.
-    fn set_sample_rate(&mut self, _sample_rate: f32) {
+    fn set_sample_rate(&mut self, _sample_rate: SampleRate) {
         // Default implementation does nothing.
         // Override in effects that need sample rate (delays, reverbs, etc.)
     }

@@ -308,7 +308,7 @@ impl AudioEffect for Eq {
 
         // Process stereo interleaved
         let channels = 2;
-        for frame in 0..context.samples {
+        for frame in 0..context.samples.as_usize() {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
@@ -345,12 +345,12 @@ impl AudioEffect for Eq {
         self.high_state.reset();
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
     fn set_param(&mut self, param: Param) {

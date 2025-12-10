@@ -30,7 +30,9 @@ use crate::modules::{
     ProcessContext,
 };
 use crate::sequencer::SequencerEvent;
-use crate::types::{Bpm, Gain, MidiNote, NormalizedValue, SampleCount, Seconds};
+use crate::types::{
+    BeatPosition, Bpm, Gain, MidiNote, NormalizedValue, SampleCount, SampleRate, Seconds, Velocity,
+};
 use crate::visualizers::{LevelMeter, Oscilloscope, VisualizationBuffer};
 
 /// Size of the command ring buffer.
@@ -850,7 +852,7 @@ impl SynthEngine {
         }
 
         if self.use_modular_routing {
-            self.module_graph.note_on(note, velocity_f32);
+            self.module_graph.note_on(note, Velocity::new(velocity_f32));
             note_triggered = true;
         }
 
@@ -1151,13 +1153,16 @@ impl SynthEngine {
         match instrument_id {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                    instrument
-                        .effect_chain_mut()
-                        .add_effect(id, effect, self.sample_rate);
+                    instrument.effect_chain_mut().add_effect(
+                        id,
+                        effect,
+                        SampleRate::new(self.sample_rate),
+                    );
                 }
             }
             None => {
-                self.master_effects.add_effect(id, effect, self.sample_rate);
+                self.master_effects
+                    .add_effect(id, effect, SampleRate::new(self.sample_rate));
             }
         }
     }
@@ -1295,7 +1300,7 @@ impl SynthEngine {
     /// Non-soloed instruments are skipped entirely (not just muted).
     fn process_voices(&mut self, context: &ProcessContext) {
         let num_channels = 2;
-        let buffer_size = context.samples * num_channels;
+        let buffer_size = context.samples.as_usize() * num_channels;
 
         // Ensure mix buffer is sized correctly and cleared
         self.mix_buffer.resize(buffer_size);
@@ -1331,14 +1336,14 @@ impl SynthEngine {
         }
 
         // Resize graph output buffer
-        self.graph_output.resize(context.samples);
+        self.graph_output.resize(context.samples.as_usize());
         self.graph_output.clear();
 
         // Process the module graph
         self.module_graph.process(&mut self.graph_output, context);
 
         // Mix graph output into stereo mix buffer (mono to stereo)
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let sample = self.graph_output[i];
             self.mix_buffer[i * 2] += sample;
             self.mix_buffer[i * 2 + 1] += sample;
@@ -1425,10 +1430,10 @@ impl AudioProcessor for SynthEngine {
 
         let process_context = ProcessContext {
             sample_rate: crate::types::SampleRate::new(context.sample_rate.as_f32()),
-            samples: context.frames,
+            samples: SampleCount::new(context.frames),
             tempo: Bpm::new(self.state.transport.get_tempo()),
             is_playing: self.state.transport.is_playing(),
-            position_beats: self.state.transport.position_beats.load(),
+            position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
         };
 
         // Process voices (built-in voice template)

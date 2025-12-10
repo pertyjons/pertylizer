@@ -14,7 +14,7 @@ use crate::modules::core::{
     AudioBuffer, InputPorts, ModuleCategory, ModuleDescriptor, PolyModule, PortDirection,
     ProcessContext,
 };
-use crate::types::{MidiNote, PortName};
+use crate::types::{MidiNote, PortName, Velocity};
 
 /// A connection between two ports.
 ///
@@ -308,7 +308,7 @@ impl ModuleGraph {
     /// Process the graph.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
         // Ensure buffer sizes
-        self.resize_buffers(context.samples);
+        self.resize_buffers(context.samples.as_usize());
 
         // Update processing order if needed
         if self.order_dirty {
@@ -372,7 +372,7 @@ impl ModuleGraph {
     }
 
     /// Trigger note on for all modules.
-    pub fn note_on(&mut self, note: MidiNote, velocity: f32) {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) {
         self.nodes
             .values_mut()
             .for_each(|node| node.module.note_on(note, velocity));
@@ -626,14 +626,14 @@ impl ModuleGraph {
                     .find(|(name, _)| *name == *to_port)
                 {
                     // Ensure buffer is correctly sized before adding
-                    if existing.len() < context.samples {
-                        existing.resize(context.samples);
+                    if existing.len() < context.samples.as_usize() {
+                        existing.resize(context.samples.as_usize());
                     }
                     existing.add_from(output_buf);
                 } else {
                     // First connection to this port - add new buffer entry
                     // Note: Vec only grows during warmup, not during steady-state processing
-                    let mut buf = AudioBuffer::new(context.samples);
+                    let mut buf = AudioBuffer::new(context.samples.as_usize());
                     buf.copy_from(output_buf);
                     self.input_buffers.push((*to_port, buf));
                 }

@@ -206,7 +206,7 @@ impl PolyModule for StereoOutput {
         context: &ProcessContext,
     ) {
         // Resize output buffer if needed (interleaved stereo)
-        let stereo_samples = context.samples * 2;
+        let stereo_samples = context.samples.as_usize() * 2;
         if self.output_buffer.len() != stereo_samples {
             self.output_buffer.resize(stereo_samples, 0.0);
         }
@@ -224,7 +224,7 @@ impl PolyModule for StereoOutput {
         let mut peak_r = Amplitude::ZERO;
 
         // Process each sample
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             // Get input samples - handle partial connections
             let input = match (left_in, right_in, mono_in) {
                 // Full stereo input
@@ -270,20 +270,20 @@ impl PolyModule for StereoOutput {
 
         // Write to stereo output ports for Voice to read
         if let Some(left_out) = outputs.get_mut("left") {
-            for i in 0..context.samples.min(left_out.len()) {
+            for i in 0..context.samples.as_usize().min(left_out.len()) {
                 left_out[i] = self.output_buffer[i * 2];
             }
         }
 
         if let Some(right_out) = outputs.get_mut("right") {
-            for i in 0..context.samples.min(right_out.len()) {
+            for i in 0..context.samples.as_usize().min(right_out.len()) {
                 right_out[i] = self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0);
             }
         }
 
         // Also write to "out" port if present (mono compatibility)
         if let Some(out_buf) = outputs.get_mut("out") {
-            for i in 0..context.samples.min(out_buf.len()) {
+            for i in 0..context.samples.as_usize().min(out_buf.len()) {
                 let stereo = StereoSample::new(
                     self.output_buffer[i * 2],
                     self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0),
@@ -347,7 +347,7 @@ impl PolyModule for StereoOutput {
         self.output_buffer.clear();
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -419,8 +419,8 @@ mod tests {
         let context = ProcessContext::default();
 
         // Create test input
-        let mut test_buf = AudioBuffer::new(context.samples);
-        for i in 0..context.samples {
+        let mut test_buf = AudioBuffer::new(context.samples.as_usize());
+        for i in 0..context.samples.as_usize() {
             test_buf[i] = 0.5;
         }
 

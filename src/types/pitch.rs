@@ -461,9 +461,211 @@ impl std::fmt::Display for MidiNote {
     }
 }
 
+/// MIDI velocity (0-127, normalized to 0.0-1.0).
+///
+/// Represents how hard a note was played.
+/// Stored internally as normalized f32 for smooth processing.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+pub struct Velocity(pub f32);
+
+impl Velocity {
+    /// Create a new velocity from normalized value (0.0-1.0).
+    #[inline]
+    pub fn new(value: f32) -> Self {
+        Self(value.clamp(0.0, 1.0))
+    }
+
+    /// Create from MIDI velocity (0-127).
+    #[inline]
+    pub fn from_midi(midi_velocity: u8) -> Self {
+        Self(midi_velocity as f32 / 127.0)
+    }
+
+    /// Create without clamping (for performance in hot paths).
+    #[inline]
+    pub const fn new_unchecked(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Zero velocity (note off).
+    pub const ZERO: Self = Self(0.0);
+
+    /// Maximum velocity.
+    pub const MAX: Self = Self(1.0);
+
+    /// Default velocity (mezzo-forte, MIDI 100).
+    pub const DEFAULT: Self = Self(100.0 / 127.0);
+
+    /// Piano (soft, MIDI 64).
+    pub const PIANO: Self = Self(64.0 / 127.0);
+
+    /// Forte (loud, MIDI 112).
+    pub const FORTE: Self = Self(112.0 / 127.0);
+
+    /// Get the normalized value (0.0-1.0).
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Convert to MIDI velocity (0-127).
+    #[inline]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn to_midi(self) -> u8 {
+        (self.0 * 127.0).round() as u8
+    }
+
+    /// Apply velocity curve (power function).
+    ///
+    /// curve = 1.0: linear
+    /// curve < 1.0: more sensitive to soft playing
+    /// curve > 1.0: more sensitive to hard playing
+    #[inline]
+    pub fn curve(self, exponent: f32) -> Self {
+        Self(self.0.powf(exponent))
+    }
+
+    /// Scale an amplitude by this velocity.
+    #[inline]
+    pub fn scale(self, value: f32) -> f32 {
+        value * self.0
+    }
+
+    /// Linear interpolation between two velocities.
+    #[inline]
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        Self::new(self.0 + (other.0 - self.0) * t)
+    }
+
+    /// Check if this is effectively zero (note off).
+    #[inline]
+    pub fn is_zero(self) -> bool {
+        self.0 < 0.001
+    }
+}
+
+impl Default for Velocity {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl From<f32> for Velocity {
+    fn from(value: f32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Velocity> for f32 {
+    fn from(vel: Velocity) -> Self {
+        vel.0
+    }
+}
+
+impl From<u8> for Velocity {
+    fn from(midi_velocity: u8) -> Self {
+        Self::from_midi(midi_velocity)
+    }
+}
+
+impl std::fmt::Display for Velocity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_midi())
+    }
+}
+
+/// MIDI channel (1-16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+pub struct MidiChannel(pub u8);
+
+impl MidiChannel {
+    /// Create a new MIDI channel (1-16).
+    #[inline]
+    pub const fn new(channel: u8) -> Self {
+        Self(if channel == 0 {
+            1
+        } else if channel > 16 {
+            16
+        } else {
+            channel
+        })
+    }
+
+    /// Channel 1 (default).
+    pub const CH1: Self = Self(1);
+
+    /// Channel 10 (drums in GM).
+    pub const DRUMS: Self = Self(10);
+
+    /// Get the channel number (1-16).
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as zero-indexed (0-15) for MIDI messages.
+    #[inline]
+    pub const fn as_index(self) -> u8 {
+        self.0 - 1
+    }
+}
+
+impl Default for MidiChannel {
+    fn default() -> Self {
+        Self::CH1
+    }
+}
+
+impl From<u8> for MidiChannel {
+    fn from(channel: u8) -> Self {
+        Self::new(channel)
+    }
+}
+
+impl From<MidiChannel> for u8 {
+    fn from(channel: MidiChannel) -> Self {
+        channel.0
+    }
+}
+
+impl std::fmt::Display for MidiChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ch {}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_velocity_from_midi() {
+        let vel = Velocity::from_midi(127);
+        assert!((vel.as_f32() - 1.0).abs() < 0.01);
+
+        let vel = Velocity::from_midi(0);
+        assert!((vel.as_f32() - 0.0).abs() < 0.01);
+
+        let vel = Velocity::from_midi(64);
+        assert!((vel.as_f32() - 0.504).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_velocity_to_midi() {
+        assert_eq!(Velocity::MAX.to_midi(), 127);
+        assert_eq!(Velocity::ZERO.to_midi(), 0);
+    }
+
+    #[test]
+    fn test_midi_channel() {
+        let ch = MidiChannel::new(10);
+        assert_eq!(ch.as_u8(), 10);
+        assert_eq!(ch.as_index(), 9);
+    }
 
     #[test]
     fn test_cents_to_ratio() {

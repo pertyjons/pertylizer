@@ -499,9 +499,150 @@ impl std::ops::Div<f32> for BeatDivision {
     }
 }
 
+/// Position in beats (musical time).
+///
+/// Used for transport position, pattern position, etc.
+/// One beat equals one quarter note at the current tempo.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+pub struct BeatPosition(pub f64);
+
+impl BeatPosition {
+    /// Create a new beat position.
+    #[inline]
+    pub const fn new(beats: f64) -> Self {
+        Self(beats)
+    }
+
+    /// Zero position (start).
+    pub const ZERO: Self = Self(0.0);
+
+    /// Get the raw value in beats.
+    #[inline]
+    pub const fn as_f64(self) -> f64 {
+        self.0
+    }
+
+    /// Get the value as f32 (for compatibility).
+    #[inline]
+    pub fn as_f32(self) -> f32 {
+        self.0 as f32
+    }
+
+    /// Convert to time at a given tempo.
+    #[inline]
+    pub fn to_seconds(self, tempo: Bpm) -> Seconds {
+        Seconds::new((self.0 * 60.0 / tempo.as_f32() as f64) as f32)
+    }
+
+    /// Create from time at a given tempo.
+    #[inline]
+    pub fn from_seconds(time: Seconds, tempo: Bpm) -> Self {
+        Self((time.as_f32() as f64) * (tempo.as_f32() as f64) / 60.0)
+    }
+
+    /// Get the bar number (assuming 4/4 time).
+    #[inline]
+    pub fn bar(self) -> u32 {
+        (self.0 / 4.0).floor() as u32
+    }
+
+    /// Get the beat within the bar (0-3 for 4/4).
+    #[inline]
+    pub fn beat_in_bar(self) -> f64 {
+        self.0.rem_euclid(4.0)
+    }
+
+    /// Advance by a number of beats.
+    #[inline]
+    pub fn advance(self, beats: f64) -> Self {
+        Self(self.0 + beats)
+    }
+
+    /// Advance by samples at a given tempo and sample rate.
+    #[inline]
+    pub fn advance_samples(self, samples: usize, tempo: Bpm, sample_rate: SampleRate) -> Self {
+        let beats_per_sample = tempo.beats_per_sample(sample_rate) as f64;
+        Self(self.0 + samples as f64 * beats_per_sample)
+    }
+
+    /// Quantize to a beat division.
+    #[inline]
+    pub fn quantize(self, division: BeatDivision) -> Self {
+        let div = division.as_f32() as f64;
+        Self((self.0 / div).round() * div)
+    }
+
+    /// Get the fractional beat (0.0-1.0) within the current beat.
+    #[inline]
+    pub fn fraction(self) -> f64 {
+        self.0.fract()
+    }
+
+    /// Check if we're on a beat boundary (within tolerance).
+    #[inline]
+    pub fn is_on_beat(self, tolerance: f64) -> bool {
+        self.fraction().abs() < tolerance || (1.0 - self.fraction()).abs() < tolerance
+    }
+}
+
+impl std::ops::Add<f64> for BeatPosition {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: f64) -> Self::Output {
+        Self(self.0 + rhs)
+    }
+}
+
+impl std::ops::Sub for BeatPosition {
+    type Output = f64;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.0 - rhs.0
+    }
+}
+
+impl From<f64> for BeatPosition {
+    fn from(beats: f64) -> Self {
+        Self(beats)
+    }
+}
+
+impl From<BeatPosition> for f64 {
+    fn from(pos: BeatPosition) -> Self {
+        pos.0
+    }
+}
+
+impl std::fmt::Display for BeatPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bar = self.bar() + 1; // 1-indexed for display
+        let beat = self.beat_in_bar();
+        write!(f, "{}:{:.2}", bar, beat + 1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_beat_position_bar() {
+        let pos = BeatPosition::new(4.5);
+        assert_eq!(pos.bar(), 1); // Second bar (0-indexed)
+        assert!((pos.beat_in_bar() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_beat_position_to_seconds() {
+        let pos = BeatPosition::new(2.0); // 2 beats
+        let tempo = Bpm::new(120.0); // 2 beats per second
+        let secs = pos.to_seconds(tempo);
+        assert!((secs.as_f32() - 1.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_beat_division_to_duration() {

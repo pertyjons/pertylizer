@@ -467,14 +467,14 @@ impl PolyModule for MathOscillator {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         // Get modulation inputs
         let fm_input = inputs.get(PortName::FM);
         let mod_a = inputs.get(PortName::intern("param_a"));
         let mod_b = inputs.get(PortName::intern("param_b"));
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             // Apply FM
             if let Some(fm) = fm_input {
                 let fm_val = fm[i];
@@ -562,7 +562,7 @@ impl PolyModule for MathOscillator {
         self.burst_remaining = FrameCount::ZERO;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.set_note(note);
         self.reset_state();
 

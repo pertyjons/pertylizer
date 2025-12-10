@@ -204,13 +204,13 @@ impl PolyModule for Filter {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let audio_in = inputs.get(PortName::IN);
         let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
         let res_cv = inputs.get(PortName::RESONANCE_CV);
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
             let cutoff_mod = cutoff_cv
                 .map(|b| b[i] * self.cutoff_mod_amount.as_f32())
@@ -276,14 +276,14 @@ impl PolyModule for Filter {
         self.ic2eq = FilterState::ZERO;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.base_note = note;
     }
 
     fn note_off(&mut self) {}
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -420,12 +420,12 @@ impl PolyModule for LadderFilter {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let audio_in = inputs.get(PortName::IN);
         let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
 
             let effective_cutoff = if let Some(cv) = cutoff_cv {
@@ -484,11 +484,11 @@ impl PolyModule for LadderFilter {
         self.delay.fill(FilterState::ZERO);
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

@@ -164,7 +164,7 @@ impl PolyModule for BodyResonance {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let input = inputs.get(PortName::IN);
         let base_freq = self.frequency.as_f32();
@@ -180,7 +180,7 @@ impl PolyModule for BodyResonance {
         let freq2 = base_freq * (1.0 + brightness * 0.5);
         let freq3 = base_freq * (1.5 + size * 0.5);
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             let input_sample = input.map_or(0.0, |buf| buf[i]);
 
             // Process through three parallel resonators
@@ -248,14 +248,14 @@ impl PolyModule for BodyResonance {
         self.filter3_state = [FilterState::ZERO; 2];
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
         // Could modulate body resonance based on note if desired
     }
 
     fn note_off(&mut self) {}
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

@@ -168,12 +168,12 @@ impl AudioEffect for Chorus {
         self.write_pos = BufferIndex::ZERO;
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
     fn set_param(&mut self, param: Param) {
@@ -239,11 +239,7 @@ mod tests {
     fn test_chorus_no_nan() {
         let mut chorus = Chorus::new();
 
-        let context = ProcessContext {
-            sample_rate: SampleRate::DVD_QUALITY,
-            samples: 256,
-            ..Default::default()
-        };
+        let context = ProcessContext::default();
 
         let input = vec![0.5f32; 256];
         let mut output = vec![0.0f32; 256];

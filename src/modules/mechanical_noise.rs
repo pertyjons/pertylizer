@@ -214,9 +214,9 @@ impl PolyModule for MechanicalNoise {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             self.output_buffer[i] = self.generate_noise();
         }
 
@@ -271,13 +271,13 @@ impl PolyModule for MechanicalNoise {
         self.filter_state = 0.0;
     }
 
-    fn note_on(&mut self, _note: MidiNote, velocity: f32) {
+    fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
         // Trigger noise on key down (for KeyDown and Hammer types)
         if matches!(
             self.noise_type,
             MechanicalNoiseType::KeyDown | MechanicalNoiseType::Hammer
         ) {
-            self.trigger(velocity);
+            self.trigger(velocity.as_f32());
         }
     }
 
@@ -288,8 +288,8 @@ impl PolyModule for MechanicalNoise {
         }
     }
 
-    fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = SampleRate::new(sample_rate);
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

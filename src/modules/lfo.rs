@@ -149,13 +149,13 @@ impl PolyModule for Lfo {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
         let retrigger_input = inputs.get(PortName::intern("retrigger"));
         let rate_cv = inputs.get(PortName::RATE_CV);
         let mut prev_retrigger = 0.0f32;
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             if let Some(retrig) = retrigger_input {
                 let val = retrig[i];
                 if val > 0.5 && prev_retrigger <= 0.5 {
@@ -249,7 +249,7 @@ impl PolyModule for Lfo {
         self.sh_value = 0.0;
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {}
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

@@ -485,8 +485,8 @@ impl PolyModule for SamplePlayer {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_left.resize(context.samples);
-        self.output_right.resize(context.samples);
+        self.output_left.resize(context.samples.as_usize());
+        self.output_right.resize(context.samples.as_usize());
 
         // Clone Arc for use in the loop (avoids borrow conflict)
         let sample = match &self.sample {
@@ -514,7 +514,7 @@ impl PolyModule for SamplePlayer {
         let level = self.effective_level();
         let sample_len = self.sample_len();
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             if self.playback_state.is_playing() {
                 let (left, right) = self.read_with_crossfade(&sample, self.position);
                 self.output_left[i] = left.as_f32() * level;
@@ -540,7 +540,7 @@ impl PolyModule for SamplePlayer {
         }
         if let Some(out) = outputs.get_mut("out") {
             // Mono output = average of L/R
-            for i in 0..context.samples {
+            for i in 0..context.samples.as_usize() {
                 out[i] = (self.output_left[i] + self.output_right[i]) * 0.5;
             }
         }
@@ -610,9 +610,9 @@ impl PolyModule for SamplePlayer {
         self.note_release_state = NoteReleaseState::Held;
     }
 
-    fn note_on(&mut self, note: MidiNote, velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, velocity: Velocity) {
         self.current_note = Some(note);
-        self.current_velocity = NormalizedValue::new(velocity);
+        self.current_velocity = NormalizedValue::new(velocity.as_f32());
         self.position = PlaybackPosition::new(self.start_frame() as f64);
         self.direction = PlaybackDirection::Forward;
         self.playback_state = PlaybackState::Playing;
@@ -689,7 +689,7 @@ mod tests {
         let sample = create_test_sample();
         player.load_sample(sample);
 
-        player.note_on(MidiNote::C4, 1.0);
+        player.note_on(MidiNote::C4, Velocity::MAX);
         assert!(player.playback_state.is_playing());
     }
 
@@ -699,7 +699,7 @@ mod tests {
         let sample = create_test_sample();
         player.load_sample(sample);
 
-        player.note_on(MidiNote::C4, 1.0);
+        player.note_on(MidiNote::C4, Velocity::MAX);
         player.note_off();
 
         // Should stop since loop mode is Off and release mode is Immediate

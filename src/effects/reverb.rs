@@ -8,7 +8,7 @@
 
 use crate::engine::typed_params::{ModuleType, Param, ReverbParam};
 use crate::modules::core::*;
-use crate::types::{FilterState, NormalizedValue, SampleRate, Seconds, StereoSample};
+use crate::types::{FilterState, NormalizedValue, SampleCount, SampleRate, Seconds, StereoSample};
 
 /// Comb filter for reverb.
 struct CombFilter {
@@ -301,7 +301,7 @@ impl AudioEffect for Reverb {
 
         // Process assuming interleaved stereo
         let channels = 2;
-        for frame in 0..context.samples {
+        for frame in 0..context.samples.as_usize() {
             let idx_l = frame * channels;
             let idx_r = frame * channels + 1;
 
@@ -381,17 +381,17 @@ impl AudioEffect for Reverb {
         self.pre_delay_index = 0;
     }
 
-    fn set_mix(&mut self, mix: f32) {
-        self.mix = NormalizedValue::new(mix);
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
     }
 
-    fn get_mix(&self) -> f32 {
-        self.mix.as_f32()
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
     }
 
-    fn tail_samples(&self) -> usize {
+    fn tail_samples(&self) -> SampleCount {
         let decay_time = 1.0 + self.room_size.as_f32() * 4.0;
-        (decay_time * self.sample_rate.as_f32()) as usize
+        SampleCount::new((decay_time * self.sample_rate.as_f32()) as usize)
     }
 
     fn set_param(&mut self, param: Param) {
@@ -456,7 +456,7 @@ mod tests {
 
         let context = ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
-            samples: 256,
+            samples: SampleCount::new(256),
             ..Default::default()
         };
 

@@ -6,7 +6,7 @@
 //! - Glide/portamento support
 
 use crate::engine::voice::{Voice, VoiceState};
-use crate::types::{Cents, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds};
+use crate::types::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity};
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,7 @@ pub struct VoiceAllocator {
     /// All available voices.
     voices: Vec<Voice>,
     /// Currently held notes (for legato/mono) - (note, velocity).
-    held_notes: Vec<(MidiNote, NormalizedValue)>,
+    held_notes: Vec<(MidiNote, Velocity)>,
     /// Current time counter (type-safe sample position).
     time: SamplePosition,
     /// Last played note (for glide).
@@ -203,15 +203,15 @@ impl VoiceAllocator {
     /// Accepts f32 velocity for backward compatibility (converted internally).
     pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
         // Track held notes with type-safe velocity
-        let velocity_norm = NormalizedValue::new(velocity);
+        let velocity_typed = Velocity::new(velocity);
         self.held_notes.retain(|(n, _)| *n != note);
-        self.held_notes.push((note, velocity_norm));
+        self.held_notes.push((note, velocity_typed));
 
         match self.config.mode {
-            AllocationMode::Polyphonic => self.allocate_poly(note, velocity_norm),
-            AllocationMode::Mono => self.allocate_mono(note, velocity_norm, true),
-            AllocationMode::Legato => self.allocate_mono(note, velocity_norm, false),
-            AllocationMode::Unison => self.allocate_unison(note, velocity_norm),
+            AllocationMode::Polyphonic => self.allocate_poly(note, velocity_typed),
+            AllocationMode::Mono => self.allocate_mono(note, velocity_typed, true),
+            AllocationMode::Legato => self.allocate_mono(note, velocity_typed, false),
+            AllocationMode::Unison => self.allocate_unison(note, velocity_typed),
         }
     }
 
@@ -293,7 +293,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for polyphonic mode.
-    fn allocate_poly(&mut self, note: MidiNote, velocity: NormalizedValue) -> Option<u32> {
+    fn allocate_poly(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
         // First, try to find an idle voice
         if let Some(voice) = self.voices.iter_mut().find(|v| v.is_available()) {
             voice.note_on(note, velocity, self.time);
@@ -329,7 +329,7 @@ impl VoiceAllocator {
     fn allocate_mono(
         &mut self,
         note: MidiNote,
-        velocity: NormalizedValue,
+        velocity: Velocity,
         retrigger: bool,
     ) -> Option<u32> {
         // Find active voice index or use first
@@ -357,7 +357,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate all voices for unison mode.
-    fn allocate_unison(&mut self, note: MidiNote, velocity: NormalizedValue) -> Option<u32> {
+    fn allocate_unison(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
         let num_voices = self.voices.len();
         let detune_per_voice = self.config.unison_detune / num_voices as f32;
 
@@ -442,7 +442,7 @@ impl VoiceAllocator {
     }
 
     /// Get the priority note based on configuration.
-    fn get_priority_note(&self) -> Option<&(MidiNote, NormalizedValue)> {
+    fn get_priority_note(&self) -> Option<&(MidiNote, Velocity)> {
         if self.held_notes.is_empty() {
             return None;
         }

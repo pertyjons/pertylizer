@@ -201,9 +201,9 @@ impl PolyModule for NoiseGenerator {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             self.output_buffer[i] = self.generate_sample();
         }
 
@@ -253,7 +253,7 @@ impl PolyModule for NoiseGenerator {
         self.violet_prev.fill(FilterState::ZERO);
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
         // Reset state on note for consistent attack
         self.reset();
     }

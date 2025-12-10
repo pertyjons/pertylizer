@@ -1,5 +1,43 @@
 # Version History
 
+## [0.38.0] - 2025
+### Added - Typsäkra Newtypes i Core Traits
+
+Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med newtype-mönstret.
+
+- **Nya typer (`src/types/`):**
+  - `BeatPosition` - Position i beats (musikalisk tid, f64)
+    - Metoder: `bar()`, `beat_in_bar()`, `to_seconds()`, `quantize()`, `advance_samples()`
+    - Konstant: `ZERO`
+  - `Velocity` - MIDI velocity (0.0-1.0)
+    - Metoder: `from_midi()`, `to_midi()`, `curve()`, `scale()`, `lerp()`
+    - Konstanter: `ZERO`, `MAX`, `DEFAULT`, `PIANO`, `FORTE`
+  - `MidiChannel` - MIDI-kanal (1-16)
+    - Metoder: `as_u8()`, `as_index()`
+    - Konstanter: `CH1`, `DRUMS`
+
+- **Uppdaterad `ProcessContext`:**
+  - `samples: usize` → `samples: SampleCount`
+  - `position_beats: f64` → `position_beats: BeatPosition`
+
+- **Uppdaterad `PolyModule` trait:**
+  - `note_on(_note: MidiNote, _velocity: f32)` → `note_on(_note: MidiNote, _velocity: Velocity)`
+  - `set_sample_rate(_sample_rate: f32)` → `set_sample_rate(_sample_rate: SampleRate)`
+
+- **Uppdaterad `AudioEffect` trait:**
+  - `set_mix(mix: f32)` → `set_mix(mix: NormalizedValue)`
+  - `get_mix() -> f32` → `get_mix() -> NormalizedValue`
+  - `tail_samples() -> usize` → `tail_samples() -> SampleCount`
+  - `set_sample_rate(_sample_rate: f32)` → `set_sample_rate(_sample_rate: SampleRate)`
+
+### Changed
+- Alla 8 effekter uppdaterade med typsäkra signaturer
+- Alla moduler som implementerar `PolyModule` uppdaterade
+- `VoiceState`, `VoiceAllocator`, `Voice` använder nu `Velocity`
+- Engine-filer använder typsäkra typer genomgående
+
+---
+
 ## [0.37.0] - 2025
 ### Added - ValueRange Typ för Parameterhantering
 

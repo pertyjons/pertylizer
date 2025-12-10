@@ -133,9 +133,9 @@ impl PolyModule for SubOscillator {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples);
+        self.output_buffer.resize(context.samples.as_usize());
 
-        for i in 0..context.samples {
+        for i in 0..context.samples.as_usize() {
             self.output_buffer[i] = self.generate_sample();
         }
 
@@ -182,7 +182,7 @@ impl PolyModule for SubOscillator {
         self.phase = Phase::ZERO;
     }
 
-    fn note_on(&mut self, note: MidiNote, _velocity: f32) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.base_frequency = note.to_frequency();
         // Reset phase on note for consistent attack
         self.phase = Phase::ZERO;
