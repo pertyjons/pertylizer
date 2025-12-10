@@ -41,7 +41,9 @@
       "Bash(timeout 3 cargo run:*)",
       "Bash(echo:*)",
       "Bash(perl:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "WebSearch",
+      "WebFetch(domain:www.audionodes.com)"
     ],
     "deny": [],
     "ask": []

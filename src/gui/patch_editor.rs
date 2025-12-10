@@ -480,23 +480,27 @@ impl PatchEditor {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Power/bypass button (rightmost)
-                        let power_color = if is_bypassed {
-                            theme().colors.text_dim
+                        let t = theme();
+                        let button_min_size = Vec2::new(20.0, 20.0);
+
+                        // Power/bypass button (rightmost) - filled/hollow circle
+                        let (power_icon, power_color) = if is_bypassed {
+                            ("○", t.colors.text_dim) // Hollow = off
                         } else {
-                            theme().colors.accent_green
+                            ("●", t.colors.accent_green) // Filled = on
                         };
                         let power_tooltip = if is_bypassed {
-                            "Module is bypassed (click to activate)"
+                            "🔇 Bypassed\nModule output is muted.\nClick to activate."
                         } else {
-                            "Module is active (click to bypass)"
+                            "🔊 Active\nModule is processing audio.\nClick to bypass."
                         };
                         if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new("⏻").color(power_color).size(14.0),
+                                    egui::RichText::new(power_icon).color(power_color).size(14.0),
                                 )
-                                .frame(false),
+                                .frame(false)
+                                .min_size(button_min_size),
                             )
                             .on_hover_text(power_tooltip)
                             .clicked()
@@ -506,53 +510,61 @@ impl PatchEditor {
                             result.bypass_toggles.push((module_id, new_bypass_state));
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
 
-                        // Connectivity status indicator
-                        match connectivity_status {
-                            ModuleConnectivity::Connected => {
-                                ui.label(
-                                    egui::RichText::new("●")
-                                        .small()
-                                        .color(Color32::from_rgb(100, 200, 100)),
-                                )
-                                .on_hover_text("Connected to output");
-                            }
-                            ModuleConnectivity::Orphaned => {
-                                ui.label(
-                                    egui::RichText::new("○")
-                                        .small()
-                                        .color(Color32::from_rgb(200, 200, 100)),
-                                )
-                                .on_hover_text("Has connections but not routed to output");
-                            }
-                            ModuleConnectivity::Disconnected => {
-                                ui.label(
-                                    egui::RichText::new("○")
-                                        .small()
-                                        .color(Color32::from_rgb(100, 100, 100)),
-                                )
-                                .on_hover_text("No connections");
-                            }
-                        }
+                        // Connectivity status indicator - diamond shapes
+                        let (conn_icon, conn_color, conn_tooltip) = match connectivity_status {
+                            ModuleConnectivity::Connected => (
+                                "◆",
+                                Color32::from_rgb(100, 200, 100),
+                                "🔗 Routed to Output\nAudio from this module reaches the output.",
+                            ),
+                            ModuleConnectivity::Orphaned => (
+                                "◇",
+                                Color32::from_rgb(200, 200, 100),
+                                "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                            ),
+                            ModuleConnectivity::Disconnected => (
+                                "◇",
+                                Color32::from_rgb(100, 100, 100),
+                                "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                            ),
+                        };
+                        ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(conn_icon).color(conn_color).size(12.0),
+                            )
+                            .frame(false)
+                            .min_size(button_min_size),
+                        )
+                        .on_hover_text(conn_tooltip);
 
-                        // Source indicator (no inputs)
+                        // Source indicator (no inputs) - small arrow
                         if is_source {
-                            ui.label(
-                                egui::RichText::new("▶")
-                                    .small()
-                                    .color(Color32::from_rgb(100, 200, 100)),
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("▸")
+                                        .color(Color32::from_rgb(100, 200, 100))
+                                        .size(10.0),
+                                )
+                                .frame(false)
+                                .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text("Source: No incoming connections");
+                            .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
                         }
-                        // Sink indicator (no outputs)
+
+                        // Sink indicator (no outputs) - small square
                         if is_sink {
-                            ui.label(
-                                egui::RichText::new("■")
-                                    .small()
-                                    .color(Color32::from_rgb(200, 100, 100)),
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("◼")
+                                        .color(Color32::from_rgb(200, 100, 100))
+                                        .size(10.0),
+                                )
+                                .frame(false)
+                                .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text("Sink: No outgoing connections");
+                            .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
                         }
                     });
                 });
@@ -690,78 +702,98 @@ impl PatchEditor {
     ) {
         use crate::modules::core::PortDirection as CorePortDirection;
 
+        let input_ports: Vec<_> = descriptor
+            .ports
+            .iter()
+            .filter(|p| p.direction == CorePortDirection::Input)
+            .collect();
+
+        let output_ports: Vec<_> = descriptor
+            .ports
+            .iter()
+            .filter(|p| p.direction == CorePortDirection::Output)
+            .collect();
+
+        let available_width = ui.available_width();
+        let t = theme();
+        let port_label_size = 9.0; // Smaller labels
+
         ui.horizontal(|ui| {
-            // Input ports
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("IN")
-                        .size(theme().fonts.size_small)
-                        .color(theme().colors.text_dim),
-                );
-                for port in descriptor
-                    .ports
-                    .iter()
-                    .filter(|p| p.direction == CorePortDirection::Input)
-                {
-                    let port_type = convert_port_type(port.port_type);
-                    let is_connected = connected_ports.contains(&port.name);
-
-                    ui.horizontal(|ui| {
-                        let (response, center) =
-                            super::widgets::Port::new(port_type, PortDirection::Input)
-                                .connected(is_connected)
-                                .show(ui);
-
-                        // Store port position (screen coordinates)
-                        self.port_positions.insert(
-                            (module_id, port.name.clone()),
-                            PortPosition {
-                                module_id,
-                                port_name: port.name.clone(),
-                                position: center,
-                                port_type,
-                                direction: PortDirection::Input,
-                            },
-                        );
-
-                        ui.label(
-                            egui::RichText::new(&port.label)
-                                .size(theme().fonts.size_small)
-                                .color(theme().colors.text_secondary),
-                        );
-
-                        if response.hovered() && !port.description.is_empty() {
-                            response.on_hover_text(&port.description);
-                        }
-                    });
-                }
-            });
-
-            ui.add_space(20.0);
-
-            // Output ports
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            // Input ports - left aligned
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                 ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new("OUT")
-                            .size(theme().fonts.size_small)
-                            .color(theme().colors.text_dim),
-                    );
-                    for port in descriptor
-                        .ports
-                        .iter()
-                        .filter(|p| p.direction == CorePortDirection::Output)
-                    {
+                    if !input_ports.is_empty() {
+                        ui.label(
+                            egui::RichText::new("IN")
+                                .size(port_label_size)
+                                .color(t.colors.text_dim),
+                        );
+                    }
+                    for port in &input_ports {
                         let port_type = convert_port_type(port.port_type);
                         let is_connected = connected_ports.contains(&port.name);
 
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(&port.label)
-                                    .size(theme().fonts.size_small)
-                                    .color(theme().colors.text_secondary),
+                            let (response, center) =
+                                super::widgets::Port::new(port_type, PortDirection::Input)
+                                    .connected(is_connected)
+                                    .show(ui);
+
+                            // Store port position (screen coordinates)
+                            self.port_positions.insert(
+                                (module_id, port.name.clone()),
+                                PortPosition {
+                                    module_id,
+                                    port_name: port.name.clone(),
+                                    position: center,
+                                    port_type,
+                                    direction: PortDirection::Input,
+                                },
                             );
 
+                            // Show label on hover for compact view, or always if space allows
+                            let label_response = ui.label(
+                                egui::RichText::new(&port.label)
+                                    .size(port_label_size)
+                                    .color(t.colors.text_secondary),
+                            );
+
+                            // Tooltip with full description
+                            if response.hovered() || label_response.hovered() {
+                                let tooltip = if port.description.is_empty() {
+                                    port.label.clone()
+                                } else {
+                                    format!("{}: {}", port.label, port.description)
+                                };
+                                response.on_hover_text(&tooltip);
+                            }
+                        });
+                    }
+                });
+            });
+
+            // Flexible space in the middle
+            let used_width = 80.0; // Approximate width for ports
+            let middle_space = (available_width - used_width * 2.0).max(10.0);
+            ui.add_space(middle_space);
+
+            // Output ports - right aligned
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.vertical(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if !output_ports.is_empty() {
+                            ui.label(
+                                egui::RichText::new("OUT")
+                                    .size(port_label_size)
+                                    .color(t.colors.text_dim),
+                            );
+                        }
+                    });
+                    for port in &output_ports {
+                        let port_type = convert_port_type(port.port_type);
+                        let is_connected = connected_ports.contains(&port.name);
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             let (response, center) =
                                 super::widgets::Port::new(port_type, PortDirection::Output)
                                     .connected(is_connected)
@@ -778,8 +810,20 @@ impl PatchEditor {
                                 },
                             );
 
-                            if response.hovered() && !port.description.is_empty() {
-                                response.on_hover_text(&port.description);
+                            let label_response = ui.label(
+                                egui::RichText::new(&port.label)
+                                    .size(port_label_size)
+                                    .color(t.colors.text_secondary),
+                            );
+
+                            // Tooltip with full description
+                            if response.hovered() || label_response.hovered() {
+                                let tooltip = if port.description.is_empty() {
+                                    port.label.clone()
+                                } else {
+                                    format!("{}: {}", port.label, port.description)
+                                };
+                                response.on_hover_text(&tooltip);
                             }
                         });
                     }
@@ -1240,7 +1284,7 @@ fn draw_module_panel_params(
     accent_color: Color32,
     vis_buffer: Option<&crate::visualizers::VisualizationBuffer>,
 ) -> PanelParamsResult {
-    use super::widgets::{Knob, WaveformSelector};
+    use super::widgets::{EnvelopeEditor, Knob, WaveformSelector};
     use crate::modules::core::WidgetHint;
 
     let mut param_changes = Vec::new();
@@ -1252,7 +1296,90 @@ fn draw_module_panel_params(
         return PanelParamsResult { param_changes };
     }
 
-    // Group parameters by widget hint
+    // Special handling for Envelope modules - use interactive EnvelopeEditor
+    if descriptor.category == ModuleCategory::Envelope {
+        // Get current ADSR values
+        let mut attack = state.param_values.get("Attack").copied().unwrap_or(0.01);
+        let mut decay = state.param_values.get("Decay").copied().unwrap_or(0.1);
+        let mut sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
+        let mut release = state.param_values.get("Release").copied().unwrap_or(0.3);
+
+        // Draw the interactive envelope editor
+        ui.add_space(4.0);
+        let width = ui.available_width().clamp(150.0, 250.0);
+        let height = (width * 0.5).clamp(80.0, 120.0);
+
+        if let Some(changes) =
+            EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
+                .accent_color(accent_color)
+                .size(width, height)
+                .max_time(10.0)
+                .show(ui)
+        {
+            // Find parameter descriptors and push changes
+            for param in &descriptor.parameters {
+                if param.name == "Attack" && changes.attack.is_some() {
+                    state.param_values.insert("Attack".to_string(), attack);
+                    param_changes.push(param.id.with_f32(attack));
+                }
+                if param.name == "Decay" && changes.decay.is_some() {
+                    state.param_values.insert("Decay".to_string(), decay);
+                    param_changes.push(param.id.with_f32(decay));
+                }
+                if param.name == "Sustain" && changes.sustain.is_some() {
+                    state.param_values.insert("Sustain".to_string(), sustain);
+                    param_changes.push(param.id.with_f32(sustain));
+                }
+                if param.name == "Release" && changes.release.is_some() {
+                    state.param_values.insert("Release".to_string(), release);
+                    param_changes.push(param.id.with_f32(release));
+                }
+            }
+        }
+
+        ui.add_space(4.0);
+
+        // Only show knob parameters for Envelope (Vel Sens, curves etc)
+        let knob_params: Vec<_> = descriptor
+            .parameters
+            .iter()
+            .filter(|p| matches!(p.widget_hint, WidgetHint::Knob))
+            .collect();
+
+        if !knob_params.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                for param in &knob_params {
+                    ui.vertical(|ui| {
+                        let current = state
+                            .param_values
+                            .get(&param.name)
+                            .copied()
+                            .unwrap_or(param.default);
+                        let mut value = current;
+
+                        Knob::new(&mut value, param.min, param.max)
+                            .default(param.default)
+                            .response_curve(param.response_curve)
+                            .unit(param.unit)
+                            .label(&param.name)
+                            .size(theme().sizes.knob_size)
+                            .accent_color(accent_color)
+                            .show(ui);
+
+                        if (value - current).abs() > f32::EPSILON {
+                            state.param_values.insert(param.name.clone(), value);
+                            param_changes.push(param.id.with_f32(value));
+                        }
+                    });
+                }
+            });
+        }
+
+        return PanelParamsResult { param_changes };
+    }
+
+    // Group parameters by widget hint (non-Envelope modules)
     let waveform_params: Vec<_> = descriptor
         .parameters
         .iter()
@@ -1326,7 +1453,7 @@ fn draw_module_panel_params(
         }
     }
 
-    // Draw sliders (for ADSR etc)
+    // Draw sliders (non-Envelope modules only)
     for param in &slider_params {
         let current = state
             .param_values
@@ -1363,20 +1490,6 @@ fn draw_module_panel_params(
                 param_changes.push(param.id.with_f32(value));
             }
         });
-    }
-
-    // Draw ADSR visualization if this is an Envelope module
-    if descriptor.category == ModuleCategory::Envelope {
-        let attack = state.param_values.get("Attack").copied().unwrap_or(0.01);
-        let decay = state.param_values.get("Decay").copied().unwrap_or(0.1);
-        let sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
-        let release = state.param_values.get("Release").copied().unwrap_or(0.3);
-
-        ui.add_space(4.0);
-        // Use available width for ADSR curve
-        let width = ui.available_width().clamp(100.0, 200.0);
-        let height = (width * 0.4).clamp(40.0, 80.0);
-        super::widgets::draw_adsr_curve(ui, attack, decay, sustain, release, width, height);
     }
 
     // Draw dropdowns (for non-waveform choices)

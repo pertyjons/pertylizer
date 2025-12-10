@@ -1,5 +1,44 @@
 # Version History
 
+## [0.36.0] - 2025
+### Added - ADSR Envelope Editor & Kompakta Knobs
+
+- **Interaktiv EnvelopeEditor (`src/gui/widgets/envelope.rs`):**
+  - Draggbara kontrollpunkter för Attack, Decay, Sustain, Release
+  - Grid-bakgrund (5x5 linjer) för visuell referens
+  - Tooltips visar värden vid hover/drag (ms/s för tid, % för sustain)
+  - Total ljudtid (Σ A+D+R) visas i övre högra hörnet
+  - Dynamisk skalning anpassar sig efter faktiska värden
+  - Glow-effekt runt aktiva kontrollpunkter
+
+- **Kompakta Knobs (`src/gui/widgets/knob.rs`):**
+  - Storlek minskad: 72px → 36px (default), 56px → 28px (small), 88px → 48px (large)
+  - Värde visas nu som tooltip istället för text i mitten
+  - Borttagen yttre ram för kompaktare utseende
+  - Arc-bredd och indikator skalas med knob-storlek
+
+- **Återanvändbar Tooltip-modul (`src/gui/widgets/tooltip.rs`):**
+  - `draw_value_tooltip()` - generell tooltip på valfri position
+  - `draw_tooltip_right_of()` - för knobs (höger om cirkeln)
+  - `draw_tooltip_above()` - för envelope-punkter
+  - Ritas på `Order::Tooltip`-lagret för att alltid visas överst
+
+- **Förbättrad Port-layout (`src/gui/patch_editor.rs`):**
+  - Inputs vänsterställda, outputs högerställda med flexibelt mellanrum
+  - Mindre labels (9px) för kompaktare vy
+  - Tooltips med fullständig beskrivning vid hover
+
+- **Förbättrade Topbar-knappar:**
+  - Power: `●`/`○` med grön/grå färg och detaljerad hover-text
+  - Connectivity: `◆`/`◇` med färgkodning och förklaringar
+  - Större klickyta (20x20px) för bättre användbarhet
+
+### Changed
+- ADSR-moduler använder nu EnvelopeEditor istället för sliders
+- Endast knob-parametrar (Vel Sens, kurvor) visas under envelope-editorn
+
+---
+
 ## [0.35.0] - 2025
 ### Added - Tracker View (FastTracker II-inspirerad sequencer)
 - **Ny TrackerViewState (`src/sequencer/view/state.rs`):**

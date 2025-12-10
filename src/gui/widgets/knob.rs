@@ -28,7 +28,7 @@ impl<'a> Knob<'a> {
             response_curve: ResponseCurve::Linear,
             unit: ParameterUnit::None,
             label: String::new(),
-            size: 80.0,
+            size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
         }
     }
@@ -42,7 +42,7 @@ impl<'a> Knob<'a> {
             response_curve: descriptor.response_curve,
             unit: descriptor.unit,
             label: descriptor.name.clone(),
-            size: 80.0,
+            size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
         }
     }
@@ -84,26 +84,19 @@ impl<'a> Knob<'a> {
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let t = theme();
-        let padding = 6.0;
+        let padding = 2.0;
         let label_height = if self.label.is_empty() {
             0.0
         } else {
-            t.sizes.knob_label_height
+            12.0 // Compact label height
         };
 
-        // Total widget size includes padding and label
+        // Total widget size - minimal padding
         let widget_width = self.size + padding * 2.0;
         let widget_height = self.size + label_height + padding * 2.0;
         let desired_size = Vec2::new(widget_width, widget_height);
 
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
-
-        // The knob circle area is centered in the top portion
-        let knob_size = self.size - padding;
-        let knob_rect = egui::Rect::from_center_size(
-            Pos2::new(rect.center().x, rect.top() + padding + knob_size / 2.0),
-            Vec2::splat(knob_size),
-        );
 
         if response.double_clicked() {
             *self.value = self.default;
@@ -123,22 +116,20 @@ impl<'a> Knob<'a> {
 
         let painter = ui.painter();
 
-        // Draw frame around entire widget
-        painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
-        painter.rect_stroke(
-            rect,
-            t.style.corner_radius,
-            Stroke::new(t.style.border_width, t.colors.bg_widget),
-            egui::StrokeKind::Inside,
+        // The knob circle area
+        let knob_size = self.size;
+        let knob_rect = egui::Rect::from_center_size(
+            Pos2::new(rect.center().x, rect.top() + padding + knob_size / 2.0),
+            Vec2::splat(knob_size),
         );
 
-        // Draw knob circle
+        // Draw knob circle - no outer frame for compactness
         let center = knob_rect.center();
-        let radius = knob_rect.width() / 2.0 - 2.0;
+        let radius = knob_size / 2.0 - 1.0;
 
         // Background circle
         painter.circle_filled(center, radius, t.colors.bg_widget);
-        painter.circle_stroke(center, radius, Stroke::new(1.5, t.colors.bg_panel));
+        painter.circle_stroke(center, radius, Stroke::new(1.0, t.colors.bg_panel));
 
         // Value arc
         let normalized = self
@@ -148,8 +139,9 @@ impl<'a> Knob<'a> {
         let end_angle = std::f32::consts::PI * 2.25;
         let value_angle = start_angle + normalized * (end_angle - start_angle);
 
-        // Draw arc segments
-        let segments = t.style.knob_arc_segments;
+        // Draw arc - scaled for smaller knob
+        let arc_width = (self.size / 20.0).max(2.0);
+        let segments = 24;
         let value_segments = ((normalized * segments as f32) as usize).min(segments);
 
         for i in 0..value_segments {
@@ -158,45 +150,41 @@ impl<'a> Knob<'a> {
             let a0 = start_angle + t0 * (end_angle - start_angle);
             let a1 = start_angle + t1 * (end_angle - start_angle);
 
-            let inner_radius = radius - 5.0;
+            let inner_radius = radius - arc_width - 1.0;
             let p0 = center + Vec2::new(a0.cos(), a0.sin()) * inner_radius;
             let p1 = center + Vec2::new(a1.cos(), a1.sin()) * inner_radius;
 
-            painter.line_segment(
-                [p0, p1],
-                Stroke::new(t.style.knob_arc_width, self.accent_color),
-            );
+            painter.line_segment([p0, p1], Stroke::new(arc_width, self.accent_color));
         }
 
-        // Indicator dot at the edge
-        let indicator_radius = radius - 8.0;
+        // Indicator dot at the edge - scaled
+        let indicator_size = (self.size / 16.0).max(2.0);
+        let indicator_radius = radius - arc_width - indicator_size - 1.0;
         let indicator_pos =
             center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
-        painter.circle_filled(
-            indicator_pos,
-            t.style.knob_indicator_size,
-            t.colors.text_primary,
-        );
+        painter.circle_filled(indicator_pos, indicator_size, t.colors.text_primary);
 
-        // Value text in center of knob
-        let value_text = self.format_value();
-        painter.text(
-            center,
-            egui::Align2::CENTER_CENTER,
-            &value_text,
-            t.fonts.small(),
-            t.colors.text_primary,
-        );
-
-        // Label below knob circle, inside frame
+        // Label below knob
         if !self.label.is_empty() {
-            let label_pos = Pos2::new(rect.center().x, knob_rect.bottom() + 4.0);
+            let label_pos = Pos2::new(rect.center().x, knob_rect.bottom() + 1.0);
             painter.text(
                 label_pos,
                 egui::Align2::CENTER_TOP,
                 &self.label,
-                t.fonts.small(),
+                egui::FontId::proportional(9.0),
                 t.colors.text_secondary,
+            );
+        }
+
+        // Show tooltip with value on hover or when dragging
+        if response.hovered() || response.dragged() {
+            let value_text = self.format_value();
+            super::tooltip::draw_tooltip_right_of(
+                ui,
+                center,
+                radius,
+                &value_text,
+                self.accent_color,
             );
         }
 
