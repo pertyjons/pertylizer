@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::engine::ModuleTypeId;
 use crate::engine::typed_params::{ModuleType as TypedModuleType, Param};
-use crate::types::{Bpm, MidiNote, SampleRate};
+use crate::types::{Bpm, MidiNote, SampleRate, ValueRange};
 
 // ============================================================================
 // Buffer types
@@ -251,8 +251,11 @@ pub enum ResponseCurve {
 
 impl ResponseCurve {
     /// Convert a normalized value (0.0-1.0) to the actual value range.
-    pub fn denormalize(&self, normalized: f32, min: f32, max: f32) -> f32 {
+    #[must_use]
+    pub fn denormalize(&self, normalized: f32, range: ValueRange) -> f32 {
         let n = normalized.clamp(0.0, 1.0);
+        let min = range.min;
+        let max = range.max;
         match self {
             Self::Linear => min + n * (max - min),
             Self::Logarithmic => {
@@ -282,7 +285,10 @@ impl ResponseCurve {
     }
 
     /// Convert an actual value to normalized (0.0-1.0).
-    pub fn normalize(&self, value: f32, min: f32, max: f32) -> f32 {
+    #[must_use]
+    pub fn normalize(&self, value: f32, range: ValueRange) -> f32 {
+        let min = range.min;
+        let max = range.max;
         if (max - min).abs() < f32::EPSILON {
             return 0.0;
         }
@@ -417,12 +423,8 @@ pub struct ParameterDescriptor {
     pub name: String,
     /// Description for tooltips.
     pub description: String,
-    /// Minimum value.
-    pub min: f32,
-    /// Maximum value.
-    pub max: f32,
-    /// Default value.
-    pub default: f32,
+    /// Value range (min, max, default).
+    pub range: ValueRange,
     /// Unit type.
     pub unit: ParameterUnit,
     /// Widget hint for UI.
@@ -443,9 +445,7 @@ impl ParameterDescriptor {
             id,
             name: name.into(),
             description: String::new(),
-            min: 0.0,
-            max: 1.0,
-            default: 0.5,
+            range: ValueRange::UNIT,
             unit: ParameterUnit::None,
             widget_hint: WidgetHint::Knob,
             response_curve: ResponseCurve::Linear,
@@ -462,9 +462,7 @@ impl ParameterDescriptor {
             id,
             name: name.into(),
             description: String::new(),
-            min: 0.0,
-            max,
-            default: 0.0,
+            range: ValueRange::new(0.0, max, 0.0),
             unit: ParameterUnit::None,
             widget_hint: WidgetHint::Dropdown,
             response_curve: ResponseCurve::Linear,
@@ -474,86 +472,74 @@ impl ParameterDescriptor {
     }
 
     // Builder methods
+    #[must_use]
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = desc.into();
         self
     }
 
+    /// Set the value range (min, max, default).
+    #[must_use]
+    pub fn value_range(mut self, range: ValueRange) -> Self {
+        self.range = range;
+        self
+    }
+
+    /// Set min and max, keeping current default (clamped if needed).
+    #[must_use]
     pub fn range(mut self, min: f32, max: f32) -> Self {
-        self.min = min;
-        self.max = max;
+        let default = self.range.default.clamp(min, max);
+        self.range = ValueRange::new(min, max, default);
         self
     }
 
+    /// Set the default value (within current min/max).
+    #[must_use]
     pub fn default(mut self, value: f32) -> Self {
-        self.default = value;
+        self.range = self
+            .range
+            .with_default(value.clamp(self.range.min, self.range.max));
         self
     }
 
+    #[must_use]
     pub fn unit(mut self, unit: ParameterUnit) -> Self {
         self.unit = unit;
         self
     }
 
+    #[must_use]
     pub fn widget(mut self, hint: WidgetHint) -> Self {
         self.widget_hint = hint;
         self
     }
 
+    #[must_use]
     pub fn curve(mut self, curve: ResponseCurve) -> Self {
         self.response_curve = curve;
         self
     }
 
+    #[must_use]
     pub fn modulatable(mut self, can_modulate: bool) -> Self {
         self.modulatable = can_modulate;
         self
     }
 
     /// Map a normalized value (0-1) to the parameter range.
+    #[must_use]
     pub fn denormalize(&self, normalized: f32) -> f32 {
-        let n = normalized.clamp(0.0, 1.0);
-        match self.response_curve {
-            ResponseCurve::Linear => self.min + n * (self.max - self.min),
-            ResponseCurve::Logarithmic => {
-                let min_log = self.min.max(0.001).ln();
-                let max_log = self.max.ln();
-                (min_log + n * (max_log - min_log)).exp()
-            }
-            ResponseCurve::Exponential => self.min + (n * n) * (self.max - self.min),
-            ResponseCurve::SCurve => {
-                let s = n * n * (3.0 - 2.0 * n);
-                self.min + s * (self.max - self.min)
-            }
-            ResponseCurve::Squared => self.min + n.sqrt() * (self.max - self.min),
-        }
+        self.response_curve.denormalize(normalized, self.range)
     }
 
     /// Map a value to normalized (0-1).
+    #[must_use]
     pub fn normalize(&self, value: f32) -> f32 {
-        let v = value.clamp(self.min, self.max);
-        match self.response_curve {
-            ResponseCurve::Linear => (v - self.min) / (self.max - self.min),
-            ResponseCurve::Logarithmic => {
-                let min_log = self.min.max(0.001).ln();
-                let max_log = self.max.ln();
-                (v.ln() - min_log) / (max_log - min_log)
-            }
-            ResponseCurve::Exponential => ((v - self.min) / (self.max - self.min)).sqrt(),
-            ResponseCurve::SCurve => {
-                // Approximate inverse
-                let n = (v - self.min) / (self.max - self.min);
-                // Newton-Raphson would be better, but this is close enough
-                n.sqrt()
-            }
-            ResponseCurve::Squared => {
-                let n = (v - self.min) / (self.max - self.min);
-                n * n
-            }
-        }
+        self.response_curve.normalize(value, self.range)
     }
 
     /// Format a value for display.
+    #[must_use]
     pub fn format(&self, value: f32) -> String {
         if let Some(ref choices) = self.choices {
             let idx = value.round() as usize;
@@ -563,6 +549,28 @@ impl ParameterDescriptor {
         }
 
         self.unit.format(value)
+    }
+
+    // Convenience accessors for backwards compatibility
+    /// Get the minimum value.
+    #[inline]
+    #[must_use]
+    pub fn min(&self) -> f32 {
+        self.range.min
+    }
+
+    /// Get the maximum value.
+    #[inline]
+    #[must_use]
+    pub fn max(&self) -> f32 {
+        self.range.max
+    }
+
+    /// Get the default value.
+    #[inline]
+    #[must_use]
+    pub fn default_value(&self) -> f32 {
+        self.range.default
     }
 }
 

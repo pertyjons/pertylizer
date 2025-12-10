@@ -300,16 +300,12 @@ fn draw_knob_param(
             .param_values
             .get(&param.name)
             .copied()
-            .unwrap_or(param.default);
+            .unwrap_or(param.range.default);
 
         let mut value = current_value;
         let size = 48.0;
 
-        Knob::new(&mut value, param.min, param.max)
-            .default(param.default)
-            .response_curve(param.response_curve)
-            .unit(param.unit)
-            .label(&param.name)
+        Knob::from_descriptor(&mut value, param)
             .size(size)
             .accent_color(accent_color)
             .show(ui);
@@ -333,7 +329,7 @@ fn draw_slider_param(
         .param_values
         .get(&param.name)
         .copied()
-        .unwrap_or(param.default);
+        .unwrap_or(param.range.default);
 
     let mut value = current_value;
 
@@ -344,7 +340,7 @@ fn draw_slider_param(
                 .color(theme().colors.text_secondary),
         );
 
-        let slider = egui::Slider::new(&mut value, param.min..=param.max)
+        let slider = egui::Slider::new(&mut value, param.range.min..=param.range.max)
             .show_value(true)
             .custom_formatter(|v, _| param.format(v as f32));
 
@@ -368,7 +364,7 @@ fn draw_dropdown_param(
             .param_values
             .get(&param.name)
             .copied()
-            .unwrap_or(param.default);
+            .unwrap_or(param.range.default);
 
         let mut selected = current_value.round() as usize;
 
@@ -413,7 +409,7 @@ fn draw_toggle_param(
         .param_values
         .get(&param.name)
         .copied()
-        .unwrap_or(param.default);
+        .unwrap_or(param.range.default);
 
     let mut checked = current_value > 0.5;
 

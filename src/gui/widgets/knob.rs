@@ -4,13 +4,12 @@ use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 use crate::modules::core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
+use crate::types::ValueRange;
 
 /// A rotary knob widget.
 pub struct Knob<'a> {
     value: &'a mut f32,
-    min: f32,
-    max: f32,
-    default: f32,
+    range: ValueRange,
     response_curve: ResponseCurve,
     unit: ParameterUnit,
     label: String,
@@ -22,9 +21,7 @@ impl<'a> Knob<'a> {
     pub fn new(value: &'a mut f32, min: f32, max: f32) -> Self {
         Self {
             value,
-            min,
-            max,
-            default: (min + max) / 2.0,
+            range: ValueRange::symmetric(min, max),
             response_curve: ResponseCurve::Linear,
             unit: ParameterUnit::None,
             label: String::new(),
@@ -36,9 +33,7 @@ impl<'a> Knob<'a> {
     pub fn from_descriptor(value: &'a mut f32, descriptor: &ParameterDescriptor) -> Self {
         Self {
             value,
-            min: descriptor.min,
-            max: descriptor.max,
-            default: descriptor.default,
+            range: descriptor.range,
             response_curve: descriptor.response_curve,
             unit: descriptor.unit,
             label: descriptor.name.clone(),
@@ -47,6 +42,7 @@ impl<'a> Knob<'a> {
         }
     }
 
+    #[must_use]
     pub fn unit(mut self, unit: ParameterUnit) -> Self {
         self.unit = unit;
         self
@@ -57,26 +53,31 @@ impl<'a> Knob<'a> {
         self.unit.format(*self.value)
     }
 
+    #[must_use]
     pub fn default(mut self, default: f32) -> Self {
-        self.default = default;
+        self.range = self.range.with_default(default);
         self
     }
 
+    #[must_use]
     pub fn response_curve(mut self, curve: ResponseCurve) -> Self {
         self.response_curve = curve;
         self
     }
 
+    #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
         self
     }
 
+    #[must_use]
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
         self
     }
 
+    #[must_use]
     pub fn accent_color(mut self, color: Color32) -> Self {
         self.accent_color = color;
         self
@@ -99,19 +100,15 @@ impl<'a> Knob<'a> {
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
         if response.double_clicked() {
-            *self.value = self.default;
+            *self.value = self.range.default;
         }
 
         if response.dragged() {
             let delta = -response.drag_delta().y;
             let sensitivity = t.style.knob_sensitivity;
-            let normalized = self
-                .response_curve
-                .normalize(*self.value, self.min, self.max);
+            let normalized = self.response_curve.normalize(*self.value, self.range);
             let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
-            *self.value = self
-                .response_curve
-                .denormalize(new_normalized, self.min, self.max);
+            *self.value = self.response_curve.denormalize(new_normalized, self.range);
         }
 
         let painter = ui.painter();
@@ -132,9 +129,7 @@ impl<'a> Knob<'a> {
         painter.circle_stroke(center, radius, Stroke::new(1.0, t.colors.bg_panel));
 
         // Value arc
-        let normalized = self
-            .response_curve
-            .normalize(*self.value, self.min, self.max);
+        let normalized = self.response_curve.normalize(*self.value, self.range);
         let start_angle = std::f32::consts::PI * 0.75;
         let end_angle = std::f32::consts::PI * 2.25;
         let value_angle = start_angle + normalized * (end_angle - start_angle);

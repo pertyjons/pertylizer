@@ -110,7 +110,7 @@ impl PatchEditor {
         // Initialize parameter values from defaults
         let mut param_values = HashMap::new();
         for param in &descriptor.parameters {
-            param_values.insert(param.name.clone(), param.default);
+            param_values.insert(param.name.clone(), param.range.default);
         }
 
         let mut state = ModulePanelState::new(id, position);
@@ -127,7 +127,7 @@ impl PatchEditor {
         // Initialize parameter values from defaults
         let mut param_values = HashMap::new();
         for param in &descriptor.parameters {
-            param_values.insert(param.name.clone(), param.default);
+            param_values.insert(param.name.clone(), param.range.default);
         }
 
         let mut state = ModulePanelState::new(id, position);
@@ -1355,14 +1355,10 @@ fn draw_module_panel_params(
                             .param_values
                             .get(&param.name)
                             .copied()
-                            .unwrap_or(param.default);
+                            .unwrap_or(param.range.default);
                         let mut value = current;
 
-                        Knob::new(&mut value, param.min, param.max)
-                            .default(param.default)
-                            .response_curve(param.response_curve)
-                            .unit(param.unit)
-                            .label(&param.name)
+                        Knob::from_descriptor(&mut value, param)
                             .size(theme().sizes.knob_size)
                             .accent_color(accent_color)
                             .show(ui);
@@ -1422,7 +1418,7 @@ fn draw_module_panel_params(
                 .param_values
                 .get(&param.name)
                 .copied()
-                .unwrap_or(param.default);
+                .unwrap_or(param.range.default);
             let mut selected = current.round() as usize;
 
             ui.label(
@@ -1459,7 +1455,7 @@ fn draw_module_panel_params(
             .param_values
             .get(&param.name)
             .copied()
-            .unwrap_or(param.default);
+            .unwrap_or(param.range.default);
         let mut value = current;
 
         ui.horizontal(|ui| {
@@ -1473,14 +1469,14 @@ fn draw_module_panel_params(
             // Use logarithmic slider for time parameters
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
 
-            let slider = if is_time && param.min > 0.0 {
-                egui::Slider::new(&mut value, param.min..=param.max)
+            let slider = if is_time && param.range.min > 0.0 {
+                egui::Slider::new(&mut value, param.range.min..=param.range.max)
                     .logarithmic(true)
                     .suffix("s")
                     .min_decimals(3)
                     .max_decimals(3)
             } else {
-                egui::Slider::new(&mut value, param.min..=param.max)
+                egui::Slider::new(&mut value, param.range.min..=param.range.max)
                     .min_decimals(2)
                     .max_decimals(2)
             };
@@ -1499,7 +1495,7 @@ fn draw_module_panel_params(
                 .param_values
                 .get(&param.name)
                 .copied()
-                .unwrap_or(param.default);
+                .unwrap_or(param.range.default);
             let mut selected = current.round() as usize;
 
             ui.horizontal(|ui| {
@@ -1541,7 +1537,7 @@ fn draw_module_panel_params(
                     .param_values
                     .get(&param.name)
                     .copied()
-                    .unwrap_or(param.default);
+                    .unwrap_or(param.range.default);
                 let mut checked = current > 0.5;
                 if ui.checkbox(&mut checked, &param.name).changed() {
                     let new_val = if checked { 1.0 } else { 0.0 };
@@ -1563,14 +1559,10 @@ fn draw_module_panel_params(
                         .param_values
                         .get(&param.name)
                         .copied()
-                        .unwrap_or(param.default);
+                        .unwrap_or(param.range.default);
                     let mut value = current;
 
-                    Knob::new(&mut value, param.min, param.max)
-                        .default(param.default)
-                        .response_curve(param.response_curve)
-                        .unit(param.unit)
-                        .label(&param.name)
+                    Knob::from_descriptor(&mut value, param)
                         .size(theme().sizes.knob_size)
                         .accent_color(accent_color)
                         .show(ui);

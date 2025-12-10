@@ -213,7 +213,7 @@ impl<'a> ParameterWidget<'a> {
 
     /// Get the current value as a normalized float (0.0 - 1.0).
     pub fn normalized_value(&self) -> f32 {
-        (self.current_value - self.descriptor.min) / (self.descriptor.max - self.descriptor.min)
+        self.descriptor.range.normalize(self.current_value)
     }
 
     /// Convert a normalized value back to the parameter's actual value (as f32).
@@ -226,11 +226,9 @@ impl<'a> ParameterWidget<'a> {
             index.min(choices.len() - 1) as f32
         } else {
             // For continuous parameters, apply response curve
-            self.descriptor.response_curve.denormalize(
-                clamped,
-                self.descriptor.min,
-                self.descriptor.max,
-            )
+            self.descriptor
+                .response_curve
+                .denormalize(clamped, self.descriptor.range)
         }
     }
 
@@ -284,9 +282,10 @@ impl<'a> ParameterWidget<'a> {
         };
 
         // Format based on range
-        if self.descriptor.max - self.descriptor.min > 100.0 {
+        let span = self.descriptor.range.span();
+        if span > 100.0 {
             format!("{:.0}{}", v, unit)
-        } else if self.descriptor.max - self.descriptor.min > 10.0 {
+        } else if span > 10.0 {
             format!("{:.1}{}", v, unit)
         } else {
             format!("{:.2}{}", v, unit)

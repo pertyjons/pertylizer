@@ -1,5 +1,28 @@
 # Version History
 
+## [0.37.0] - 2025
+### Added - ValueRange Typ för Parameterhantering
+
+- **Ny `ValueRange`-typ (`src/types/range.rs`):**
+  - Kapslar in `min`, `max`, `default` i en enda typ
+  - Fördefinierade konstanter: `UNIT`, `UNIT_ZERO`, `UNIT_ONE`, `BIPOLAR`, `PERCENT`, `TOGGLE`
+  - Konstruktorer: `new()`, `symmetric()`, `from_min()`, `from_max()`
+  - Metoder: `span()`, `contains()`, `clamp()`, `normalize()`, `denormalize()`, `lerp()`
+
+- **Uppdaterad `ParameterDescriptor`:**
+  - Ersatte separata `min`, `max`, `default` fält med `range: ValueRange`
+  - Ny `value_range()` builder-metod
+  - Bakåtkompatibla accessor-metoder: `min()`, `max()`, `default_value()`
+
+- **Uppdaterad `ResponseCurve`:**
+  - `normalize()` och `denormalize()` tar nu `ValueRange` istället för separata parametrar
+
+### Changed
+- GUI widgets (`Knob`, `module_panel`, `patch_editor`) använder nu `param.range.default/min/max`
+- `ParameterWidget` i `src/ui/mod.rs` använder `range.normalize()` och `range.span()`
+
+---
+
 ## [0.36.1] - 2025
 ### Changed - Kompaktare Modulstorlekar
 
