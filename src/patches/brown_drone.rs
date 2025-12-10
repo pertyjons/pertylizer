@@ -1,6 +1,6 @@
 //! Brown Drone - Dark ambient drone using brown noise.
 
-use crate::patch::{ModuleBuilder, ModuleType, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
 
 /// Brown Drone - Ambient drone showcasing the colored noise generator.
 pub fn patch_brown_drone() -> Patch {
@@ -46,7 +46,7 @@ sound design, and meditation soundscapes.
 
     // Brown Noise Generator (nse-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Noise)
+        ModuleBuilder::new(1, PatchModuleType::Noise)
             .position(50.0, 50.0)
             .param_choice("type", "brown") // Dark, rumbling noise
             .param_f("level", 0.9)
@@ -55,7 +55,7 @@ sound design, and meditation soundscapes.
 
     // Filter - Lowpass with resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Filter)
+        ModuleBuilder::new(1, PatchModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
@@ -65,7 +65,7 @@ sound design, and meditation soundscapes.
 
     // Slow LFO for filter movement (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Lfo)
+        ModuleBuilder::new(1, PatchModuleType::Lfo)
             .position(50.0, 300.0)
             .waveform("sine")
             .param_f("rate", 0.08)
@@ -75,7 +75,7 @@ sound design, and meditation soundscapes.
 
     // Amp Envelope - Slow attack for drones (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 1.5)
             .param_f("decay", 0.5)
@@ -89,7 +89,7 @@ sound design, and meditation soundscapes.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
+        ModuleBuilder::new(1, PatchModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -97,7 +97,7 @@ sound design, and meditation soundscapes.
 
     // Reverb - Large space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Reverb)
+        ModuleBuilder::new(1, PatchModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.3)
@@ -107,7 +107,7 @@ sound design, and meditation soundscapes.
 
     // Oscilloscope (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -116,7 +116,7 @@ sound design, and meditation soundscapes.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
+        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master", 0.75)
             .build(),

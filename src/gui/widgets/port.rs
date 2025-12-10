@@ -5,32 +5,36 @@ use eframe::egui::{Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 use crate::gui::theme::theme;
 
 /// A port widget for connections.
-pub struct Port {
-    port_type: PortType,
+pub struct PortWidget {
+    port_type: WidgetPortType,
     #[allow(dead_code)] // Semantic field for future connection logic
-    direction: PortDirection,
+    direction: WidgetPortDirection,
     connected: bool,
     label: String,
 }
 
-/// Port type enum (mirrors the one in modules::core).
+/// Port type for widget rendering.
+///
+/// For signal routing definitions, see `modules::core::PortType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortType {
+pub enum WidgetPortType {
     Audio,
     Control,
     Gate,
     Midi,
 }
 
-/// Port direction enum.
+/// Port direction for widget rendering.
+///
+/// For signal routing definitions, see `modules::core::PortDirection`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortDirection {
+pub enum WidgetPortDirection {
     Input,
     Output,
 }
 
-impl Port {
-    pub fn new(port_type: PortType, direction: PortDirection) -> Self {
+impl PortWidget {
+    pub fn new(port_type: WidgetPortType, direction: WidgetPortDirection) -> Self {
         Self {
             port_type,
             direction,
@@ -52,10 +56,10 @@ impl Port {
     pub fn color(&self) -> Color32 {
         let colors = &theme().colors;
         match self.port_type {
-            PortType::Audio => colors.port_audio,
-            PortType::Control => colors.port_control,
-            PortType::Gate => colors.port_gate,
-            PortType::Midi => colors.port_midi,
+            WidgetPortType::Audio => colors.port_audio,
+            WidgetPortType::Control => colors.port_control,
+            WidgetPortType::Gate => colors.port_gate,
+            WidgetPortType::Midi => colors.port_midi,
         }
     }
 

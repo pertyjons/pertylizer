@@ -1,5 +1,40 @@
 # Version History
 
+## [0.39.0] - 2025
+### Changed - Eliminera Duplicerade Typnamn
+
+Alla strukturer och typer med samma namn i olika moduler har bytt namn till unika, beskrivande namn.
+
+- **DSP-typer:**
+  - `dsp::FilterType` → `SvfFilterType` (SVF = State Variable Filter)
+
+- **Sequencer-typer:**
+  - `sequencer::InstrumentId` → `SeqInstrumentId` (+ type alias för bakåtkompatibilitet)
+  - `sequencer::InstrumentParam` → `AutoInstrumentParam` (automation-relaterad)
+
+- **Engine shared state:**
+  - `shared_state::MeterState` → `SharedMeterState` (trådsäker version)
+  - `shared_state::TransportState` → `SharedTransportState` (trådsäker version)
+
+- **Patch-serialisering:**
+  - `patch::ModuleType` → `PatchModuleType`
+  - `params::to_module_type()` → `to_patch_module_type()`
+
+- **GUI widgets:**
+  - `widgets::Port` → `PortWidget`
+  - `widgets::PortType` → `WidgetPortType`
+  - `widgets::PortDirection` → `WidgetPortDirection`
+  - `patch_editor::VisualizerType` → `PaletteVisualizerType`
+
+- **SampleRate:**
+  - Behålls som två typer: `audio::SampleRate(u32)` för hårdvara, `types::SampleRate(f32)` för DSP
+  - `From`-implementationer finns för konvertering mellan dem
+
+### Why
+Eliminerar förvirring vid import och gör det tydligt vilken typ som avses i varje kontext.
+
+---
+
 ## [0.38.0] - 2025
 ### Added - Typsäkra Newtypes i Core Traits
 

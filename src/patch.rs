@@ -63,7 +63,7 @@ pub struct ModuleState {
     pub id: String,
     /// Module type (oscillator, filter, envelope, etc.).
     #[serde(rename = "type")]
-    pub module_type: ModuleType,
+    pub module_type: PatchModuleType,
     /// Position in the rack view.
     pub position: (f32, f32),
     /// Parameter values.
@@ -71,10 +71,13 @@ pub struct ModuleState {
     pub parameters: HashMap<String, ParamValue>,
 }
 
-/// Module types that can be saved/loaded.
+/// Module types for patch file serialization.
+///
+/// This is a subset of module types used for save/load.
+/// For the complete runtime module type enum, see `engine::params::ModuleType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ModuleType {
+pub enum PatchModuleType {
     Oscillator,
     MathOscillator,
     SubOscillator,
@@ -98,7 +101,7 @@ pub enum ModuleType {
     MechanicalNoise,
 }
 
-impl ModuleType {
+impl PatchModuleType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Oscillator => "oscillator",
@@ -290,8 +293,8 @@ pub struct ModuleBuilder {
 
 impl ModuleBuilder {
     /// Create a new module with auto-generated ID based on type and instance number.
-    /// Example: ModuleBuilder::new(1, ModuleType::Oscillator) creates ID "osc-1"
-    pub fn new(instance: u16, module_type: ModuleType) -> Self {
+    /// Example: ModuleBuilder::new(1, PatchModuleType::Oscillator) creates ID "osc-1"
+    pub fn new(instance: u16, module_type: PatchModuleType) -> Self {
         let id = format!("{}-{}", module_type.prefix(), instance);
         Self {
             state: ModuleState {

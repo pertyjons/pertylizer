@@ -24,12 +24,15 @@ impl TrackId {
     }
 }
 
-/// Unique identifier for an instrument.
+/// Unique identifier for an instrument in the sequencer.
+///
+/// This is a compact u16 ID used for pattern data storage.
+/// For engine-level instrument identification, see `engine::instrument::InstrumentId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct InstrumentId(pub u16);
+pub struct SeqInstrumentId(pub u16);
 
-impl InstrumentId {
-    /// Create a new instrument ID.
+impl SeqInstrumentId {
+    /// Create a new sequencer instrument ID.
     pub fn new(id: u16) -> Self {
         Self(id)
     }

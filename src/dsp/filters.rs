@@ -5,9 +5,11 @@
 
 use crate::types::{Hertz, SampleRate};
 
-/// Filter type enumeration for coefficient calculation.
+/// SVF filter type enumeration for coefficient calculation.
+///
+/// Used with `SvfCoeffs::process()` to select output type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FilterType {
+pub enum SvfFilterType {
     #[default]
     Lowpass,
     Highpass,
@@ -75,7 +77,7 @@ impl SvfCoeffs {
         input: f32,
         ic1eq: &mut f32,
         ic2eq: &mut f32,
-        filter_type: FilterType,
+        filter_type: SvfFilterType,
     ) -> f32 {
         let v3 = input - *ic2eq;
         let v1 = self.a1 * *ic1eq + self.a2 * v3;
@@ -85,20 +87,20 @@ impl SvfCoeffs {
         *ic2eq = 2.0 * v2 - *ic2eq;
 
         match filter_type {
-            FilterType::Lowpass => v2,
-            FilterType::Highpass => input - self.k * v1 - v2,
-            FilterType::Bandpass => v1,
-            FilterType::Notch => input - self.k * v1,
-            FilterType::Peak => {
+            SvfFilterType::Lowpass => v2,
+            SvfFilterType::Highpass => input - self.k * v1 - v2,
+            SvfFilterType::Bandpass => v1,
+            SvfFilterType::Notch => input - self.k * v1,
+            SvfFilterType::Peak => {
                 let lp = v2;
                 let hp = input - self.k * v1 - v2;
                 lp - hp
             }
-            FilterType::LowShelf => {
+            SvfFilterType::LowShelf => {
                 let lp = v2;
                 input * 0.5 + lp * 0.5
             }
-            FilterType::HighShelf => {
+            SvfFilterType::HighShelf => {
                 let hp = input - self.k * v1 - v2;
                 input * 0.5 + hp * 0.5
             }
@@ -231,7 +233,7 @@ mod tests {
         let mut ic2eq = 0.0;
 
         for _ in 0..100 {
-            let output = coeffs.process(0.5, &mut ic1eq, &mut ic2eq, FilterType::Lowpass);
+            let output = coeffs.process(0.5, &mut ic1eq, &mut ic2eq, SvfFilterType::Lowpass);
             assert!(output.is_finite());
         }
     }

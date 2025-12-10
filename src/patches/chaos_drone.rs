@@ -1,6 +1,6 @@
 //! Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 
-use crate::patch::{ModuleBuilder, ModuleType, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
 
 /// Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 pub fn patch_chaos_drone() -> Patch {
@@ -42,7 +42,7 @@ different due to the chaotic nature of the algorithm.
 
     // Math Oscillator - Lorenz chaos (mth-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::MathOscillator)
+        ModuleBuilder::new(1, PatchModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("lorenz")
             .param_f("param_a", 0.5)
@@ -54,7 +54,7 @@ different due to the chaotic nature of the algorithm.
 
     // Filter - Smooth out harsh chaos (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Filter)
+        ModuleBuilder::new(1, PatchModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 2000.0)
@@ -64,7 +64,7 @@ different due to the chaotic nature of the algorithm.
 
     // Amp Envelope - Long pad envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 2.0)
             .param_f("decay", 0.5)
@@ -75,7 +75,7 @@ different due to the chaotic nature of the algorithm.
 
     // LFO - Modulate chaos speed (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Lfo)
+        ModuleBuilder::new(1, PatchModuleType::Lfo)
             .position(250.0, 300.0)
             .waveform("sine")
             .param_f("rate", 0.05)
@@ -85,7 +85,7 @@ different due to the chaotic nature of the algorithm.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
+        ModuleBuilder::new(1, PatchModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -93,7 +93,7 @@ different due to the chaotic nature of the algorithm.
 
     // Reverb - Spacious (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Reverb)
+        ModuleBuilder::new(1, PatchModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.3)
@@ -103,7 +103,7 @@ different due to the chaotic nature of the algorithm.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -112,7 +112,7 @@ different due to the chaotic nature of the algorithm.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
+        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master", 0.7)
             .build(),

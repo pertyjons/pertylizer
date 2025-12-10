@@ -17,8 +17,8 @@ use crate::modules::core::{ModuleCategory, ModuleDescriptor};
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    PortDirection, PortType, cable_color, draw_cable, draw_cable_dragging, draw_cable_highlighted,
-    point_near_cable,
+    WidgetPortDirection, WidgetPortType, cable_color, draw_cable, draw_cable_dragging,
+    draw_cable_highlighted, point_near_cable,
 };
 
 /// Module connectivity status for visualization.
@@ -40,8 +40,8 @@ pub struct PendingConnection {
     pub from_module: ModuleId,
     pub from_port: String,
     pub from_position: Pos2,
-    pub from_type: PortType,
-    pub from_direction: PortDirection,
+    pub from_type: WidgetPortType,
+    pub from_direction: WidgetPortDirection,
     /// Current mouse position.
     pub current_pos: Pos2,
 }
@@ -734,10 +734,12 @@ impl PatchEditor {
                         let is_connected = connected_ports.contains(&port.name);
 
                         ui.horizontal(|ui| {
-                            let (response, center) =
-                                super::widgets::Port::new(port_type, PortDirection::Input)
-                                    .connected(is_connected)
-                                    .show(ui);
+                            let (response, center) = super::widgets::PortWidget::new(
+                                port_type,
+                                WidgetPortDirection::Input,
+                            )
+                            .connected(is_connected)
+                            .show(ui);
 
                             // Store port position (screen coordinates)
                             self.port_positions.insert(
@@ -747,7 +749,7 @@ impl PatchEditor {
                                     port_name: port.name.clone(),
                                     position: center,
                                     port_type,
-                                    direction: PortDirection::Input,
+                                    direction: WidgetPortDirection::Input,
                                 },
                             );
 
@@ -794,10 +796,12 @@ impl PatchEditor {
                         let is_connected = connected_ports.contains(&port.name);
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            let (response, center) =
-                                super::widgets::Port::new(port_type, PortDirection::Output)
-                                    .connected(is_connected)
-                                    .show(ui);
+                            let (response, center) = super::widgets::PortWidget::new(
+                                port_type,
+                                WidgetPortDirection::Output,
+                            )
+                            .connected(is_connected)
+                            .show(ui);
 
                             self.port_positions.insert(
                                 (module_id, port.name.clone()),
@@ -806,7 +810,7 @@ impl PatchEditor {
                                     port_name: port.name.clone(),
                                     position: center,
                                     port_type,
-                                    direction: PortDirection::Output,
+                                    direction: WidgetPortDirection::Output,
                                 },
                             );
 
@@ -942,21 +946,22 @@ impl PatchEditor {
                     if let Some(ref pending) = self.pending_connection {
                         // Complete connection
                         if self.can_connect(pending, port_pos) {
-                            let connection = if pending.from_direction == PortDirection::Output {
-                                Connection::new(
-                                    pending.from_module,
-                                    pending.from_port.clone(),
-                                    *module_id,
-                                    port_name.clone(),
-                                )
-                            } else {
-                                Connection::new(
-                                    *module_id,
-                                    port_name.clone(),
-                                    pending.from_module,
-                                    pending.from_port.clone(),
-                                )
-                            };
+                            let connection =
+                                if pending.from_direction == WidgetPortDirection::Output {
+                                    Connection::new(
+                                        pending.from_module,
+                                        pending.from_port.clone(),
+                                        *module_id,
+                                        port_name.clone(),
+                                    )
+                                } else {
+                                    Connection::new(
+                                        *module_id,
+                                        port_name.clone(),
+                                        pending.from_module,
+                                        pending.from_port.clone(),
+                                    )
+                                };
                             result.connections_to_add.push(connection);
                         }
                         self.pending_connection = None;
@@ -1585,9 +1590,11 @@ pub struct ModulePalette;
 // Re-export EffectType from commands for GUI use
 pub use crate::engine::commands::EffectType;
 
-/// Visualizer type for the add module submenu.
+/// Visualizer type for the add module submenu (palette selection).
+///
+/// For engine command types, see `engine::commands::VisualizerType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisualizerType {
+pub enum PaletteVisualizerType {
     Oscilloscope,
     LevelMeter,
 }
@@ -1600,7 +1607,7 @@ pub enum PaletteSelection {
     SubOscillator,
     Noise,
     Effect(EffectType),
-    Visualizer(VisualizerType),
+    Visualizer(PaletteVisualizerType),
     StereoOutput,
     // Physical modeling
     KeyboardPanner,
@@ -1703,11 +1710,15 @@ impl ModulePalette {
                 egui::RichText::new("📊 Visualizer").color(viz_color),
                 |ui| {
                     if ui.button("📈 Oscilloscope").clicked() {
-                        selected = Some(PaletteSelection::Visualizer(VisualizerType::Oscilloscope));
+                        selected = Some(PaletteSelection::Visualizer(
+                            PaletteVisualizerType::Oscilloscope,
+                        ));
                         ui.close();
                     }
                     if ui.button("📊 Level Meter").clicked() {
-                        selected = Some(PaletteSelection::Visualizer(VisualizerType::LevelMeter));
+                        selected = Some(PaletteSelection::Visualizer(
+                            PaletteVisualizerType::LevelMeter,
+                        ));
                         ui.close();
                     }
                 },
@@ -1747,11 +1758,11 @@ impl ModulePalette {
 }
 
 /// Convert from core PortType to widget PortType.
-fn convert_port_type(port_type: crate::modules::core::PortType) -> PortType {
+fn convert_port_type(port_type: crate::modules::core::PortType) -> WidgetPortType {
     match port_type {
-        crate::modules::core::PortType::Audio => PortType::Audio,
-        crate::modules::core::PortType::Control => PortType::Control,
-        crate::modules::core::PortType::Gate => PortType::Gate,
-        crate::modules::core::PortType::Midi => PortType::Midi,
+        crate::modules::core::PortType::Audio => WidgetPortType::Audio,
+        crate::modules::core::PortType::Control => WidgetPortType::Control,
+        crate::modules::core::PortType::Gate => WidgetPortType::Gate,
+        crate::modules::core::PortType::Midi => WidgetPortType::Midi,
     }
 }

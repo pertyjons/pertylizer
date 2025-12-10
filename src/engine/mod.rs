@@ -103,8 +103,8 @@ pub use event_priority::{
 };
 pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
 pub use shared_state::{
-    AtomicF32, ConnectionSnapshot, MeterState, ModuleStateSnapshot, SharedEngineState,
-    SharedGraphState, TransportState,
+    AtomicF32, ConnectionSnapshot, ModuleStateSnapshot, SharedEngineState, SharedGraphState,
+    SharedMeterState, SharedTransportState,
 };
 pub use transactions::{
     BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,

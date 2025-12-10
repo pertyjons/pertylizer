@@ -3,7 +3,7 @@
 //! Provides a unified interface for all input sources (MIDI, keyboard, GUI, etc.).
 
 use super::effects::EffectCommand;
-use super::ids::{InstrumentId, NoteId, PatternId};
+use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick, Tick};
 
@@ -15,7 +15,7 @@ pub enum InputCommand {
     NoteOn {
         pitch: Pitch,
         velocity: Velocity,
-        instrument: Option<InstrumentId>,
+        instrument: Option<SeqInstrumentId>,
     },
     /// Note off.
     NoteOff { pitch: Pitch },
@@ -345,7 +345,7 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key press (note on).
-    pub fn key_down(&mut self, note_offset: u8, instrument: Option<InstrumentId>) {
+    pub fn key_down(&mut self, note_offset: u8, instrument: Option<SeqInstrumentId>) {
         let midi_note = (self.base_octave + 1) as u8 * 12 + note_offset;
         if let Some(pitch) = Pitch::new(midi_note) {
             self.push_command(InputCommand::NoteOn {

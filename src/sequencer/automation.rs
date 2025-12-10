@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{InstrumentId, TrackId};
+use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
 
 /// A single automation point.
@@ -166,8 +166,8 @@ impl AutomationLane {
 pub enum AutomationTarget {
     /// Instrument parameter.
     Instrument {
-        instrument: InstrumentId,
-        param: InstrumentParam,
+        instrument: SeqInstrumentId,
+        param: AutoInstrumentParam,
     },
     /// Track parameter.
     Track { track: TrackId, param: TrackParam },
@@ -175,9 +175,12 @@ pub enum AutomationTarget {
     Global(GlobalParam),
 }
 
-/// Automatable instrument parameters.
+/// Automatable instrument parameters for sequencer automation lanes.
+///
+/// These are parameter identifiers (no values) used in automation.
+/// For engine commands with values, see `engine::commands::InstrumentParam`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum InstrumentParam {
+pub enum AutoInstrumentParam {
     Volume,
     Pan,
     FilterCutoff,

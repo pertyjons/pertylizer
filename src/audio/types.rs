@@ -4,7 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
-/// Sample rate in Hz.
+/// Sample rate in Hz for audio backend configuration.
+///
+/// This type uses `u32` to match hardware API conventions.
+/// For DSP calculations, use `crate::types::SampleRate` (f32) which
+/// provides methods like `nyquist()`, `period()`, and `samples_for()`.
+///
+/// Conversions between the two types are provided via `From` impls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SampleRate(pub u32);
 
@@ -45,6 +51,18 @@ impl Default for SampleRate {
 impl From<u32> for SampleRate {
     fn from(value: u32) -> Self {
         Self(value)
+    }
+}
+
+impl From<crate::types::SampleRate> for SampleRate {
+    fn from(rate: crate::types::SampleRate) -> Self {
+        Self(rate.as_f32() as u32)
+    }
+}
+
+impl From<SampleRate> for crate::types::SampleRate {
+    fn from(rate: SampleRate) -> Self {
+        Self::new(rate.0 as f32)
     }
 }
 

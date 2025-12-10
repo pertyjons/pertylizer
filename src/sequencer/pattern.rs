@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
-use super::ids::{InstrumentId, NoteId, PatternId};
+use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
@@ -149,7 +149,7 @@ impl Pattern {
         start: PatternTick,
         pitch: Pitch,
         velocity: Velocity,
-        instrument: InstrumentId,
+        instrument: SeqInstrumentId,
     ) -> NoteId {
         let id = self.next_id();
         let note = Note::new(id, start, pitch, velocity, instrument);
@@ -340,7 +340,7 @@ impl Pattern {
         range_start: super::time::Tick,
         range_end: super::time::Tick,
         transpose: Semitones,
-        instrument_override: Option<InstrumentId>,
+        instrument_override: Option<SeqInstrumentId>,
     ) -> Vec<super::events::SequencerEvent> {
         use super::events::SequencerEvent;
         use super::time::Tick;
@@ -419,7 +419,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         assert!(pattern.note(id).is_some());
@@ -434,19 +434,19 @@ mod tests {
             PatternTick(480),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
         pattern.add_note(
             PatternTick(0),
             Pitch::new(62).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
         pattern.add_note(
             PatternTick(240),
             Pitch::new(64).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         let ticks: Vec<_> = pattern.notes().iter().map(|n| n.start.0).collect();
@@ -460,7 +460,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         assert!(pattern.remove_note(id).is_some());
@@ -474,7 +474,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         assert!(pattern.move_note(id, PatternTick(480)));
@@ -490,7 +490,7 @@ mod tests {
             PatternTick(120),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         pattern.quantize_notes();
@@ -509,7 +509,7 @@ mod tests {
             PatternTick(120),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         // 50% quantization toward 240
@@ -531,7 +531,7 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(40)); // Ends at 140, before range
         let note2 = Note::new(
@@ -539,7 +539,7 @@ mod tests {
             PatternTick(200),
             Pitch::new(62).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(40)); // Starts at 200, within range
         let note3 = Note::new(
@@ -547,7 +547,7 @@ mod tests {
             PatternTick(300),
             Pitch::new(64).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(40)); // Starts at 300, after range
 
@@ -568,13 +568,13 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
         pattern2.add_note(
             PatternTick(200),
             Pitch::new(62).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         // Notes without duration overlap with any range after their start

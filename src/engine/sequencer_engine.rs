@@ -14,7 +14,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::sequencer::{InstrumentId, Pitch, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
+use crate::sequencer::{Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
 use crate::types::{Bpm, SampleCount, SampleRate};
 
 /// Playback state of the sequencer.
@@ -34,8 +34,8 @@ pub enum PlayState {
 struct ActiveNote {
     /// The pitch being played.
     pitch: Pitch,
-    /// The instrument playing the note.
-    instrument: InstrumentId,
+    /// The sequencer instrument playing the note.
+    instrument: SeqInstrumentId,
     /// When the note should end (if duration is known).
     end_tick: Option<Tick>,
 }
@@ -383,7 +383,7 @@ impl Default for SequencerEngine {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::sequencer::{Duration, InstrumentId, PatternTick, Velocity};
+    use crate::sequencer::{Duration, PatternTick, SeqInstrumentId, Velocity};
 
     fn create_test_song() -> Song {
         let mut song = Song::new("Test").with_tempo(Bpm::new(120.0));
@@ -395,7 +395,7 @@ mod tests {
                 PatternTick(0),
                 Pitch::new(60).unwrap(),
                 Velocity::MF,
-                InstrumentId(0),
+                SeqInstrumentId(0),
             );
         }
 

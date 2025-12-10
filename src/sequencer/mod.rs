@@ -46,7 +46,7 @@
 //!     PatternTick(0),
 //!     Pitch::new(60).unwrap(), // Middle C
 //!     Velocity::MF,
-//!     InstrumentId(0),
+//!     SeqInstrumentId(0),
 //! );
 //!
 //! // Create a track and place the pattern
@@ -68,11 +68,11 @@ pub mod track;
 pub mod view;
 
 // Re-export commonly used types
+pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
-pub use automation::{GlobalParam, InstrumentParam, TrackParam};
 pub use effects::{EffectCommand, EffectWaveform};
 pub use events::{EventSorting, SequencerEvent};
-pub use ids::{InstrumentId, NoteId, PatternId, TrackId};
+pub use ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::Note;
 pub use pattern::{Pattern, RowResolution};
@@ -89,7 +89,7 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::effects::EffectCommand;
     pub use super::events::SequencerEvent;
-    pub use super::ids::{InstrumentId, NoteId, PatternId, TrackId};
+    pub use super::ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
     pub use super::input::{InputCommand, InputSource};
     pub use super::note::Note;
     pub use super::pattern::{Pattern, RowResolution};

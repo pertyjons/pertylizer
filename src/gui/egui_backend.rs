@@ -33,7 +33,7 @@ use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{
-    EffectType, ModulePalette, PaletteSelection, PatchEditor, VisualizerType,
+    EffectType, ModulePalette, PaletteSelection, PaletteVisualizerType, PatchEditor,
 };
 use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
@@ -995,13 +995,13 @@ impl SynthApp {
         });
     }
 
-    fn add_visualizer_module(&mut self, viz_type: VisualizerType) {
+    fn add_visualizer_module(&mut self, viz_type: PaletteVisualizerType) {
         let (descriptor, module_type) = match viz_type {
-            VisualizerType::Oscilloscope => (
+            PaletteVisualizerType::Oscilloscope => (
                 Oscilloscope::new().descriptor(),
                 TypedModuleType::Oscilloscope,
             ),
-            VisualizerType::LevelMeter => {
+            PaletteVisualizerType::LevelMeter => {
                 (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
             }
         };
@@ -1017,10 +1017,14 @@ impl SynthApp {
         self.handle
             .add_visualization_buffer(next_id, buffer.clone());
 
-        // Convert GUI VisualizerType to engine VisualizerType
+        // Convert GUI PaletteVisualizerType to engine VisualizerType
         let engine_viz_type = match viz_type {
-            VisualizerType::Oscilloscope => crate::engine::commands::VisualizerType::Oscilloscope,
-            VisualizerType::LevelMeter => crate::engine::commands::VisualizerType::LevelMeter,
+            PaletteVisualizerType::Oscilloscope => {
+                crate::engine::commands::VisualizerType::Oscilloscope
+            }
+            PaletteVisualizerType::LevelMeter => {
+                crate::engine::commands::VisualizerType::LevelMeter
+            }
         };
 
         // Send command to active instrument's effect chain

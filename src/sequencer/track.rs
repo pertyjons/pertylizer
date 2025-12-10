@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{InstrumentId, TrackId};
+use super::ids::{SeqInstrumentId, TrackId};
 use crate::types::NormalizedValue;
 
 /// A sequencer track in the song.
@@ -14,7 +14,7 @@ pub struct SequencerTrack {
     /// Track name.
     pub name: String,
     /// Instrument this track controls (None = MIDI out or none).
-    pub instrument: Option<InstrumentId>,
+    pub instrument: Option<SeqInstrumentId>,
     /// Volume (type-safe normalized 0.0-1.0).
     pub volume: NormalizedValue,
     /// Panning (type-safe: 0.0 = left, 0.5 = center, 1.0 = right).
@@ -43,7 +43,7 @@ impl SequencerTrack {
     }
 
     /// Set the instrument (builder pattern).
-    pub fn with_instrument(mut self, instrument: InstrumentId) -> Self {
+    pub fn with_instrument(mut self, instrument: SeqInstrumentId) -> Self {
         self.instrument = Some(instrument);
         self
     }
@@ -194,11 +194,11 @@ mod tests {
     #[test]
     fn test_track_builder() {
         let track = SequencerTrack::new(TrackId(0), "Bass")
-            .with_instrument(InstrumentId(1))
+            .with_instrument(SeqInstrumentId(1))
             .with_volume(NormalizedValue::new(0.8))
             .with_pan(NormalizedValue::new(0.3));
 
-        assert_eq!(track.instrument, Some(InstrumentId(1)));
+        assert_eq!(track.instrument, Some(SeqInstrumentId(1)));
         assert_eq!(track.volume, NormalizedValue::new(0.8));
         assert_eq!(track.pan, NormalizedValue::new(0.3));
     }

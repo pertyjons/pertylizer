@@ -1,6 +1,6 @@
 //! Karplus Guitar - Physical modeling plucked string sound.
 
-use crate::patch::{ModuleBuilder, ModuleType, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
 
 /// Karplus Guitar - Physical modeling plucked string sound.
 pub fn patch_karplus_guitar() -> Patch {
@@ -41,7 +41,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Math Oscillator - Karplus-Strong (mth-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::MathOscillator)
+        ModuleBuilder::new(1, PatchModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("karplus_strong")
             .param_f("param_a", 0.7) // Damping
@@ -53,7 +53,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.1)
@@ -64,7 +64,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
+        ModuleBuilder::new(1, PatchModuleType::Amplifier)
             .position(250.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -72,7 +72,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Chorus - Add width (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Chorus)
+        ModuleBuilder::new(1, PatchModuleType::Chorus)
             .position(450.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.2)
@@ -82,7 +82,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Reverb - Room sound (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Reverb)
+        ModuleBuilder::new(1, PatchModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.5)
             .param_f("damping", 0.4)
@@ -92,7 +92,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -101,7 +101,7 @@ guitar, higher notes like acoustic guitar or harp.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
+        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master", 0.8)
             .build(),

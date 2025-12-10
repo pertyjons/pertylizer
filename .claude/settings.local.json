@@ -43,7 +43,12 @@
       "Bash(perl:*)",
       "Bash(wc:*)",
       "WebSearch",
-      "WebFetch(domain:www.audionodes.com)"
+      "WebFetch(domain:www.audionodes.com)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(for name in \"FilterType\" \"InstrumentId\" \"InstrumentParam\" \"MeterState\" \"ModuleType\" \"Port\" \"PortDirection\" \"PortType\" \"SampleRate\" \"TransportState\" \"VisualizerType\" \"Bpm\")",
+      "Bash(do)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

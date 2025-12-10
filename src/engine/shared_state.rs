@@ -57,16 +57,18 @@ impl Clone for AtomicF32 {
     }
 }
 
-/// Thread-safe meter state.
+/// Thread-safe meter state for multi-GUI sharing.
+///
+/// For simpler single-GUI metering, see `engine::state::MeterState`.
 #[derive(Debug, Default)]
-pub struct MeterState {
+pub struct SharedMeterState {
     pub peak_left: AtomicF32,
     pub peak_right: AtomicF32,
     pub rms_left: AtomicF32,
     pub rms_right: AtomicF32,
 }
 
-impl MeterState {
+impl SharedMeterState {
     /// Create new meter state.
     pub fn new() -> Self {
         Self::default()
@@ -95,7 +97,7 @@ impl MeterState {
     }
 }
 
-impl Clone for MeterState {
+impl Clone for SharedMeterState {
     fn clone(&self) -> Self {
         Self {
             peak_left: self.peak_left.clone(),
@@ -106,9 +108,12 @@ impl Clone for MeterState {
     }
 }
 
-/// Transport state.
+/// Transport state for multi-GUI sharing with loop support.
+///
+/// This version supports play/pause/stop states and loop markers.
+/// For simpler transport, see `engine::state::TransportState`.
 #[derive(Debug)]
-pub struct TransportState {
+pub struct SharedTransportState {
     /// Whether playback is active.
     pub playing: AtomicU32, // 0 = stopped, 1 = playing, 2 = paused
     /// Current tempo in BPM.
@@ -123,7 +128,7 @@ pub struct TransportState {
     pub loop_end: AtomicU64,
 }
 
-impl TransportState {
+impl SharedTransportState {
     /// Create new transport state.
     pub fn new() -> Self {
         Self {
@@ -157,7 +162,7 @@ impl TransportState {
     }
 }
 
-impl Default for TransportState {
+impl Default for SharedTransportState {
     fn default() -> Self {
         Self::new()
     }
@@ -465,13 +470,13 @@ impl Default for SharedGraphState {
 #[derive(Debug)]
 pub struct SharedEngineState {
     /// Meter state (atomic, updated frequently).
-    pub meters: MeterState,
+    pub meters: SharedMeterState,
     /// Voice count.
     pub voice_count: AtomicU32,
     /// Overall CPU usage.
     pub cpu_usage: AtomicF32,
     /// Transport state.
-    pub transport: TransportState,
+    pub transport: SharedTransportState,
     /// Graph topology.
     pub graph: SharedGraphState,
     /// Global version counter for any state change.
@@ -482,10 +487,10 @@ impl SharedEngineState {
     /// Create new shared engine state.
     pub fn new() -> Self {
         Self {
-            meters: MeterState::new(),
+            meters: SharedMeterState::new(),
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
-            transport: TransportState::new(),
+            transport: SharedTransportState::new(),
             graph: SharedGraphState::new(),
             version: AtomicU64::new(0),
         }
@@ -543,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_meter_state() {
-        let meters = MeterState::new();
+        let meters = SharedMeterState::new();
         meters.set_peak(0.8, 0.7);
         let (l, r) = meters.get_peak();
         assert!((l - 0.8).abs() < 0.001);

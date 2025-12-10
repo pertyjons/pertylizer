@@ -6,16 +6,16 @@
 use eframe::egui::epaint::CubicBezierShape;
 use eframe::egui::{Color32, Pos2, Stroke};
 
-use super::port::PortType;
+use super::port::WidgetPortType;
 use crate::gui::theme::theme;
 
 /// Get cable color from theme based on port type.
-pub fn cable_color(port_type: PortType, alpha: u8) -> Color32 {
+pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
     let base = match port_type {
-        PortType::Audio => theme().colors.cable_audio,
-        PortType::Control => theme().colors.cable_control,
-        PortType::Gate => theme().colors.cable_gate,
-        PortType::Midi => theme().colors.port_midi,
+        WidgetPortType::Audio => theme().colors.cable_audio,
+        WidgetPortType::Control => theme().colors.cable_control,
+        WidgetPortType::Gate => theme().colors.cable_gate,
+        WidgetPortType::Midi => theme().colors.port_midi,
     };
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
 }

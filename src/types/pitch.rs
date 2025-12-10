@@ -492,17 +492,47 @@ impl Velocity {
     /// Zero velocity (note off).
     pub const ZERO: Self = Self(0.0);
 
+    /// Note off / silent (alias for ZERO).
+    pub const OFF: Self = Self(0.0);
+
     /// Maximum velocity.
     pub const MAX: Self = Self(1.0);
 
     /// Default velocity (mezzo-forte, MIDI 100).
     pub const DEFAULT: Self = Self(100.0 / 127.0);
 
-    /// Piano (soft, MIDI 64).
-    pub const PIANO: Self = Self(64.0 / 127.0);
+    // === Musical dynamics constants ===
 
-    /// Forte (loud, MIDI 112).
-    pub const FORTE: Self = Self(112.0 / 127.0);
+    /// Pianissississimo (MIDI 16).
+    pub const PPP: Self = Self(16.0 / 127.0);
+
+    /// Pianissimo (MIDI 32).
+    pub const PP: Self = Self(32.0 / 127.0);
+
+    /// Piano (soft, MIDI 48).
+    pub const P: Self = Self(48.0 / 127.0);
+
+    /// Mezzo-piano (MIDI 64).
+    pub const MP: Self = Self(64.0 / 127.0);
+
+    /// Mezzo-forte (MIDI 80).
+    pub const MF: Self = Self(80.0 / 127.0);
+
+    /// Forte (loud, MIDI 96).
+    pub const F: Self = Self(96.0 / 127.0);
+
+    /// Fortissimo (MIDI 112).
+    pub const FF: Self = Self(112.0 / 127.0);
+
+    /// Fortississimo (MIDI 127, alias for MAX).
+    pub const FFF: Self = Self(1.0);
+
+    // Legacy aliases
+    /// Piano (soft, MIDI 64) - legacy alias for MP.
+    pub const PIANO: Self = Self::MP;
+
+    /// Forte (loud, MIDI 112) - legacy alias for FF.
+    pub const FORTE: Self = Self::FF;
 
     /// Get the normalized value (0.0-1.0).
     #[inline]
@@ -543,6 +573,23 @@ impl Velocity {
     #[inline]
     pub fn is_zero(self) -> bool {
         self.0 < 0.001
+    }
+
+    /// Get the dynamics name for this velocity.
+    #[must_use]
+    pub fn dynamics_name(&self) -> &'static str {
+        let midi = self.to_midi();
+        match midi {
+            0 => "off",
+            1..=24 => "ppp",
+            25..=40 => "pp",
+            41..=56 => "p",
+            57..=72 => "mp",
+            73..=88 => "mf",
+            89..=104 => "f",
+            105..=120 => "ff",
+            _ => "fff",
+        }
     }
 }
 

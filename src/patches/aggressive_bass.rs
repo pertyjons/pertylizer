@@ -1,6 +1,6 @@
 //! Aggressive Bass - Punchy, distorted bass with filter movement.
 
-use crate::patch::{ModuleBuilder, ModuleType, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
 
 /// Aggressive Bass - Punchy, distorted bass with filter movement.
 pub fn patch_aggressive_bass() -> Patch {
@@ -42,7 +42,7 @@ style bass lines. Try different octaves for different characters.
 
     // OSC - Square wave for punch (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscillator)
+        ModuleBuilder::new(1, PatchModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("square")
             .param_f("level", 0.7) // Reduced to make room for sub
@@ -51,7 +51,7 @@ style bass lines. Try different octaves for different characters.
 
     // Sub-Oscillator for bass weight (sub-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::SubOscillator)
+        ModuleBuilder::new(1, PatchModuleType::SubOscillator)
             .position(50.0, 150.0)
             .param_choice("waveform", "sine") // Pure sine for clean sub
             .param_choice("octave", "minus1") // One octave down
@@ -61,7 +61,7 @@ style bass lines. Try different octaves for different characters.
 
     // Filter - Resonant lowpass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Filter)
+        ModuleBuilder::new(1, PatchModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
@@ -71,7 +71,7 @@ style bass lines. Try different octaves for different characters.
 
     // Amp Envelope - Punchy with curves (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.15)
@@ -85,7 +85,7 @@ style bass lines. Try different octaves for different characters.
 
     // Filter Envelope - Sweep with curves (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, ModuleType::Envelope)
+        ModuleBuilder::new(2, PatchModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.25)
@@ -99,7 +99,7 @@ style bass lines. Try different octaves for different characters.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
+        ModuleBuilder::new(1, PatchModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.8)
             .build(),
@@ -107,7 +107,7 @@ style bass lines. Try different octaves for different characters.
 
     // Distortion - Tube warmth (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Distortion)
+        ModuleBuilder::new(1, PatchModuleType::Distortion)
             .position(650.0, 50.0)
             .distortion_mode("tube")
             .param_f("drive", 0.5)
@@ -118,7 +118,7 @@ style bass lines. Try different octaves for different characters.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -127,7 +127,7 @@ style bass lines. Try different octaves for different characters.
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
+        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master", 0.8)
             .build(),

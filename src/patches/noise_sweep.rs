@@ -1,6 +1,6 @@
 //! Noise Sweep - Filter sweep effect with modulated noise.
 
-use crate::patch::{ModuleBuilder, ModuleType, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
 
 /// Noise Sweep - Filter sweep effect with modulated noise.
 pub fn patch_noise_sweep() -> Patch {
@@ -49,7 +49,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Noise Generator - Pink for natural sweep (nse-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Noise)
+        ModuleBuilder::new(1, PatchModuleType::Noise)
             .position(50.0, 50.0)
             .param_choice("type", "pink") // Pink noise for more natural sweep
             .param_f("level", 0.9)
@@ -58,7 +58,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Filter - Bandpass with high resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Filter)
+        ModuleBuilder::new(1, PatchModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("bandpass")
             .param_f("cutoff", 1500.0)
@@ -68,7 +68,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Sweep LFO (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Lfo)
+        ModuleBuilder::new(1, PatchModuleType::Lfo)
             .position(50.0, 300.0)
             .waveform("triangle")
             .param_f("rate", 0.15)
@@ -78,7 +78,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.5)
             .param_f("decay", 0.2)
@@ -89,7 +89,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
+        ModuleBuilder::new(1, PatchModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -97,7 +97,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Distortion (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Distortion)
+        ModuleBuilder::new(1, PatchModuleType::Distortion)
             .position(650.0, 50.0)
             .distortion_mode("soft_clip")
             .param_f("drive", 0.4)
@@ -107,7 +107,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Reverb (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Reverb)
+        ModuleBuilder::new(1, PatchModuleType::Reverb)
             .position(850.0, 50.0)
             .param_f("room_size", 0.7)
             .param_f("damping", 0.4)
@@ -117,7 +117,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscilloscope)
+        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
             .position(1050.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -126,7 +126,7 @@ different effect speeds. Great for transitions, buildups, and risers.
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
+        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1250.0, 50.0)
             .param_f("master", 0.8)
             .build(),

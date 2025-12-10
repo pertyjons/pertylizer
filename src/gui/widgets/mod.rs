@@ -24,7 +24,7 @@ pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::module_frame;
 pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
-pub use port::{Port, PortDirection, PortType};
+pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::draw_oscilloscope;
 pub use tooltip::{draw_tooltip_above, draw_tooltip_right_of, draw_value_tooltip};
 pub use waveform::{WaveformSelector, WaveformType};

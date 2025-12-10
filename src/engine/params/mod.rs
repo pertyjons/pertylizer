@@ -266,9 +266,9 @@ impl ModuleType {
         }
     }
 
-    /// Convert to patch::ModuleType for storage.
-    pub fn to_module_type(self) -> crate::patch::ModuleType {
-        use crate::patch::ModuleType as PM;
+    /// Convert to patch::PatchModuleType for storage.
+    pub fn to_patch_module_type(self) -> crate::patch::PatchModuleType {
+        use crate::patch::PatchModuleType as PM;
         match self {
             Self::Oscillator => PM::Oscillator,
             Self::MathOscillator => PM::MathOscillator,

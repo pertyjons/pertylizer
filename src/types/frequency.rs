@@ -282,9 +282,13 @@ impl std::fmt::Display for Hertz {
     }
 }
 
-/// Sample rate in samples per second.
+/// Sample rate in samples per second for DSP calculations.
 ///
-/// This is essentially a frequency (Hz) but semantically different.
+/// This type uses `f32` for efficient math operations in audio processing.
+/// For audio backend configuration, use `crate::audio::types::SampleRate` (u32)
+/// which matches hardware API conventions.
+///
+/// Conversions between the two types are provided via `From` impls in `audio::types`.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]

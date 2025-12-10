@@ -197,7 +197,8 @@ pub use gui::{GuiBackend, GuiType, SynthGuiConfig, create_backend, print_availab
 
 // Re-export patch system
 pub use patch::{
-    ConnectionState, ModuleState, ModuleType, Patch, PatchError, PatchSettings, example_patches,
+    ConnectionState, ModuleState, Patch, PatchError, PatchModuleType, PatchSettings,
+    example_patches,
 };
 
 // Re-export I/O
@@ -215,7 +216,6 @@ pub use sequencer::{
     EffectCommand,
     InputCommand,
     InputSource,
-    InstrumentId,
     Note,
     NoteId,
     NoteName,
@@ -225,6 +225,7 @@ pub use sequencer::{
     PatternTick,
     // Pitch/velocity
     Pitch,
+    SeqInstrumentId,
     // Events and input
     SequencerEvent,
     SequencerTrack,

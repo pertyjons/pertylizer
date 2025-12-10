@@ -3,9 +3,10 @@
 //! Structures for rendering Pattern data as tracker-style rows and columns.
 
 use crate::sequencer::effects::EffectCommand;
-use crate::sequencer::ids::InstrumentId;
+use crate::sequencer::ids::SeqInstrumentId;
 use crate::sequencer::pattern::Pattern;
-use crate::sequencer::pitch::{Pitch, Velocity};
+use crate::sequencer::pitch::Pitch;
+use crate::types::Velocity;
 
 /// Display representation of a note in the tracker.
 #[derive(Debug, Clone)]
@@ -38,7 +39,7 @@ pub struct TrackerCell {
     /// Note in this cell (if any).
     pub note: Option<TrackerNoteDisplay>,
     /// Instrument number (if any).
-    pub instrument: Option<InstrumentId>,
+    pub instrument: Option<SeqInstrumentId>,
     /// Volume (0-64 tracker style, if any).
     pub volume: Option<u8>,
     /// Effects in this cell.
@@ -52,7 +53,7 @@ impl TrackerCell {
     }
 
     /// Create a cell with a note.
-    pub fn with_note(pitch: Pitch, instrument: InstrumentId, velocity: Velocity) -> Self {
+    pub fn with_note(pitch: Pitch, instrument: SeqInstrumentId, velocity: Velocity) -> Self {
         Self {
             note: Some(TrackerNoteDisplay {
                 pitch,
@@ -354,8 +355,8 @@ mod tests {
     use super::*;
     use crate::sequencer::ids::PatternId;
     use crate::sequencer::pattern::RowResolution;
-    use crate::sequencer::pitch::Velocity;
     use crate::sequencer::time::{Duration, PatternTick};
+    use crate::types::Velocity;
 
     #[test]
     fn test_note_display_string() {
@@ -374,10 +375,11 @@ mod tests {
 
     #[test]
     fn test_tracker_cell() {
-        let cell = TrackerCell::with_note(Pitch::new(60).unwrap(), InstrumentId(1), Velocity::MF);
+        let cell =
+            TrackerCell::with_note(Pitch::new(60).unwrap(), SeqInstrumentId(1), Velocity::MF);
 
         assert!(cell.note.is_some());
-        assert_eq!(cell.instrument, Some(InstrumentId(1)));
+        assert_eq!(cell.instrument, Some(SeqInstrumentId(1)));
         assert!(!cell.is_empty());
 
         let empty = TrackerCell::default();
@@ -389,7 +391,7 @@ mod tests {
         let _config = TrackerViewConfig::default();
         let mut row = TrackerRow::new(16);
         row.columns[0] =
-            TrackerCell::with_note(Pitch::new(60).unwrap(), InstrumentId(1), Velocity::MF);
+            TrackerCell::with_note(Pitch::new(60).unwrap(), SeqInstrumentId(1), Velocity::MF);
 
         let row_num = row.format_row_number(true);
         assert_eq!(row_num, "10"); // 16 in hex
@@ -405,7 +407,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         );
 
         let config = TrackerViewConfig::default();
@@ -431,7 +433,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(960)); // 4 rows
 

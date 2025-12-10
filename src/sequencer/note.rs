@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::effects::EffectCommand;
-use super::ids::{InstrumentId, NoteId};
+use super::ids::{NoteId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
@@ -23,7 +23,7 @@ pub struct Note {
     /// Velocity/attack strength.
     pub velocity: Velocity,
     /// Instrument that plays this note.
-    pub instrument: InstrumentId,
+    pub instrument: SeqInstrumentId,
     /// Effects applied at note start.
     pub effects: Vec<EffectCommand>,
 }
@@ -35,7 +35,7 @@ impl Note {
         start: PatternTick,
         pitch: Pitch,
         velocity: Velocity,
-        instrument: InstrumentId,
+        instrument: SeqInstrumentId,
     ) -> Self {
         Self {
             id,
@@ -115,7 +115,7 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
     }
 
@@ -162,7 +162,7 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(200));
 
@@ -182,7 +182,7 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            InstrumentId(0),
+            SeqInstrumentId(0),
         )
         .with_duration(Duration(200));
 

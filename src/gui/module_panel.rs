@@ -14,7 +14,7 @@ use crate::modules::core::{
 };
 
 use super::theme::theme;
-use super::widgets::{Knob, Port, PortDirection, PortType};
+use super::widgets::{Knob, PortWidget, WidgetPortDirection, WidgetPortType};
 
 /// State for a module panel in the UI.
 #[derive(Clone)]
@@ -52,8 +52,8 @@ pub struct PortPosition {
     pub module_id: ModuleId,
     pub port_name: String,
     pub position: Pos2,
-    pub port_type: PortType,
-    pub direction: PortDirection,
+    pub port_type: WidgetPortType,
+    pub direction: WidgetPortDirection,
 }
 
 /// Result of drawing a module panel.
@@ -132,9 +132,10 @@ pub fn draw_module_panel(
                         let is_connected = connected_ports.contains(&port.name);
 
                         ui.horizontal(|ui| {
-                            let (response, center) = Port::new(port_type, PortDirection::Input)
-                                .connected(is_connected)
-                                .show(ui);
+                            let (response, center) =
+                                PortWidget::new(port_type, WidgetPortDirection::Input)
+                                    .connected(is_connected)
+                                    .show(ui);
 
                             // Convert local position to absolute
                             let abs_pos = center;
@@ -144,7 +145,7 @@ pub fn draw_module_panel(
                                 port_name: port.name.clone(),
                                 position: abs_pos,
                                 port_type,
-                                direction: PortDirection::Input,
+                                direction: WidgetPortDirection::Input,
                             });
 
                             ui.label(
@@ -187,7 +188,7 @@ pub fn draw_module_panel(
                                 );
 
                                 let (response, center) =
-                                    Port::new(port_type, PortDirection::Output)
+                                    PortWidget::new(port_type, WidgetPortDirection::Output)
                                         .connected(is_connected)
                                         .show(ui);
 
@@ -198,7 +199,7 @@ pub fn draw_module_panel(
                                     port_name: port.name.clone(),
                                     position: abs_pos,
                                     port_type,
-                                    direction: PortDirection::Output,
+                                    direction: WidgetPortDirection::Output,
                                 });
 
                                 if response.hovered() && !port.description.is_empty() {
@@ -440,11 +441,11 @@ pub fn category_color(category: ModuleCategory) -> Color32 {
 }
 
 /// Convert from core PortType to widget PortType.
-fn convert_port_type(port_type: CorePortType) -> PortType {
+fn convert_port_type(port_type: CorePortType) -> WidgetPortType {
     match port_type {
-        CorePortType::Audio => PortType::Audio,
-        CorePortType::Control => PortType::Control,
-        CorePortType::Gate => PortType::Gate,
-        CorePortType::Midi => PortType::Midi,
+        CorePortType::Audio => WidgetPortType::Audio,
+        CorePortType::Control => WidgetPortType::Control,
+        CorePortType::Gate => WidgetPortType::Gate,
+        CorePortType::Midi => WidgetPortType::Midi,
     }
 }

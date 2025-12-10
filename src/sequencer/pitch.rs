@@ -135,71 +135,8 @@ impl std::fmt::Display for NoteName {
     }
 }
 
-/// Velocity (0-127).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Velocity(u8);
-
-impl Velocity {
-    /// Note off / silent.
-    pub const OFF: Velocity = Velocity(0);
-    /// Pianissississimo.
-    pub const PPP: Velocity = Velocity(16);
-    /// Pianissimo.
-    pub const PP: Velocity = Velocity(32);
-    /// Piano.
-    pub const P: Velocity = Velocity(48);
-    /// Mezzo-piano.
-    pub const MP: Velocity = Velocity(64);
-    /// Mezzo-forte.
-    pub const MF: Velocity = Velocity(80);
-    /// Forte.
-    pub const F: Velocity = Velocity(96);
-    /// Fortissimo.
-    pub const FF: Velocity = Velocity(112);
-    /// Maximum velocity.
-    pub const MAX: Velocity = Velocity(127);
-
-    /// Create a new velocity value.
-    pub fn new(vel: u8) -> Option<Self> {
-        (vel <= 127).then_some(Self(vel))
-    }
-
-    /// Get the raw velocity value (0-127).
-    pub fn as_u8(&self) -> u8 {
-        self.0
-    }
-
-    /// Get the velocity as a normalized float (0.0-1.0).
-    pub fn as_f32(&self) -> f32 {
-        self.0 as f32 / 127.0
-    }
-
-    /// Create from a normalized float (0.0-1.0).
-    pub fn from_f32(value: f32) -> Self {
-        Velocity((value.clamp(0.0, 1.0) * 127.0) as u8)
-    }
-
-    /// Get the dynamics name.
-    pub fn dynamics_name(&self) -> &'static str {
-        match self.0 {
-            0 => "off",
-            1..=24 => "ppp",
-            25..=40 => "pp",
-            41..=56 => "p",
-            57..=72 => "mp",
-            73..=88 => "mf",
-            89..=104 => "f",
-            105..=120 => "ff",
-            _ => "fff",
-        }
-    }
-}
-
-impl Default for Velocity {
-    fn default() -> Self {
-        Self::MF
-    }
-}
+// Velocity type is now in crate::types::pitch - re-export for backwards compatibility
+pub use crate::types::Velocity;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -253,17 +190,22 @@ mod tests {
 
     #[test]
     fn test_velocity_creation() {
-        assert!(Velocity::new(64).is_some());
-        assert!(Velocity::new(128).is_none());
+        // New Velocity type uses normalized f32 (0.0-1.0)
+        let vel = Velocity::new(0.5);
+        assert!((vel.as_f32() - 0.5).abs() < 0.01);
+
+        // Values are clamped to 0.0-1.0
+        let vel_clamped = Velocity::new(2.0);
+        assert!((vel_clamped.as_f32() - 1.0).abs() < 0.01);
     }
 
     #[test]
     fn test_velocity_conversion() {
-        let vel = Velocity::new(127).unwrap();
+        let vel = Velocity::from_midi(127);
         assert!((vel.as_f32() - 1.0).abs() < 0.01);
 
-        let vel2 = Velocity::from_f32(0.5);
-        assert_eq!(vel2.as_u8(), 63);
+        let vel2 = Velocity::new(0.5);
+        assert_eq!(vel2.to_midi(), 64); // 0.5 * 127 rounded = 64
     }
 
     #[test]

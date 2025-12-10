@@ -542,9 +542,9 @@ impl EffectType {
         }
     }
 
-    /// Convert from patch::ModuleType if it's an effect.
-    pub fn from_patch_module_type(mt: crate::patch::ModuleType) -> Option<Self> {
-        use crate::patch::ModuleType as PMT;
+    /// Convert from patch::PatchModuleType if it's an effect.
+    pub fn from_patch_module_type(mt: crate::patch::PatchModuleType) -> Option<Self> {
+        use crate::patch::PatchModuleType as PMT;
         match mt {
             PMT::Chorus => Some(Self::Chorus),
             PMT::Delay => Some(Self::Delay),

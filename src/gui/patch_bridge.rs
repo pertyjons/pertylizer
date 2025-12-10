@@ -22,9 +22,7 @@ use crate::modules::{
     Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
     ModuleDescriptor, NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
 };
-use crate::patch::{
-    ConnectionState, ModuleState, ModuleType as PatchModuleType, ParamValue, Patch,
-};
+use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch, PatchModuleType};
 use crate::visualizers::{LevelMeter, Oscilloscope};
 
 /// Load a patch into a specific instrument's rack view and send commands to the engine.
