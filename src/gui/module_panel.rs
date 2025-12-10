@@ -79,9 +79,9 @@ pub fn draw_module_panel(
     let mut port_positions = Vec::new();
     let mut param_changes = Vec::new();
 
-    // Calculate panel size based on content
-    let panel_width = 180.0;
-    let min_height = 120.0;
+    // Calculate panel size based on content - kompakta storlekar
+    let panel_width = 140.0;
+    let min_height = 80.0;
 
     let frame_response = egui::Frame::new()
         .fill(theme().colors.bg_module)

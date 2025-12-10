@@ -660,16 +660,16 @@ impl Sizes {
 
             port_size: 12.0,
 
-            module_min_width: 180.0,
-            module_min_height: 100.0,
+            module_min_width: 140.0,
+            module_min_height: 80.0,
 
-            meter_width: 80.0,
-            meter_height: 100.0,
+            meter_width: 60.0,
+            meter_height: 80.0,
 
-            oscilloscope_width: 160.0,
-            oscilloscope_height: 80.0,
+            oscilloscope_width: 120.0,
+            oscilloscope_height: 60.0,
 
-            adsr_width: 140.0,
+            adsr_width: 120.0,
             adsr_height: 50.0,
 
             cable_thickness: 2.5,

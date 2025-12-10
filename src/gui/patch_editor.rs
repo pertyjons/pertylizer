@@ -100,11 +100,11 @@ impl PatchEditor {
     /// Add a module to the rack.
     pub fn add_module(&mut self, id: ModuleId, descriptor: ModuleDescriptor) {
         let position = self.next_module_pos;
-        self.next_module_pos.x += 210.0;
+        self.next_module_pos.x += 160.0; // Kompaktare avstånd
         // Wrap to next row based on typical screen width
         if self.next_module_pos.x > 1200.0 {
             self.next_module_pos.x = 50.0;
-            self.next_module_pos.y += 320.0;
+            self.next_module_pos.y += 200.0; // Kompaktare radavstånd
         }
 
         // Initialize parameter values from defaults
@@ -441,8 +441,8 @@ impl PatchEditor {
                 .open(&mut open)
                 .collapsible(true)
                 .resizable(true)
-                .min_width(180.0)
-                .min_height(100.0)
+                .min_width(140.0)
+                .min_height(80.0)
                 .frame(frame);
 
             // Use current_pos for forced repositioning, default_pos for normal operation

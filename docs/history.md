@@ -1,5 +1,22 @@
 # Version History
 
+## [0.36.1] - 2025
+### Changed - Kompaktare Modulstorlekar
+
+- **Minskade modulstorlekar för att matcha kompakta widgets:**
+  - Min bredd: 180px → 140px
+  - Min höjd: 100px → 80px
+  - Auto-layout gap: 10px → 8px
+  - Modul X-offset: 210px → 160px
+  - Modul Y-offset: 320px → 200px
+
+- **Uppdaterade visualizer-storlekar:**
+  - Meter: 80x100 → 60x80
+  - Oscilloscope: 160x80 → 120x60
+  - ADSR: 140x50 → 120x50
+
+---
+
 ## [0.36.0] - 2025
 ### Added - ADSR Envelope Editor & Kompakta Knobs
 
