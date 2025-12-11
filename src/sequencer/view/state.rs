@@ -118,6 +118,12 @@ pub struct TrackerViewState {
     pub visible_tracks: usize,
     /// First visible track index.
     pub first_visible_track: usize,
+    /// Flag set when user wants to navigate to previous pattern (cleared after handling).
+    #[serde(skip)]
+    pub navigate_pattern_prev: bool,
+    /// Flag set when user wants to navigate to next pattern (cleared after handling).
+    #[serde(skip)]
+    pub navigate_pattern_next: bool,
 }
 
 impl Default for TrackerViewState {
@@ -133,6 +139,8 @@ impl Default for TrackerViewState {
             follow_playback: true,
             visible_tracks: 4,
             first_visible_track: 0,
+            navigate_pattern_prev: false,
+            navigate_pattern_next: false,
         }
     }
 }
@@ -219,6 +227,62 @@ impl TrackerViewState {
         // Scroll up if cursor is above visible area
         if self.cursor_row.0 < self.scroll_offset.0 {
             self.scroll_offset = self.cursor_row;
+        }
+    }
+
+    /// Navigate to a pattern from a sorted list of pattern IDs.
+    /// Returns the new pattern ID if navigation occurred.
+    pub fn navigate_to_pattern(&mut self, sorted_pattern_ids: &[PatternId]) -> Option<PatternId> {
+        if sorted_pattern_ids.is_empty() {
+            return None;
+        }
+
+        // Check for pending navigation requests
+        let go_prev = self.navigate_pattern_prev;
+        let go_next = self.navigate_pattern_next;
+
+        // Reset flags
+        self.navigate_pattern_prev = false;
+        self.navigate_pattern_next = false;
+
+        if !go_prev && !go_next {
+            return None;
+        }
+
+        // Find current index in sorted list
+        let current_idx = self
+            .active_pattern
+            .and_then(|id| sorted_pattern_ids.iter().position(|&p| p == id));
+
+        let new_idx = match current_idx {
+            Some(idx) => {
+                if go_prev && idx > 0 {
+                    Some(idx - 1)
+                } else if go_next && idx + 1 < sorted_pattern_ids.len() {
+                    Some(idx + 1)
+                } else {
+                    None
+                }
+            }
+            None => {
+                // No current pattern selected - start at beginning or end
+                if go_prev {
+                    Some(sorted_pattern_ids.len() - 1)
+                } else {
+                    Some(0)
+                }
+            }
+        };
+
+        if let Some(idx) = new_idx {
+            let new_pattern = sorted_pattern_ids[idx];
+            self.active_pattern = Some(new_pattern);
+            // Reset cursor position when changing patterns
+            self.cursor_row = RowIndex(0);
+            self.scroll_offset = RowIndex(0);
+            Some(new_pattern)
+        } else {
+            None
         }
     }
 }

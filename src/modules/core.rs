@@ -805,6 +805,12 @@ pub trait PolyModule: Describable + Send {
         // Override in modules that need sample rate (oscillators, filters, etc.)
     }
 
+    /// Load a sample into this module (for sample-based modules).
+    /// Returns true if the sample was loaded, false if this module doesn't support samples.
+    fn load_sample(&mut self, _sample: std::sync::Arc<crate::types::Sample>) -> bool {
+        false
+    }
+
     /// Clone into a boxed trait object.
     fn box_clone(&self) -> Box<dyn PolyModule>;
 }

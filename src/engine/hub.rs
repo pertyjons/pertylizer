@@ -345,7 +345,8 @@ impl EngineHub {
             | EngineCommand::Stop
             | EngineCommand::Pause
             | EngineCommand::Rewind
-            | EngineCommand::SetTempo(_) => perms.can_control_transport,
+            | EngineCommand::SetTempo(_)
+            | EngineCommand::SetSong { .. } => perms.can_control_transport,
 
             // Note events - require param permission
             EngineCommand::NoteOn { .. }

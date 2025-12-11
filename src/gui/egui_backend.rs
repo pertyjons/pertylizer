@@ -17,7 +17,8 @@ use crate::audio::AudioHostTrait;
 use crate::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use crate::engine::ModuleType as TypedModuleType;
 use crate::engine::commands::PortId;
-use crate::engine::instrument::{InstrumentId, MidiChannel};
+use crate::engine::graph::Connection;
+use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::engine::params::{
     ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
     PhaserParam, ReverbParam,
@@ -41,12 +42,12 @@ use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_hori
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
 use crate::io::import;
-use crate::sequencer::Song;
 use crate::modules::{
     Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
-    NoiseGenerator, Oscillator, StereoOutput, SubOscillator,
+    NoiseGenerator, Oscillator, SamplePlayer, StereoOutput, SubOscillator,
 };
 use crate::patch::{Patch, example_patches};
+use crate::sequencer::Song;
 use crate::types::NormalizedValue;
 use crate::visualizers::{LevelMeter, Oscilloscope};
 
@@ -779,11 +780,27 @@ impl eframe::App for SynthApp {
             }
             AppView::Sequencer => {
                 // Show sequencer view with tracker state and loaded song
-                let _result = crate::gui::views::sequencer::show(
+                let result = crate::gui::views::sequencer::show(
                     ctx,
                     &mut self.tracker_state,
                     self.song.as_ref(),
                 );
+
+                // Handle transport actions
+                if let Some(action) = result.transport {
+                    use crate::gui::views::sequencer::TransportAction;
+                    match action {
+                        TransportAction::Play => {
+                            self.handle.send(EngineCommand::Play);
+                        }
+                        TransportAction::Stop => {
+                            self.handle.send(EngineCommand::Stop);
+                        }
+                        TransportAction::Rewind => {
+                            self.handle.send(EngineCommand::Rewind);
+                        }
+                    }
+                }
             }
             AppView::Mixer => {
                 crate::gui::views::mixer::show(ctx);
@@ -1500,20 +1517,196 @@ impl SynthApp {
     /// Import a song from a tracker file (MOD, XM, S3M).
     fn import_song_file(&mut self, path: &std::path::Path) {
         match import::import_song(path) {
-            Ok(imported) => {
+            Ok(mut imported) => {
+                // === Step 1: Clear existing state ===
+                // Remove ALL existing instruments from engine (including the default one)
+                for inst in &self.instruments {
+                    self.handle.send_blocking(EngineCommand::RemoveInstrument {
+                        instrument_id: inst.id,
+                    });
+                }
+                // Clear GUI state
+                self.instruments.clear();
+                self.instance_counters.clear();
+                self.handle.visualization_buffers.clear();
+
+                // === Step 2: Sync grid from notes for tracker view ===
+                // Collect pattern IDs first to avoid borrow issues
+                let pattern_ids: Vec<_> = imported.song.patterns().map(|p| p.id).collect();
+                for pattern_id in pattern_ids {
+                    if let Some(pattern) = imported.song.pattern_mut(pattern_id) {
+                        pattern.sync_grid_from_notes();
+                    }
+                }
+
+                // === Step 3: Create instruments for each sample ===
+                let sample_count = imported.samples.len();
+                if sample_count == 0 {
+                    // No samples - create a default instrument with just StereoOutput
+                    let inst_id = InstrumentId::new(self.next_instrument_id);
+                    self.next_instrument_id += 1;
+
+                    let mut ui_state = InstrumentUiState::new(inst_id, "Default");
+                    ui_state.channel = MidiChannel::CH1;
+
+                    // Add StereoOutput to patch editor
+                    let output = StereoOutput::new();
+                    let output_desc = output.descriptor();
+                    let output_id = self.next_module_id(TypedModuleType::StereoOutput);
+                    ui_state.patch_editor.add_module(output_id, output_desc);
+
+                    // Create engine instrument and send to engine
+                    let mut engine_inst = Instrument::new(inst_id, "Default");
+                    engine_inst.set_midi_channel(MidiChannel::CH1);
+                    self.handle.send_blocking(EngineCommand::AddInstrument {
+                        instrument: Box::new(engine_inst),
+                    });
+
+                    // Add StereoOutput module to engine
+                    self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                        instrument_id: Some(inst_id),
+                        id: output_id,
+                        module: Box::new(output),
+                    });
+
+                    self.instruments.push(ui_state);
+                    self.active_instrument_id = inst_id;
+                } else {
+                    // Create one instrument per sample
+                    for (idx, sample) in imported.samples.iter().enumerate() {
+                        let inst_id = InstrumentId::new(self.next_instrument_id);
+                        self.next_instrument_id += 1;
+
+                        // Use sample name or generate one
+                        let inst_name = if sample.name.0.is_empty() {
+                            format!("Sample {}", idx + 1)
+                        } else {
+                            sample.name.0.clone()
+                        };
+
+                        // Assign MIDI channel (1-16, wrap around)
+                        let channel = MidiChannel::from_one_indexed(((idx % 16) + 1) as u8)
+                            .unwrap_or(MidiChannel::CH1);
+
+                        let mut ui_state = InstrumentUiState::new(inst_id, &inst_name);
+                        ui_state.channel = channel;
+
+                        // Generate waveform overview for GUI visualization
+                        ui_state.waveform_overview =
+                            Some(crate::types::WaveformOverview::generate(sample, 200));
+
+                        // === Create SamplePlayer module ===
+                        let sample_player = SamplePlayer::new();
+                        let sample_player_desc = sample_player.descriptor();
+                        let sample_player_id = self.next_module_id(TypedModuleType::SamplePlayer);
+                        ui_state
+                            .patch_editor
+                            .add_module(sample_player_id, sample_player_desc);
+
+                        // Copy waveform overview to the module's panel state
+                        if let Some(ref waveform) = ui_state.waveform_overview {
+                            ui_state
+                                .patch_editor
+                                .set_module_waveform(sample_player_id, waveform.clone());
+                        }
+
+                        // === Create StereoOutput module ===
+                        let stereo_output = StereoOutput::new();
+                        let stereo_output_desc = stereo_output.descriptor();
+                        let stereo_output_id = self.next_module_id(TypedModuleType::StereoOutput);
+                        ui_state
+                            .patch_editor
+                            .add_module(stereo_output_id, stereo_output_desc);
+
+                        // === Create connections in GUI (SamplePlayer -> StereoOutput) ===
+                        // Left channel
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            sample_player_id,
+                            "out_l",
+                            stereo_output_id,
+                            "in_l",
+                        ));
+                        // Right channel
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            sample_player_id,
+                            "out_r",
+                            stereo_output_id,
+                            "in_r",
+                        ));
+
+                        // === Create engine instrument ===
+                        let mut engine_inst = Instrument::new(inst_id, &inst_name);
+                        engine_inst.set_midi_channel(channel);
+                        self.handle.send_blocking(EngineCommand::AddInstrument {
+                            instrument: Box::new(engine_inst),
+                        });
+
+                        // === Send modules to engine ===
+                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                            instrument_id: Some(inst_id),
+                            id: sample_player_id,
+                            module: Box::new(sample_player),
+                        });
+                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                            instrument_id: Some(inst_id),
+                            id: stereo_output_id,
+                            module: Box::new(stereo_output),
+                        });
+
+                        // === Send connections to engine ===
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(sample_player_id, "out_l"),
+                            to: PortId::new(stereo_output_id, "in_l"),
+                        });
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(sample_player_id, "out_r"),
+                            to: PortId::new(stereo_output_id, "in_r"),
+                        });
+
+                        // === Load sample into SamplePlayer ===
+                        self.handle.send_blocking(EngineCommand::LoadSample {
+                            instrument_id: Some(inst_id),
+                            module_id: sample_player_id,
+                            sample: std::sync::Arc::clone(sample),
+                        });
+
+                        self.instruments.push(ui_state);
+
+                        // Set first instrument as active
+                        if idx == 0 {
+                            self.active_instrument_id = inst_id;
+                        }
+                    }
+                }
+
+                // === Step 4: Store the song and set tempo ===
+                self.handle
+                    .send_blocking(EngineCommand::SetTempo(imported.song.default_tempo));
+
                 // Set the active pattern for the tracker view
                 let first_pattern_id = imported.song.patterns().next().map(|p| p.id);
                 self.tracker_state.active_pattern = first_pattern_id;
 
-                // Store the song
+                // === Step 5: Send song to engine for playback ===
+                // Create Arc<RwLock<Song>> and share with engine
+                let song_arc = std::sync::Arc::new(std::sync::RwLock::new(imported.song.clone()));
+                self.handle
+                    .send_blocking(EngineCommand::SetSong { song: song_arc });
+
+                // Store the song in GUI state
                 self.song = Some(imported.song);
+
+                // === Step 6: Reset transport ===
+                self.handle.send_blocking(EngineCommand::Stop);
+                self.handle.send_blocking(EngineCommand::Rewind);
 
                 // Show success status
                 let file_name = path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                let sample_count = imported.samples.len();
                 self.dialog_state.set_status(format!(
                     "Imported: {} ({} samples)",
                     file_name, sample_count
@@ -1523,8 +1716,7 @@ impl SynthApp {
                 self.active_view = AppView::Sequencer;
             }
             Err(e) => {
-                self.dialog_state
-                    .set_status(format!("Import failed: {e}"));
+                self.dialog_state.set_status(format!("Import failed: {e}"));
             }
         }
     }

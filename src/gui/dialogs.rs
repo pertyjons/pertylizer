@@ -313,8 +313,8 @@ pub fn show_import_song_dialog(
 
             ui.add_space(16.0);
             ui.horizontal(|ui| {
-                let path_valid = !path.trim().is_empty()
-                    && std::path::Path::new(path.trim()).exists();
+                let path_valid =
+                    !path.trim().is_empty() && std::path::Path::new(path.trim()).exists();
                 if ui
                     .add_enabled(path_valid, egui::Button::new("Import"))
                     .clicked()

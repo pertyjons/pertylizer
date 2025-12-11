@@ -641,6 +641,12 @@ impl PolyModule for SamplePlayer {
         }
     }
 
+    fn load_sample(&mut self, sample: std::sync::Arc<crate::types::Sample>) -> bool {
+        // Use the existing load_sample method
+        SamplePlayer::load_sample(self, sample);
+        true
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }

@@ -13,6 +13,14 @@ use crate::sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
 
+/// Transport action requested from the sequencer view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportAction {
+    Play,
+    Stop,
+    Rewind,
+}
+
 /// Result of sequencer view interaction.
 #[derive(Debug, Default)]
 pub struct SequencerResult {
@@ -20,6 +28,8 @@ pub struct SequencerResult {
     pub play_note: Option<u8>,
     /// Note to stop.
     pub stop_note: Option<u8>,
+    /// Transport action requested.
+    pub transport: Option<TransportAction>,
 }
 
 /// Show the sequencer view.
@@ -33,7 +43,7 @@ pub fn show(
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical(|ui| {
             // Toolbar
-            draw_toolbar(ui, tracker_state);
+            result.transport = draw_toolbar(ui, tracker_state);
 
             ui.add_space(4.0);
             ui.separator();
@@ -42,6 +52,14 @@ pub fn show(
             // Main content area
             match song {
                 Some(song) => {
+                    // Handle pattern navigation (if buttons were clicked)
+                    if tracker_state.navigate_pattern_prev || tracker_state.navigate_pattern_next {
+                        // Collect and sort pattern IDs
+                        let mut pattern_ids: Vec<_> = song.patterns().map(|p| p.id).collect();
+                        pattern_ids.sort_by_key(|id| id.0);
+                        tracker_state.navigate_to_pattern(&pattern_ids);
+                    }
+
                     // Handle keyboard input BEFORE drawing (to update state first)
                     handle_tracker_input(ui, tracker_state, song, &mut result);
 
@@ -60,8 +78,10 @@ pub fn show(
 }
 
 /// Draw the toolbar with controls.
-fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
+/// Returns the transport action if a button was clicked.
+fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) -> Option<TransportAction> {
     let colors = theme().colors;
+    let mut transport_action = None;
 
     ui.horizontal(|ui| {
         // Transport controls
@@ -73,6 +93,7 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
             .clicked()
         {
             state.goto_start();
+            transport_action = Some(TransportAction::Rewind);
         }
 
         if ui
@@ -80,7 +101,7 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
             .on_hover_text("Play (Space)")
             .clicked()
         {
-            // TODO: Implement play
+            transport_action = Some(TransportAction::Play);
         }
 
         if ui
@@ -88,7 +109,7 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
             .on_hover_text("Stop (Space)")
             .clicked()
         {
-            // TODO: Implement stop
+            transport_action = Some(TransportAction::Stop);
         }
 
         if ui
@@ -163,8 +184,12 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
         ui.separator();
         ui.add_space(20.0);
 
-        // Pattern selector
+        // Pattern selector with navigation
         ui.label(RichText::new("Pattern:").color(colors.text_dim));
+        if ui.button("<").on_hover_text("Previous pattern").clicked() {
+            // Navigate to previous pattern (will be handled with song context below)
+            state.navigate_pattern_prev = true;
+        }
         let pattern_text = state
             .active_pattern
             .map(|id| format!("{:02}", id.0))
@@ -175,6 +200,10 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
                 .monospace()
                 .strong(),
         );
+        if ui.button(">").on_hover_text("Next pattern").clicked() {
+            // Navigate to next pattern (will be handled with song context below)
+            state.navigate_pattern_next = true;
+        }
 
         // Cursor position display
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -192,6 +221,8 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) {
             );
         });
     });
+
+    transport_action
 }
 
 /// Handle keyboard input for tracker navigation and editing.

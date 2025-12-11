@@ -167,6 +167,13 @@ impl PatchEditor {
         ))
     }
 
+    /// Set waveform overview for a module (used for SamplePlayer visualization).
+    pub fn set_module_waveform(&mut self, id: ModuleId, waveform: crate::types::WaveformOverview) {
+        if let Some(panel) = self.panels.get_mut(&id) {
+            panel.waveform_overview = Some(waveform);
+        }
+    }
+
     /// Remove a module from the rack.
     pub fn remove_module(&mut self, id: ModuleId) {
         self.panels.remove(&id);
@@ -1299,6 +1306,24 @@ fn draw_module_panel_params(
         draw_visualizer_display(ui, state, descriptor, vis_buffer, &mut param_changes);
         // Skip regular parameter drawing for visualizers - the display is the main UI
         return PanelParamsResult { param_changes };
+    }
+
+    // Sample waveform display for SamplePlayer modules
+    if descriptor.type_id.0 == "sample_player"
+        && let Some(ref overview) = state.waveform_overview
+    {
+        ui.add_space(4.0);
+        let width = ui.available_width().clamp(150.0, 300.0);
+        let height = if overview.is_stereo { 80.0 } else { 60.0 };
+        super::widgets::draw_sample_waveform(
+            ui,
+            overview,
+            None, // TODO: playback position from VisualizationBuffer
+            width,
+            height,
+            accent_color,
+        );
+        ui.add_space(4.0);
     }
 
     // Special handling for Envelope modules - use interactive EnvelopeEditor

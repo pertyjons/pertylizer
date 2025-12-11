@@ -305,6 +305,21 @@ impl ModuleGraph {
         self.nodes.get(&module)?.module.get_param(param)
     }
 
+    /// Load a sample into a module (for sample-based modules like SamplePlayer).
+    /// Returns true if the sample was loaded, false if the module doesn't exist
+    /// or doesn't support sample loading.
+    pub fn load_sample(
+        &mut self,
+        module: ModuleId,
+        sample: std::sync::Arc<crate::types::Sample>,
+    ) -> bool {
+        if let Some(node) = self.nodes.get_mut(&module) {
+            node.module.load_sample(sample)
+        } else {
+            false
+        }
+    }
+
     /// Process the graph.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
         // Ensure buffer sizes

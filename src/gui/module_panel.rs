@@ -12,6 +12,7 @@ use crate::modules::core::{
     ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortDirection as CorePortDirection,
     PortType as CorePortType, WidgetHint,
 };
+use crate::types::WaveformOverview;
 
 use super::theme::theme;
 use super::widgets::{Knob, PortWidget, WidgetPortDirection, WidgetPortType};
@@ -32,6 +33,8 @@ pub struct ModulePanelState {
     /// Is this panel being dragged?
     #[allow(dead_code)]
     pub dragging: bool,
+    /// Waveform overview for sample-based modules (SamplePlayer).
+    pub waveform_overview: Option<WaveformOverview>,
 }
 
 impl ModulePanelState {
@@ -42,6 +45,7 @@ impl ModulePanelState {
             param_values: HashMap::new(),
             selected: false,
             dragging: false,
+            waveform_overview: None,
         }
     }
 }

@@ -502,6 +502,14 @@ pub enum EngineCommand {
         /// The pre-loaded sample data.
         sample: std::sync::Arc<crate::types::Sample>,
     },
+
+    /// Set the song for the sequencer.
+    ///
+    /// The song is shared via Arc<RwLock<Song>> for thread-safe access.
+    /// The sequencer will stop and reset when a new song is set.
+    SetSong {
+        song: std::sync::Arc<std::sync::RwLock<crate::sequencer::Song>>,
+    },
 }
 
 /// Type of visualizer to add.
@@ -906,6 +914,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("module_id", module_id)
                 .field("sample", &sample.name)
                 .finish(),
+            Self::SetSong { .. } => write!(f, "SetSong"),
         }
     }
 }

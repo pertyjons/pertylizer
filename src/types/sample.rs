@@ -639,14 +639,22 @@ impl std::fmt::Display for SampleName {
 ///
 /// Contains min/max peaks for efficient waveform display without
 /// reading all sample data every frame.
+///
+/// Supports both mono and stereo samples:
+/// - `peaks_left`: Always populated (min, max) pairs for left channel (or mono)
+/// - `peaks_right`: Empty for mono, populated for stereo
 #[derive(Debug, Clone)]
 pub struct WaveformOverview {
-    /// (min, max) pairs for each segment.
-    pub peaks: Vec<(SampleValue, SampleValue)>,
+    /// (min, max) pairs for left channel (or mono).
+    pub peaks_left: Vec<(SampleValue, SampleValue)>,
+    /// (min, max) pairs for right channel (empty if mono).
+    pub peaks_right: Vec<(SampleValue, SampleValue)>,
     /// Number of source samples per peak.
     pub samples_per_peak: usize,
     /// Total number of frames in the source sample.
     pub total_frames: usize,
+    /// Whether the source sample was stereo.
+    pub is_stereo: bool,
 }
 
 impl WaveformOverview {
@@ -660,63 +668,109 @@ impl WaveformOverview {
         let frame_count = sample.len().as_usize();
         let num_peaks = num_peaks.max(1);
         let samples_per_peak = (frame_count / num_peaks).max(1);
-        let mut peaks = Vec::with_capacity(num_peaks);
+        let is_stereo = matches!(sample.channels, ChannelMode::Stereo);
+
+        let mut peaks_left = Vec::with_capacity(num_peaks);
+        let mut peaks_right = if is_stereo {
+            Vec::with_capacity(num_peaks)
+        } else {
+            Vec::new()
+        };
 
         for i in 0..num_peaks {
             let start = i * samples_per_peak;
             let end = ((i + 1) * samples_per_peak).min(frame_count);
 
             if start >= frame_count {
-                peaks.push((SampleValue::ZERO, SampleValue::ZERO));
+                peaks_left.push((SampleValue::ZERO, SampleValue::ZERO));
+                if is_stereo {
+                    peaks_right.push((SampleValue::ZERO, SampleValue::ZERO));
+                }
                 continue;
             }
 
-            let mut min = SampleValue::MAX;
-            let mut max = SampleValue::MIN;
+            let mut min_l = SampleValue::MAX;
+            let mut max_l = SampleValue::MIN;
+            let mut min_r = SampleValue::MAX;
+            let mut max_r = SampleValue::MIN;
 
             for j in start..end {
                 let (l, r) = sample.read(PlaybackPosition::new(j as f64), Interpolation::Nearest);
-                // Convert to mono for visualization
-                let mono = SampleValue::new((l.as_f32() + r.as_f32()) * 0.5);
 
-                if mono.as_f32() < min.as_f32() {
-                    min = mono;
+                if l.as_f32() < min_l.as_f32() {
+                    min_l = l;
                 }
-                if mono.as_f32() > max.as_f32() {
-                    max = mono;
+                if l.as_f32() > max_l.as_f32() {
+                    max_l = l;
+                }
+                if is_stereo {
+                    if r.as_f32() < min_r.as_f32() {
+                        min_r = r;
+                    }
+                    if r.as_f32() > max_r.as_f32() {
+                        max_r = r;
+                    }
                 }
             }
 
-            peaks.push((min, max));
+            peaks_left.push((min_l, max_l));
+            if is_stereo {
+                peaks_right.push((min_r, max_r));
+            }
         }
 
         Self {
-            peaks,
+            peaks_left,
+            peaks_right,
             samples_per_peak,
             total_frames: frame_count,
+            is_stereo,
         }
     }
 
-    /// Get the peak at a normalized position (0.0 to 1.0).
+    /// Get the left (or mono) peak at a normalized position (0.0 to 1.0).
     #[must_use]
-    pub fn peak_at(&self, position: f32) -> Option<(SampleValue, SampleValue)> {
-        if self.peaks.is_empty() {
+    pub fn peak_left_at(&self, position: f32) -> Option<(SampleValue, SampleValue)> {
+        if self.peaks_left.is_empty() {
             return None;
         }
-        let index = (position * self.peaks.len() as f32) as usize;
-        self.peaks.get(index.min(self.peaks.len() - 1)).copied()
+        let index = (position * self.peaks_left.len() as f32) as usize;
+        self.peaks_left
+            .get(index.min(self.peaks_left.len() - 1))
+            .copied()
+    }
+
+    /// Get the right peak at a normalized position (0.0 to 1.0).
+    /// Returns None for mono samples or if position is out of range.
+    #[must_use]
+    pub fn peak_right_at(&self, position: f32) -> Option<(SampleValue, SampleValue)> {
+        if self.peaks_right.is_empty() {
+            return None;
+        }
+        let index = (position * self.peaks_right.len() as f32) as usize;
+        self.peaks_right
+            .get(index.min(self.peaks_right.len() - 1))
+            .copied()
+    }
+
+    /// Get the peak at a normalized position (0.0 to 1.0).
+    /// For stereo, returns the left channel peak.
+    /// Provided for backwards compatibility.
+    #[must_use]
+    pub fn peak_at(&self, position: f32) -> Option<(SampleValue, SampleValue)> {
+        self.peak_left_at(position)
     }
 
     /// Get the number of peaks.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.peaks.len()
+        self.peaks_left.len()
     }
 
     /// Check if the overview is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.peaks.is_empty()
+        self.peaks_left.is_empty()
     }
 }
 

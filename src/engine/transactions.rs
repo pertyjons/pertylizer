@@ -538,6 +538,10 @@ impl Clone for EngineCommand {
                 module_id: *module_id,
                 sample: std::sync::Arc::clone(sample),
             },
+            // Song (Arc can be cloned)
+            EngineCommand::SetSong { song } => EngineCommand::SetSong {
+                song: std::sync::Arc::clone(song),
+            },
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
             EngineCommand::AddInstrument { .. } => {
                 panic!("AddInstrument cannot be cloned - instrument instances are unique")

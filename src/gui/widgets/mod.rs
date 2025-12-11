@@ -12,6 +12,7 @@ mod port;
 mod scope;
 mod tooltip;
 mod waveform;
+mod waveform_display;
 
 // Re-export theme for convenience
 pub use super::theme::{Theme, set_theme, theme, with_theme_mut};
@@ -28,3 +29,4 @@ pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::draw_oscilloscope;
 pub use tooltip::{draw_tooltip_above, draw_tooltip_right_of, draw_value_tooltip};
 pub use waveform::{WaveformSelector, WaveformType};
+pub use waveform_display::{draw_sample_waveform, draw_sample_waveform_compact};

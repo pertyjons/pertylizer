@@ -10,7 +10,7 @@ use crate::engine::{
     EngineCommand, EngineHandle, InstrumentParam,
     instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel},
 };
-use crate::types::{BipolarValue, Gain, MidiNote, Semitones};
+use crate::types::{BipolarValue, Gain, MidiNote, Semitones, WaveformOverview};
 use eframe::egui::{self, RichText, Ui};
 
 /// GUI state for a single instrument.
@@ -45,6 +45,8 @@ pub struct InstrumentUiState {
     pub transpose: Semitones,
     /// MIDI learn state for key range assignment.
     pub learn_state: LearnState,
+    /// Sample waveform overview for visualization (if this is a sample-based instrument).
+    pub waveform_overview: Option<WaveformOverview>,
 }
 
 impl Default for InstrumentUiState {
@@ -62,6 +64,7 @@ impl Default for InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
+            waveform_overview: None,
         }
     }
 }
@@ -82,6 +85,7 @@ impl InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
+            waveform_overview: None,
         }
     }
 

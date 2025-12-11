@@ -1,5 +1,39 @@
 # Version History
 
+## [0.42.0] - 2025
+### Added - Song Playback & Sample Waveform Display
+
+Uppspelning av importerade tracker-filer och visualisering av samples.
+
+#### Transport-kontroll
+- **`SetSong` kommando** - Skickar song till `SequencerEngine` för uppspelning
+- **Transport-kommandon** i `synth_engine.rs`: `Play`, `Stop`, `Pause`, `Rewind`
+- **GUI-knappar** i sequencer-vyn kopplade till engine
+
+#### Sample Waveform-visning
+- **`WaveformOverview`** utökad med stereo-stöd:
+  - `peaks_left` / `peaks_right` för separata kanaler
+  - `is_stereo` flagga
+  - Nya metoder `peak_left_at()`, `peak_right_at()`
+- **Ny widget** `draw_sample_waveform()` i `widgets/waveform_display.rs`:
+  - Mono: Enkel centrerad vågform
+  - Stereo: L/R separerade (ovanför/under mittlinje)
+  - Stöd för playback-position indikator
+- **Integration** i `patch_editor.rs` - Waveform visas automatiskt i SamplePlayer-moduler
+
+#### Filer som ändrats
+- `src/engine/commands.rs` - `SetSong` kommando
+- `src/engine/synth_engine.rs` - Transport-hantering
+- `src/engine/hub.rs`, `src/engine/transactions.rs` - SetSong stöd
+- `src/gui/views/sequencer.rs` - `TransportAction` enum, knappkoppling
+- `src/gui/egui_backend.rs` - Transport-routing, SetSong vid import
+- `src/types/sample.rs` - Stereo `WaveformOverview`
+- `src/gui/widgets/waveform_display.rs` - Ny widget
+- `src/gui/patch_editor.rs` - Waveform i SamplePlayer
+- `src/gui/module_panel.rs` - `waveform_overview` i `ModulePanelState`
+
+---
+
 ## [0.41.0] - 2025
 ### Added - Tracker Import (MOD/XM/S3M)
 
