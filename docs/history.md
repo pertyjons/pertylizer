@@ -1,5 +1,52 @@
 # Version History
 
+## [0.43.0] - 2025
+### Added - Focused Instrument & Tracker Playback Fixes
+
+Lösningar för MIDI-kanalkonflikter och korrekt tracker-uppspelning.
+
+#### Focused Instrument (Keyboard Routing)
+- **Problem:** Med >16 instrument delade flera samma MIDI-kanal, alla spelade samtidigt
+- **Lösning:** "Focused Instrument" - keyboard input (kanal 0) går endast till valt instrument
+- **`EngineState`:** `focused_instrument: AtomicU32` för trådsäker state
+- **`EngineCommand::SetFocusedInstrument`** - Nytt kommando för GUI-styrning
+- **`EngineHandle`:** `set_focused_instrument()`, `get_focused_instrument()` metoder
+- **GUI-integration:** Automatiskt fokus vid instrumentval, import, och borttagning
+
+#### Mono-per-Track (Tracker-beteende)
+- **Problem:** Loopade ljud försvann inte vid nya noter på samma track
+- **Lösning:** `TrackId` newtype för typsäker track-identifiering
+- **`Note::track`:** `Option<TrackId>` för mono-per-track routing
+- **Sequencer:** `stop_notes_on_track()` stänger av föregående not automatiskt
+- **Tracker-import:** Sätter `TrackId` för varje kanal vid import
+
+#### Sample Player Fixes
+- **Release Mode:** Non-looped samples använder nu `ReleaseMode::PlayToEnd` (default)
+  - Drums/one-shots spelar klart istället för abrupt stopp
+  - Looped samples behåller `ReleaseMode::Immediate`
+- **Interpolation:** Konfigurerbar i GUI med Cubic som default
+  - Nearest, Linear, Cubic, Hermite, Lagrange, Sinc8, Sinc16
+
+#### Pattern View Improvements
+- **Follow Playback:** Pattern-vyn följer nu aktiv rad under uppspelning
+- **Auto-switch Pattern:** Automatiskt byte till aktivt pattern
+- **Dynamiska tracks:** Visar rätt antal tracks från importerad fil (inte hårdkodat 4)
+- **Pattern display:** Visar "1/3" format (aktuellt/totalt) istället för hex
+
+#### Filer som ändrats
+- `src/engine/state.rs` - `focused_instrument`, `NO_FOCUSED_INSTRUMENT`
+- `src/engine/commands.rs` - `SetFocusedInstrument` kommando
+- `src/engine/synth_engine.rs` - note routing, handle methods
+- `src/sequencer/note.rs` - `track: Option<TrackId>`, `with_track()`
+- `src/sequencer/ids.rs` - `TrackId` exporteras
+- `src/engine/sequencer_engine.rs` - `ActiveNote::track`, `stop_notes_on_track()`
+- `src/io/import/tracker.rs` - Sätter `TrackId` vid import
+- `src/modules/sample_player.rs` - Smart `ReleaseMode` i `load_sample()`
+- `src/gui/instrument_rack.rs` - Focused instrument vid val/borttagning
+- `src/gui/egui_backend.rs` - Focused instrument vid start/import
+
+---
+
 ## [0.42.0] - 2025
 ### Added - Song Playback & Sample Waveform Display
 

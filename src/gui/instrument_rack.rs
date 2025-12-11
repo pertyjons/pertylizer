@@ -186,10 +186,13 @@ pub fn show_instrument_rack(
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 // Selection indicator / radio button
+                                // Active instrument receives keyboard input
                                 let response = ui.selectable_label(is_active, "");
                                 if response.clicked() {
                                     *active_instrument_id = instrument_id;
                                     result.active_instrument_changed = Some(instrument_id);
+                                    // Set focused instrument for keyboard routing
+                                    handle.set_focused_instrument(Some(instrument_id));
                                 }
 
                                 // Instrument name (editable)
@@ -501,6 +504,8 @@ pub fn show_instrument_rack(
             if removed_instrument.id == *active_instrument_id && !instruments.is_empty() {
                 *active_instrument_id = instruments[0].id;
                 result.active_instrument_changed = Some(*active_instrument_id);
+                // Update focused instrument for keyboard routing
+                handle.set_focused_instrument(Some(*active_instrument_id));
             }
         }
 

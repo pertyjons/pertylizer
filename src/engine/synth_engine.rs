@@ -266,6 +266,16 @@ impl EngineHandle {
         self.state.master_volume.load()
     }
 
+    /// Get the current playback position in sequencer ticks.
+    pub fn playback_ticks(&self) -> u64 {
+        self.state.transport.get_ticks()
+    }
+
+    /// Check if the sequencer is playing.
+    pub fn is_playing(&self) -> bool {
+        self.state.transport.is_playing()
+    }
+
     /// Add a visualization buffer for a module (Arc is shared with engine).
     pub fn add_visualization_buffer(
         &mut self,
@@ -285,6 +295,19 @@ impl EngineHandle {
     /// Remove a visualization buffer.
     pub fn remove_visualization_buffer(&mut self, module_id: ModuleId) {
         self.visualization_buffers.remove(&module_id);
+    }
+
+    /// Set the focused instrument for keyboard/MIDI input.
+    /// When set, keyboard input (channel 0) goes only to this instrument.
+    /// When None, traditional MIDI channel routing is used.
+    pub fn set_focused_instrument(&mut self, instrument_id: Option<InstrumentId>) -> bool {
+        self.send(EngineCommand::SetFocusedInstrument(instrument_id))
+    }
+
+    /// Get the currently focused instrument index.
+    /// Returns None if using traditional MIDI channel routing.
+    pub fn get_focused_instrument(&self) -> Option<u32> {
+        self.state.get_focused_instrument()
     }
 }
 
@@ -633,6 +656,9 @@ impl SynthEngine {
             EngineCommand::SetGlideTime(time) => {
                 self.handle_set_glide_time(time);
             }
+            EngineCommand::SetFocusedInstrument(instrument_id) => {
+                self.handle_set_focused_instrument(instrument_id);
+            }
 
             // Voice/module parameters
             EngineCommand::SetVoiceParameter {
@@ -742,15 +768,19 @@ impl SynthEngine {
             // Transport control
             EngineCommand::Play => {
                 self.sequencer.play();
+                self.state.transport.set_playing(true);
             }
             EngineCommand::Stop => {
                 let _ = self.sequencer.stop();
+                self.state.transport.set_playing(false);
             }
             EngineCommand::Pause => {
                 self.sequencer.pause();
+                self.state.transport.set_playing(false);
             }
             EngineCommand::Rewind => {
                 let _ = self.sequencer.seek(crate::sequencer::Tick::ZERO);
+                self.state.transport.set_ticks(0);
             }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
@@ -857,9 +887,26 @@ impl SynthEngine {
         let velocity_f32 = velocity.as_f32();
         let mut note_triggered = false;
 
-        for instrument in &mut self.instruments {
-            if !instrument.responds_to_channel(channel_raw) {
-                continue;
+        // Check if there's a focused instrument for keyboard input
+        let focused_idx = self.state.get_focused_instrument();
+
+        for (idx, instrument) in self.instruments.iter_mut().enumerate() {
+            // If focused instrument is set, only that instrument receives keyboard input
+            // (Channel 0 is the default keyboard channel)
+            if let Some(focus_idx) = focused_idx {
+                // Only send to focused instrument, and only for channel 0 (keyboard)
+                if channel_raw == 0 && idx != focus_idx as usize {
+                    continue;
+                }
+                // For other channels (e.g., external MIDI), use traditional routing
+                if channel_raw != 0 && !instrument.responds_to_channel(channel_raw) {
+                    continue;
+                }
+            } else {
+                // Traditional MIDI channel routing
+                if !instrument.responds_to_channel(channel_raw) {
+                    continue;
+                }
             }
 
             // Check learn mode
@@ -893,10 +940,21 @@ impl SynthEngine {
 
     fn handle_note_off(&mut self, note: MidiNote, channel: MidiChannel) {
         let channel_raw = channel.as_zero_indexed();
-        for instrument in &mut self.instruments {
-            if instrument.responds_to_channel(channel_raw) {
-                instrument.note_off(note);
+        let focused_idx = self.state.get_focused_instrument();
+
+        for (idx, instrument) in self.instruments.iter_mut().enumerate() {
+            // Same logic as note_on for focused instrument routing
+            if let Some(focus_idx) = focused_idx {
+                if channel_raw == 0 && idx != focus_idx as usize {
+                    continue;
+                }
+                if channel_raw != 0 && !instrument.responds_to_channel(channel_raw) {
+                    continue;
+                }
+            } else if !instrument.responds_to_channel(channel_raw) {
+                continue;
             }
+            instrument.note_off(note);
         }
 
         if self.use_modular_routing {
@@ -996,6 +1054,17 @@ impl SynthEngine {
         for instrument in &mut self.instruments {
             instrument.allocator_mut().set_glide_time(time_secs);
         }
+    }
+
+    fn handle_set_focused_instrument(&mut self, instrument_id: Option<InstrumentId>) {
+        // Convert InstrumentId to u32 index for atomic storage
+        let index = instrument_id.and_then(|id| {
+            self.instruments
+                .iter()
+                .position(|i| i.id() == id)
+                .map(|pos| pos as u32)
+        });
+        self.state.set_focused_instrument(index);
     }
 
     // ========================================================================
@@ -1444,6 +1513,11 @@ impl AudioProcessor for SynthEngine {
         self.sequencer_event_buffer.clear();
         self.sequencer
             .process(sample_count, &mut self.sequencer_event_buffer);
+
+        // Update shared transport state with current sequencer position
+        self.state
+            .transport
+            .set_ticks(self.sequencer.current_tick().0);
 
         // Route sequencer events to the appropriate instruments
         // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)

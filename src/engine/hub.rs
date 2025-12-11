@@ -326,7 +326,8 @@ impl EngineHub {
             | EngineCommand::SetModuleParameter { .. }
             | EngineCommand::SetEffectParameter { .. }
             | EngineCommand::SetMasterVolume(_)
-            | EngineCommand::SetGlideTime(_) => perms.can_modify_params,
+            | EngineCommand::SetGlideTime(_)
+            | EngineCommand::SetFocusedInstrument(_) => perms.can_modify_params,
 
             // Topology changes
             EngineCommand::AddModuleInstance { .. }

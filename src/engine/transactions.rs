@@ -464,6 +464,7 @@ impl Clone for EngineCommand {
             EngineCommand::ClearAllModules => EngineCommand::ClearAllModules,
             EngineCommand::SetMasterVolume(v) => EngineCommand::SetMasterVolume(*v),
             EngineCommand::SetGlideTime(t) => EngineCommand::SetGlideTime(*t),
+            EngineCommand::SetFocusedInstrument(id) => EngineCommand::SetFocusedInstrument(*id),
             EngineCommand::SetBypass { module, bypass } => EngineCommand::SetBypass {
                 module: *module,
                 bypass: *bypass,

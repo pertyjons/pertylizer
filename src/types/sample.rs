@@ -493,9 +493,9 @@ pub enum Interpolation {
     /// No interpolation (nearest sample). Fastest, lowest quality.
     Nearest,
     /// Linear interpolation between adjacent samples. Fast, decent quality.
-    #[default]
     Linear,
     /// Cubic interpolation (Catmull-Rom spline). Good quality.
+    #[default]
     Cubic,
     /// 4-point Hermite interpolation. Similar to cubic, smoother.
     Hermite,
@@ -778,6 +778,19 @@ impl WaveformOverview {
 // SAMPLE
 // ============================================================================
 
+/// Loop metadata from tracker file import.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SampleLoopInfo {
+    /// Loop start position as normalized value (0.0-1.0).
+    pub loop_start: f32,
+    /// Loop end position as normalized value (0.0-1.0).
+    pub loop_end: f32,
+    /// Whether looping is enabled.
+    pub enabled: bool,
+    /// Ping-pong (bidirectional) loop.
+    pub ping_pong: bool,
+}
+
 /// An audio sample with metadata.
 ///
 /// Samples are immutable and can be safely shared across threads via `Arc`.
@@ -793,6 +806,10 @@ pub struct Sample {
     pub sample_rate: SampleRate,
     /// Root note (pitch at normal speed).
     pub root_note: MidiNote,
+    /// Loop information from tracker import.
+    pub loop_info: Option<SampleLoopInfo>,
+    /// Default volume (0.0-1.0) from tracker import.
+    pub default_volume: Option<f32>,
 }
 
 impl Sample {
@@ -809,12 +826,26 @@ impl Sample {
             channels,
             sample_rate,
             root_note: MidiNote::C4,
+            loop_info: None,
+            default_volume: None,
         }
     }
 
     /// Create a new sample with a specific root note.
     pub fn with_root_note(mut self, root_note: MidiNote) -> Self {
         self.root_note = root_note;
+        self
+    }
+
+    /// Set loop information from tracker import.
+    pub fn with_loop_info(mut self, loop_info: SampleLoopInfo) -> Self {
+        self.loop_info = Some(loop_info);
+        self
+    }
+
+    /// Set default volume from tracker import (0.0-1.0).
+    pub fn with_default_volume(mut self, volume: f32) -> Self {
+        self.default_volume = Some(volume.clamp(0.0, 1.0));
         self
     }
 

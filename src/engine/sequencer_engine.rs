@@ -14,7 +14,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::sequencer::{Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
+use crate::sequencer::{Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId};
 use crate::types::{Bpm, SampleCount, SampleRate};
 
 /// Playback state of the sequencer.
@@ -38,6 +38,8 @@ struct ActiveNote {
     instrument: SeqInstrumentId,
     /// When the note should end (if duration is known).
     end_tick: Option<Tick>,
+    /// Track for mono-per-track behavior.
+    track: Option<TrackId>,
 }
 
 /// The sequencer engine processes song data and emits real-time events.
@@ -281,6 +283,7 @@ impl SequencerEngine {
                         note.instrument,
                         note.effects.clone(),
                         end_tick,
+                        note.track,
                     ));
                 }
             }
@@ -289,12 +292,19 @@ impl SequencerEngine {
         }; // Lock released here
 
         // Now process the collected notes without holding the lock
-        for (pitch, velocity, instrument, effects, end_tick) in notes_to_trigger {
+        for (pitch, velocity, instrument, effects, end_tick, track) in notes_to_trigger {
+            // Mono-per-track: If this note has a track, stop any active note on the same track
+            // This is the classic tracker behavior where each channel is monophonic
+            if let Some(track_id) = track {
+                self.stop_notes_on_track(track_id, events);
+            }
+
             // Track active note for NoteOff
             self.active_notes.push(ActiveNote {
                 pitch,
                 instrument,
                 end_tick,
+                track,
             });
 
             // Emit NoteOn event
@@ -305,6 +315,24 @@ impl SequencerEngine {
                 instrument,
                 effects,
             });
+        }
+    }
+
+    /// Stop all active notes on the given track (mono-per-track behavior).
+    fn stop_notes_on_track(&mut self, track: TrackId, events: &mut Vec<SequencerEvent>) {
+        let current = self.current_tick;
+        let mut i = 0;
+        while i < self.active_notes.len() {
+            if self.active_notes[i].track == Some(track) {
+                let note = self.active_notes.swap_remove(i);
+                events.push(SequencerEvent::NoteOff {
+                    tick: current,
+                    pitch: note.pitch,
+                    instrument: note.instrument,
+                });
+            } else {
+                i += 1;
+            }
         }
     }
 

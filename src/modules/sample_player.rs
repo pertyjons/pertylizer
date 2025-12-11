@@ -132,7 +132,7 @@ impl SamplePlayer {
             note_release_state: NoteReleaseState::Held,
 
             // Config
-            interpolation: Interpolation::Linear,
+            interpolation: Interpolation::Cubic,
             sample_rate: SampleRate::DVD_QUALITY,
 
             // Visualization
@@ -148,7 +148,37 @@ impl SamplePlayer {
     /// Load a sample into this player.
     ///
     /// This is called from the engine when handling `LoadSample` command.
+    /// Automatically applies loop and volume settings from sample metadata.
     pub fn load_sample(&mut self, sample: Arc<Sample>) {
+        // Apply loop settings from sample metadata (from tracker import)
+        if let Some(loop_info) = &sample.loop_info {
+            self.loop_start = NormalizedValue::new(loop_info.loop_start);
+            self.loop_end = NormalizedValue::new(loop_info.loop_end);
+            if loop_info.enabled {
+                if loop_info.ping_pong {
+                    self.loop_mode = LoopMode::PingPong;
+                } else {
+                    self.loop_mode = LoopMode::Forward;
+                }
+            } else {
+                self.loop_mode = LoopMode::Off;
+            }
+        }
+
+        // Apply default volume from sample metadata
+        if let Some(volume) = sample.default_volume {
+            self.level = Gain::new(volume);
+        }
+
+        // Set release mode based on loop settings:
+        // - Looped samples: Immediate (stop at note-off, common for sustained sounds)
+        // - Non-looped samples: PlayToEnd (let sample play through, typical for drums/one-shots)
+        if self.loop_mode == LoopMode::Off {
+            self.release_mode = ReleaseMode::PlayToEnd;
+        } else {
+            self.release_mode = ReleaseMode::Immediate;
+        }
+
         // Generate waveform overview for visualization
         self.waveform_overview = Some(WaveformOverview::generate(&sample, 200));
         self.sample = Some(sample);
@@ -471,6 +501,15 @@ impl Describable for SamplePlayer {
                 .description("Note-off behavior")
                 .widget(WidgetHint::Dropdown),
             )
+            .parameter(
+                ParameterDescriptor::choice(
+                    Param::SamplePlayer(SamplePlayerParam::Interpolation(Interpolation::Cubic)),
+                    "Interp",
+                    Interpolation::to_choices(),
+                )
+                .description("Sample interpolation quality")
+                .widget(WidgetHint::Dropdown),
+            )
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .port(PortDescriptor::audio_output("out", "Out").description("Mono output"))
@@ -559,6 +598,7 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::Level(g) => self.level = g,
                 SamplePlayerParam::VelocitySensitivity(v) => self.velocity_sensitivity = v,
                 SamplePlayerParam::ReleaseMode(m) => self.release_mode = m,
+                SamplePlayerParam::Interpolation(i) => self.interpolation = i,
             }
         }
     }
@@ -576,6 +616,7 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::Level(_) => self.level.as_f32(),
                 SamplePlayerParam::VelocitySensitivity(_) => self.velocity_sensitivity.as_f32(),
                 SamplePlayerParam::ReleaseMode(_) => self.release_mode.index() as f32,
+                SamplePlayerParam::Interpolation(_) => self.interpolation.index() as f32,
             })
         } else {
             None
@@ -596,6 +637,7 @@ impl PolyModule for SamplePlayer {
                 self.velocity_sensitivity,
             )),
             Param::SamplePlayer(SamplePlayerParam::ReleaseMode(self.release_mode)),
+            Param::SamplePlayer(SamplePlayerParam::Interpolation(self.interpolation)),
         ]
     }
 
@@ -700,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn test_note_off_stops_playback() {
+    fn test_note_off_releases_playback() {
         let mut player = SamplePlayer::new();
         let sample = create_test_sample();
         player.load_sample(sample);
@@ -708,7 +750,28 @@ mod tests {
         player.note_on(MidiNote::C4, Velocity::MAX);
         player.note_off();
 
-        // Should stop since loop mode is Off and release mode is Immediate
+        // With PlayToEnd release mode (default for non-looped samples),
+        // note_off marks the note as released but lets it play to the end
+        assert!(matches!(
+            player.note_release_state,
+            NoteReleaseState::Released
+        ));
+        // Still playing until sample reaches end
+        assert!(player.playback_state.is_playing());
+    }
+
+    #[test]
+    fn test_note_off_immediate_stops_playback() {
+        let mut player = SamplePlayer::new();
+        let sample = create_test_sample();
+        player.load_sample(sample);
+        // Override to Immediate mode
+        player.release_mode = ReleaseMode::Immediate;
+
+        player.note_on(MidiNote::C4, Velocity::MAX);
+        player.note_off();
+
+        // With Immediate release mode and no loop, should stop immediately
         assert!(player.playback_state.is_stopped());
     }
 

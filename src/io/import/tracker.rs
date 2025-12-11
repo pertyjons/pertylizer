@@ -11,13 +11,14 @@ use xmrs::import::xm::xmmodule::XmModule;
 use xmrs::prelude::{
     InstrumentType, Module, Pattern as XmrsPattern, Sample as XmrsSample, SampleDataType, TrackUnit,
 };
+use xmrs::sample::LoopType as XmrsLoopType;
 
 use super::{ImportError, ImportResult, ImportedSong, SongImporter};
 use crate::sequencer::pattern::RowResolution;
 use crate::sequencer::pitch::{Pitch, Velocity};
 use crate::sequencer::time::Duration;
-use crate::sequencer::{PatternId, SeqInstrumentId, Song, Tick};
-use crate::types::{Bpm, ChannelMode, MidiNote, Sample, SampleRate, SampleValue};
+use crate::sequencer::{PatternId, SeqInstrumentId, Song, Tick, TrackId};
+use crate::types::{Bpm, ChannelMode, MidiNote, Sample, SampleLoopInfo, SampleRate, SampleValue};
 
 /// Importer for tracker files (MOD, XM, S3M).
 pub struct TrackerImporter;
@@ -191,7 +192,41 @@ fn convert_sample(
     let root_midi = (60 + i16::from(xmrs_sample.relative_pitch)).clamp(0, 127) as u8;
     let root_note = MidiNote::new(root_midi);
 
-    Ok(Sample::new(name, data, channels, sample_rate).with_root_note(root_note))
+    // Calculate sample length in frames
+    let frame_count = data.len() / channels.channel_count();
+
+    // Extract loop information
+    let loop_info = if matches!(
+        xmrs_sample.loop_flag,
+        XmrsLoopType::Forward | XmrsLoopType::PingPong
+    ) && xmrs_sample.loop_length > 0
+        && frame_count > 0
+    {
+        let loop_start = xmrs_sample.loop_start as f32 / frame_count as f32;
+        let loop_end =
+            (xmrs_sample.loop_start + xmrs_sample.loop_length) as f32 / frame_count as f32;
+        Some(SampleLoopInfo {
+            loop_start: loop_start.clamp(0.0, 1.0),
+            loop_end: loop_end.clamp(0.0, 1.0),
+            enabled: true,
+            ping_pong: matches!(xmrs_sample.loop_flag, XmrsLoopType::PingPong),
+        })
+    } else {
+        None
+    };
+
+    // Extract default volume (xmrs uses 0.0-1.0)
+    let default_volume = xmrs_sample.volume;
+
+    let mut sample = Sample::new(name, data, channels, sample_rate).with_root_note(root_note);
+
+    if let Some(loop_info) = loop_info {
+        sample = sample.with_loop_info(loop_info);
+    }
+
+    sample = sample.with_default_volume(default_volume);
+
+    Ok(sample)
 }
 
 /// Convert xmrs sample data to Vec<SampleValue>.
@@ -284,15 +319,21 @@ fn convert_pattern(
             }
 
             // Update channel state and create note if needed
+            #[allow(clippy::cast_possible_truncation)]
+            let track_id = TrackId::new(channel_idx as u16);
             if let Some(note_event) =
-                process_track_unit(track_unit, &mut channel_state[channel_idx])
+                process_track_unit(track_unit, &mut channel_state[channel_idx], track_id)
             {
-                pattern.add_note(
+                // Create note with track info for mono-per-track behavior
+                let note = crate::sequencer::Note::new(
+                    crate::sequencer::NoteId(0), // ID will be reassigned by insert_note
                     row_tick,
                     note_event.pitch,
                     note_event.velocity,
                     note_event.instrument,
-                );
+                )
+                .with_track(note_event.track);
+                pattern.insert_note(note);
             }
         }
     }
@@ -312,10 +353,11 @@ struct NoteEvent {
     pitch: Pitch,
     velocity: Velocity,
     instrument: SeqInstrumentId,
+    track: TrackId,
 }
 
 /// Process a track unit and return a note event if one should be triggered.
-fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState) -> Option<NoteEvent> {
+fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState, track: TrackId) -> Option<NoteEvent> {
     // Check for instrument change
     if let Some(inst) = unit.instrument {
         state.last_instrument = inst;
@@ -350,5 +392,6 @@ fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState) -> Option<Note
         pitch,
         velocity,
         instrument,
+        track,
     })
 }

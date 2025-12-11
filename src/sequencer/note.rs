@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::effects::EffectCommand;
-use super::ids::{NoteId, SeqInstrumentId};
+use super::ids::{NoteId, SeqInstrumentId, TrackId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
@@ -24,6 +24,9 @@ pub struct Note {
     pub velocity: Velocity,
     /// Instrument that plays this note.
     pub instrument: SeqInstrumentId,
+    /// Track/channel for mono-per-track behavior (tracker style).
+    /// When set, a new note on the same track will cut off the previous one.
+    pub track: Option<TrackId>,
     /// Effects applied at note start.
     pub effects: Vec<EffectCommand>,
 }
@@ -44,6 +47,7 @@ impl Note {
             pitch,
             velocity,
             instrument,
+            track: None,
             effects: Vec::new(),
         }
     }
@@ -51,6 +55,13 @@ impl Note {
     /// Set the duration (builder pattern).
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.duration = Some(duration);
+        self
+    }
+
+    /// Set the track (builder pattern).
+    /// Used for mono-per-track behavior in tracker-style playback.
+    pub fn with_track(mut self, track: TrackId) -> Self {
+        self.track = Some(track);
         self
     }
 

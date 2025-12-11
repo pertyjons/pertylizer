@@ -460,11 +460,13 @@ impl ParameterDescriptor {
     /// The id parameter should contain the default choice value.
     pub fn choice(id: Param, name: impl Into<String>, choices: Vec<ChoiceOption>) -> Self {
         let max = (choices.len().saturating_sub(1)) as f32;
+        // Extract default value from the param's current value
+        let default = id.as_f32();
         Self {
             id,
             name: name.into(),
             description: String::new(),
-            range: ValueRange::new(0.0, max, 0.0),
+            range: ValueRange::new(0.0, max, default),
             unit: ParameterUnit::None,
             widget_hint: WidgetHint::Dropdown,
             response_curve: ResponseCurve::Linear,

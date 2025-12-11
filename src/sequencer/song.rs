@@ -297,6 +297,23 @@ impl Song {
             .filter(move |p| p.track_id == track_id)
     }
 
+    /// Find the pattern playing at a given tick.
+    /// Returns the pattern ID and the tick offset within that pattern.
+    pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
+        // Find placement that contains this tick
+        for placement in &self.arrangement {
+            if let Some(pattern) = self.patterns.get(&placement.pattern_id) {
+                let pattern_end = placement.end(pattern.length);
+                if tick >= placement.start && tick < pattern_end {
+                    // Calculate offset within pattern
+                    let offset = Tick(tick.0.saturating_sub(placement.start.0));
+                    return Some((placement.pattern_id, offset));
+                }
+            }
+        }
+        None
+    }
+
     // === Tempo ===
 
     /// Set tempo at a position.

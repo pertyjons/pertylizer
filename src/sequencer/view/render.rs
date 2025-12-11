@@ -149,6 +149,7 @@ pub struct TrackerColors {
     pub row_highlight: Color32,
     pub cursor_row: Color32,
     pub cursor_cell: Color32,
+    pub playback_row: Color32,
     pub note: Color32,
     pub note_off: Color32,
     pub instrument: Color32,
@@ -167,6 +168,7 @@ impl Default for TrackerColors {
             row_highlight: Color32::from_rgb(32, 32, 48),
             cursor_row: Color32::from_rgb(48, 48, 80),
             cursor_cell: Color32::from_rgb(80, 80, 160),
+            playback_row: Color32::from_rgb(60, 100, 60),
             note: Color32::from_rgb(220, 220, 255),
             note_off: Color32::from_rgb(255, 100, 100),
             instrument: Color32::from_rgb(180, 180, 100),
@@ -191,6 +193,7 @@ pub fn draw_tracker_grid(
     state: &mut TrackerViewState,
     song: &Song,
     config: &TrackerViewConfig,
+    playback_row: Option<usize>,
 ) -> bool {
     let colors = TrackerColors::default();
 
@@ -217,8 +220,13 @@ pub fn draw_tracker_grid(
         }
     };
 
-    // Convert pattern to tracker rows
-    let rows = super::tracker::to_tracker_rows(pattern, config);
+    // Get number of tracks from pattern (dynamic)
+    let num_tracks = pattern.num_tracks() as usize;
+
+    // Convert pattern to tracker rows using pattern's track count
+    let mut config_with_tracks = config.clone();
+    config_with_tracks.num_channels = num_tracks;
+    let rows = super::tracker::to_tracker_rows(pattern, &config_with_tracks);
     let num_rows = rows.len();
 
     if num_rows == 0 {
@@ -228,33 +236,38 @@ pub fn draw_tracker_grid(
         return false;
     }
 
-    // Calculate visible rows
-    let available_height = ui.available_height();
-    let visible_rows = (available_height / ROW_HEIGHT) as usize;
-
-    // Ensure cursor is visible
-    state.ensure_cursor_visible(visible_rows);
+    // Determine which row to scroll to
+    let scroll_to = if state.follow_playback {
+        // Follow playback position when playing
+        playback_row
+    } else {
+        // Follow cursor when not playing
+        Some(state.cursor_row.get())
+    };
 
     let interaction = false;
 
-    // Build the table
-    TableBuilder::new(ui)
+    // Build the table with dynamic track count
+    let mut table = TableBuilder::new(ui)
         .striped(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::exact(30.0)) // Row number
-        .columns(
-            Column::exact(calculate_track_width(config)),
-            config.num_channels.min(state.visible_tracks),
-        )
+        .columns(Column::exact(calculate_track_width(config)), num_tracks);
+
+    // Scroll to keep the target row visible
+    if let Some(row) = scroll_to {
+        table = table.scroll_to_row(row, Some(egui::Align::Center));
+    }
+
+    table
         .header(ROW_HEIGHT, |mut header| {
             header.col(|ui| {
                 ui.label(RichText::new("Row").color(colors.row_number).small());
             });
-            for track_idx in 0..config.num_channels.min(state.visible_tracks) {
+            for track_idx in 0..num_tracks {
                 header.col(|ui| {
-                    let track_num = state.first_visible_track + track_idx;
                     ui.label(
-                        RichText::new(format!("Track {}", track_num + 1))
+                        RichText::new(format!("Track {}", track_idx + 1))
                             .color(colors.row_number)
                             .small(),
                     );
@@ -266,11 +279,17 @@ pub fn draw_tracker_grid(
                 let row_idx = row.index();
                 let tracker_row = &rows[row_idx];
                 let is_cursor_row = state.cursor_row.get() == row_idx;
+                let is_playback_row = playback_row == Some(row_idx);
                 let is_highlight = config.should_highlight(row_idx as u16);
 
                 // Row number column
                 row.col(|ui| {
-                    let bg = if is_cursor_row {
+                    let bg = if is_playback_row && is_cursor_row {
+                        // Both cursor and playback on same row - blend colors
+                        Color32::from_rgb(70, 100, 90)
+                    } else if is_playback_row {
+                        colors.playback_row
+                    } else if is_cursor_row {
                         colors.cursor_row
                     } else if is_highlight {
                         colors.row_highlight
@@ -289,13 +308,16 @@ pub fn draw_tracker_grid(
                 });
 
                 // Track columns
-                for track_idx in 0..config.num_channels.min(state.visible_tracks) {
+                for track_idx in 0..num_tracks {
                     row.col(|ui| {
-                        let actual_track = state.first_visible_track + track_idx;
-                        let is_cursor_track = state.cursor_track == actual_track;
+                        let is_cursor_track = state.cursor_track == track_idx;
 
                         let bg = if is_cursor_row && is_cursor_track {
                             colors.cursor_cell
+                        } else if is_playback_row && is_cursor_row {
+                            Color32::from_rgb(70, 100, 90)
+                        } else if is_playback_row {
+                            colors.playback_row
                         } else if is_cursor_row {
                             colors.cursor_row
                         } else if is_highlight {
@@ -308,7 +330,7 @@ pub fn draw_tracker_grid(
                         ui.painter().rect_filled(rect, 0.0, bg);
 
                         // Get cell data
-                        let cell = tracker_row.columns.get(actual_track);
+                        let cell = tracker_row.columns.get(track_idx);
 
                         // Draw cell contents
                         ui.horizontal(|ui| {

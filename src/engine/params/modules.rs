@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BipolarValue, Gain, Milliseconds, NormalizedValue, Seconds, Semitones};
+use crate::types::{
+    BipolarValue, Gain, Interpolation, Milliseconds, NormalizedValue, Seconds, Semitones,
+};
 
 // Re-export LoopMode and ReleaseMode from types module for backwards compatibility
 pub use crate::types::{LoopMode, ReleaseMode};
@@ -163,6 +165,8 @@ pub enum SamplePlayerParam {
     VelocitySensitivity(NormalizedValue),
     /// Release mode (what happens on note-off)
     ReleaseMode(ReleaseMode),
+    /// Interpolation method for sample playback
+    Interpolation(Interpolation),
 }
 
 impl SamplePlayerParam {
@@ -182,6 +186,7 @@ impl SamplePlayerParam {
             Self::Level(_) => "Level",
             Self::VelocitySensitivity(_) => "Vel Sens",
             Self::ReleaseMode(_) => "Release",
+            Self::Interpolation(_) => "Interp",
         }
     }
 
@@ -195,6 +200,7 @@ impl SamplePlayerParam {
             | Self::VelocitySensitivity(v) => v.as_f32(),
             Self::LoopMode(m) => m.index() as f32,
             Self::ReleaseMode(m) => m.index() as f32,
+            Self::Interpolation(i) => i.index() as f32,
             Self::LoopCrossfade(ms) => ms.as_f32(),
             Self::Level(g) => g.as_f32(),
         }
@@ -215,6 +221,9 @@ impl SamplePlayerParam {
             Self::VelocitySensitivity(_) => Self::VelocitySensitivity(NormalizedValue::new(value)),
             Self::ReleaseMode(_) => {
                 Self::ReleaseMode(ReleaseMode::from_index(value as usize).unwrap_or_default())
+            }
+            Self::Interpolation(_) => {
+                Self::Interpolation(Interpolation::from_index(value as usize).unwrap_or_default())
             }
         }
     }

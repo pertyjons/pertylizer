@@ -12,6 +12,7 @@ use crate::sequencer::song::Song;
 use crate::sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
+use crate::sequencer::{PatternTick, Tick};
 
 /// Transport action requested from the sequencer view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,13 +38,14 @@ pub fn show(
     ctx: &egui::Context,
     tracker_state: &mut TrackerViewState,
     song: Option<&Song>,
+    playback_tick: Option<Tick>,
 ) -> SequencerResult {
     let mut result = SequencerResult::default();
 
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical(|ui| {
             // Toolbar
-            result.transport = draw_toolbar(ui, tracker_state);
+            result.transport = draw_toolbar(ui, tracker_state, song);
 
             ui.add_space(4.0);
             ui.separator();
@@ -63,9 +65,37 @@ pub fn show(
                     // Handle keyboard input BEFORE drawing (to update state first)
                     handle_tracker_input(ui, tracker_state, song, &mut result);
 
+                    // Calculate playback row and auto-switch pattern during playback
+                    let playback_row = playback_tick.and_then(|tick| {
+                        // Find which pattern is playing at this tick
+                        if let Some((pattern_id, offset)) = song.pattern_at_tick(tick) {
+                            // Auto-switch to the playing pattern if follow is enabled
+                            if tracker_state.follow_playback
+                                && tracker_state.active_pattern != Some(pattern_id)
+                            {
+                                tracker_state.active_pattern = Some(pattern_id);
+                                // Reset scroll to top when switching patterns
+                                tracker_state.scroll_offset = crate::sequencer::view::RowIndex(0);
+                            }
+
+                            // Calculate row within the pattern
+                            if tracker_state.active_pattern == Some(pattern_id) {
+                                song.pattern(pattern_id).map(|pattern| {
+                                    let pattern_tick = PatternTick(offset.0 as u32);
+                                    pattern.row_resolution.tick_to_row(pattern_tick) as usize
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            // No pattern at this position - maybe before first pattern or gap
+                            None
+                        }
+                    });
+
                     // Draw the tracker grid
                     let config = TrackerViewConfig::fasttracker();
-                    draw_tracker_grid(ui, tracker_state, song, &config);
+                    draw_tracker_grid(ui, tracker_state, song, &config, playback_row);
                 }
                 None => {
                     draw_no_song_placeholder(ui);
@@ -79,7 +109,11 @@ pub fn show(
 
 /// Draw the toolbar with controls.
 /// Returns the transport action if a button was clicked.
-fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) -> Option<TransportAction> {
+fn draw_toolbar(
+    ui: &mut Ui,
+    state: &mut TrackerViewState,
+    song: Option<&Song>,
+) -> Option<TransportAction> {
     let colors = theme().colors;
     let mut transport_action = None;
 
@@ -184,16 +218,30 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) -> Option<TransportAc
         ui.separator();
         ui.add_space(20.0);
 
-        // Pattern selector with navigation
+        // Pattern selector with navigation and count
         ui.label(RichText::new("Pattern:").color(colors.text_dim));
         if ui.button("<").on_hover_text("Previous pattern").clicked() {
-            // Navigate to previous pattern (will be handled with song context below)
             state.navigate_pattern_prev = true;
         }
-        let pattern_text = state
-            .active_pattern
-            .map(|id| format!("{:02}", id.0))
-            .unwrap_or_else(|| "--".to_string());
+
+        // Show current/total pattern count
+        let pattern_count = song.map(|s| s.pattern_count()).unwrap_or(0);
+        let current_index = song
+            .and_then(|s| {
+                state.active_pattern.and_then(|active_id| {
+                    let mut ids: Vec<_> = s.patterns().map(|p| p.id).collect();
+                    ids.sort_by_key(|id| id.0);
+                    ids.iter().position(|&id| id == active_id)
+                })
+            })
+            .map(|i| i + 1) // 1-based index for display
+            .unwrap_or(0);
+
+        let pattern_text = if pattern_count > 0 {
+            format!("{}/{}", current_index, pattern_count)
+        } else {
+            "--/--".to_string()
+        };
         ui.label(
             RichText::new(pattern_text)
                 .color(colors.text_primary)
@@ -201,7 +249,6 @@ fn draw_toolbar(ui: &mut Ui, state: &mut TrackerViewState) -> Option<TransportAc
                 .strong(),
         );
         if ui.button(">").on_hover_text("Next pattern").clicked() {
-            // Navigate to next pattern (will be handled with song context below)
             state.navigate_pattern_next = true;
         }
 

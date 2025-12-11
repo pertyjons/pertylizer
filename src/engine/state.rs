@@ -176,6 +176,8 @@ pub struct TransportState {
     pub position_beats: AtomicF64,
     /// Current position in samples.
     pub position_samples: AtomicU64,
+    /// Current position in sequencer ticks.
+    pub position_ticks: AtomicU64,
     /// Is playing.
     pub is_playing: std::sync::atomic::AtomicBool,
 }
@@ -186,6 +188,7 @@ impl TransportState {
             tempo: AtomicF32::new(120.0),
             position_beats: AtomicF64::new(0.0),
             position_samples: AtomicU64::new(0),
+            position_ticks: AtomicU64::new(0),
             is_playing: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -214,9 +217,18 @@ impl TransportState {
         self.position_beats.store(beats);
     }
 
+    pub fn set_ticks(&self, ticks: u64) {
+        self.position_ticks.store(ticks, Ordering::Relaxed);
+    }
+
+    pub fn get_ticks(&self) -> u64 {
+        self.position_ticks.load(Ordering::Relaxed)
+    }
+
     pub fn reset(&self) {
         self.position_samples.store(0, Ordering::Relaxed);
         self.position_beats.store(0.0);
+        self.position_ticks.store(0, Ordering::Relaxed);
     }
 }
 
@@ -225,6 +237,9 @@ impl Default for TransportState {
         Self::new()
     }
 }
+
+/// Constant indicating no focused instrument (use MIDI channel routing).
+pub const NO_FOCUSED_INSTRUMENT: u32 = u32::MAX;
 
 /// Complete engine state shared between threads.
 #[derive(Debug)]
@@ -241,6 +256,10 @@ pub struct EngineState {
     pub cpu_usage: AtomicF32,
     /// Sample rate.
     pub sample_rate: AtomicU32,
+    /// Focused instrument for keyboard input.
+    /// When set (not NO_FOCUSED_INSTRUMENT), keyboard input goes only to this instrument.
+    /// When NO_FOCUSED_INSTRUMENT, traditional MIDI channel routing is used.
+    pub focused_instrument: AtomicU32,
 }
 
 impl EngineState {
@@ -252,7 +271,25 @@ impl EngineState {
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
+            focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
         })
+    }
+
+    /// Set the focused instrument for keyboard input.
+    /// Pass None to use traditional MIDI channel routing.
+    pub fn set_focused_instrument(&self, instrument_index: Option<u32>) {
+        let value = instrument_index.unwrap_or(NO_FOCUSED_INSTRUMENT);
+        self.focused_instrument.store(value);
+    }
+
+    /// Get the focused instrument index, or None if using MIDI channel routing.
+    pub fn get_focused_instrument(&self) -> Option<u32> {
+        let value = self.focused_instrument.load();
+        if value == NO_FOCUSED_INSTRUMENT {
+            None
+        } else {
+            Some(value)
+        }
     }
 }
 
@@ -265,6 +302,7 @@ impl Default for EngineState {
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
+            focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
         }
     }
 }

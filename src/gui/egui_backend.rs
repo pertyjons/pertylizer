@@ -281,6 +281,9 @@ impl SynthApp {
 
         let instruments = vec![default_instrument];
 
+        // Set the focused instrument for keyboard routing (only this instrument receives keyboard input)
+        handle.set_focused_instrument(Some(active_instrument_id));
+
         // Initialize MIDI input (connects to first available port)
         // The MidiHandler gets a clone of the command sender, so both GUI and MIDI
         // can send commands to the engine.
@@ -779,11 +782,19 @@ impl eframe::App for SynthApp {
                 });
             }
             AppView::Sequencer => {
+                // Get playback position from engine
+                let playback_tick = if self.handle.is_playing() {
+                    Some(crate::sequencer::Tick(self.handle.playback_ticks()))
+                } else {
+                    None
+                };
+
                 // Show sequencer view with tracker state and loaded song
                 let result = crate::gui::views::sequencer::show(
                     ctx,
                     &mut self.tracker_state,
                     self.song.as_ref(),
+                    playback_tick,
                 );
 
                 // Handle transport actions
@@ -1571,6 +1582,8 @@ impl SynthApp {
 
                     self.instruments.push(ui_state);
                     self.active_instrument_id = inst_id;
+                    // Set focused instrument for keyboard routing
+                    self.handle.set_focused_instrument(Some(inst_id));
                 } else {
                     // Create one instrument per sample
                     for (idx, sample) in imported.samples.iter().enumerate() {
@@ -1674,9 +1687,11 @@ impl SynthApp {
 
                         self.instruments.push(ui_state);
 
-                        // Set first instrument as active
+                        // Set first instrument as active for keyboard input
                         if idx == 0 {
                             self.active_instrument_id = inst_id;
+                            // Set focused instrument for keyboard routing
+                            self.handle.set_focused_instrument(Some(inst_id));
                         }
                     }
                 }

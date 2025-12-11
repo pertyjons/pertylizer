@@ -428,6 +428,11 @@ pub enum EngineCommand {
     /// Set glide/portamento time (type-safe seconds).
     SetGlideTime(Seconds),
 
+    /// Set the focused instrument for keyboard/MIDI input.
+    /// When set, keyboard input goes only to this instrument, ignoring MIDI channels.
+    /// When None, traditional MIDI channel routing is used.
+    SetFocusedInstrument(Option<InstrumentId>),
+
     /// Bypass a module.
     SetBypass { module: ModuleId, bypass: bool },
 
@@ -850,6 +855,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),
             Self::SetGlideTime(t) => write!(f, "SetGlideTime({t})"),
+            Self::SetFocusedInstrument(id) => write!(f, "SetFocusedInstrument({id:?})"),
             Self::SetBypass { module, bypass } => f
                 .debug_struct("SetBypass")
                 .field("module", module)
