@@ -79,6 +79,8 @@ impl Describable for Amplifier {
                 .widget(WidgetHint::PanKnob),
             )
             .port(PortDescriptor::audio_input("in", "In"))
+            .port(PortDescriptor::audio_input("in_l", "In L"))
+            .port(PortDescriptor::audio_input("in_r", "In R"))
             .port(PortDescriptor::control_input("cv", "CV"))
             .port(PortDescriptor::control_input("pan_cv", "Pan CV"))
             .port(PortDescriptor::audio_output("left", "L"))
@@ -99,11 +101,26 @@ impl PolyModule for Amplifier {
         self.output_right.resize(context.samples.as_usize());
 
         let audio_in = inputs.get(PortName::IN);
+        let audio_in_l = inputs.get(PortName::IN_L);
+        let audio_in_r = inputs.get(PortName::IN_R);
         let cv_in = inputs.get(PortName::CV);
         let pan_cv = inputs.get(PortName::PAN_CV);
 
+        // Determine if we have stereo input
+        let has_stereo_input = audio_in_l.is_some() || audio_in_r.is_some();
+
         for i in 0..context.samples.as_usize() {
-            let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
+            // Get input: use stereo inputs if connected, otherwise mono
+            let (input_l, input_r) = if has_stereo_input {
+                (
+                    audio_in_l.map(|b| b[i]).unwrap_or(0.0),
+                    audio_in_r.map(|b| b[i]).unwrap_or(0.0),
+                )
+            } else {
+                let mono = audio_in.map(|b| b[i]).unwrap_or(0.0);
+                (mono, mono)
+            };
+
             let cv = cv_in.map(|b| b[i]).unwrap_or(1.0);
             let effective_level = self.level * cv.max(0.0);
 
@@ -115,8 +132,8 @@ impl PolyModule for Amplifier {
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
 
-            let left = input * effective_level.as_f32() * pan_left.as_f32();
-            let right = input * effective_level.as_f32() * pan_right.as_f32();
+            let left = input_l * effective_level.as_f32() * pan_left.as_f32();
+            let right = input_r * effective_level.as_f32() * pan_right.as_f32();
 
             self.output_left[i] = Self::apply_clip(left, self.clip_mode);
             self.output_right[i] = Self::apply_clip(right, self.clip_mode);

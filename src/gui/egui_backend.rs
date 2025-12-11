@@ -20,8 +20,8 @@ use crate::engine::commands::PortId;
 use crate::engine::graph::Connection;
 use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::engine::params::{
-    ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
-    PhaserParam, ReverbParam,
+    AmplifierParam, ChorusParam, CompressorParam, DelayParam, DistortionParam, EnvelopeParam,
+    EqParam, FlangerParam, Param, PhaserParam, ReverbParam,
 };
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use crate::gui::app::state::AppView;
@@ -43,7 +43,7 @@ use crate::io::MidiHandler;
 use crate::io::import;
 use crate::modules::{
     Amplifier, Describable, Envelope, Filter, Lfo, MathOscillator, Mixer, ModuleCategory,
-    NoiseGenerator, Oscillator, SamplePlayer, StereoOutput, SubOscillator,
+    NoiseGenerator, Oscillator, PolyModule, SamplePlayer, StereoOutput, SubOscillator,
 };
 use crate::patch::{Patch, example_patches};
 use crate::sequencer::Song;
@@ -539,6 +539,19 @@ impl eframe::App for SynthApp {
                         };
                         if ui.selectable_label(is_selected, text).clicked() {
                             self.active_view = view;
+                            // Manage focused instrument based on view
+                            match view {
+                                AppView::Sequencer => {
+                                    // Clear focused instrument so all instruments play
+                                    self.handle.set_focused_instrument(None);
+                                }
+                                AppView::Rack => {
+                                    // Set focused instrument to active one for solo preview
+                                    self.handle
+                                        .set_focused_instrument(Some(self.active_instrument_id));
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 });
@@ -1570,10 +1583,10 @@ impl SynthApp {
                     }
                 }
 
-                // === Step 3: Create instruments for each sample ===
-                let sample_count = imported.samples.len();
-                if sample_count == 0 {
-                    // No samples - create a default instrument with just StereoOutput
+                // === Step 3: Create instruments ===
+                let instrument_count = imported.instruments.len();
+                if instrument_count == 0 {
+                    // No instruments - create a default instrument with just StereoOutput
                     let inst_id = InstrumentId::new(self.next_instrument_id);
                     self.next_instrument_id += 1;
 
@@ -1605,16 +1618,22 @@ impl SynthApp {
                     // Set focused instrument for keyboard routing
                     self.handle.set_focused_instrument(Some(inst_id));
                 } else {
-                    // Create one instrument per sample
-                    for (idx, sample) in imported.samples.iter().enumerate() {
+                    // Create one synth instrument per imported instrument
+                    for (idx, inst_meta) in imported.instruments.iter().enumerate() {
                         let inst_id = InstrumentId::new(self.next_instrument_id);
                         self.next_instrument_id += 1;
 
-                        // Use sample name or generate one
-                        let inst_name = if sample.name.0.is_empty() {
-                            format!("Sample {}", idx + 1)
+                        // Get sample for this instrument (if any)
+                        let sample = inst_meta
+                            .sample_index
+                            .and_then(|i| imported.samples.get(i))
+                            .cloned();
+
+                        // Use instrument name or generate one
+                        let inst_name = if inst_meta.name.is_empty() {
+                            format!("Instrument {}", idx + 1)
                         } else {
-                            sample.name.0.clone()
+                            inst_meta.name.clone()
                         };
 
                         // Assign MIDI channel (1-16, wrap around)
@@ -1625,8 +1644,10 @@ impl SynthApp {
                         ui_state.channel = channel;
 
                         // Generate waveform overview for GUI visualization
-                        ui_state.waveform_overview =
-                            Some(crate::types::WaveformOverview::generate(sample, 200));
+                        if let Some(ref smp) = sample {
+                            ui_state.waveform_overview =
+                                Some(crate::types::WaveformOverview::generate(smp, 200));
+                        }
 
                         // === Create SamplePlayer module ===
                         let sample_player = SamplePlayer::new();
@@ -1643,6 +1664,47 @@ impl SynthApp {
                                 .set_module_waveform(sample_player_id, waveform.clone());
                         }
 
+                        // === Create ADSR Envelope + Amplifier if envelope is enabled ===
+                        let envelope_amplifier = if inst_meta.volume_envelope.enabled {
+                            // Create Envelope module with imported ADSR parameters
+                            let mut envelope = Envelope::new();
+                            envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
+                                inst_meta.volume_envelope.attack,
+                            )));
+                            envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
+                                inst_meta.volume_envelope.decay,
+                            )));
+                            envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                                inst_meta.volume_envelope.sustain,
+                            )));
+                            envelope.set_param(Param::Envelope(EnvelopeParam::Release(
+                                inst_meta.volume_envelope.release,
+                            )));
+
+                            let envelope_desc = envelope.descriptor();
+                            let envelope_id = self.next_module_id(TypedModuleType::Envelope);
+                            ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+
+                            // Create Amplifier (VCA) with global volume and pan
+                            let mut amplifier = Amplifier::new();
+                            amplifier.set_param(Param::Amplifier(AmplifierParam::Level(
+                                inst_meta.global_volume,
+                            )));
+                            amplifier.set_param(Param::Amplifier(AmplifierParam::Pan(
+                                inst_meta.default_pan,
+                            )));
+
+                            let amplifier_desc = amplifier.descriptor();
+                            let amplifier_id = self.next_module_id(TypedModuleType::Amplifier);
+                            ui_state
+                                .patch_editor
+                                .add_module(amplifier_id, amplifier_desc);
+
+                            Some((envelope_id, envelope, amplifier_id, amplifier))
+                        } else {
+                            None
+                        };
+
                         // === Create StereoOutput module ===
                         let stereo_output = StereoOutput::new();
                         let stereo_output_desc = stereo_output.descriptor();
@@ -1651,21 +1713,49 @@ impl SynthApp {
                             .patch_editor
                             .add_module(stereo_output_id, stereo_output_desc);
 
-                        // === Create connections in GUI (SamplePlayer -> StereoOutput) ===
-                        // Left channel
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            sample_player_id,
-                            "out_l",
-                            stereo_output_id,
-                            "in_l",
-                        ));
-                        // Right channel
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            sample_player_id,
-                            "out_r",
-                            stereo_output_id,
-                            "in_r",
-                        ));
+                        // === Create connections in GUI ===
+                        if let Some((envelope_id, _, amplifier_id, _)) = &envelope_amplifier {
+                            // With envelope: SamplePlayer -> Amplifier -> StereoOutput
+                            //                Envelope -> Amplifier CV
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                sample_player_id,
+                                "out",
+                                *amplifier_id,
+                                "in",
+                            ));
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                *envelope_id,
+                                "out",
+                                *amplifier_id,
+                                "cv",
+                            ));
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                *amplifier_id,
+                                "left",
+                                stereo_output_id,
+                                "in_l",
+                            ));
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                *amplifier_id,
+                                "right",
+                                stereo_output_id,
+                                "in_r",
+                            ));
+                        } else {
+                            // Without envelope: direct SamplePlayer -> StereoOutput
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                sample_player_id,
+                                "out_l",
+                                stereo_output_id,
+                                "in_l",
+                            ));
+                            ui_state.patch_editor.add_connection(Connection::new(
+                                sample_player_id,
+                                "out_r",
+                                stereo_output_id,
+                                "in_r",
+                            ));
+                        }
 
                         // === Create engine instrument ===
                         let mut engine_inst = Instrument::new(inst_id, &inst_name);
@@ -1674,36 +1764,76 @@ impl SynthApp {
                             instrument: Box::new(engine_inst),
                         });
 
-                        // === Send modules to engine ===
+                        // === Send modules to engine (all modules BEFORE connections) ===
                         self.handle.send_blocking(EngineCommand::AddModuleInstance {
                             instrument_id: Some(inst_id),
                             id: sample_player_id,
                             module: Box::new(sample_player),
                         });
+
                         self.handle.send_blocking(EngineCommand::AddModuleInstance {
                             instrument_id: Some(inst_id),
                             id: stereo_output_id,
                             module: Box::new(stereo_output),
                         });
 
-                        // === Send connections to engine ===
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(sample_player_id, "out_l"),
-                            to: PortId::new(stereo_output_id, "in_l"),
-                        });
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(sample_player_id, "out_r"),
-                            to: PortId::new(stereo_output_id, "in_r"),
-                        });
+                        if let Some((envelope_id, envelope, amplifier_id, amplifier)) =
+                            envelope_amplifier
+                        {
+                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                                instrument_id: Some(inst_id),
+                                id: envelope_id,
+                                module: Box::new(envelope),
+                            });
+                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                                instrument_id: Some(inst_id),
+                                id: amplifier_id,
+                                module: Box::new(amplifier),
+                            });
 
-                        // === Load sample into SamplePlayer ===
-                        self.handle.send_blocking(EngineCommand::LoadSample {
-                            instrument_id: Some(inst_id),
-                            module_id: sample_player_id,
-                            sample: std::sync::Arc::clone(sample),
-                        });
+                            // Send connections with envelope
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(sample_player_id, "out"),
+                                to: PortId::new(amplifier_id, "in"),
+                            });
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(envelope_id, "out"),
+                                to: PortId::new(amplifier_id, "cv"),
+                            });
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(amplifier_id, "left"),
+                                to: PortId::new(stereo_output_id, "in_l"),
+                            });
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(amplifier_id, "right"),
+                                to: PortId::new(stereo_output_id, "in_r"),
+                            });
+                        } else {
+                            // Send connections without envelope
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(sample_player_id, "out_l"),
+                                to: PortId::new(stereo_output_id, "in_l"),
+                            });
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(sample_player_id, "out_r"),
+                                to: PortId::new(stereo_output_id, "in_r"),
+                            });
+                        }
+
+                        // === Load sample into SamplePlayer (if available) ===
+                        if let Some(smp) = sample {
+                            self.handle.send_blocking(EngineCommand::LoadSample {
+                                instrument_id: Some(inst_id),
+                                module_id: sample_player_id,
+                                sample: smp,
+                            });
+                        }
 
                         self.instruments.push(ui_state);
 
@@ -1742,13 +1872,16 @@ impl SynthApp {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
+                let sample_count = imported.samples.len();
                 self.dialog_state.set_status(format!(
-                    "Imported: {} ({} samples)",
-                    file_name, sample_count
+                    "Imported: {} ({} instruments, {} samples)",
+                    file_name, instrument_count, sample_count
                 ));
 
                 // Switch to sequencer view to show the imported song
                 self.active_view = AppView::Sequencer;
+                // Clear focused instrument so all instruments play in sequencer view
+                self.handle.set_focused_instrument(None);
             }
             Err(e) => {
                 self.dialog_state.set_status(format!("Import failed: {e}"));

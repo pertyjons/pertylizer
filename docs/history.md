@@ -1,5 +1,35 @@
 # Version History
 
+## [0.45.0] - 2025
+### Fixed - Tracker Import & Sequencer Playback
+
+Kritiska fixar för tyst uppspelning av importerade tracker-moduler.
+
+#### Bugfixar
+- **Tyst XM-uppspelning:** `focused_instrument` rensas nu efter import så att alla instrument spelas i Sequencer-vyn
+- **Fokuserad routing:** Sequencer-händelser respekterar nu `focused_instrument` för solo-läge i Rack-vyn
+
+#### Nytt verktyg
+- **`analyze_tracker`** - Diagnostikverktyg för MOD/XM/S3M-filer
+  - Visar modulinfo (namn, BPM, tempo, kanaler, mönster)
+  - Instrumentdetaljer (samples, volym-envelopes, pan, fadeout)
+  - Sample-information (datalängd, volym, loop-inställningar)
+  - Mönsterordning och noter i första mönstret
+  - Sammanfattning med statistik
+
+```bash
+cargo run --example analyze_tracker -- /path/to/file.mod
+cargo run --example analyze_tracker -- /path/to/file.xm
+cargo run --example analyze_tracker -- /path/to/file.s3m
+```
+
+#### Filer som ändrats
+- `src/gui/egui_backend.rs` - Rensar `focused_instrument` efter import till Sequencer-vy
+- `src/engine/synth_engine.rs` - Kollapsade if-satser (clippy-fix)
+- `examples/analyze_tracker.rs` - Nytt verktyg (ersätter analyze_xm.rs)
+
+---
+
 ## [0.44.0] - 2025
 ### Added - Native File Dialogs
 

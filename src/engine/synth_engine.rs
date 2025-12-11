@@ -1521,6 +1521,9 @@ impl AudioProcessor for SynthEngine {
 
         // Route sequencer events to the appropriate instruments
         // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)
+        // If focused_instrument is set, only play notes for that instrument (solo mode)
+        let focused_idx = self.state.get_focused_instrument();
+
         for event in &self.sequencer_event_buffer {
             match event {
                 crate::sequencer::SequencerEvent::NoteOn {
@@ -1532,6 +1535,13 @@ impl AudioProcessor for SynthEngine {
                     let note = MidiNote::new(pitch.as_midi());
                     let vel = velocity.as_f32();
                     let instrument_index = instrument.0 as usize;
+
+                    // If focused instrument is set, only play notes for that instrument
+                    if let Some(focus_idx) = focused_idx
+                        && instrument_index != focus_idx as usize
+                    {
+                        continue;
+                    }
 
                     // Trigger note on the matching instrument, or first instrument if index out of bounds
                     if let Some(target) = self.instruments.get_mut(instrument_index) {
@@ -1546,6 +1556,13 @@ impl AudioProcessor for SynthEngine {
                 } => {
                     let note = MidiNote::new(pitch.as_midi());
                     let instrument_index = instrument.0 as usize;
+
+                    // If focused instrument is set, only handle note-off for that instrument
+                    if let Some(focus_idx) = focused_idx
+                        && instrument_index != focus_idx as usize
+                    {
+                        continue;
+                    }
 
                     // Trigger note off on the matching instrument
                     if let Some(target) = self.instruments.get_mut(instrument_index) {

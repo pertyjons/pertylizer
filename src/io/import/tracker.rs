@@ -13,12 +13,17 @@ use xmrs::prelude::{
 };
 use xmrs::sample::LoopType as XmrsLoopType;
 
-use super::{ImportError, ImportResult, ImportedSong, SongImporter};
+use super::{
+    ImportError, ImportResult, ImportedAdsr, ImportedInstrument, ImportedSong, SongImporter,
+};
 use crate::sequencer::pattern::RowResolution;
 use crate::sequencer::pitch::{Pitch, Velocity};
 use crate::sequencer::time::Duration;
 use crate::sequencer::{PatternId, SeqInstrumentId, Song, Tick, TrackId};
-use crate::types::{Bpm, ChannelMode, MidiNote, Sample, SampleLoopInfo, SampleRate, SampleValue};
+use crate::types::{
+    BipolarValue, Bpm, ChannelMode, Gain, MidiNote, NormalizedValue, Sample, SampleLoopInfo,
+    SampleRate, SampleValue, Seconds,
+};
 
 /// Importer for tracker files (MOD, XM, S3M).
 pub struct TrackerImporter;
@@ -108,6 +113,9 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Extract samples from instruments
     let samples = extract_samples(&module)?;
 
+    // Extract instrument metadata with envelope info
+    let instruments = extract_instruments(&module, bpm);
+
     // Get number of channels
     let num_channels = module.get_num_channels();
 
@@ -141,7 +149,11 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
         current_tick = Tick(current_tick.0 + length.0 as u64);
     }
 
-    Ok(ImportedSong { song, samples })
+    Ok(ImportedSong {
+        song,
+        samples,
+        instruments,
+    })
 }
 
 /// Extract samples from module instruments.
@@ -161,6 +173,132 @@ fn extract_samples(module: &Module) -> ImportResult<Vec<Arc<Sample>>> {
     }
 
     Ok(samples)
+}
+
+/// Extract instrument metadata with ADSR envelope info.
+fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
+    let mut sample_offset = 0usize;
+
+    module
+        .instrument
+        .iter()
+        .enumerate()
+        .map(|(idx, inst)| {
+            match &inst.instr_type {
+                InstrumentType::Default(instr) => {
+                    // Convert envelope to ADSR
+                    let volume_envelope =
+                        convert_envelope_to_adsr(&instr.volume_envelope, instr.volume_fadeout, bpm);
+
+                    // Find first sample index for this instrument
+                    // Samples are flattened across all instruments, so we track offset
+                    let sample_index = if !instr.sample.is_empty() {
+                        let idx = sample_offset;
+                        sample_offset += instr.sample.iter().filter(|s| s.is_some()).count();
+                        Some(idx)
+                    } else {
+                        None
+                    };
+
+                    // Convert pan from 0.0-1.0 to -1.0 to 1.0
+                    let default_pan = BipolarValue::new(instr.default_pan * 2.0 - 1.0);
+
+                    ImportedInstrument {
+                        name: inst.name.clone(),
+                        sample_index,
+                        volume_envelope,
+                        global_volume: Gain::new(instr.global_volume),
+                        default_pan,
+                    }
+                }
+                _ => ImportedInstrument {
+                    name: format!("Instrument {}", idx + 1),
+                    sample_index: None,
+                    volume_envelope: ImportedAdsr::default(),
+                    global_volume: Gain::UNITY,
+                    default_pan: BipolarValue::CENTER,
+                },
+            }
+        })
+        .collect()
+}
+
+/// Convert XM envelope points to ADSR parameters.
+///
+/// XM envelope format:
+/// - Points with (frame, value) where frame is in ticks
+/// - Tick rate ≈ BPM * 2 / 5 Hz (at standard speed=6)
+/// - Sustain point = where envelope holds during note-on
+fn convert_envelope_to_adsr(
+    envelope: &xmrs::envelope::Envelope,
+    volume_fadeout: f32,
+    bpm: f32,
+) -> ImportedAdsr {
+    if !envelope.enabled || envelope.point.is_empty() {
+        return ImportedAdsr::default();
+    }
+
+    // XM tick rate: at BPM=125, speed=6: 125*2/5 = 50 ticks/second
+    let tick_rate = (bpm * 2.0 / 5.0).max(1.0);
+    let secs_per_tick = 1.0 / tick_rate;
+
+    // Find peak (highest value)
+    let peak_idx = envelope
+        .point
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.value
+                .partial_cmp(&b.value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
+    let peak_point = &envelope.point[peak_idx];
+
+    // Attack = time to peak
+    let attack_secs = if peak_idx > 0 && peak_point.frame > 0 {
+        (peak_point.frame as f32 * secs_per_tick).max(0.001)
+    } else {
+        0.01 // Minimal attack
+    };
+
+    // Sustain point and decay
+    let (decay_secs, sustain_level) =
+        if envelope.sustain_enabled && envelope.sustain_start_point < envelope.point.len() {
+            let sustain_point = &envelope.point[envelope.sustain_start_point];
+            let level = sustain_point.value.clamp(0.0, 1.0);
+
+            // Decay = time from peak to sustain
+            let decay = if envelope.sustain_start_point > peak_idx {
+                let decay_frames = sustain_point.frame.saturating_sub(peak_point.frame);
+                (decay_frames as f32 * secs_per_tick).max(0.001)
+            } else {
+                0.1 // Default decay
+            };
+            (decay, level)
+        } else {
+            (0.1, 1.0) // Defaults
+        };
+
+    // Release based on fadeout
+    // XM fadeout: value represents how fast volume decreases
+    // Higher value = faster fade = shorter release
+    let release_secs = if volume_fadeout > 0.001 {
+        // Invert: high fadeout = short release
+        (1.0 / volume_fadeout).clamp(0.01, 10.0)
+    } else {
+        0.3 // Default release
+    };
+
+    ImportedAdsr {
+        enabled: true,
+        attack: Seconds::new(attack_secs),
+        decay: Seconds::new(decay_secs),
+        sustain: NormalizedValue::new(sustain_level),
+        release: Seconds::new(release_secs),
+    }
 }
 
 /// Convert an xmrs Sample to our Sample type.

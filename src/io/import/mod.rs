@@ -29,7 +29,7 @@ use thiserror::Error;
 pub use tracker::TrackerImporter;
 
 use crate::sequencer::Song;
-use crate::types::Sample;
+use crate::types::{BipolarValue, Gain, NormalizedValue, Sample, Seconds};
 
 /// Errors that can occur during song import.
 #[derive(Debug, Error)]
@@ -58,15 +58,61 @@ pub enum ImportError {
 /// Result type for import operations.
 pub type ImportResult<T> = Result<T, ImportError>;
 
+/// ADSR envelope parameters from import.
+///
+/// Maps directly to our Envelope module parameters.
+#[derive(Debug, Clone)]
+pub struct ImportedAdsr {
+    /// Whether the envelope is enabled.
+    pub enabled: bool,
+    /// Attack time.
+    pub attack: Seconds,
+    /// Decay time.
+    pub decay: Seconds,
+    /// Sustain level.
+    pub sustain: NormalizedValue,
+    /// Release time.
+    pub release: Seconds,
+}
+
+impl Default for ImportedAdsr {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            attack: Seconds::new(0.01),
+            decay: Seconds::new(0.1),
+            sustain: NormalizedValue::new(0.7),
+            release: Seconds::new(0.3),
+        }
+    }
+}
+
+/// Instrument metadata from import.
+#[derive(Debug, Clone)]
+pub struct ImportedInstrument {
+    /// Instrument name.
+    pub name: String,
+    /// Index into the samples vector.
+    pub sample_index: Option<usize>,
+    /// Volume envelope (converted to ADSR).
+    pub volume_envelope: ImportedAdsr,
+    /// Global instrument volume.
+    pub global_volume: Gain,
+    /// Default pan position.
+    pub default_pan: BipolarValue,
+}
+
 /// Result of a successful import.
 ///
-/// Contains the song and any samples that were extracted.
+/// Contains the song, samples, and instrument metadata.
 #[derive(Debug)]
 pub struct ImportedSong {
     /// The imported song with patterns and arrangement.
     pub song: Song,
-    /// Extracted samples (indexed by instrument number).
+    /// Extracted samples (indexed by sample number).
     pub samples: Vec<Arc<Sample>>,
+    /// Instrument metadata with envelope information.
+    pub instruments: Vec<ImportedInstrument>,
 }
 
 /// Trait for song importers.
