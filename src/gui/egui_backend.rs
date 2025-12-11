@@ -26,9 +26,8 @@ use crate::engine::params::{
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use crate::gui::app::state::AppView;
 use crate::gui::dialogs::{
-    DialogState, ImportSongResult, LoadPatchResult, SavePatchResult, show_about_dialog,
-    show_import_song_dialog, show_load_patch_dialog, show_save_patch_dialog, show_settings_dialog,
-    show_status_toast,
+    DialogState, FileDialogMode, FileDialogResult, LoadPatchResult, show_about_dialog,
+    show_load_patch_dialog, show_settings_dialog, show_status_toast,
 };
 use crate::gui::input::handle_keyboard_input;
 use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
@@ -399,13 +398,20 @@ impl eframe::App for SynthApp {
                             .set_status("New patch created".to_string());
                         ui.close();
                     }
-                    if ui.button("📂 Load Patch...").clicked() {
+                    if ui.button("📂 Open Patch...").clicked() {
+                        self.dialog_state.open_open_patch_dialog();
+                        ui.close();
+                    }
+                    if ui.button("📋 Load Built-in...").clicked() {
                         self.dialog_state.show_load_patch = true;
                         ui.close();
                     }
                     if ui.button("💾 Save Patch...").clicked() {
-                        self.dialog_state.patch_save_name = self.current_patch_name.clone();
-                        self.dialog_state.show_save_patch = true;
+                        let default_name = format!(
+                            "{}.json",
+                            self.current_patch_name.to_lowercase().replace(' ', "_")
+                        );
+                        self.dialog_state.open_save_patch_dialog(&default_name);
                         ui.close();
                     }
                     ui.separator();
@@ -422,7 +428,7 @@ impl eframe::App for SynthApp {
                     });
                     ui.separator();
                     if ui.button("🎵 Import Song...").clicked() {
-                        self.dialog_state.show_import_song = true;
+                        self.dialog_state.open_import_song_dialog();
                         ui.close();
                     }
                     ui.separator();
@@ -1450,7 +1456,7 @@ impl SynthApp {
         // About dialog
         show_about_dialog(ctx, &mut self.dialog_state.show_about);
 
-        // Load patch dialog
+        // Load built-in patch dialog
         match show_load_patch_dialog(ctx, &mut self.dialog_state.show_load_patch) {
             LoadPatchResult::LoadBuiltin(patch) => {
                 self.load_patch_data(&patch);
@@ -1461,37 +1467,51 @@ impl SynthApp {
             LoadPatchResult::Cancelled | LoadPatchResult::None => {}
         }
 
-        // Save patch dialog
-        match show_save_patch_dialog(
-            ctx,
-            &mut self.dialog_state.show_save_patch,
-            &mut self.dialog_state.patch_save_name,
-        ) {
-            SavePatchResult::Save(name) => {
-                if let Some(patch) = self.create_patch_from_rack() {
-                    let filename = format!("{}.json", name.to_lowercase().replace(' ', "_"));
-                    if let Err(e) = patch.save(&filename) {
-                        self.dialog_state.set_status(format!("Error saving: {}", e));
-                    } else {
-                        self.current_patch_name = name;
-                        self.current_patch_path = Some(PathBuf::from(&filename));
-                        self.dialog_state.set_status(format!("Saved: {}", filename));
+        // File dialog (open/save/import)
+        if let Some(result) = self.dialog_state.update_file_dialog(ctx) {
+            match result {
+                FileDialogResult::Picked(path, Some(FileDialogMode::OpenPatch)) => {
+                    match Patch::load(&path) {
+                        Ok(patch) => {
+                            self.load_patch_data(&patch);
+                            self.current_patch_name = patch.name.clone();
+                            self.current_patch_path = Some(path.clone());
+                            self.dialog_state
+                                .set_status(format!("Loaded: {}", path.display()));
+                        }
+                        Err(e) => {
+                            self.dialog_state.set_status(format!("Error loading: {e}"));
+                        }
                     }
                 }
+                FileDialogResult::Picked(path, Some(FileDialogMode::ImportSong)) => {
+                    self.import_song_file(&path);
+                }
+                FileDialogResult::Picked(path, Some(FileDialogMode::OpenSample)) => {
+                    // TODO: Handle sample loading when sample player UI is ready
+                    self.dialog_state
+                        .set_status(format!("Sample selected: {}", path.display()));
+                }
+                FileDialogResult::Saved(path, Some(FileDialogMode::SavePatch)) => {
+                    if let Some(patch) = self.create_patch_from_rack() {
+                        if let Err(e) = patch.save(&path) {
+                            self.dialog_state.set_status(format!("Error saving: {e}"));
+                        } else {
+                            // Extract name from path
+                            let name = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("patch")
+                                .to_string();
+                            self.current_patch_name = name;
+                            self.current_patch_path = Some(path.clone());
+                            self.dialog_state
+                                .set_status(format!("Saved: {}", path.display()));
+                        }
+                    }
+                }
+                _ => {}
             }
-            SavePatchResult::Cancelled | SavePatchResult::None => {}
-        }
-
-        // Import song dialog
-        match show_import_song_dialog(
-            ctx,
-            &mut self.dialog_state.show_import_song,
-            &mut self.dialog_state.import_song_path,
-        ) {
-            ImportSongResult::Import(path) => {
-                self.import_song_file(&path);
-            }
-            ImportSongResult::Cancelled | ImportSongResult::None => {}
         }
 
         // Status message toast

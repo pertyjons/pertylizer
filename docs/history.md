@@ -1,5 +1,34 @@
 # Version History
 
+## [0.44.0] - 2025
+### Added - Native File Dialogs
+
+Ersätter manuella fildialog med `egui-file-dialog` crate för native filbläddrare.
+
+#### File Dialog Integration
+- **`egui-file-dialog` v0.12** - Native filväljare med filterstöd
+- **Öppna patch** - Ny menypost "Open Patch..." för att öppna sparade patches
+- **Spara patch** - "Save Patch..." öppnar filväljare med .json-filter
+- **Import song** - "Import Song..." med filter för .mod/.xm/.s3m
+- **Load Built-in** - Behållen för inbyggda example-patches
+
+#### API-ändringar
+- **`FileDialogMode`** enum: `OpenPatch`, `SavePatch`, `ImportSong`, `OpenSample`
+- **`FileDialogResult`** enum: `Picked(PathBuf, mode)`, `Saved(PathBuf, mode)`
+- **`DialogState`** metoder:
+  - `open_open_patch_dialog()` - Öppna patch-fil
+  - `open_save_patch_dialog(default_name)` - Spara patch
+  - `open_import_song_dialog()` - Import tracker-fil
+  - `open_sample_dialog()` - Öppna WAV-sample (förberett för framtida bruk)
+  - `update_file_dialog(ctx)` - Hanterar dialog-state och returnerar resultat
+
+#### Filer som ändrats
+- `Cargo.toml` - `egui-file-dialog = "0.12"` tillagt
+- `src/gui/dialogs.rs` - FileDialog integration, nya typer och metoder
+- `src/gui/egui_backend.rs` - Uppdaterade menyer och FileDialogResult-hantering
+
+---
+
 ## [0.43.0] - 2025
 ### Added - Focused Instrument & Tracker Playback Fixes
 

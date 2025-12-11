@@ -357,7 +357,11 @@ struct NoteEvent {
 }
 
 /// Process a track unit and return a note event if one should be triggered.
-fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState, track: TrackId) -> Option<NoteEvent> {
+fn process_track_unit(
+    unit: &TrackUnit,
+    state: &mut ChannelState,
+    track: TrackId,
+) -> Option<NoteEvent> {
     // Check for instrument change
     if let Some(inst) = unit.instrument {
         state.last_instrument = inst;

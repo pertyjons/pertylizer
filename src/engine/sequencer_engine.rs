@@ -14,7 +14,9 @@
 
 use std::sync::{Arc, RwLock};
 
-use crate::sequencer::{Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId};
+use crate::sequencer::{
+    Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
+};
 use crate::types::{Bpm, SampleCount, SampleRate};
 
 /// Playback state of the sequencer.

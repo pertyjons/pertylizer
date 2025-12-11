@@ -3,33 +3,62 @@
 //! This module provides reusable dialog components for settings,
 //! about information, and patch management.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use eframe::egui::{self, RichText};
+use egui_file_dialog::FileDialog;
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
 use crate::patch::{Patch, example_patches};
 
+/// Type of file dialog operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileDialogMode {
+    /// Opening a patch file.
+    OpenPatch,
+    /// Saving a patch file.
+    SavePatch,
+    /// Importing a song (tracker file).
+    ImportSong,
+    /// Opening a WAV sample.
+    OpenSample,
+}
+
 /// State for all application dialogs.
-#[derive(Debug, Default)]
 pub struct DialogState {
     /// Show settings dialog.
     pub show_settings: bool,
     /// Show about dialog.
     pub show_about: bool,
-    /// Show load patch dialog.
+    /// Show load patch dialog (built-in patches).
     pub show_load_patch: bool,
-    /// Show save patch dialog.
-    pub show_save_patch: bool,
-    /// Show import song dialog.
-    pub show_import_song: bool,
-    /// Path for importing song.
-    pub import_song_path: String,
     /// Name for saving patch.
     pub patch_save_name: String,
     /// Status message with timestamp.
     pub status_message: Option<(String, std::time::Instant)>,
     /// Currently selected theme preset.
     pub current_theme: ThemePreset,
+    /// File dialog instance.
+    file_dialog: FileDialog,
+    /// Current file dialog mode.
+    file_dialog_mode: Option<FileDialogMode>,
+}
+
+impl Default for DialogState {
+    fn default() -> Self {
+        Self {
+            show_settings: false,
+            show_about: false,
+            show_load_patch: false,
+            patch_save_name: String::new(),
+            status_message: None,
+            current_theme: ThemePreset::default(),
+            file_dialog: FileDialog::new(),
+            file_dialog_mode: None,
+        }
+    }
 }
 
 impl DialogState {
@@ -51,34 +80,99 @@ impl DialogState {
             self.status_message = None;
         }
     }
+
+    /// Open the file dialog for importing a song.
+    pub fn open_import_song_dialog(&mut self) {
+        self.file_dialog_mode = Some(FileDialogMode::ImportSong);
+        self.file_dialog = FileDialog::new()
+            .add_file_filter(
+                "Tracker files",
+                Arc::new(|p| {
+                    p.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+                        matches!(ext.to_lowercase().as_str(), "mod" | "xm" | "s3m")
+                    })
+                }),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        self.file_dialog.pick_file();
+    }
+
+    /// Open the file dialog for opening a patch.
+    pub fn open_open_patch_dialog(&mut self) {
+        self.file_dialog_mode = Some(FileDialogMode::OpenPatch);
+        self.file_dialog = FileDialog::new()
+            .add_file_filter(
+                "Patch files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        self.file_dialog.pick_file();
+    }
+
+    /// Open the file dialog for saving a patch.
+    pub fn open_save_patch_dialog(&mut self, default_name: &str) {
+        self.file_dialog_mode = Some(FileDialogMode::SavePatch);
+        self.file_dialog = FileDialog::new()
+            .add_file_filter(
+                "Patch files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .default_file_name(default_name);
+        self.file_dialog.save_file();
+    }
+
+    /// Open the file dialog for opening a sample.
+    pub fn open_sample_dialog(&mut self) {
+        self.file_dialog_mode = Some(FileDialogMode::OpenSample);
+        self.file_dialog = FileDialog::new()
+            .add_file_filter(
+                "Audio files",
+                Arc::new(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+                }),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        self.file_dialog.pick_file();
+    }
+
+    /// Update the file dialog and return any completed result.
+    pub fn update_file_dialog(&mut self, ctx: &egui::Context) -> Option<FileDialogResult> {
+        self.file_dialog.update(ctx);
+
+        if let Some(path) = self.file_dialog.take_picked() {
+            let mode = self.file_dialog_mode.take();
+            // Distinguish between picked and saved based on mode
+            return match mode {
+                Some(FileDialogMode::SavePatch) => Some(FileDialogResult::Saved(path, mode)),
+                _ => Some(FileDialogResult::Picked(path, mode)),
+            };
+        }
+
+        None
+    }
+
+    /// Check if a file dialog is currently open.
+    pub fn is_file_dialog_open(&self) -> bool {
+        self.file_dialog_mode.is_some()
+    }
 }
 
-/// Result from showing the load patch dialog.
+/// Result from the file dialog.
+pub enum FileDialogResult {
+    /// User picked a file.
+    Picked(PathBuf, Option<FileDialogMode>),
+    /// User saved to a file.
+    Saved(PathBuf, Option<FileDialogMode>),
+}
+
+/// Result from showing the load patch dialog (built-in patches).
 pub enum LoadPatchResult {
     /// No action taken.
     None,
     /// User selected a built-in patch to load.
     LoadBuiltin(Box<Patch>),
-    /// User cancelled.
-    Cancelled,
-}
-
-/// Result from showing the save patch dialog.
-pub enum SavePatchResult {
-    /// No action taken.
-    None,
-    /// User wants to save with the given name.
-    Save(String),
-    /// User cancelled.
-    Cancelled,
-}
-
-/// Result from showing the import song dialog.
-pub enum ImportSongResult {
-    /// No action taken.
-    None,
-    /// User wants to import from the given path.
-    Import(std::path::PathBuf),
     /// User cancelled.
     Cancelled,
 }
@@ -224,113 +318,6 @@ pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatch
             if ui.button("Cancel").clicked() {
                 result = LoadPatchResult::Cancelled;
                 *open = false;
-            }
-        });
-
-    result
-}
-
-/// Show the save patch dialog.
-///
-/// Returns the action the user wants to take.
-pub fn show_save_patch_dialog(
-    ctx: &egui::Context,
-    open: &mut bool,
-    patch_name: &mut String,
-) -> SavePatchResult {
-    if !*open {
-        return SavePatchResult::None;
-    }
-
-    let mut result = SavePatchResult::None;
-
-    egui::Window::new("Save Patch")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.label("Enter a name for your patch:");
-            ui.add_space(8.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Name:");
-                ui.text_edit_singleline(patch_name);
-            });
-
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                let can_save = !patch_name.trim().is_empty();
-                if ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
-                    .clicked()
-                {
-                    result = SavePatchResult::Save(patch_name.clone());
-                    *open = false;
-                }
-                if ui.button("Cancel").clicked() {
-                    result = SavePatchResult::Cancelled;
-                    *open = false;
-                }
-            });
-        });
-
-    result
-}
-
-/// Show the import song dialog.
-///
-/// Returns the action the user wants to take.
-pub fn show_import_song_dialog(
-    ctx: &egui::Context,
-    open: &mut bool,
-    path: &mut String,
-) -> ImportSongResult {
-    if !*open {
-        return ImportSongResult::None;
-    }
-
-    let mut result = ImportSongResult::None;
-
-    egui::Window::new("Import Song")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.label("Import a tracker file (MOD, XM, S3M):");
-            ui.add_space(8.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Path:");
-                ui.add(egui::TextEdit::singleline(path).desired_width(300.0));
-            });
-
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Supported formats: .mod, .xm, .s3m")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
-
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                let path_valid =
-                    !path.trim().is_empty() && std::path::Path::new(path.trim()).exists();
-                if ui
-                    .add_enabled(path_valid, egui::Button::new("Import"))
-                    .clicked()
-                {
-                    result = ImportSongResult::Import(std::path::PathBuf::from(path.trim()));
-                    *open = false;
-                }
-                if ui.button("Cancel").clicked() {
-                    result = ImportSongResult::Cancelled;
-                    *open = false;
-                }
-            });
-
-            if !path.trim().is_empty() && !std::path::Path::new(path.trim()).exists() {
-                ui.add_space(4.0);
-                ui.label(RichText::new("File not found").color(theme().colors.accent_red));
             }
         });
 

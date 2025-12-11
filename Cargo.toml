@@ -1,8 +1,8 @@
 [package]
 name = "modular-synth"
-version = "0.43.0"
+version = "0.44.0"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 description = "A modular synthesizer with abstract audio backend"
 authors = ["Per"]
 license = "MIT"
@@ -11,7 +11,7 @@ default-run = "modular-synth"
 [features]
 default = ["gui-egui"]
 gui-console = []
-gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras"]
+gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog"]
 
 [dependencies]
 # Audio I/O
@@ -55,6 +55,7 @@ eframe = { version = "0.33", optional = true, default-features = false, features
 ] }
 egui = { version = "0.33", optional = true }
 egui_extras = { version = "0.33", optional = true }
+egui-file-dialog = { version = "0.12", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
