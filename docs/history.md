@@ -1,5 +1,55 @@
 # Version History
 
+## [0.46.0] - 2025
+### Added - Tracker Effects Implementation
+
+Fullständig implementation av tracker-effekter för MOD/XM/S3M-import.
+
+#### Effekter Implementerade
+- **Volume Effects:** SetVolume, VolumeSlide, FineVolumeSlide, Tremolo
+- **Pitch Effects:** Arpeggio, PortamentoUp, PortamentoDown, TonePortamento, Vibrato
+- **Panning Effects:** SetPanning, PanningSlide
+- **Timing Effects:** NoteDelay, NoteCut, NoteFadeOut, Retrigger
+- **Global Effects:** SetTempo, SetSpeed, PatternBreak, PatternJump, PatternLoop, PatternDelay
+- **Miscellaneous:** SampleOffset, FineTune, Glissando, VibratoWaveform, TremoloWaveform
+
+#### Nya Typer (typsäkra wrappers)
+- **`TrackerSpeed`** - Ticks per rad (default: 6)
+- **`TickInRow`** - Position inom en rad
+- **`TrackerSampleOffset`** - Startposition för sample-uppspelning
+- **`PitchCents`** - Tonhöjdsförskjutning i cents
+- **`PortamentoDirection`** - Up/Down/Off för portamento
+
+#### Arkitektur
+- **`ChannelEffectProcessor`** - Hanterar alla kanal-effekter
+- **`ChannelEffectState`** - Per-kanal-tillstånd (volym, panning, vibrato-fas, etc.)
+- **`ChannelModulation`** - Modulationsvärden som appliceras på noter
+- **`GlobalCommand`** - Kommandon som påverkar sequencer-nivån
+
+#### Effektkonvertering (xmrs → vår modell)
+- `TrackEffect` → `EffectCommand` (not-nivå effekter)
+- `GlobalEffect` → `EffectCommand` (pattern-nivå effekter)
+- Waveform-mapping för vibrato/tremolo
+
+#### Analysverktyg
+- **`analyze_all_trackers`** - Analyserar alla tracker-filer i en katalog
+  - Rapporterar vilka effekter som används
+  - Identifierar saknade/ostödda funktioner
+  - Listar envelope- och sample-features
+
+```bash
+cargo run --example analyze_all_trackers -- /path/to/music
+```
+
+#### Filer som ändrats
+- `src/engine/tracker_effects.rs` - **NY** - Effektprocessing
+- `src/engine/mod.rs` - Exporterar tracker_effects
+- `src/engine/sequencer_engine.rs` - Integrerar effektprocessing
+- `src/io/import/tracker.rs` - Konverterar xmrs-effekter till EffectCommand
+- `examples/analyze_all_trackers.rs` - **NY** - Analysverktyg
+
+---
+
 ## [0.45.0] - 2025
 ### Fixed - Tracker Import & Sequencer Playback
 

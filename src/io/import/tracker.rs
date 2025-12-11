@@ -13,9 +13,12 @@ use xmrs::prelude::{
 };
 use xmrs::sample::LoopType as XmrsLoopType;
 
+use xmrs::effect::{GlobalEffect, TrackEffect};
+
 use super::{
     ImportError, ImportResult, ImportedAdsr, ImportedInstrument, ImportedSong, SongImporter,
 };
+use crate::sequencer::effects::EffectCommand;
 use crate::sequencer::pattern::RowResolution;
 use crate::sequencer::pitch::{Pitch, Velocity};
 use crate::sequencer::time::Duration;
@@ -71,6 +74,14 @@ fn load_tracker_module(data: &[u8], path: &Path) -> ImportResult<Module> {
         .map(str::to_lowercase)
         .unwrap_or_default();
 
+    // Check for "mod." prefix (e.g., "mod.echoing" instead of "echoing.mod")
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    let is_mod_prefix = file_name.starts_with("mod.");
+
     match ext.as_str() {
         "xm" => {
             let xm = XmModule::load(data)
@@ -86,6 +97,12 @@ fn load_tracker_module(data: &[u8], path: &Path) -> ImportResult<Module> {
             let s3m = S3mModule::load(data)
                 .map_err(|e| ImportError::Parse(format!("S3M parse error: {e}")))?;
             Ok(s3m.to_module())
+        }
+        _ if is_mod_prefix => {
+            // Handle "mod.filename" format (common on Amiga)
+            let amiga = AmigaModule::load(data)
+                .map_err(|e| ImportError::Parse(format!("MOD parse error: {e}")))?;
+            Ok(amiga.to_module())
         }
         _ => Err(ImportError::UnsupportedFormat(format!(
             "Unknown extension: {ext}"
@@ -463,7 +480,7 @@ fn convert_pattern(
                 process_track_unit(track_unit, &mut channel_state[channel_idx], track_id)
             {
                 // Create note with track info for mono-per-track behavior
-                let note = crate::sequencer::Note::new(
+                let mut note = crate::sequencer::Note::new(
                     crate::sequencer::NoteId(0), // ID will be reassigned by insert_note
                     row_tick,
                     note_event.pitch,
@@ -471,6 +488,12 @@ fn convert_pattern(
                     note_event.instrument,
                 )
                 .with_track(note_event.track);
+
+                // Add effects to the note
+                if !note_event.effects.is_empty() {
+                    note = note.with_effects(note_event.effects);
+                }
+
                 pattern.insert_note(note);
             }
         }
@@ -484,6 +507,14 @@ fn convert_pattern(
 struct ChannelState {
     last_instrument: usize,
     last_volume: f32, // 0.0-1.0
+    /// Last portamento target (for tone portamento continuation)
+    last_porta_target: Option<Pitch>,
+    /// Last vibrato settings
+    last_vibrato_speed: u8,
+    last_vibrato_depth: u8,
+    /// Last tremolo settings
+    last_tremolo_speed: u8,
+    last_tremolo_depth: u8,
 }
 
 /// A note event to be added to the pattern.
@@ -492,6 +523,7 @@ struct NoteEvent {
     velocity: Velocity,
     instrument: SeqInstrumentId,
     track: TrackId,
+    effects: Vec<EffectCommand>,
 }
 
 /// Process a track unit and return a note event if one should be triggered.
@@ -510,9 +542,29 @@ fn process_track_unit(
         state.last_volume = unit.velocity;
     }
 
+    // Convert effects
+    let mut effects = Vec::new();
+
+    // Process track effects
+    for effect in &unit.effects {
+        if let Some(cmd) = convert_track_effect(effect, state) {
+            effects.push(cmd);
+        }
+    }
+
+    // Process global effects
+    for effect in &unit.global_effects {
+        if let Some(cmd) = convert_global_effect(effect) {
+            effects.push(cmd);
+        }
+    }
+
     // Check for note using the Pitch enum
     // Pitch::None and Pitch::Off should not trigger a note
     if unit.note.is_none() || unit.note.is_keyoff() {
+        // Even without a note, we might have effects to apply
+        // For now, effects are attached to notes only
+        // TODO: Support effect-only rows
         return None;
     }
 
@@ -525,6 +577,10 @@ fn process_track_unit(
     let midi_note = note_value.saturating_add(12).min(127);
 
     let pitch = Pitch::new(midi_note)?;
+
+    // Update portamento target for tone portamento
+    state.last_porta_target = Some(pitch);
+
     let velocity = Velocity::new(state.last_volume.max(0.5)); // Default to 0.5 if no volume set
 
     #[allow(clippy::cast_possible_truncation)]
@@ -535,5 +591,306 @@ fn process_track_unit(
         velocity,
         instrument,
         track,
+        effects,
     })
+}
+
+/// Convert an xmrs track effect to our EffectCommand.
+#[allow(clippy::cast_possible_truncation)]
+fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Option<EffectCommand> {
+    match effect {
+        // === Pitch effects ===
+        TrackEffect::Arpeggio { half1, half2 } => Some(EffectCommand::Arpeggio {
+            x: *half1 as u8,
+            y: *half2 as u8,
+        }),
+
+        TrackEffect::Portamento(speed) => {
+            // Positive = up, negative = down
+            // Scale from xmrs float to tracker units (0-255)
+            let scaled = (speed.abs() * 16.0).min(255.0) as u8;
+            if *speed > 0.0 {
+                Some(EffectCommand::PortamentoUp(scaled))
+            } else if *speed < 0.0 {
+                Some(EffectCommand::PortamentoDown(scaled))
+            } else {
+                None
+            }
+        }
+
+        TrackEffect::TonePortamento(speed) => {
+            let scaled = (speed * 16.0).min(255.0) as u8;
+            Some(EffectCommand::TonePortamento {
+                speed: scaled,
+                target: state.last_porta_target,
+            })
+        }
+
+        TrackEffect::Vibrato { speed, depth } => {
+            // Update state for memory
+            if *speed > 0.0 {
+                state.last_vibrato_speed = (speed * 16.0).min(15.0) as u8;
+            }
+            if *depth > 0.0 {
+                state.last_vibrato_depth = (depth * 16.0).min(15.0) as u8;
+            }
+            Some(EffectCommand::Vibrato {
+                speed: state.last_vibrato_speed,
+                depth: state.last_vibrato_depth,
+            })
+        }
+
+        TrackEffect::VibratoSpeed(speed) => {
+            state.last_vibrato_speed = (speed * 16.0).min(15.0) as u8;
+            Some(EffectCommand::Vibrato {
+                speed: state.last_vibrato_speed,
+                depth: state.last_vibrato_depth,
+            })
+        }
+
+        TrackEffect::VibratoDepth(depth) => {
+            state.last_vibrato_depth = (depth * 16.0).min(15.0) as u8;
+            Some(EffectCommand::Vibrato {
+                speed: state.last_vibrato_speed,
+                depth: state.last_vibrato_depth,
+            })
+        }
+
+        TrackEffect::VibratoWaveform { waveform, .. } => {
+            Some(EffectCommand::VibratoWaveform(convert_waveform(waveform)))
+        }
+
+        TrackEffect::Glissando(enabled) => Some(EffectCommand::Glissando(*enabled)),
+
+        TrackEffect::InstrumentFineTune(tune) => {
+            // Convert from semitones to cents (-128 to +127)
+            let cents = (tune * 100.0).clamp(-128.0, 127.0) as i8;
+            Some(EffectCommand::FineTune(cents))
+        }
+
+        // === Volume effects ===
+        TrackEffect::Volume { value, .. } => {
+            // Convert 0.0-1.0 to 0-64
+            let vol = (value * 64.0).min(64.0) as u8;
+            Some(EffectCommand::SetVolume(vol))
+        }
+
+        TrackEffect::ChannelVolume(value) => {
+            let vol = (value * 64.0).min(64.0) as u8;
+            Some(EffectCommand::SetVolume(vol))
+        }
+
+        TrackEffect::VolumeSlide { speed, fine } => {
+            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            if *fine {
+                if *speed > 0.0 {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: scaled,
+                        down: 0,
+                    })
+                } else {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: 0,
+                        down: scaled,
+                    })
+                }
+            } else if *speed > 0.0 {
+                Some(EffectCommand::VolumeSlide {
+                    up: scaled,
+                    down: 0,
+                })
+            } else {
+                Some(EffectCommand::VolumeSlide {
+                    up: 0,
+                    down: scaled,
+                })
+            }
+        }
+
+        TrackEffect::ChannelVolumeSlide { speed, fine } => {
+            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            if *fine {
+                if *speed > 0.0 {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: scaled,
+                        down: 0,
+                    })
+                } else {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: 0,
+                        down: scaled,
+                    })
+                }
+            } else if *speed > 0.0 {
+                Some(EffectCommand::VolumeSlide {
+                    up: scaled,
+                    down: 0,
+                })
+            } else {
+                Some(EffectCommand::VolumeSlide {
+                    up: 0,
+                    down: scaled,
+                })
+            }
+        }
+
+        TrackEffect::Tremolo { speed, depth } => {
+            if *speed > 0.0 {
+                state.last_tremolo_speed = (speed * 16.0).min(15.0) as u8;
+            }
+            if *depth > 0.0 {
+                state.last_tremolo_depth = (depth * 16.0).min(15.0) as u8;
+            }
+            Some(EffectCommand::Tremolo {
+                speed: state.last_tremolo_speed,
+                depth: state.last_tremolo_depth,
+            })
+        }
+
+        TrackEffect::TremoloWaveform { waveform, .. } => {
+            Some(EffectCommand::TremoloWaveform(convert_waveform(waveform)))
+        }
+
+        // === Panning effects ===
+        TrackEffect::Panning(pan) => {
+            // Convert 0.0-1.0 to 0-255 (0=left, 128=center, 255=right)
+            let p = (pan * 255.0).min(255.0) as u8;
+            Some(EffectCommand::SetPanning(p))
+        }
+
+        TrackEffect::PanningSlide { speed, .. } => {
+            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            if *speed < 0.0 {
+                Some(EffectCommand::PanningSlide {
+                    left: scaled,
+                    right: 0,
+                })
+            } else {
+                Some(EffectCommand::PanningSlide {
+                    left: 0,
+                    right: scaled,
+                })
+            }
+        }
+
+        // === Sample/playback effects ===
+        TrackEffect::InstrumentSampleOffset(offset) => {
+            // Convert from samples to 256ths
+            let off = (*offset as u32 / 256).min(u16::MAX as u32) as u16;
+            Some(EffectCommand::SampleOffset(off))
+        }
+
+        TrackEffect::NoteRetrig {
+            speed,
+            volume_modifier,
+        } => {
+            let vol_change = match volume_modifier {
+                xmrs::effect::NoteRetrigOperator::None => 0i8,
+                xmrs::effect::NoteRetrigOperator::Sum(v) => (v * 16.0).clamp(-128.0, 127.0) as i8,
+                xmrs::effect::NoteRetrigOperator::Mul(v) => {
+                    // Approximate multiplication as addition
+                    ((v - 1.0) * 16.0).clamp(-128.0, 127.0) as i8
+                }
+            };
+            Some(EffectCommand::Retrigger {
+                interval: *speed as u8,
+                volume_change: vol_change,
+            })
+        }
+
+        TrackEffect::NoteCut { tick, .. } => Some(EffectCommand::NoteCut(*tick as u8)),
+
+        TrackEffect::NoteDelay(ticks) => Some(EffectCommand::NoteDelay(*ticks as u8)),
+
+        TrackEffect::NoteFadeOut { tick, .. } => Some(EffectCommand::NoteFadeOut(*tick as u8)),
+
+        // === Envelope effects (not directly supported yet) ===
+        TrackEffect::InstrumentVolumeEnvelope(_)
+        | TrackEffect::InstrumentVolumeEnvelopePosition(_)
+        | TrackEffect::InstrumentPanningEnvelope(_)
+        | TrackEffect::InstrumentPanningEnvelopePosition(_)
+        | TrackEffect::InstrumentPitchEnvelope(_)
+        | TrackEffect::InstrumentNewNoteAction(_)
+        | TrackEffect::InstrumentSurround(_) => None,
+
+        // === Unsupported effects ===
+        TrackEffect::Panbrello { .. }
+        | TrackEffect::PanbrelloWaveform { .. }
+        | TrackEffect::NoteOff { .. }
+        | TrackEffect::Tremor { .. } => None,
+    }
+}
+
+/// Convert an xmrs global effect to our EffectCommand.
+#[allow(clippy::cast_possible_truncation)]
+fn convert_global_effect(effect: &GlobalEffect) -> Option<EffectCommand> {
+    match effect {
+        GlobalEffect::Bpm(bpm) => Some(EffectCommand::SetTempo(*bpm as u16)),
+
+        GlobalEffect::Speed(speed) => Some(EffectCommand::SetSpeed(*speed as u8)),
+
+        GlobalEffect::PatternBreak(row) => Some(EffectCommand::PatternBreak(*row as u8)),
+
+        GlobalEffect::PositionJump(pos) => Some(EffectCommand::PatternJump(*pos as u8)),
+
+        GlobalEffect::PatternLoop(count) => Some(EffectCommand::PatternLoop {
+            count: *count as u8,
+        }),
+
+        GlobalEffect::PatternDelay { quantity, .. } => {
+            Some(EffectCommand::PatternDelay(*quantity as u8))
+        }
+
+        GlobalEffect::Volume(vol) => {
+            // Global volume - convert to SetVolume for now
+            let v = (vol * 64.0).min(64.0) as u8;
+            Some(EffectCommand::SetVolume(v))
+        }
+
+        GlobalEffect::VolumeSlide { speed, fine } => {
+            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            if *fine {
+                if *speed > 0.0 {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: scaled,
+                        down: 0,
+                    })
+                } else {
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: 0,
+                        down: scaled,
+                    })
+                }
+            } else if *speed > 0.0 {
+                Some(EffectCommand::VolumeSlide {
+                    up: scaled,
+                    down: 0,
+                })
+            } else {
+                Some(EffectCommand::VolumeSlide {
+                    up: 0,
+                    down: scaled,
+                })
+            }
+        }
+
+        // === Unsupported ===
+        GlobalEffect::BpmSlide(_) | GlobalEffect::MidiMacro(_) => None,
+    }
+}
+
+/// Convert xmrs waveform to our EffectWaveform.
+fn convert_waveform(
+    waveform: &xmrs::waveform::Waveform,
+) -> crate::sequencer::effects::EffectWaveform {
+    use crate::sequencer::effects::EffectWaveform;
+    use xmrs::waveform::Waveform;
+    match waveform {
+        Waveform::Sine | Waveform::TranslatedSine => EffectWaveform::Sine,
+        Waveform::RampDown | Waveform::TranslatedRampDown | Waveform::TranslatedRampUp => {
+            EffectWaveform::Ramp
+        }
+        Waveform::Square | Waveform::TranslatedSquare => EffectWaveform::Square,
+        Waveform::Random => EffectWaveform::Random,
+    }
 }

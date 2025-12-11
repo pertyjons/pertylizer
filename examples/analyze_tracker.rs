@@ -34,12 +34,19 @@ fn main() {
 
     println!("File size: {} bytes", data.len());
 
-    // Detect format from extension
+    // Detect format from extension or "mod." prefix
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .unwrap_or_default();
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    let is_mod_prefix = file_name.starts_with("mod.");
 
     let module: Module = match ext.as_str() {
         "xm" => {
@@ -72,9 +79,19 @@ fn main() {
                 }
             }
         }
+        _ if is_mod_prefix => {
+            println!("Format: MOD (Amiga ProTracker Module) - detected from mod. prefix");
+            match AmigaModule::load(&data) {
+                Ok(amiga) => amiga.to_module(),
+                Err(e) => {
+                    eprintln!("Failed to parse MOD: {:?}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         _ => {
             eprintln!("Unknown file extension: {}", ext);
-            eprintln!("Supported formats: .mod, .xm, .s3m");
+            eprintln!("Supported formats: .mod, .xm, .s3m, or mod.* prefix");
             std::process::exit(1);
         }
     };

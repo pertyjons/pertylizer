@@ -19,6 +19,7 @@ pub mod params;
 pub mod sequencer_engine;
 pub mod state;
 pub mod synth_engine;
+pub mod tracker_effects;
 pub mod voice;
 pub mod voice_allocator;
 

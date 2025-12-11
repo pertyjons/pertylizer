@@ -88,9 +88,16 @@ impl DialogState {
             .add_file_filter(
                 "Tracker files",
                 Arc::new(|p| {
-                    p.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+                    // Check extension (.mod, .xm, .s3m)
+                    let ext_match = p.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
                         matches!(ext.to_lowercase().as_str(), "mod" | "xm" | "s3m")
-                    })
+                    });
+                    // Also check for "mod." prefix (e.g., "mod.echoing")
+                    let mod_prefix = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|name| name.to_lowercase().starts_with("mod."));
+                    ext_match || mod_prefix
                 }),
             )
             .add_file_filter("All files", Arc::new(|_| true));

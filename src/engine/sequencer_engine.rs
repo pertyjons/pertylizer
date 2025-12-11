@@ -14,6 +14,7 @@
 
 use std::sync::{Arc, RwLock};
 
+use crate::engine::tracker_effects::{ChannelEffectProcessor, GlobalCommand};
 use crate::sequencer::{
     Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
 };
@@ -40,7 +41,7 @@ struct ActiveNote {
     instrument: SeqInstrumentId,
     /// When the note should end (if duration is known).
     end_tick: Option<Tick>,
-    /// Track for mono-per-track behavior.
+    /// Track for mono-per-track behavior and effect processing.
     track: Option<TrackId>,
 }
 
@@ -70,6 +71,8 @@ pub struct SequencerEngine {
     loop_start: Tick,
     /// Loop end position.
     loop_end: Tick,
+    /// Tracker effect processor for handling per-channel effects.
+    effect_processor: ChannelEffectProcessor,
 }
 
 impl SequencerEngine {
@@ -86,6 +89,7 @@ impl SequencerEngine {
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
+            effect_processor: ChannelEffectProcessor::default(),
         }
     }
 
@@ -107,6 +111,7 @@ impl SequencerEngine {
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
+            effect_processor: ChannelEffectProcessor::default(),
         }
     }
 
@@ -299,24 +304,71 @@ impl SequencerEngine {
             // This is the classic tracker behavior where each channel is monophonic
             if let Some(track_id) = track {
                 self.stop_notes_on_track(track_id, events);
+
+                // Process effects for this channel
+                let global_commands =
+                    self.effect_processor
+                        .process_row_start(track_id, &effects, Some(pitch));
+
+                // Handle global commands (tempo changes, etc.)
+                for cmd in global_commands {
+                    match cmd {
+                        GlobalCommand::SetTempo(bpm) => {
+                            self.cached_tempo = Bpm::new(f32::from(bpm));
+                        }
+                        GlobalCommand::SetSpeed(_speed) => {
+                            // Speed affects ticks per row - handled by effect processor
+                        }
+                        // Pattern navigation effects would require additional state
+                        GlobalCommand::PatternBreak(_)
+                        | GlobalCommand::PatternJump(_)
+                        | GlobalCommand::SetLoopStart
+                        | GlobalCommand::PatternLoop(_)
+                        | GlobalCommand::PatternDelay(_) => {
+                            // TODO: Implement pattern navigation
+                        }
+                    }
+                }
+
+                // Get channel modulation to adjust velocity
+                let modulation = self.effect_processor.get_channel_modulation(track_id);
+                let adjusted_velocity = crate::sequencer::pitch::Velocity::new(
+                    velocity.as_f32() * modulation.volume.as_f32(),
+                );
+
+                // Track active note for NoteOff
+                self.active_notes.push(ActiveNote {
+                    pitch,
+                    instrument,
+                    end_tick,
+                    track,
+                });
+
+                // Emit NoteOn event with adjusted velocity
+                events.push(SequencerEvent::NoteOn {
+                    tick: self.current_tick,
+                    pitch,
+                    velocity: adjusted_velocity,
+                    instrument,
+                    effects,
+                });
+            } else {
+                // No track - no effect processing, emit as-is
+                self.active_notes.push(ActiveNote {
+                    pitch,
+                    instrument,
+                    end_tick,
+                    track,
+                });
+
+                events.push(SequencerEvent::NoteOn {
+                    tick: self.current_tick,
+                    pitch,
+                    velocity,
+                    instrument,
+                    effects,
+                });
             }
-
-            // Track active note for NoteOff
-            self.active_notes.push(ActiveNote {
-                pitch,
-                instrument,
-                end_tick,
-                track,
-            });
-
-            // Emit NoteOn event
-            events.push(SequencerEvent::NoteOn {
-                tick: self.current_tick,
-                pitch,
-                velocity,
-                instrument,
-                effects,
-            });
         }
     }
 

@@ -21,7 +21,7 @@ use crate::engine::graph::Connection;
 use crate::engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::engine::params::{
     AmplifierParam, ChorusParam, CompressorParam, DelayParam, DistortionParam, EnvelopeParam,
-    EqParam, FlangerParam, Param, PhaserParam, ReverbParam,
+    EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
 };
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use crate::gui::app::state::AppView;
@@ -47,7 +47,7 @@ use crate::modules::{
 };
 use crate::patch::{Patch, example_patches};
 use crate::sequencer::Song;
-use crate::types::NormalizedValue;
+use crate::types::{Gain, LoopMode, NormalizedValue, ReleaseMode};
 use crate::visualizers::{LevelMeter, Oscilloscope};
 
 /// Egui-based GUI backend.
@@ -1650,12 +1650,113 @@ impl SynthApp {
                         }
 
                         // === Create SamplePlayer module ===
-                        let sample_player = SamplePlayer::new();
+                        let mut sample_player = SamplePlayer::new();
+
+                        // Pre-configure SamplePlayer from sample metadata (if available)
+                        // This ensures GUI and engine have matching parameters
+                        if let Some(ref smp) = sample {
+                            // Apply loop settings from sample metadata
+                            if let Some(ref loop_info) = smp.loop_info {
+                                sample_player.set_param(Param::SamplePlayer(
+                                    SamplePlayerParam::LoopStart(NormalizedValue::new(
+                                        loop_info.loop_start,
+                                    )),
+                                ));
+                                sample_player.set_param(Param::SamplePlayer(
+                                    SamplePlayerParam::LoopEnd(NormalizedValue::new(
+                                        loop_info.loop_end,
+                                    )),
+                                ));
+                                if loop_info.enabled {
+                                    let loop_mode = if loop_info.ping_pong {
+                                        LoopMode::PingPong
+                                    } else {
+                                        LoopMode::Forward
+                                    };
+                                    sample_player.set_param(Param::SamplePlayer(
+                                        SamplePlayerParam::LoopMode(loop_mode),
+                                    ));
+                                }
+                            }
+
+                            // Apply default volume from sample metadata
+                            if let Some(volume) = smp.default_volume {
+                                sample_player.set_param(Param::SamplePlayer(
+                                    SamplePlayerParam::Level(Gain::new(volume)),
+                                ));
+                            }
+
+                            // Set release mode based on loop settings:
+                            // - Looped samples: Immediate (stop at note-off)
+                            // - Non-looped samples: PlayToEnd (let sample finish)
+                            let has_loop =
+                                smp.loop_info.as_ref().map(|li| li.enabled).unwrap_or(false);
+                            let release_mode = if has_loop {
+                                ReleaseMode::Immediate
+                            } else {
+                                ReleaseMode::PlayToEnd
+                            };
+                            sample_player.set_param(Param::SamplePlayer(
+                                SamplePlayerParam::ReleaseMode(release_mode),
+                            ));
+                        }
+
                         let sample_player_desc = sample_player.descriptor();
                         let sample_player_id = self.next_module_id(TypedModuleType::SamplePlayer);
                         ui_state
                             .patch_editor
                             .add_module(sample_player_id, sample_player_desc);
+
+                        // Sync GUI parameter values with pre-configured SamplePlayer
+                        // (add_module uses descriptor defaults, so we need to override)
+                        if let Some(ref smp) = sample {
+                            if let Some(ref loop_info) = smp.loop_info {
+                                ui_state.patch_editor.set_parameter_by_name(
+                                    sample_player_id,
+                                    "Loop Start",
+                                    loop_info.loop_start,
+                                );
+                                ui_state.patch_editor.set_parameter_by_name(
+                                    sample_player_id,
+                                    "Loop End",
+                                    loop_info.loop_end,
+                                );
+                                if loop_info.enabled {
+                                    let loop_mode_idx = if loop_info.ping_pong {
+                                        3.0 // PingPong = index 3
+                                    } else {
+                                        1.0 // Forward = index 1
+                                    };
+                                    ui_state.patch_editor.set_parameter_by_name(
+                                        sample_player_id,
+                                        "Loop",
+                                        loop_mode_idx,
+                                    );
+                                }
+                            }
+
+                            if let Some(volume) = smp.default_volume {
+                                ui_state.patch_editor.set_parameter_by_name(
+                                    sample_player_id,
+                                    "Level",
+                                    volume,
+                                );
+                            }
+
+                            // Set release mode in GUI
+                            let has_loop =
+                                smp.loop_info.as_ref().map(|li| li.enabled).unwrap_or(false);
+                            let release_mode_idx = if has_loop {
+                                0.0 // Immediate = index 0
+                            } else {
+                                1.0 // PlayToEnd = index 1
+                            };
+                            ui_state.patch_editor.set_parameter_by_name(
+                                sample_player_id,
+                                "Release",
+                                release_mode_idx,
+                            );
+                        }
 
                         // Copy waveform overview to the module's panel state
                         if let Some(ref waveform) = ui_state.waveform_overview {
