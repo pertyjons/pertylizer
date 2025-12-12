@@ -810,6 +810,8 @@ pub struct Sample {
     pub loop_info: Option<SampleLoopInfo>,
     /// Default volume (0.0-1.0) from tracker import.
     pub default_volume: Option<f32>,
+    /// Default panning (0.0=left, 0.5=center, 1.0=right) from tracker import.
+    pub default_panning: Option<f32>,
 }
 
 impl Sample {
@@ -828,6 +830,7 @@ impl Sample {
             root_note: MidiNote::C4,
             loop_info: None,
             default_volume: None,
+            default_panning: None,
         }
     }
 
@@ -846,6 +849,12 @@ impl Sample {
     /// Set default volume from tracker import (0.0-1.0).
     pub fn with_default_volume(mut self, volume: f32) -> Self {
         self.default_volume = Some(volume.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set default panning from tracker import (0.0=left, 0.5=center, 1.0=right).
+    pub fn with_default_panning(mut self, panning: f32) -> Self {
+        self.default_panning = Some(panning.clamp(0.0, 1.0));
         self
     }
 

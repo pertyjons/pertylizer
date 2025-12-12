@@ -8,6 +8,7 @@ use std::sync::Arc;
 use xmrs::import::amiga::amiga_module::AmigaModule;
 use xmrs::import::s3m::s3m_module::S3mModule;
 use xmrs::import::xm::xmmodule::XmModule;
+use xmrs::period_helper::FrequencyType;
 use xmrs::prelude::{
     InstrumentType, Module, Pattern as XmrsPattern, Sample as XmrsSample, SampleDataType, TrackUnit,
 };
@@ -129,7 +130,7 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     song.default_tempo = Bpm::new(bpm.clamp(60.0, 300.0));
 
     // Extract samples from instruments
-    let samples = extract_samples(&module)?;
+    let samples = extract_samples(&module, module.frequency_type)?;
 
     // Extract instrument metadata with envelope info
     let instruments = extract_instruments(&module, bpm);
@@ -192,7 +193,7 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
 }
 
 /// Extract samples from module instruments.
-fn extract_samples(module: &Module) -> ImportResult<Vec<Arc<Sample>>> {
+fn extract_samples(module: &Module, freq_type: FrequencyType) -> ImportResult<Vec<Arc<Sample>>> {
     let mut samples = Vec::new();
 
     for (inst_idx, instrument) in module.instrument.iter().enumerate() {
@@ -200,7 +201,7 @@ fn extract_samples(module: &Module) -> ImportResult<Vec<Arc<Sample>>> {
         if let InstrumentType::Default(instr) = &instrument.instr_type {
             for (smp_idx, sample_opt) in instr.sample.iter().enumerate() {
                 if let Some(xmrs_sample) = sample_opt {
-                    let sample = convert_sample(xmrs_sample, inst_idx, smp_idx)?;
+                    let sample = convert_sample(xmrs_sample, inst_idx, smp_idx, freq_type)?;
                     samples.push(Arc::new(sample));
                 }
             }
@@ -342,6 +343,7 @@ fn convert_sample(
     xmrs_sample: &XmrsSample,
     inst_idx: usize,
     smp_idx: usize,
+    freq_type: FrequencyType,
 ) -> ImportResult<Sample> {
     let name = if xmrs_sample.name.is_empty() {
         format!("Inst{inst_idx:02X}_Smp{smp_idx:02X}")
@@ -355,14 +357,33 @@ fn convert_sample(
         None => (Vec::new(), ChannelMode::Mono),
     };
 
-    // Tracker samples typically use 8363 Hz as base rate for C-4
-    // relative_pitch adjusts this
-    let base_rate = 8363.0_f32;
-    let rate_multiplier = 2.0_f32.powf(f32::from(xmrs_sample.relative_pitch) / 12.0);
-    let sample_rate = SampleRate::new(base_rate * rate_multiplier);
+    // Calculate base frequency based on frequency type (Linear vs Amiga)
+    // - Linear mode: Uses 8363 Hz as C-4 rate with standard 2^(semitones/12) scaling
+    // - Amiga mode: Uses period-based calculations from Paula chipset
+    //
+    // For Amiga mode, C-4 frequency ≈ 8287 Hz (slightly different from Linear's 8363 Hz)
+    // We calculate the C-4 frequency for the given mode and use that as base.
+    let base_rate = match freq_type {
+        FrequencyType::LinearFrequencies => 8363.0_f32,
+        FrequencyType::AmigaFrequencies => {
+            // Amiga C-4 calculation:
+            // period = 6848.0 * e^(-0.0578 * 48) + 0.2782 ≈ 428.46
+            // frequency = 7093789.2 / (period * 2) ≈ 8278 Hz
+            // Using xmrs's actual formula for accuracy
+            let note = 48.0_f32; // C-4 in xmrs notation
+            let period = 6848.0 * (-0.0578 * note).exp() + 0.2782;
+            7_093_789.2 / (period * 2.0)
+        }
+    };
 
-    // Calculate root note from relative_pitch
-    // relative_pitch = 0 means C-4 (MIDI 60)
+    // Apply finetune adjustment (-1..1, roughly -1 to +1 semitones)
+    // We bake finetune into the sample_rate to achieve fine pitch adjustment.
+    // The playback engine uses: rate = sample_rate * 2^((target_note - root_note) / 12)
+    let finetune_adjustment = 2.0_f32.powf(xmrs_sample.finetune / 12.0);
+    let sample_rate = SampleRate::new(base_rate * finetune_adjustment);
+
+    // Root note from relative_pitch
+    // relative_pitch = 0 means C-4 (MIDI 60), +12 means C-5, etc.
     let root_midi = (60 + i16::from(xmrs_sample.relative_pitch)).clamp(0, 127) as u8;
     let root_note = MidiNote::new(root_midi);
 
@@ -389,8 +410,9 @@ fn convert_sample(
         None
     };
 
-    // Extract default volume (xmrs uses 0.0-1.0)
+    // Extract default volume and panning (xmrs uses 0.0-1.0)
     let default_volume = xmrs_sample.volume;
+    let default_panning = xmrs_sample.panning; // 0.0 = left, 1.0 = right
 
     let mut sample = Sample::new(name, data, channels, sample_rate).with_root_note(root_note);
 
@@ -398,7 +420,9 @@ fn convert_sample(
         sample = sample.with_loop_info(loop_info);
     }
 
-    sample = sample.with_default_volume(default_volume);
+    sample = sample
+        .with_default_volume(default_volume)
+        .with_default_panning(default_panning);
 
     Ok(sample)
 }

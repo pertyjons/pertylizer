@@ -1,5 +1,27 @@
 # Version History
 
+## [0.55.0] - 2025
+### Fixed - XM/MOD Import Pitch Accuracy
+
+Fixade pitch-beräkning för tracker-moduler genom att hantera FrequencyType (Amiga vs Linear).
+
+#### Problemen
+1. **FrequencyType ignorerades** - XM-filer kan använda Amiga eller Linear frekvensberäkning. Amiga C-4 = 8297 Hz vs Linear C-4 = 8363 Hz (~14 cents skillnad).
+2. **Dubbel relative_pitch** - `relative_pitch` applicerades på både `sample_rate` OCH `root_note`, vilket tog ut varandra.
+3. **Finetune ignorerades** - Sample finetune (-1..1 semitoner) användes inte alls.
+
+#### Lösningen
+- Beräknar korrekt basfrekvens baserat på `module.frequency_type` (Amiga: 8297 Hz, Linear: 8363 Hz)
+- Applicerar `finetune` på sample_rate via formeln `2^(finetune/12)`
+- Använder `relative_pitch` enbart för `root_note`
+- Lade till `default_panning` fält i Sample struct
+
+#### Filer som ändrats
+- `crates/modular_synth/src/io/import/tracker.rs` - FrequencyType-hantering, finetune-fix
+- `crates/synth_core/src/types/sample.rs` - Lade till `default_panning` fält
+
+---
+
 ## [0.54.0] - 2025
 ### Fixed - Tracker Voice Allocation (TrackId Mismatch)
 
