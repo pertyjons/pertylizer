@@ -1,5 +1,26 @@
 # Version History
 
+## [0.53.0] - 2025
+### Fixed - Rack View Silent Audio Bug
+
+Kritisk fix för tyst ljud i Rack View efter graf-rebuild.
+
+#### Problemet
+Efter att ha valt ett instrument i Rack View producerade grafen inget ljud trots att oscillatorer och envelopes kördes korrekt. Endast den första audio-buffern efter note_on innehöll ljud.
+
+#### Rotorsaken
+`ModuleGraph::process_module()` återanvände `input_buffers` Vec mellan moduler men clearade bara **buffrarnas innehåll** - inte **listan av port-entries**.
+
+Om modul A processades med port "in" och sedan modul B (t.ex. `StereoOutput`) också hade port "in", hittade den en **stale entry** från modul A istället för att skapa en ny från rätt koppling. Resultatet blev att signaler routades fel eller försvann.
+
+#### Lösningen
+Ändrade från att cleara buffrarnas innehåll till att cleara hela Vec:en med `self.input_buffers.clear()` vid början av varje modul-process.
+
+#### Filer som ändrats
+- `crates/synth_engine/src/graph.rs` - Fixade input_buffers hantering i `process_module()`
+
+---
+
 ## [0.52.0] - 2025
 ### Changed - Cargo Workspace Refactoring
 

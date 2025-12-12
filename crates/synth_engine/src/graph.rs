@@ -620,11 +620,11 @@ impl ModuleGraph {
             }
         }
 
-        // Clear and reuse the pre-allocated input buffers Vec
-        // We clear all buffers to silence and track which ports have data
-        for (_, buf) in self.input_buffers.iter_mut() {
-            buf.clear();
-        }
+        // Clear the input buffers Vec for this module
+        // We need to clear the list entirely (not just buffer contents) because
+        // different modules have different input ports. Previously we only cleared
+        // buffer contents which caused stale port entries to persist across modules.
+        self.input_buffers.clear();
 
         // Gather inputs from connected modules
         // Uses Vec for zero-allocation (no HashMap creation per frame)
