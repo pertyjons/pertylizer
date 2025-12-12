@@ -1,0 +1,63 @@
+[package]
+name = "modular_synth"
+version = "0.51.0"
+edition = "2024"
+rust-version = "1.92"
+description = "A modular synthesizer with abstract audio backend"
+authors = ["Per"]
+license = "MIT"
+default-run = "modular-synth"
+
+[features]
+default = ["gui-egui"]
+gui-console = []
+gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog"]
+debug-tools = []
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }
+synth_sequencer = { path = "../synth_sequencer" }
+synth_modules = { path = "../synth_modules" }
+synth_engine = { path = "../synth_engine" }
+
+# Audio I/O
+cpal = { workspace = true }
+
+# MIDI I/O
+midir = { workspace = true }
+
+# Lock-free communication
+ringbuf = { workspace = true }
+
+# Fast mutex for visualization buffers
+parking_lot = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Fast random number generation
+fastrand = { workspace = true }
+
+# Serialization for save/load
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# File system paths
+dirs = { workspace = true }
+
+# WAV file reading for samples
+hound = { workspace = true }
+
+# Tracker module import (MOD, XM, S3M)
+xmrs = { workspace = true }
+
+# GUI - egui (optional)
+eframe = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+egui_extras = { workspace = true, optional = true }
+egui-file-dialog = { workspace = true, optional = true }
+
+[[bin]]
+name = "modular-synth"
+path = "src/main.rs"

@@ -1,0 +1,16 @@
+[package]
+name = "synth_sequencer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Sequencer and pattern system for modular synthesizer"
+authors = ["Per"]
+license = "MIT"
+
+[features]
+default = []
+gui-egui = []
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+serde = { workspace = true }

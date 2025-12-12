@@ -1,0 +1,14 @@
+[package]
+name = "synth_modules"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Synth modules and audio effects for modular synthesizer"
+authors = ["Per"]
+license = "MIT"
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }
+serde = { workspace = true }
+fastrand = { workspace = true }

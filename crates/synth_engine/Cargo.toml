@@ -1,0 +1,16 @@
+[package]
+name = "synth_engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Synth engine with voice allocation, graph processing, and sequencer"
+authors = ["Per"]
+license = "MIT"
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+synth_modules = { path = "../synth_modules" }
+synth_sequencer = { path = "../synth_sequencer" }
+serde = { workspace = true }
+parking_lot = { workspace = true }
+ringbuf = { workspace = true }

@@ -51,7 +51,9 @@
       "Bash(done)",
       "WebFetch(domain:codeberg.org)",
       "Bash(cargo doc:*)",
-      "Bash(timeout 10 cargo run:*)"
+      "Bash(timeout 10 cargo run:*)",
+      "Bash(tree:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

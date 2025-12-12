@@ -1,0 +1,11 @@
+[package]
+name = "synth_dsp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "DSP primitives for modular synthesizer"
+authors = ["Per"]
+license = "MIT"
+
+[dependencies]
+synth_core = { path = "../synth_core" }

@@ -1,20 +1,29 @@
-[package]
-name = "modular-synth"
-version = "0.51.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/synth_core",
+    "crates/synth_dsp",
+    "crates/synth_sequencer",
+    "crates/synth_modules",
+    "crates/synth_engine",
+    "crates/modular_synth",
+]
+
+# Default to run the main application
+default-members = ["crates/modular_synth"]
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.92"
-description = "A modular synthesizer with abstract audio backend"
 authors = ["Per"]
 license = "MIT"
-default-run = "modular-synth"
 
-[features]
-default = ["gui-egui"]
-gui-console = []
-gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog"]
-debug-tools = []  # Debugging tools for development and testing
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
 
-[dependencies]
 # Audio I/O
 cpal = "0.16"
 
@@ -27,15 +36,8 @@ ringbuf = "0.4"
 # Fast mutex for visualization buffers
 parking_lot = "0.12"
 
-# Error handling
-thiserror = "2.0"
-
 # Fast random number generation
 fastrand = "2.3"
-
-# Serialization for save/load
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
 # File system paths
 dirs = "6.0"
@@ -47,24 +49,27 @@ hound = "3.5"
 xmrs = { version = "0.9", features = ["std", "import"] }
 
 # GUI - egui (optional)
-eframe = { version = "0.33", optional = true, default-features = false, features = [
+eframe = { version = "0.33", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
     "x11",
 ] }
-egui = { version = "0.33", optional = true }
-egui_extras = { version = "0.33", optional = true }
-egui-file-dialog = { version = "0.12", optional = true }
+egui = { version = "0.33" }
+egui_extras = { version = "0.33" }
+egui-file-dialog = { version = "0.12" }
 
-[dev-dependencies]
-criterion = "0.8"
-tempfile = "3.23"
-
-[[bench]]
-name = "audio_processing"
-harness = false
+[workspace.lints.clippy]
+all = "warn"
+# Allow these for synth-appropriate exceptions
+must_use_candidate = "allow"
+missing_const_for_fn = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
 
 [profile.release]
 lto = true
