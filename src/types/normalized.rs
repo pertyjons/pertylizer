@@ -391,6 +391,22 @@ impl Mul<f32> for BipolarValue {
     }
 }
 
+/// BipolarValue * NormalizedValue = f32.
+///
+/// Attenuate a bipolar signal (e.g., LFO output) by a normalized amount.
+/// This is the fundamental operation for modulation:
+/// ```ignore
+/// let modulation = lfo_output * mod_depth; // Returns f32
+/// ```
+impl Mul<NormalizedValue> for BipolarValue {
+    type Output = f32;
+
+    #[inline]
+    fn mul(self, rhs: NormalizedValue) -> Self::Output {
+        self.0 * rhs.0
+    }
+}
+
 impl From<f32> for BipolarValue {
     fn from(value: f32) -> Self {
         Self::new(value)

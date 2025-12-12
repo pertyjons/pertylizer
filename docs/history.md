@@ -1,5 +1,53 @@
 # Version History
 
+## [0.51.0] - 2025
+### Added - Type Safety & Operator Overloading
+
+Utökade typsystemet med nya domäntyper och operator overloading för renare DSP-kod.
+
+#### Nya Cross-Type Operators
+
+| Operation | Resultat | Användning |
+|-----------|----------|------------|
+| `Hertz / SampleRate` | `f32` | Phase increment för oscillatorer |
+| `BipolarValue * NormalizedValue` | `f32` | LFO × mod depth (attenuering) |
+| `SampleCount / SampleRate` | `Seconds` | Bufferstorlek → tid |
+
+Exempel på förenklad kod:
+```rust
+// Före
+let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
+
+// Efter
+let phase_inc = self.rate / self.sample_rate;
+```
+
+#### Nya Typer (`src/types/audio.rs`)
+
+- **`CpuUsage(f32)`** - CPU-belastning (0.0-1.0) med `is_warning()`, `is_critical()`
+- **`StereoLevels`** - Peak-mätning för meters (`left`, `right`: Amplitude)
+- **`TrackCount(usize)`** - Antal kanaler med konstanter: `MOD_STANDARD`, `THIRTYTWO`
+- **`PatternIndex(usize)`** - Position i song arrangement
+- **`RowIndex(u32)`** - Radnummer i pattern med `is_beat()`, `is_bar()`
+- **`TrackerSpeed(u8)`** - Ticks per row (1-31, DEFAULT=6)
+
+#### Uppdateringar till VoiceCount
+
+- **`new()` clampar nu till 1-128** (var obegränsat)
+- **`new_unchecked()`** för performance-kritiska paths
+- **`THIRTYTWO`** konstant (32 voices för tracker)
+- **`MAX_ALLOCATOR`** konstant (128 voices)
+- **`clamp_allocator()`** metod för allocator range
+- **`From<usize>`** implementation
+
+#### Filer som ändrats
+- `src/types/frequency.rs` - `Hertz / SampleRate` operator
+- `src/types/normalized.rs` - `BipolarValue * NormalizedValue` operator
+- `src/types/samples.rs` - `SampleCount / SampleRate` operator
+- `src/types/audio.rs` - Nya typer och VoiceCount-uppdateringar
+
+---
+
 ## [0.50.0] - 2025
 ### Added - Tracker Voice Allocation (Mono-Per-Channel)
 

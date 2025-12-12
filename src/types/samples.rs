@@ -94,6 +94,21 @@ impl Div<usize> for SampleCount {
     }
 }
 
+/// SampleCount / SampleRate = Seconds.
+///
+/// Convert sample count to duration:
+/// ```ignore
+/// let duration = buffer_size / sample_rate;
+/// ```
+impl Div<SampleRate> for SampleCount {
+    type Output = Seconds;
+
+    #[inline]
+    fn div(self, rhs: SampleRate) -> Self::Output {
+        Seconds::new(self.0 as f32 / rhs.0)
+    }
+}
+
 impl From<usize> for SampleCount {
     fn from(count: usize) -> Self {
         Self(count)

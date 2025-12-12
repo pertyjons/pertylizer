@@ -272,6 +272,23 @@ crate::impl_scaling!(Hertz);
 crate::impl_ratio!(Hertz);
 crate::impl_float_conversions!(Hertz);
 
+// Cross-type operators for ergonomic DSP code
+
+/// Hertz / SampleRate = phase increment (f32).
+///
+/// This is the fundamental operation for oscillators:
+/// ```ignore
+/// let phase_inc = self.frequency / context.sample_rate;
+/// ```
+impl std::ops::Div<SampleRate> for Hertz {
+    type Output = f32;
+
+    #[inline]
+    fn div(self, rhs: SampleRate) -> Self::Output {
+        self.0 / rhs.0
+    }
+}
+
 impl std::fmt::Display for Hertz {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0 >= 1000.0 {

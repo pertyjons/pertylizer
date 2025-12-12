@@ -359,9 +359,15 @@ impl From<Amplitude> for f32 {
 pub struct VoiceCount(pub u8);
 
 impl VoiceCount {
-    /// Create a new voice count.
+    /// Create a new voice count, clamping to [1, 128].
     #[inline]
-    pub const fn new(count: u8) -> Self {
+    pub fn new(count: u8) -> Self {
+        Self(count.clamp(1, 128))
+    }
+
+    /// Create without clamping (for performance in hot paths).
+    #[inline]
+    pub const fn new_unchecked(count: u8) -> Self {
         Self(count)
     }
 
@@ -374,11 +380,17 @@ impl VoiceCount {
     /// Four voices (common for chorus).
     pub const QUAD: Self = Self(4);
 
-    /// Eight voices.
+    /// Eight voices (default for synth).
     pub const OCTO: Self = Self(8);
 
     /// Sixteen voices.
     pub const SIXTEEN: Self = Self(16);
+
+    /// Thirty-two voices (tracker max channels).
+    pub const THIRTYTWO: Self = Self(32);
+
+    /// Maximum allocator voices.
+    pub const MAX_ALLOCATOR: Self = Self(128);
 
     /// Get the raw voice count.
     #[inline]
@@ -403,17 +415,29 @@ impl VoiceCount {
     pub fn clamp_polyphony(self) -> Self {
         Self(self.0.clamp(1, 16))
     }
+
+    /// Clamp to voice allocator range (1-128).
+    #[inline]
+    pub fn clamp_allocator(self) -> Self {
+        Self(self.0.clamp(1, 128))
+    }
 }
 
 impl From<u8> for VoiceCount {
     fn from(count: u8) -> Self {
-        Self(count.max(1))
+        Self::new(count)
     }
 }
 
 impl From<u32> for VoiceCount {
     fn from(count: u32) -> Self {
-        Self((count.clamp(1, 255)) as u8)
+        Self::new(count.min(128) as u8)
+    }
+}
+
+impl From<usize> for VoiceCount {
+    fn from(count: usize) -> Self {
+        Self::new(count.min(128) as u8)
     }
 }
 
@@ -785,6 +809,439 @@ impl From<StereoSample> for [f32; 2] {
     }
 }
 
+// ============================================================================
+// CPU USAGE
+// ============================================================================
+
+/// CPU usage percentage (0.0 - 1.0).
+///
+/// Represents the fraction of available CPU time used by audio processing.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[repr(transparent)]
+pub struct CpuUsage(pub f32);
+
+impl CpuUsage {
+    /// Create a new CPU usage value, clamping to [0, 1].
+    #[inline]
+    pub fn new(value: f32) -> Self {
+        Self(value.clamp(0.0, 1.0))
+    }
+
+    /// Zero usage.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Full usage (100%).
+    pub const FULL: Self = Self(1.0);
+
+    /// Get the raw value (0.0 - 1.0).
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Get as percentage (0 - 100).
+    #[inline]
+    pub fn as_percent(self) -> f32 {
+        self.0 * 100.0
+    }
+
+    /// Check if usage is critical (> 80%).
+    #[inline]
+    pub fn is_critical(self) -> bool {
+        self.0 > 0.8
+    }
+
+    /// Check if usage is warning level (> 60%).
+    #[inline]
+    pub fn is_warning(self) -> bool {
+        self.0 > 0.6
+    }
+}
+
+impl From<f32> for CpuUsage {
+    fn from(value: f32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<CpuUsage> for f32 {
+    fn from(usage: CpuUsage) -> Self {
+        usage.0
+    }
+}
+
+impl std::fmt::Display for CpuUsage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}%", self.0 * 100.0)
+    }
+}
+
+// ============================================================================
+// STEREO LEVELS
+// ============================================================================
+
+/// Stereo level measurements for meters and visualization.
+///
+/// Contains separate amplitude measurements for left and right channels.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct StereoLevels {
+    /// Left channel amplitude.
+    pub left: Amplitude,
+    /// Right channel amplitude.
+    pub right: Amplitude,
+}
+
+impl StereoLevels {
+    /// Create new stereo levels.
+    #[inline]
+    pub const fn new(left: Amplitude, right: Amplitude) -> Self {
+        Self { left, right }
+    }
+
+    /// Zero levels (silence).
+    pub const ZERO: Self = Self {
+        left: Amplitude::ZERO,
+        right: Amplitude::ZERO,
+    };
+
+    /// Create from mono level (both channels equal).
+    #[inline]
+    pub const fn from_mono(level: Amplitude) -> Self {
+        Self {
+            left: level,
+            right: level,
+        }
+    }
+
+    /// Get the maximum of left and right.
+    #[inline]
+    pub fn peak(self) -> Amplitude {
+        Amplitude::new(self.left.as_f32().max(self.right.as_f32()))
+    }
+
+    /// Convert both channels to decibels.
+    #[inline]
+    pub fn to_db(self) -> (Decibels, Decibels) {
+        (self.left.to_db(), self.right.to_db())
+    }
+
+    /// Apply decay to both channels.
+    #[inline]
+    pub fn decay(&mut self, factor: f32) {
+        self.left.decay(factor);
+        self.right.decay(factor);
+    }
+
+    /// Update with peak values from a stereo sample.
+    #[inline]
+    pub fn update_peak(&mut self, left: f32, right: f32) {
+        self.left.update_peak(left);
+        self.right.update_peak(right);
+    }
+}
+
+impl From<(f32, f32)> for StereoLevels {
+    fn from((left, right): (f32, f32)) -> Self {
+        Self {
+            left: Amplitude::new(left),
+            right: Amplitude::new(right),
+        }
+    }
+}
+
+impl From<StereoLevels> for (f32, f32) {
+    fn from(levels: StereoLevels) -> Self {
+        (levels.left.as_f32(), levels.right.as_f32())
+    }
+}
+
+// ============================================================================
+// TRACK COUNT
+// ============================================================================
+
+/// Number of tracks in a sequencer/pattern.
+///
+/// Used for tracker channel count, mixer channels, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct TrackCount(pub usize);
+
+impl TrackCount {
+    /// Create a new track count.
+    #[inline]
+    pub const fn new(count: usize) -> Self {
+        Self(count)
+    }
+
+    /// Zero tracks.
+    pub const ZERO: Self = Self(0);
+
+    /// Single track (mono).
+    pub const MONO: Self = Self(1);
+
+    /// Stereo (2 tracks).
+    pub const STEREO: Self = Self(2);
+
+    /// Standard 4-channel MOD.
+    pub const MOD_STANDARD: Self = Self(4);
+
+    /// 8 channels.
+    pub const EIGHT: Self = Self(8);
+
+    /// 16 channels.
+    pub const SIXTEEN: Self = Self(16);
+
+    /// 32 channels (XM max).
+    pub const THIRTYTWO: Self = Self(32);
+
+    /// Get the raw count.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl From<usize> for TrackCount {
+    fn from(count: usize) -> Self {
+        Self(count)
+    }
+}
+
+impl From<TrackCount> for usize {
+    fn from(count: TrackCount) -> Self {
+        count.0
+    }
+}
+
+impl std::fmt::Display for TrackCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} tracks", self.0)
+    }
+}
+
+// ============================================================================
+// PATTERN INDEX
+// ============================================================================
+
+/// Index of a pattern in the song arrangement.
+///
+/// Zero-indexed position in the pattern order list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct PatternIndex(pub usize);
+
+impl PatternIndex {
+    /// Create a new pattern index.
+    #[inline]
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// First pattern.
+    pub const ZERO: Self = Self(0);
+
+    /// Get the raw index.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+
+    /// Advance to next pattern.
+    #[inline]
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    /// Go to previous pattern (saturating).
+    #[inline]
+    pub fn prev(self) -> Self {
+        Self(self.0.saturating_sub(1))
+    }
+}
+
+impl From<usize> for PatternIndex {
+    fn from(index: usize) -> Self {
+        Self(index)
+    }
+}
+
+impl From<PatternIndex> for usize {
+    fn from(index: PatternIndex) -> Self {
+        index.0
+    }
+}
+
+impl std::fmt::Display for PatternIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pattern {}", self.0)
+    }
+}
+
+// ============================================================================
+// ROW INDEX
+// ============================================================================
+
+/// Row number within a pattern.
+///
+/// Zero-indexed row position in a tracker pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct RowIndex(pub u32);
+
+impl RowIndex {
+    /// Create a new row index.
+    #[inline]
+    pub const fn new(row: u32) -> Self {
+        Self(row)
+    }
+
+    /// First row.
+    pub const ZERO: Self = Self(0);
+
+    /// Get the raw index.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Get as usize for array indexing.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Advance to next row.
+    #[inline]
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    /// Go to previous row (saturating).
+    #[inline]
+    pub fn prev(self) -> Self {
+        Self(self.0.saturating_sub(1))
+    }
+
+    /// Check if this is a beat boundary (divisible by 4).
+    #[inline]
+    pub fn is_beat(self) -> bool {
+        self.0.is_multiple_of(4)
+    }
+
+    /// Check if this is a bar boundary (divisible by 16).
+    #[inline]
+    pub fn is_bar(self) -> bool {
+        self.0.is_multiple_of(16)
+    }
+}
+
+impl From<u32> for RowIndex {
+    fn from(row: u32) -> Self {
+        Self(row)
+    }
+}
+
+impl From<usize> for RowIndex {
+    fn from(row: usize) -> Self {
+        Self(row as u32)
+    }
+}
+
+impl From<RowIndex> for u32 {
+    fn from(row: RowIndex) -> Self {
+        row.0
+    }
+}
+
+impl From<RowIndex> for usize {
+    fn from(row: RowIndex) -> Self {
+        row.0 as usize
+    }
+}
+
+impl std::fmt::Display for RowIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02X}", self.0)
+    }
+}
+
+// ============================================================================
+// TRACKER SPEED
+// ============================================================================
+
+/// Tracker speed (ticks per row).
+///
+/// Controls how many ticks pass before advancing to the next row.
+/// Standard range is 1-31, with 6 being the classic ProTracker default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct TrackerSpeed(pub u8);
+
+impl TrackerSpeed {
+    /// Create a new speed value, clamping to [1, 31].
+    #[inline]
+    pub fn new(speed: u8) -> Self {
+        Self(speed.clamp(1, 31))
+    }
+
+    /// Create without clamping (for performance).
+    #[inline]
+    pub const fn new_unchecked(speed: u8) -> Self {
+        Self(speed)
+    }
+
+    /// Classic ProTracker default speed.
+    pub const DEFAULT: Self = Self(6);
+
+    /// Minimum speed (fastest).
+    pub const MIN: Self = Self(1);
+
+    /// Maximum speed (slowest).
+    pub const MAX: Self = Self(31);
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as usize for calculations.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Default for TrackerSpeed {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl From<u8> for TrackerSpeed {
+    fn from(speed: u8) -> Self {
+        Self::new(speed)
+    }
+}
+
+impl From<TrackerSpeed> for u8 {
+    fn from(speed: TrackerSpeed) -> Self {
+        speed.0
+    }
+}
+
+impl std::fmt::Display for TrackerSpeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Spd {}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,5 +1451,103 @@ mod tests {
         let arr: [f32; 2] = sample.into();
         assert!((arr[0] - 0.3).abs() < 0.001);
         assert!((arr[1] - 0.9).abs() < 0.001);
+    }
+
+    // === Tests for new types ===
+
+    #[test]
+    fn test_cpu_usage() {
+        let usage = CpuUsage::new(0.75);
+        assert!((usage.as_f32() - 0.75).abs() < 0.001);
+        assert!((usage.as_percent() - 75.0).abs() < 0.1);
+        assert!(usage.is_warning());
+        assert!(!usage.is_critical());
+
+        let critical = CpuUsage::new(0.9);
+        assert!(critical.is_critical());
+
+        // Test clamping
+        let over = CpuUsage::new(1.5);
+        assert!((over.as_f32() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stereo_levels() {
+        let levels = StereoLevels::new(Amplitude::new(0.8), Amplitude::new(0.6));
+        assert!((levels.peak().as_f32() - 0.8).abs() < 0.001);
+
+        let mono = StereoLevels::from_mono(Amplitude::new(0.5));
+        assert!((mono.left.as_f32() - 0.5).abs() < 0.001);
+        assert!((mono.right.as_f32() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_track_count() {
+        let tracks = TrackCount::MOD_STANDARD;
+        assert_eq!(tracks.as_usize(), 4);
+
+        let thirty_two = TrackCount::THIRTYTWO;
+        assert_eq!(thirty_two.as_usize(), 32);
+    }
+
+    #[test]
+    fn test_pattern_index() {
+        let idx = PatternIndex::ZERO;
+        assert_eq!(idx.as_usize(), 0);
+
+        let next = idx.next();
+        assert_eq!(next.as_usize(), 1);
+
+        let prev = idx.prev();
+        assert_eq!(prev.as_usize(), 0); // Saturating
+    }
+
+    #[test]
+    fn test_row_index() {
+        let row = RowIndex::new(16);
+        assert!(row.is_beat());
+        assert!(row.is_bar());
+
+        let row4 = RowIndex::new(4);
+        assert!(row4.is_beat());
+        assert!(!row4.is_bar());
+
+        let row5 = RowIndex::new(5);
+        assert!(!row5.is_beat());
+    }
+
+    #[test]
+    fn test_tracker_speed() {
+        let speed = TrackerSpeed::DEFAULT;
+        assert_eq!(speed.as_u8(), 6);
+
+        // Test clamping
+        let fast = TrackerSpeed::new(0);
+        assert_eq!(fast.as_u8(), 1);
+
+        let slow = TrackerSpeed::new(50);
+        assert_eq!(slow.as_u8(), 31);
+    }
+
+    #[test]
+    fn test_voice_count_clamping() {
+        // Test allocator range
+        let voices = VoiceCount::new(200);
+        assert_eq!(voices.as_u8(), 128);
+
+        let zero = VoiceCount::new(0);
+        assert_eq!(zero.as_u8(), 1);
+
+        let valid = VoiceCount::new(64);
+        assert_eq!(valid.as_u8(), 64);
+    }
+
+    #[test]
+    fn test_voice_index() {
+        let idx = VoiceIndex::ZERO;
+        assert_eq!(idx.as_usize(), 0);
+
+        let idx5 = VoiceIndex::new(5);
+        assert_eq!(idx5.as_u8(), 5);
     }
 }
