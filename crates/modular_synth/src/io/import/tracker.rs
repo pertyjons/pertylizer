@@ -155,7 +155,8 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Convert patterns
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
-        let pattern_id = convert_pattern(&mut song, pattern_data, pat_idx, num_channels, speed)?;
+        let pattern_id =
+            convert_pattern(&mut song, pattern_data, pat_idx, num_channels, speed, &track_ids)?;
         pattern_ids.push(pattern_id);
     }
 
@@ -449,6 +450,7 @@ fn convert_pattern(
     pat_idx: usize,
     num_channels: usize,
     speed: f32,
+    track_ids: &[TrackId],
 ) -> ImportResult<PatternId> {
     // Pattern data is organized as: pattern[row][channel] = Vec<Vec<TrackUnit>>
     let num_rows = pattern_data.len();
@@ -494,8 +496,11 @@ fn convert_pattern(
             }
 
             // Update channel state and create note if needed
-            #[allow(clippy::cast_possible_truncation)]
-            let track_id = TrackId::new(channel_idx as u16);
+            // Use the track_id from song.create_track() to ensure TrackMode::MonoVoice is found
+            let track_id = track_ids
+                .get(channel_idx)
+                .copied()
+                .unwrap_or_else(|| TrackId::new(channel_idx as u16));
             if let Some(note_event) =
                 process_track_unit(track_unit, &mut channel_state[channel_idx], track_id)
             {

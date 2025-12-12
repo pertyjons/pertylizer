@@ -101,9 +101,8 @@ pub struct VoiceAllocator {
 impl VoiceAllocator {
     /// Create a new voice allocator.
     pub fn new(config: AllocatorConfig) -> Self {
-        let voices = (0..config.max_voices.as_usize())
-            .map(|i| Voice::new(i as u32))
-            .collect();
+        let num_voices = config.max_voices.as_usize();
+        let voices = (0..num_voices).map(|i| Voice::new(i as u32)).collect();
 
         Self {
             config,

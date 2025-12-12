@@ -1867,8 +1867,9 @@ impl SynthApp {
 
                         // === Create engine instrument with tracker voice config ===
                         // Use min_voices from import to ensure enough voices for all channels
+                        let min_voices = imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
                         let voice_config = AllocatorConfig {
-                            max_voices: imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO),
+                            max_voices: min_voices,
                             mode: AllocationMode::Tracker,
                             ..Default::default()
                         };

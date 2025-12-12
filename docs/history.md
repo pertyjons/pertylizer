@@ -1,5 +1,24 @@
 # Version History
 
+## [0.54.0] - 2025
+### Fixed - Tracker Voice Allocation (TrackId Mismatch)
+
+Fixade tracker-style voice allocation för korrekt mono-per-kanal uppspelning.
+
+#### Problemet
+Vid import av tracker-moduler (MOD/XM/S3M) skapades `TrackId` med `TrackId::new(channel_idx)` i `convert_pattern()`, men detta matchade inte de `TrackId`:s som skapats av `song.create_track()`. Resultatet var att `get_voice_index_for_track()` returnerade `None`, vilket orsakade polyfon allokering istället för tracker-style mono-per-kanal.
+
+#### Lösningen
+Skickade `track_ids` vektorn (från `song.create_track()`) till `convert_pattern()` och använde dessa ID:n istället för att skapa nya.
+
+#### Filer som ändrats
+- `crates/modular_synth/src/io/import/tracker.rs` - Skickar `track_ids` till `convert_pattern()`
+- `crates/synth_engine/src/sequencer_engine.rs` - Förenklad `get_voice_index_for_track()`
+- `crates/synth_engine/src/voice_allocator.rs` - Rensad debug-utskrift
+- `crates/modular_synth/src/gui/egui_backend.rs` - Rensad debug-utskrift
+
+---
+
 ## [0.53.0] - 2025
 ### Fixed - Rack View Silent Audio Bug
 
