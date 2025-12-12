@@ -1,5 +1,58 @@
 # Version History
 
+## [0.49.0] - 2025
+### Added - Debug System
+
+Implementerade ett komplett debug-system för offline-analys av audio-motorn.
+
+#### Nya komponenter
+
+**SignalProbe** - Inspektera sample-värden vid specifika punkter
+- Spela in samples från godtyckliga portar i grafen
+- Beräkna statistik (RMS, peak, DC offset, min/max)
+- Jämför signaler (korrelation, skillnad)
+- Max-samples-gräns för att förhindra minnesläckor
+
+**GraphDebugger** - Verifiera modulkopplingar
+- Lista alla connections i grafen
+- Sök path mellan moduler
+- Hitta okopplade inputs/outputs
+- Diagnostisera vanliga problem (envelope utan gate, amplifier utan CV)
+- Human-readable graph description
+
+**SequencerDebugger** - Stega genom songs tick-för-tick
+- Stega framåt tick-för-tick offline
+- Event-logg med tidsstämplar och källa
+- Snapshot av aktiva noter och state
+- Sammanfattning av genererade events
+
+**VoiceDebugger** - Förstå voice allocation
+- Spåra allokeringar, releases, steals
+- State change-historik
+- Snapshot av alla voices vid given tidpunkt
+- Analysera voice reuse och unique voices
+
+#### Feature flag
+
+Debug-systemet är opt-in via `--features debug-tools`. Ingen overhead vid normal körning.
+
+```toml
+[features]
+debug-tools = []
+```
+
+#### Filer som lagts till
+- `src/debug/mod.rs` - Modul-struktur och re-exports
+- `src/debug/signal_probe.rs` - SignalProbe implementation
+- `src/debug/graph_debugger.rs` - GraphDebugger implementation
+- `src/debug/sequencer_debugger.rs` - SequencerDebugger implementation
+- `src/debug/voice_debugger.rs` - VoiceDebugger implementation
+
+#### Dokumentation
+- `docs/DEBUG_SYSTEM_DESIGN.md` - Design-dokument med API-specifikation
+
+---
+
 ## [0.48.0] - 2025
 ### Fixed - Tracker Playback Volume (Silent XM Fix)
 

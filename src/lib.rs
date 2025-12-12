@@ -150,6 +150,8 @@
 #![allow(clippy::field_reassign_with_default)] // Default::default() + assign
 
 pub mod audio;
+#[cfg(feature = "debug-tools")]
+pub mod debug;
 pub mod dsp;
 pub mod effects;
 pub mod engine;
