@@ -1,5 +1,53 @@
 # Version History
 
+## [0.52.0] - 2025
+### Changed - Cargo Workspace Refactoring
+
+Delade upp monolitisk crate (~21k LOC) i 6 separata crates för bättre kompileringstider och arkitektur.
+
+#### Ny Crate-struktur
+
+```
+modular-synth/
+├── Cargo.toml (workspace root)
+└── crates/
+    ├── synth_core/      # Types, traits, audio abstractions
+    ├── synth_dsp/       # DSP primitives (oscillators, filters)
+    ├── synth_sequencer/ # Pattern, song, events
+    ├── synth_modules/   # Synth modules and effects
+    ├── synth_engine/    # Voice allocation, graph, sequencer engine
+    └── modular_synth/   # GUI, main, audio backends
+```
+
+#### Beroendegraf
+
+```
+synth_core (types, traits)
+    ↑
+    ├── synth_dsp (oscillators, filters)
+    ├── synth_sequencer (pattern, song)
+    │
+    └── synth_modules (oscillator, filter, effects)
+            ↑
+            └── synth_engine (graph, voice, instrument)
+                    ↑
+                    └── modular_synth (gui, main, cpal)
+```
+
+#### Fördelar
+
+- **Snabbare inkrementell kompilering** - Ändringar i GUI behöver inte rekompilera DSP-kod
+- **Bättre separation of concerns** - Tydliga gränser mellan moduler
+- **Enklare testning** - Varje crate kan testas isolerat
+- **Möjliggör framtida plugin-stöd** - `synth_engine` kan användas utan GUI
+
+#### Borttagna filer
+
+- `src/` mappen (all kod flyttad till `crates/`)
+- `examples/` (flyttad till `crates/modular_synth/examples/`)
+
+---
+
 ## [0.51.0] - 2025
 ### Added - Type Safety & Operator Overloading
 

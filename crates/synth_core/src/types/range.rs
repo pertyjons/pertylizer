@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```
-/// use modular_synth::types::ValueRange;
+/// use synth_core::ValueRange;
 ///
 /// // Create a frequency range
 /// let freq_range = ValueRange::new(20.0, 20000.0, 440.0);

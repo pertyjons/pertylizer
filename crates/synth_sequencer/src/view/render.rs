@@ -97,7 +97,7 @@ pub fn render_cell_text(cell: &TrackCell, col: ColumnType) -> Cow<'static, str> 
 }
 
 /// Format a pitch as a tracker string (e.g., "C-4", "C#5").
-fn format_pitch(pitch: crate::sequencer::pitch::Pitch) -> String {
+fn format_pitch(pitch: crate::pitch::Pitch) -> String {
     let note_names = [
         "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-",
     ];
@@ -606,7 +606,7 @@ pub fn draw_track_cell(
 pub fn draw_tracker_grid_from_pattern(
     ui: &mut Ui,
     state: &mut TrackerViewState,
-    pattern: &mut crate::sequencer::pattern::Pattern,
+    pattern: &mut crate::pattern::Pattern,
     config: &TrackerViewConfig,
 ) -> bool {
     let colors = TrackerColors::default();

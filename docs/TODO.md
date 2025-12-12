@@ -66,7 +66,15 @@
     * [ ] Vectorscope, Tuner, 3D-vyer.
 
 ## ⚡ Fas 5: Prestanda & Optimering (Ny sektion)
-21. **Realtime Audio Thread Safety**
+21. **Cargo Workspace Refactoring**
+    * [x] ~~Dela upp monolitisk crate i 6 separata crates~~ *(0.52.0)*
+    * [x] ~~synth_core: Types, traits, audio abstractions~~
+    * [x] ~~synth_dsp: DSP primitives~~
+    * [x] ~~synth_sequencer: Pattern, song, events~~
+    * [x] ~~synth_modules: Synth modules and effects~~
+    * [x] ~~synth_engine: Voice allocation, graph~~
+    * [x] ~~modular_synth: GUI, main, backends~~
+22. **Realtime Audio Thread Safety**
     * [x] ~~Eliminera AudioBuffer::new() i Instrument::process()~~ *(0.33.10)*
     * [x] ~~Ändra Connection till PortName (Copy) istället för String~~ *(0.33.10)*
     * [x] ~~Refaktorera PolyModule::process() till InputPorts istället för HashMap~~ *(0.33.11)*

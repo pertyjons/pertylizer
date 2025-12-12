@@ -7,6 +7,9 @@ description = "Synth modules and audio effects for modular synthesizer"
 authors = ["Per"]
 license = "MIT"
 
+[lints]
+workspace = true
+
 [dependencies]
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }

@@ -53,7 +53,13 @@
       "Bash(cargo doc:*)",
       "Bash(timeout 10 cargo run:*)",
       "Bash(tree:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(for f in oscillator filter envelope lfo amplifier noise sub_osc math_oscillator output sample_player body_resonance keyboard_panner mechanical_noise)",
+      "Bash(do cp /home/per/Dokument/rust-projects/modular-synth/src/modules/$f.rs /home/per/Dokument/rust-projects/modular-synth/crates/synth_modules/src/)",
+      "Bash(for f in amplifier.rs envelope.rs filter.rs lfo.rs math_oscillator.rs noise.rs oscillator.rs output.rs sample_player.rs sub_osc.rs body_resonance.rs keyboard_panner.rs mechanical_noise.rs)",
+      "Bash(do perl -i -pe 's/, ModuleType, ParameterDescriptor/, ParameterDescriptor/g; s/, Param\\}/\\}/g' \"$f\")",
+      "Bash(for:*)",
+      "Bash(do perl -i -pe 's/, ModuleType, ParameterDescriptor/, ParameterDescriptor/g; s/, ModuleType, NormalizedValue/, NormalizedValue/g; s/, Param\\}/, /g; s/, NormalizedValue, ParameterDescriptor/, ParameterDescriptor/g; s/, SampleCount, WidgetHint/, WidgetHint/g' \"$f\")"
     ],
     "deny": [],
     "ask": []

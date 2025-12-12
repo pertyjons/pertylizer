@@ -7,6 +7,9 @@ description = "Core types, traits, and audio abstractions for modular synthesize
 authors = ["Per"]
 license = "MIT"
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }

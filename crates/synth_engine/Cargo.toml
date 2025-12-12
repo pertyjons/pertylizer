@@ -7,10 +7,16 @@ description = "Synth engine with voice allocation, graph processing, and sequenc
 authors = ["Per"]
 license = "MIT"
 
+[lints]
+workspace = true
+
 [dependencies]
 synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }
 synth_modules = { path = "../synth_modules" }
 synth_sequencer = { path = "../synth_sequencer" }
 serde = { workspace = true }
+thiserror = { workspace = true }
 parking_lot = { workspace = true }
 ringbuf = { workspace = true }
+fastrand = { workspace = true }

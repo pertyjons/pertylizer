@@ -9,7 +9,7 @@ members = [
     "crates/modular_synth",
 ]
 
-# Default to run the main application
+# Default to run the main applicationj99nnhfdc
 default-members = ["crates/modular_synth"]
 
 [workspace.package]
@@ -61,7 +61,7 @@ egui_extras = { version = "0.33" }
 egui-file-dialog = { version = "0.12" }
 
 [workspace.lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
 # Allow these for synth-appropriate exceptions
 must_use_candidate = "allow"
 missing_const_for_fn = "allow"
@@ -70,6 +70,10 @@ too_many_lines = "allow"
 cast_precision_loss = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
+# Allow for DSP code that uses these patterns intentionally
+should_implement_trait = "allow"
+needless_range_loop = "allow"
+vec_box = "allow"
 
 [profile.release]
 lto = true

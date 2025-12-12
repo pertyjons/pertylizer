@@ -1,12 +1,15 @@
 [package]
 name = "modular_synth"
-version = "0.51.0"
+version = "0.52.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A modular synthesizer with abstract audio backend"
 authors = ["Per"]
 license = "MIT"
 default-run = "modular-synth"
+
+[lints]
+workspace = true
 
 [features]
 default = ["gui-egui"]
@@ -17,7 +20,7 @@ debug-tools = []
 [dependencies]
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
-synth_sequencer = { path = "../synth_sequencer" }
+synth_sequencer = { path = "../synth_sequencer", features = ["gui-egui"] }
 synth_modules = { path = "../synth_modules" }
 synth_engine = { path = "../synth_engine" }
 
@@ -57,6 +60,9 @@ eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui_extras = { workspace = true, optional = true }
 egui-file-dialog = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3.15"
 
 [[bin]]
 name = "modular-synth"

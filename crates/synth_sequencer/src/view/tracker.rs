@@ -429,7 +429,7 @@ mod tests {
         // Add a note with duration (4 rows = 960 ticks)
         use crate::note::Note;
         let note = Note::new(
-            crate::sequencer::ids::NoteId(0),
+            crate::ids::NoteId(0),
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
