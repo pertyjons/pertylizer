@@ -16,9 +16,9 @@ use std::sync::{Arc, RwLock};
 
 use crate::engine::tracker_effects::{ChannelEffectProcessor, GlobalCommand};
 use crate::sequencer::{
-    Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
+    Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackMode,
 };
-use crate::types::{Bpm, SampleCount, SampleRate};
+use crate::types::{Bpm, SampleCount, SampleRate, VoiceIndex};
 
 /// Playback state of the sequencer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -300,10 +300,18 @@ impl SequencerEngine {
 
         // Now process the collected notes without holding the lock
         for (pitch, velocity, instrument, effects, end_tick, track) in notes_to_trigger {
-            // Mono-per-track: If this note has a track, stop any active note on the same track
-            // This is the classic tracker behavior where each channel is monophonic
+            // Determine voice_index based on track mode
+            let voice_index = self.get_voice_index_for_track(track);
+
             if let Some(track_id) = track {
-                self.stop_notes_on_track(track_id, events);
+                // For MonoVoice tracks: DON'T send NoteOff - the voice will be retriggered
+                // directly via note_on_fixed_voice() which preserves envelope level.
+                // For Polyphonic tracks: still use stop_notes_on_track for classic behavior.
+                if voice_index.is_none() {
+                    // Polyphonic mode - stop existing notes on this track
+                    self.stop_notes_on_track(track_id, events);
+                }
+                // MonoVoice mode - don't stop, voice will be retriggered without envelope reset
 
                 // Process effects for this channel
                 let global_commands =
@@ -330,7 +338,7 @@ impl SequencerEngine {
                     }
                 }
 
-                // Track active note for NoteOff
+                // Track active note for NoteOff (for duration-based note-off)
                 self.active_notes.push(ActiveNote {
                     pitch,
                     instrument,
@@ -348,9 +356,10 @@ impl SequencerEngine {
                     velocity,
                     instrument,
                     effects,
+                    voice_index,
                 });
             } else {
-                // No track - no effect processing, emit as-is
+                // No track - no effect processing, emit as-is (polyphonic)
                 self.active_notes.push(ActiveNote {
                     pitch,
                     instrument,
@@ -364,9 +373,30 @@ impl SequencerEngine {
                     velocity,
                     instrument,
                     effects,
+                    voice_index: None, // No track = polyphonic mode
                 });
             }
         }
+    }
+
+    /// Get the voice index for a track based on its mode.
+    ///
+    /// Returns `Some(VoiceIndex)` for `MonoVoice` tracks (tracker-style),
+    /// and `None` for `Polyphonic` tracks (keyboard/MIDI-style).
+    fn get_voice_index_for_track(&self, track: Option<TrackId>) -> Option<VoiceIndex> {
+        let track_id = track?;
+
+        if let Ok(song) = self.song.read() {
+            for seq_track in song.tracks() {
+                if seq_track.id == track_id {
+                    return match seq_track.mode {
+                        TrackMode::MonoVoice(idx) => Some(idx),
+                        TrackMode::Polyphonic => None,
+                    };
+                }
+            }
+        }
+        None
     }
 
     /// Stop all active notes on the given track (mono-per-track behavior).

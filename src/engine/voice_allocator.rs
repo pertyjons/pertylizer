@@ -1,12 +1,15 @@
 //! Voice allocator - manages polyphonic voice allocation.
 //!
 //! Features:
-//! - Multiple allocation modes (poly, mono, legato)
+//! - Multiple allocation modes (poly, mono, legato, tracker)
 //! - Voice stealing strategies
 //! - Glide/portamento support
+//! - Fixed voice allocation for tracker-style playback
 
 use crate::engine::voice::{Voice, VoiceState};
-use crate::types::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity};
+use crate::types::{
+    Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount, VoiceIndex,
+};
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +22,10 @@ pub enum AllocationMode {
     Legato,
     /// Unison - all voices play same note.
     Unison,
+    /// Tracker mode - voices are assigned by channel/track index.
+    /// Each channel gets a fixed voice, new notes on the same channel
+    /// retrigger without envelope reset (uses `note_on_fixed_voice()`).
+    Tracker,
 }
 
 /// Strategy for stealing voices when all are busy.
@@ -50,8 +57,8 @@ pub enum NotePriority {
 /// Voice allocator configuration.
 #[derive(Debug, Clone)]
 pub struct AllocatorConfig {
-    /// Maximum number of voices.
-    pub max_voices: usize,
+    /// Maximum number of voices (type-safe count).
+    pub max_voices: VoiceCount,
     /// Allocation mode.
     pub mode: AllocationMode,
     /// Voice stealing strategy.
@@ -67,7 +74,7 @@ pub struct AllocatorConfig {
 impl Default for AllocatorConfig {
     fn default() -> Self {
         Self {
-            max_voices: 8,
+            max_voices: VoiceCount::OCTO,
             mode: AllocationMode::Polyphonic,
             stealing: StealingStrategy::Oldest,
             priority: NotePriority::Last,
@@ -94,7 +101,7 @@ pub struct VoiceAllocator {
 impl VoiceAllocator {
     /// Create a new voice allocator.
     pub fn new(config: AllocatorConfig) -> Self {
-        let voices = (0..config.max_voices)
+        let voices = (0..config.max_voices.as_usize())
             .map(|i| Voice::new(i as u32))
             .collect();
 
@@ -109,7 +116,7 @@ impl VoiceAllocator {
 
     /// Create with a template voice that will be cloned.
     pub fn with_template(config: AllocatorConfig, template: &Voice) -> Self {
-        let voices = (0..config.max_voices)
+        let voices = (0..config.max_voices.as_usize())
             .map(|i| {
                 let mut v = template.clone_structure();
                 v.id = i as u32;
@@ -132,7 +139,7 @@ impl VoiceAllocator {
         config: AllocatorConfig,
         graph_template: &crate::engine::graph::ModuleGraph,
     ) -> Self {
-        let voices = (0..config.max_voices)
+        let voices = (0..config.max_voices.as_usize())
             .map(|i| Voice::from_graph(i as u32, graph_template.clone_structure()))
             .collect();
 
@@ -201,6 +208,9 @@ impl VoiceAllocator {
 
     /// Handle note on event.
     /// Accepts f32 velocity for backward compatibility (converted internally).
+    ///
+    /// Note: In `Tracker` mode, use `note_on_fixed_voice()` instead for fixed voice allocation.
+    /// This method will fall back to polyphonic behavior in Tracker mode.
     pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
         // Track held notes with type-safe velocity
         let velocity_typed = Velocity::new(velocity);
@@ -208,7 +218,10 @@ impl VoiceAllocator {
         self.held_notes.push((note, velocity_typed));
 
         match self.config.mode {
-            AllocationMode::Polyphonic => self.allocate_poly(note, velocity_typed),
+            AllocationMode::Polyphonic | AllocationMode::Tracker => {
+                // Tracker mode falls back to poly for regular note_on (use note_on_fixed_voice for tracker)
+                self.allocate_poly(note, velocity_typed)
+            }
             AllocationMode::Mono => self.allocate_mono(note, velocity_typed, true),
             AllocationMode::Legato => self.allocate_mono(note, velocity_typed, false),
             AllocationMode::Unison => self.allocate_unison(note, velocity_typed),
@@ -216,12 +229,14 @@ impl VoiceAllocator {
     }
 
     /// Handle note off event.
+    ///
+    /// Note: In `Tracker` mode, use `note_off_fixed_voice()` for specific voice release.
     pub fn note_off(&mut self, note: MidiNote) {
         // Remove from held notes
         self.held_notes.retain(|(n, _)| *n != note);
 
         match self.config.mode {
-            AllocationMode::Polyphonic => {
+            AllocationMode::Polyphonic | AllocationMode::Tracker => {
                 // Release all voices playing this note
                 for voice in &mut self.voices {
                     // Use pattern matching on VoiceState::Active to check note
@@ -290,6 +305,141 @@ impl VoiceAllocator {
     /// Advance time (call once per audio block).
     pub fn advance_time(&mut self, samples: SampleCount) {
         self.time = self.time + samples;
+    }
+
+    // =========================================================================
+    // Tracker-style fixed voice allocation
+    // =========================================================================
+
+    /// Trigger a note on a specific voice (fixed voice index).
+    ///
+    /// This is used for tracker-style playback where each channel has a
+    /// dedicated voice. The key difference from regular `note_on`:
+    ///
+    /// 1. Does NOT send note_off first - avoids envelope reset
+    /// 2. Retriggers envelope from current position (legato-style stealing)
+    /// 3. Voice is specified by index, not allocated dynamically
+    ///
+    /// # Arguments
+    /// * `voice_index` - The voice to use (wrapped with modulo if out of bounds)
+    /// * `note` - MIDI note to play
+    /// * `velocity` - Note velocity (0.0-1.0)
+    ///
+    /// # Returns
+    /// The voice ID if successful, None if no voices exist.
+    pub fn note_on_fixed_voice(
+        &mut self,
+        voice_index: VoiceIndex,
+        note: MidiNote,
+        velocity: f32,
+    ) -> Option<u32> {
+        if self.voices.is_empty() {
+            return None;
+        }
+
+        // Wrap index if out of bounds
+        let idx = voice_index.as_usize() % self.voices.len();
+        let velocity_typed = Velocity::new(velocity);
+
+        let voice = &mut self.voices[idx];
+
+        // KEY: Don't send note_off - retrigger directly.
+        // This preserves envelope state (legato-style stealing).
+        // The envelope will restart from its current level, not from zero.
+
+        // Set glide time for portamento if configured and voice was active
+        if self.config.glide_time.as_f32() > 0.0 && voice.is_active() {
+            voice.set_glide_time(self.config.glide_time);
+        }
+
+        // Retrigger the voice - envelope restarts from current phase
+        voice.note_on(note, velocity_typed, self.time);
+        self.last_note = Some(note);
+
+        Some(voice.id)
+    }
+
+    /// Release a note on a specific voice (fixed voice index).
+    ///
+    /// Used for tracker-style playback when a note-off is explicitly needed.
+    pub fn note_off_fixed_voice(&mut self, voice_index: VoiceIndex) {
+        if self.voices.is_empty() {
+            return;
+        }
+
+        let idx = voice_index.as_usize() % self.voices.len();
+        self.voices[idx].note_off();
+    }
+
+    /// Resize the voice pool to the specified count.
+    ///
+    /// If shrinking, excess voices are released and removed.
+    /// If growing, new voices are created using the first voice as template
+    /// (or empty voices if no template exists).
+    ///
+    /// # Arguments
+    /// * `new_count` - New number of voices (will be clamped to valid range)
+    pub fn resize(&mut self, new_count: VoiceCount) {
+        let new_size = new_count.as_usize();
+        let current_size = self.voices.len();
+
+        if new_size == current_size || new_size == 0 {
+            return;
+        }
+
+        if new_size < current_size {
+            // Release and remove excess voices
+            for voice in &mut self.voices[new_size..] {
+                voice.reset();
+            }
+            self.voices.truncate(new_size);
+        } else {
+            // Add new voices - clone structure from first voice if available
+            for i in current_size..new_size {
+                let new_voice = if let Some(template) = self.voices.first() {
+                    let mut v = template.clone_structure();
+                    v.id = i as u32;
+                    v
+                } else {
+                    Voice::new(i as u32)
+                };
+                self.voices.push(new_voice);
+            }
+        }
+
+        self.config.max_voices = new_count;
+    }
+
+    /// Resize the voice pool with a specific graph template.
+    ///
+    /// Like `resize()` but uses a provided `ModuleGraph` as template for new voices.
+    pub fn resize_with_graph(
+        &mut self,
+        new_count: VoiceCount,
+        graph_template: &crate::engine::graph::ModuleGraph,
+    ) {
+        let new_size = new_count.as_usize();
+        let current_size = self.voices.len();
+
+        if new_size == current_size || new_size == 0 {
+            return;
+        }
+
+        if new_size < current_size {
+            // Release and remove excess voices
+            for voice in &mut self.voices[new_size..] {
+                voice.reset();
+            }
+            self.voices.truncate(new_size);
+        } else {
+            // Add new voices from graph template
+            for i in current_size..new_size {
+                let new_voice = Voice::from_graph(i as u32, graph_template.clone_structure());
+                self.voices.push(new_voice);
+            }
+        }
+
+        self.config.max_voices = new_count;
     }
 
     /// Allocate voice for polyphonic mode.
@@ -463,7 +613,7 @@ mod tests {
     #[test]
     fn test_allocator_creation() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             ..Default::default()
         };
         let allocator = VoiceAllocator::new(config);
@@ -474,7 +624,7 @@ mod tests {
     #[test]
     fn test_poly_allocation() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             mode: AllocationMode::Polyphonic,
             ..Default::default()
         };
@@ -503,7 +653,7 @@ mod tests {
     #[test]
     fn test_mono_allocation() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             mode: AllocationMode::Mono,
             ..Default::default()
         };
@@ -523,7 +673,7 @@ mod tests {
     #[test]
     fn test_voice_stealing() {
         let config = AllocatorConfig {
-            max_voices: 2,
+            max_voices: VoiceCount::DUAL,
             mode: AllocationMode::Polyphonic,
             stealing: StealingStrategy::Oldest,
             ..Default::default()

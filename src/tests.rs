@@ -333,12 +333,12 @@ mod parameter_handling {
 #[cfg(test)]
 mod voice_allocation {
     use crate::engine::{AllocationMode, AllocatorConfig, StealingStrategy, VoiceAllocator};
-    use crate::types::MidiNote;
+    use crate::types::{MidiNote, VoiceCount};
 
     #[test]
     fn test_polyphonic_allocation() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             mode: AllocationMode::Polyphonic,
             ..Default::default()
         };
@@ -354,7 +354,7 @@ mod voice_allocation {
     #[test]
     fn test_voice_stealing() {
         let config = AllocatorConfig {
-            max_voices: 2,
+            max_voices: VoiceCount::DUAL,
             mode: AllocationMode::Polyphonic,
             stealing: StealingStrategy::Oldest,
             ..Default::default()
@@ -372,7 +372,7 @@ mod voice_allocation {
     #[test]
     fn test_mono_mode() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             mode: AllocationMode::Mono,
             ..Default::default()
         };

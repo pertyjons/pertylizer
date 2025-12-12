@@ -3,7 +3,21 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{SeqInstrumentId, TrackId};
-use crate::types::NormalizedValue;
+use crate::types::{NormalizedValue, VoiceIndex};
+
+/// Track playback mode - determines how notes are allocated to voices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TrackMode {
+    /// Polyphonic mode - notes are allocated from the voice pool dynamically.
+    /// Standard keyboard/MIDI behavior.
+    #[default]
+    Polyphonic,
+
+    /// Mono-voice mode - all notes on this track use a fixed voice.
+    /// Used for tracker-style playback where each channel is monophonic.
+    /// New notes retrigger on the same voice without envelope reset (legato stealing).
+    MonoVoice(VoiceIndex),
+}
 
 /// A sequencer track in the song.
 /// Named SequencerTrack to distinguish from future AudioTrack.
@@ -25,6 +39,8 @@ pub struct SequencerTrack {
     pub solo: bool,
     /// Track color for UI.
     pub color: TrackColor,
+    /// Playback mode (polyphonic or mono-voice for tracker channels).
+    pub mode: TrackMode,
 }
 
 impl SequencerTrack {
@@ -39,6 +55,7 @@ impl SequencerTrack {
             mute: false,
             solo: false,
             color: TrackColor::default(),
+            mode: TrackMode::default(),
         }
     }
 
@@ -63,6 +80,13 @@ impl SequencerTrack {
     /// Set the color (builder pattern).
     pub fn with_color(mut self, color: TrackColor) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Set the playback mode (builder pattern).
+    #[must_use]
+    pub fn with_mode(mut self, mode: TrackMode) -> Self {
+        self.mode = mode;
         self
     }
 

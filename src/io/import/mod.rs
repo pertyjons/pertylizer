@@ -29,7 +29,7 @@ use thiserror::Error;
 pub use tracker::TrackerImporter;
 
 use crate::sequencer::Song;
-use crate::types::{BipolarValue, Gain, NormalizedValue, Sample, Seconds};
+use crate::types::{BipolarValue, Gain, NormalizedValue, Sample, Seconds, VoiceCount};
 
 /// Errors that can occur during song import.
 #[derive(Debug, Error)]
@@ -113,6 +113,9 @@ pub struct ImportedSong {
     pub samples: Vec<Arc<Sample>>,
     /// Instrument metadata with envelope information.
     pub instruments: Vec<ImportedInstrument>,
+    /// Minimum voice count required for playback (e.g., tracker channel count).
+    /// The engine should resize its voice pool to at least this many voices.
+    pub min_voices: Option<VoiceCount>,
 }
 
 /// Trait for song importers.

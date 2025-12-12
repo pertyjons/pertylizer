@@ -85,8 +85,14 @@ fn test_graph_debugger_path_verification() {
     let out_id = graph.find_module_by_type(ModuleType::Mixer).unwrap();
 
     // Verify paths exist
-    assert!(dbg.path_exists(osc_id, amp_id), "osc → amp path should exist");
-    assert!(dbg.path_exists(amp_id, out_id), "amp → out path should exist");
+    assert!(
+        dbg.path_exists(osc_id, amp_id),
+        "osc → amp path should exist"
+    );
+    assert!(
+        dbg.path_exists(amp_id, out_id),
+        "amp → out path should exist"
+    );
     assert!(
         dbg.path_exists(osc_id, out_id),
         "osc → out path should exist"
@@ -131,7 +137,10 @@ fn test_graph_debugger_diagnose_with_envelope() {
 
     // Should warn about envelope without gate
     let has_gate_warning = issues.iter().any(|issue| issue.contains("gate"));
-    assert!(has_gate_warning, "Should warn about missing gate connection");
+    assert!(
+        has_gate_warning,
+        "Should warn about missing gate connection"
+    );
 }
 
 #[test]
@@ -165,7 +174,10 @@ fn test_graph_debugger_describe() {
     assert!(description.contains("mix-"), "Should mention mixer/output");
 
     // Should contain connections section
-    assert!(description.contains("Connections"), "Should have connections section");
+    assert!(
+        description.contains("Connections"),
+        "Should have connections section"
+    );
 }
 
 // =============================================================================
@@ -197,7 +209,10 @@ fn test_signal_probe_oscillator_output() {
 
     // Oscillator should produce signal
     assert!(!stats.is_silent, "Oscillator should produce signal");
-    assert!(stats.peak > 0.5, "Oscillator should have significant amplitude");
+    assert!(
+        stats.peak > 0.5,
+        "Oscillator should have significant amplitude"
+    );
     assert!(
         stats.dc_offset.abs() < 0.1,
         "Sine wave should have near-zero DC offset"
@@ -230,7 +245,10 @@ fn test_signal_probe_envelope_attack() {
     let stats = probe.stats(env_id, "out").unwrap();
 
     // Envelope should ramp up during attack
-    assert!(!stats.is_silent, "Envelope should produce output after trigger");
+    assert!(
+        !stats.is_silent,
+        "Envelope should produce output after trigger"
+    );
     assert!(stats.max > 0.0, "Envelope should rise above zero");
 }
 
@@ -403,10 +421,16 @@ fn test_sequencer_debugger_event_filtering() {
 
     // Test filtering by instrument
     let inst0_events = dbg.events_for_instrument(SeqInstrumentId(0));
-    assert!(!inst0_events.is_empty(), "Should have events for instrument 0");
+    assert!(
+        !inst0_events.is_empty(),
+        "Should have events for instrument 0"
+    );
 
     let inst1_events = dbg.events_for_instrument(SeqInstrumentId(1));
-    assert!(inst1_events.is_empty(), "Should have no events for instrument 1");
+    assert!(
+        inst1_events.is_empty(),
+        "Should have no events for instrument 1"
+    );
 }
 
 // =============================================================================
@@ -503,8 +527,14 @@ fn test_complete_debug_workflow() {
     let out_id = graph.find_module_by_type(ModuleType::Mixer).unwrap();
 
     // Verify signal paths
-    assert!(graph_dbg.path_exists(osc_id, out_id), "Audio path should exist");
-    assert!(graph_dbg.path_exists(env_id, amp_id), "CV path should exist");
+    assert!(
+        graph_dbg.path_exists(osc_id, out_id),
+        "Audio path should exist"
+    );
+    assert!(
+        graph_dbg.path_exists(env_id, amp_id),
+        "CV path should exist"
+    );
 
     // 2. Setup signal probe
     let mut probe = SignalProbe::new();

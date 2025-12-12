@@ -24,6 +24,7 @@ use modular_synth::audio::{
 };
 use modular_synth::engine::{AllocationMode, AllocatorConfig, SynthEngine};
 use modular_synth::gui::{GuiType, SynthGuiConfig, create_backend, print_available_backends};
+use modular_synth::types::VoiceCount;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
-        max_voices: 8,
+        max_voices: VoiceCount::OCTO,
         mode: AllocationMode::Polyphonic,
         ..Default::default()
     };

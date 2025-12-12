@@ -1530,6 +1530,7 @@ impl AudioProcessor for SynthEngine {
                     pitch,
                     velocity,
                     instrument,
+                    voice_index,
                     ..
                 } => {
                     let note = MidiNote::new(pitch.as_midi());
@@ -1543,12 +1544,24 @@ impl AudioProcessor for SynthEngine {
                         continue;
                     }
 
-                    // Trigger note on the matching instrument, or first instrument if index out of bounds
+                    // Trigger note on the matching instrument
                     if let Some(target) = self.instruments.get_mut(instrument_index) {
-                        target.note_on(note, vel);
+                        if let Some(v_idx) = voice_index {
+                            // Tracker mode: use fixed voice with legato-style retrigger
+                            target
+                                .allocator_mut()
+                                .note_on_fixed_voice(*v_idx, note, vel);
+                        } else {
+                            // Polyphonic mode: normal allocation
+                            target.note_on(note, vel);
+                        }
                     } else if let Some(first) = self.instruments.first_mut() {
                         // Fallback to first instrument if instrument index is out of range
-                        first.note_on(note, vel);
+                        if let Some(v_idx) = voice_index {
+                            first.allocator_mut().note_on_fixed_voice(*v_idx, note, vel);
+                        } else {
+                            first.note_on(note, vel);
+                        }
                     }
                 }
                 crate::sequencer::SequencerEvent::NoteOff {
@@ -1664,6 +1677,7 @@ impl AudioProcessor for SynthEngine {
 mod tests {
     use super::*;
     use crate::engine::voice_allocator::AllocationMode;
+    use crate::types::VoiceCount;
 
     #[test]
     fn test_engine_creation() {
@@ -1676,7 +1690,7 @@ mod tests {
     #[test]
     fn test_polyphonic_notes() {
         let config = AllocatorConfig {
-            max_voices: 4,
+            max_voices: VoiceCount::QUAD,
             mode: AllocationMode::Polyphonic,
             ..Default::default()
         };
@@ -1806,7 +1820,7 @@ mod tests {
         #[test]
         fn test_voice_module_propagates_to_voices() {
             let config = AllocatorConfig {
-                max_voices: 4,
+                max_voices: VoiceCount::QUAD,
                 mode: AllocationMode::Polyphonic,
                 ..Default::default()
             };
@@ -1851,7 +1865,7 @@ mod tests {
         #[test]
         fn test_voice_connection_propagates_to_voices() {
             let config = AllocatorConfig {
-                max_voices: 2,
+                max_voices: VoiceCount::DUAL,
                 mode: AllocationMode::Polyphonic,
                 ..Default::default()
             };
@@ -1933,7 +1947,7 @@ mod tests {
         #[test]
         fn test_remove_voice_module_propagates() {
             let config = AllocatorConfig {
-                max_voices: 2,
+                max_voices: VoiceCount::DUAL,
                 ..Default::default()
             };
             let (mut engine, mut handle) = SynthEngine::with_config(config);

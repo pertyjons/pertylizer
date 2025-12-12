@@ -805,6 +805,7 @@ impl Pattern {
                     velocity: note.velocity,
                     instrument,
                     effects: note.effects.clone(),
+                    voice_index: None, // Pattern events use dynamic allocation
                 });
             }
 

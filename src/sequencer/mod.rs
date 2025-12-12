@@ -79,7 +79,7 @@ pub use pattern::{Pattern, RowResolution, TrackCell, TrackerGrid};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
-pub use track::{SequencerTrack, TrackColor};
+pub use track::{SequencerTrack, TrackColor, TrackMode};
 pub use view::tracker::{
     PatternTrackerView, TrackerCell, TrackerNoteDisplay, TrackerRow, TrackerViewConfig,
 };

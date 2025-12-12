@@ -436,6 +436,67 @@ impl std::fmt::Display for VoiceCount {
 }
 
 // ============================================================================
+// VOICE INDEX
+// ============================================================================
+
+/// Index of a specific voice within a voice allocator.
+///
+/// Used for tracker-style playback where each channel maps to a fixed voice.
+/// Range is 0-255 to match `VoiceCount` capacity.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[repr(transparent)]
+pub struct VoiceIndex(pub u8);
+
+impl VoiceIndex {
+    /// Create a new voice index.
+    #[inline]
+    pub const fn new(index: u8) -> Self {
+        Self(index)
+    }
+
+    /// First voice (index 0).
+    pub const ZERO: Self = Self(0);
+
+    /// Get the raw voice index.
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as usize for array indexing.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u8> for VoiceIndex {
+    fn from(index: u8) -> Self {
+        Self(index)
+    }
+}
+
+impl From<usize> for VoiceIndex {
+    fn from(index: usize) -> Self {
+        Self(index.min(255) as u8)
+    }
+}
+
+impl From<VoiceIndex> for usize {
+    fn from(index: VoiceIndex) -> Self {
+        index.0 as usize
+    }
+}
+
+impl std::fmt::Display for VoiceIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// ============================================================================
 // STEREO BALANCE
 // ============================================================================
 

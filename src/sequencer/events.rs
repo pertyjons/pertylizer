@@ -9,6 +9,7 @@ use super::effects::EffectCommand;
 use super::ids::SeqInstrumentId;
 use super::pitch::{Pitch, Velocity};
 use super::time::Tick;
+use crate::types::VoiceIndex;
 
 /// Events generated during sequencer playback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,11 @@ pub enum SequencerEvent {
         instrument: SeqInstrumentId,
         /// Effects applied at note start.
         effects: Vec<EffectCommand>,
+        /// Optional fixed voice index for tracker-style playback.
+        /// When Some, the note should be played on this specific voice
+        /// using legato-style retrigger (no envelope reset).
+        /// When None, normal voice allocation is used.
+        voice_index: Option<VoiceIndex>,
     },
     /// Note off event.
     NoteOff {
@@ -128,6 +134,7 @@ mod tests {
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(0),
             effects: Vec::new(),
+            voice_index: None,
         };
         assert_eq!(event.tick().0, 1000);
     }
@@ -140,6 +147,7 @@ mod tests {
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(0),
             effects: Vec::new(),
+            voice_index: None,
         };
         assert!(note_on.is_note_on());
         assert!(!note_on.is_note_off());
@@ -162,6 +170,7 @@ mod tests {
                 velocity: Velocity::MF,
                 instrument: SeqInstrumentId(0),
                 effects: Vec::new(),
+                voice_index: None,
             },
             SequencerEvent::NoteOn {
                 tick: Tick(100),
@@ -169,6 +178,7 @@ mod tests {
                 velocity: Velocity::MF,
                 instrument: SeqInstrumentId(0),
                 effects: Vec::new(),
+                voice_index: None,
             },
             SequencerEvent::NoteOff {
                 tick: Tick(300),
@@ -191,6 +201,7 @@ mod tests {
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(5),
             effects: Vec::new(),
+            voice_index: None,
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
 

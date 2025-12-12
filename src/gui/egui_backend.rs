@@ -23,7 +23,10 @@ use crate::engine::params::{
     AmplifierParam, ChorusParam, CompressorParam, DelayParam, DistortionParam, EnvelopeParam,
     EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
 };
-use crate::engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
+use crate::engine::{
+    AllocationMode, AllocatorConfig, EngineCommand, EngineEvent, EngineHandle, ModuleId,
+    SynthEngine,
+};
 use crate::gui::app::state::AppView;
 use crate::gui::dialogs::{
     DialogState, FileDialogMode, FileDialogResult, LoadPatchResult, show_about_dialog,
@@ -1599,8 +1602,15 @@ impl SynthApp {
                     let output_id = self.next_module_id(TypedModuleType::StereoOutput);
                     ui_state.patch_editor.add_module(output_id, output_desc);
 
-                    // Create engine instrument and send to engine
-                    let mut engine_inst = Instrument::new(inst_id, "Default");
+                    // Create engine instrument with tracker config
+                    let voice_config = AllocatorConfig {
+                        max_voices: imported
+                            .min_voices
+                            .unwrap_or(crate::types::VoiceCount::OCTO),
+                        mode: AllocationMode::Tracker,
+                        ..Default::default()
+                    };
+                    let mut engine_inst = Instrument::with_config(inst_id, "Default", voice_config);
                     engine_inst.set_midi_channel(MidiChannel::CH1);
                     self.handle.send_blocking(EngineCommand::AddInstrument {
                         instrument: Box::new(engine_inst),
@@ -1858,8 +1868,17 @@ impl SynthApp {
                             ));
                         }
 
-                        // === Create engine instrument ===
-                        let mut engine_inst = Instrument::new(inst_id, &inst_name);
+                        // === Create engine instrument with tracker voice config ===
+                        // Use min_voices from import to ensure enough voices for all channels
+                        let voice_config = AllocatorConfig {
+                            max_voices: imported
+                                .min_voices
+                                .unwrap_or(crate::types::VoiceCount::OCTO),
+                            mode: AllocationMode::Tracker,
+                            ..Default::default()
+                        };
+                        let mut engine_inst =
+                            Instrument::with_config(inst_id, &inst_name, voice_config);
                         engine_inst.set_midi_channel(channel);
                         self.handle.send_blocking(EngineCommand::AddInstrument {
                             instrument: Box::new(engine_inst),

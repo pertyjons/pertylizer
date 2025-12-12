@@ -22,10 +22,11 @@ use crate::sequencer::effects::EffectCommand;
 use crate::sequencer::pattern::RowResolution;
 use crate::sequencer::pitch::{Pitch, Velocity};
 use crate::sequencer::time::Duration;
+use crate::sequencer::track::TrackMode;
 use crate::sequencer::{PatternId, SeqInstrumentId, Song, Tick, TrackId};
 use crate::types::{
     BipolarValue, Bpm, ChannelMode, Gain, MidiNote, NormalizedValue, Sample, SampleLoopInfo,
-    SampleRate, SampleValue, Seconds,
+    SampleRate, SampleValue, Seconds, VoiceCount, VoiceIndex,
 };
 
 /// Importer for tracker files (MOD, XM, S3M).
@@ -136,8 +137,20 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Get number of channels
     let num_channels = module.get_num_channels();
 
-    // Create a single track for simplicity (tracker patterns span all channels)
-    let track_id = song.create_track("Main");
+    // Create a track per channel for tracker-style mono-per-channel playback
+    // Each channel gets a fixed voice via TrackMode::MonoVoice
+    let mut track_ids = Vec::with_capacity(num_channels);
+    for ch in 0..num_channels {
+        let track_id = song.create_track(format!("Ch{}", ch + 1));
+        // Set mono-voice mode: channel i uses voice i
+        if let Some(track) = song.track_mut(track_id) {
+            track.mode = TrackMode::MonoVoice(VoiceIndex::new(ch as u8));
+        }
+        track_ids.push(track_id);
+    }
+
+    // Use the first track for pattern placement (patterns span all channels)
+    let main_track_id = track_ids.first().copied().unwrap_or(TrackId::new(0));
 
     // Convert patterns
     let mut pattern_ids = Vec::new();
@@ -162,14 +175,18 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
 
         let length = pattern.length;
 
-        song.place_pattern(pattern_id, track_id, current_tick);
+        song.place_pattern(pattern_id, main_track_id, current_tick);
         current_tick = Tick(current_tick.0 + length.0 as u64);
     }
+
+    // Calculate minimum voice count needed (one per channel)
+    let min_voices = Some(VoiceCount::new(num_channels.max(1) as u8));
 
     Ok(ImportedSong {
         song,
         samples,
         instruments,
+        min_voices,
     })
 }
 

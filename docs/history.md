@@ -1,5 +1,52 @@
 # Version History
 
+## [0.50.0] - 2025
+### Added - Tracker Voice Allocation (Mono-Per-Channel)
+
+Implementerade tracker-style voice allocation för korrekt MOD/XM/S3M-uppspelning.
+
+#### Problemet
+Importerade tracker-filer hade "ghost notes" - loopade ljud fortsatte spela även när nya noter startade på samma kanal. Tracker-moduler är mono-per-kanal, men synten använde polyfon röstallokering.
+
+#### Lösningen
+Ny `Tracker` allocation mode där varje kanal får en dedikerad röst (fixed voice index). Nya noter på samma kanal gör en legato-style retrigger utan att nollställa envelope.
+
+#### Nya typer (`src/types/audio.rs`)
+- **`VoiceIndex`** - Index för en specifik röst (0-255)
+- **`VoiceCount`** - Antal röster med konstanter: `DUAL`, `QUAD`, `OCTO`, `SIXTEEN`, `THIRTYTWO`
+
+#### TrackMode (`src/sequencer/track.rs`)
+- **`TrackMode::MonoVoice(VoiceIndex)`** - Tracker-style, kanal i → röst i
+- **`TrackMode::Polyphonic`** - Keyboard/MIDI-style, dynamisk allokering
+
+#### Voice Allocator (`src/engine/voice_allocator.rs`)
+- **`AllocationMode::Tracker`** - Ny allocation mode
+- **`note_on_fixed_voice(voice_index, note, velocity)`** - Triggrar not på specifik röst
+- **`note_off_fixed_voice(voice_index)`** - Släpper specifik röst
+- **`resize(count)` / `resize_with_graph(count, template)`** - Dynamisk omstorlek av voice pool
+- **`AllocatorConfig::max_voices`** är nu `VoiceCount` istället för `usize`
+
+#### Sequencer Event
+- **`NoteOn::voice_index: Option<VoiceIndex>`** - Specifierar vilken röst som ska användas
+
+#### Import (`src/io/import/`)
+- **`ImportedSong::min_voices`** - Minimum antal röster (antal tracker-kanaler)
+- Tracker-import skapar nu en track per kanal med `TrackMode::MonoVoice`
+- GUI skapar instrument med `AllocationMode::Tracker` och rätt antal röster
+
+#### Filer som ändrats
+- `src/types/audio.rs` - VoiceIndex, VoiceCount newtypes
+- `src/engine/voice_allocator.rs` - Fixed voice allocation, resize
+- `src/engine/sequencer_engine.rs` - voice_index routing
+- `src/engine/synth_engine.rs` - note_on_fixed_voice() integration
+- `src/sequencer/track.rs` - TrackMode enum
+- `src/sequencer/events.rs` - voice_index i NoteOn
+- `src/io/import/tracker.rs` - MonoVoice per kanal
+- `src/io/import/mod.rs` - min_voices i ImportedSong
+- `src/gui/egui_backend.rs` - Tracker mode vid import
+
+---
+
 ## [0.49.0] - 2025
 ### Added - Debug System
 
