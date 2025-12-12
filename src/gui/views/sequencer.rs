@@ -286,7 +286,12 @@ fn handle_tracker_input(
         .map(|p| p.row_resolution.rows as usize)
         .unwrap_or(64);
 
-    let num_tracks = 4; // TODO: Get from song/config
+    // Get track count from active pattern
+    let num_tracks = state
+        .active_pattern
+        .and_then(|id| song.pattern(id))
+        .map(|p| p.num_tracks() as usize)
+        .unwrap_or(4);
 
     // Navigation keys
     ui.input(|i| {

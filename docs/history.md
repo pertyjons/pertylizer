@@ -1,5 +1,52 @@
 # Version History
 
+## [0.48.0] - 2025
+### Fixed - Tracker Playback Volume (Silent XM Fix)
+
+Kritisk fix för tyst uppspelning av importerade tracker-filer.
+
+#### Problemet
+Importerade XM/MOD-filer spelades nästan tyst (2-16% volym) trots korrekt import.
+
+#### Rotorsaken
+Volymen applicerades **dubbelt**:
+1. Notens velocity (från volume-kolumnen) = t.ex. 0.12 (12%)
+2. Effektprocessorns `SetVolume` = t.ex. 0.12 (12%)
+3. Resultat: `0.12 × 0.12 = 0.014` (1.4% volym) - ohörbart!
+
+#### Lösningen
+I tracker-format representerar notens velocity volymkolumnens värde direkt.
+Effektprocessorns volymmodulering ska endast påverka UNDER uppspelning (volume slide, tremolo), inte vid note-onset.
+
+Ändrade `sequencer_engine.rs` att använda notens velocity direkt istället för att multiplicera med effektprocessorns volym.
+
+#### Filer som ändrats
+- `src/engine/sequencer_engine.rs` - Tog bort volym-multiplikation vid note-onset
+- `src/engine/synth_engine.rs` - Rensade temporär debug-logging
+
+---
+
+## [0.47.0] - 2025
+### Fixed - Multi-Channel Tracker Display & Sample Index
+
+Fixar för korrekt visning av tracker-filer med många kanaler och sample-indexering.
+
+#### Bugfixar
+- **Multi-channel display:** Pattern visar nu alla kanaler (30 kanaler för joli_untouched.xm), inte bara 4
+  - `Pattern.set_num_tracks()` - ny setter-metod för att sätta antal kanaler
+  - Tracker-import sätter nu `num_tracks` baserat på modulens kanalantal
+  - Tangentbordsnavigering i Sequencer-vyn respekterar nu antal kanaler från pattern
+- **Sample-indexering:** Fixade bug där instrument utan samples fick felaktig sample_index
+  - Kontrollerar nu `sample_count > 0` istället för `!instr.sample.is_empty()`
+- **Standard volym:** `ChannelState.last_volume` sätts nu till 1.0 (full volym) som default
+
+#### Filer som ändrats
+- `src/sequencer/pattern.rs` - Lade till `set_num_tracks()` metod
+- `src/io/import/tracker.rs` - Fixade sample-indexering och volym-default
+- `src/gui/views/sequencer.rs` - Hämtar antal tracks från pattern
+
+---
+
 ## [0.46.0] - 2025
 ### Added - Tracker Effects Implementation
 

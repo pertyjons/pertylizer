@@ -399,6 +399,14 @@ impl Pattern {
         self.num_tracks
     }
 
+    /// Set the number of tracks.
+    ///
+    /// This invalidates the grid cache.
+    pub fn set_num_tracks(&mut self, tracks: u8) {
+        self.num_tracks = tracks;
+        self.grid = None;
+    }
+
     // === Grid access ===
 
     /// Get the tracker grid, creating it if necessary.

@@ -209,9 +209,10 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
 
                     // Find first sample index for this instrument
                     // Samples are flattened across all instruments, so we track offset
-                    let sample_index = if !instr.sample.is_empty() {
+                    let sample_count = instr.sample.iter().filter(|s| s.is_some()).count();
+                    let sample_index = if sample_count > 0 {
                         let idx = sample_offset;
-                        sample_offset += instr.sample.iter().filter(|s| s.is_some()).count();
+                        sample_offset += sample_count;
                         Some(idx)
                     } else {
                         None
@@ -458,8 +459,10 @@ fn convert_pattern(
 
     pattern.name = format!("Pattern {pat_idx:02X}");
 
-    // Set up row resolution for tracker view
+    // Set up row resolution and channel count for tracker view
     pattern.row_resolution = RowResolution::custom(num_rows as u16, ticks_per_row as u16);
+    #[allow(clippy::cast_possible_truncation)]
+    pattern.set_num_tracks(num_channels as u8);
 
     // Track state per channel (for volume/instrument memory)
     let mut channel_state: Vec<ChannelState> = vec![ChannelState::default(); num_channels];
@@ -503,10 +506,11 @@ fn convert_pattern(
 }
 
 /// Channel state for tracking volume/instrument between rows.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct ChannelState {
     last_instrument: usize,
-    last_volume: f32, // 0.0-1.0
+    /// Volume (0.0-1.0), defaults to 1.0 (full volume) as per tracker convention.
+    last_volume: f32,
     /// Last portamento target (for tone portamento continuation)
     last_porta_target: Option<Pitch>,
     /// Last vibrato settings
@@ -515,6 +519,20 @@ struct ChannelState {
     /// Last tremolo settings
     last_tremolo_speed: u8,
     last_tremolo_depth: u8,
+}
+
+impl Default for ChannelState {
+    fn default() -> Self {
+        Self {
+            last_instrument: 0,
+            last_volume: 1.0, // Full volume by default
+            last_porta_target: None,
+            last_vibrato_speed: 0,
+            last_vibrato_depth: 0,
+            last_tremolo_speed: 0,
+            last_tremolo_depth: 0,
+        }
+    }
 }
 
 /// A note event to be added to the pattern.
@@ -533,6 +551,7 @@ fn process_track_unit(
     track: TrackId,
 ) -> Option<NoteEvent> {
     // Check for instrument change
+    // Note: xmrs uses 0-indexed instruments, matching our SeqInstrumentId
     if let Some(inst) = unit.instrument {
         state.last_instrument = inst;
     }
@@ -581,7 +600,8 @@ fn process_track_unit(
     // Update portamento target for tone portamento
     state.last_porta_target = Some(pitch);
 
-    let velocity = Velocity::new(state.last_volume.max(0.5)); // Default to 0.5 if no volume set
+    // Use the channel's current volume (defaults to 1.0 if never set)
+    let velocity = Velocity::new(state.last_volume);
 
     #[allow(clippy::cast_possible_truncation)]
     let instrument = SeqInstrumentId(state.last_instrument as u16);

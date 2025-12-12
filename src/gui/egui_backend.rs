@@ -1951,8 +1951,8 @@ impl SynthApp {
                 self.handle
                     .send_blocking(EngineCommand::SetTempo(imported.song.default_tempo));
 
-                // Set the active pattern for the tracker view
-                let first_pattern_id = imported.song.patterns().next().map(|p| p.id);
+                // Set the active pattern for the tracker view (first pattern in arrangement)
+                let first_pattern_id = imported.song.arrangement().first().map(|p| p.pattern_id);
                 self.tracker_state.active_pattern = first_pattern_id;
 
                 // === Step 5: Send song to engine for playback ===

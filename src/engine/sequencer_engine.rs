@@ -330,12 +330,6 @@ impl SequencerEngine {
                     }
                 }
 
-                // Get channel modulation to adjust velocity
-                let modulation = self.effect_processor.get_channel_modulation(track_id);
-                let adjusted_velocity = crate::sequencer::pitch::Velocity::new(
-                    velocity.as_f32() * modulation.volume.as_f32(),
-                );
-
                 // Track active note for NoteOff
                 self.active_notes.push(ActiveNote {
                     pitch,
@@ -344,11 +338,14 @@ impl SequencerEngine {
                     track,
                 });
 
-                // Emit NoteOn event with adjusted velocity
+                // Note: We use the note's velocity directly - in tracker formats,
+                // the note's velocity column IS the volume for that note.
+                // Effect-based volume modulation (SetVolume, VolumeSlide) happens
+                // DURING playback via the effect processor, not at note onset.
                 events.push(SequencerEvent::NoteOn {
                     tick: self.current_tick,
                     pitch,
-                    velocity: adjusted_velocity,
+                    velocity,
                     instrument,
                     effects,
                 });
