@@ -1,5 +1,29 @@
 # Version History
 
+## [0.57.0] - 2025
+### Added - CLI Debug Import Command
+
+Ny kommandoradsparameter `--debug-import` / `-d` för att importera tracker-filer och visa debuginformation utan att starta GUI.
+
+#### Användning
+```bash
+modular-synth --debug-import /path/to/song.xm
+modular-synth -d /path/to/song.xm
+```
+
+#### Output
+- Songinformation (namn, tempo, antal patterns/samples/instrument)
+- Instrumentlista med sample-referenser och volym
+- Samplelista med antal frames, kanaler och loop-info
+- Arrangement med pattern-placeringar
+- Första pattern med noter och duration-info
+- Varningar för saknade samples eller ogiltiga instrument-referenser
+
+#### Filer som ändrats
+- `crates/modular_synth/src/main.rs` - Ny `CliAction` enum, `--debug-import` argument-parsing, `run_debug_import()` funktion
+
+---
+
 ## [0.56.0] - 2025
 ### Fixed - XM Import Key Off and Effect-Only Rows
 
