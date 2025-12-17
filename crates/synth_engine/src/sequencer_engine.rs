@@ -65,6 +65,11 @@ pub struct SequencerEngine {
     active_notes: Vec<ActiveNote>,
     /// Cached tempo (BPM) to avoid locking song every sample.
     cached_tempo: Bpm,
+    /// Base tempo before speed adjustments (for tracker speed effect).
+    base_tempo: Bpm,
+    /// Current tracker speed (ticks per row, default 6).
+    /// Lower speed = faster playback.
+    tracker_speed: u8,
     /// Whether we're looping.
     looping: bool,
     /// Loop start position.
@@ -78,6 +83,7 @@ pub struct SequencerEngine {
 impl SequencerEngine {
     /// Create a new sequencer engine with the given sample rate.
     pub fn new(sample_rate: SampleRate) -> Self {
+        let default_tempo = Bpm::new(120.0);
         Self {
             song: Arc::new(RwLock::new(Song::default())),
             play_state: PlayState::Stopped,
@@ -85,7 +91,9 @@ impl SequencerEngine {
             tick_accumulator: 0.0,
             sample_rate,
             active_notes: Vec::new(),
-            cached_tempo: Bpm::new(120.0),
+            cached_tempo: default_tempo,
+            base_tempo: default_tempo,
+            tracker_speed: 6, // Default tracker speed
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -108,6 +116,8 @@ impl SequencerEngine {
             sample_rate,
             active_notes: Vec::new(),
             cached_tempo,
+            base_tempo: cached_tempo,
+            tracker_speed: 6, // Default tracker speed
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -237,20 +247,39 @@ impl SequencerEngine {
 
     /// Update the cached tempo from the song.
     fn update_cached_tempo(&mut self) {
-        if let Ok(song) = self.song.read() {
-            self.cached_tempo = song.tempo_at(self.current_tick);
+        let new_tempo = if let Ok(song) = self.song.read() {
+            Some(song.tempo_at(self.current_tick))
+        } else {
+            None
+        };
+
+        if let Some(tempo) = new_tempo {
+            self.base_tempo = tempo;
+            self.recalculate_effective_tempo();
         }
+    }
+
+    /// Recalculate effective tempo based on base tempo and tracker speed.
+    ///
+    /// Tracker speed affects playback rate:
+    /// - Speed 6 (default): tempo is used as-is
+    /// - Speed 3: playback is 2x faster (effective_tempo = base_tempo * 6/3)
+    /// - Speed 12: playback is 0.5x slower (effective_tempo = base_tempo * 6/12)
+    fn recalculate_effective_tempo(&mut self) {
+        let speed_ratio = 6.0 / self.tracker_speed.max(1) as f32;
+        self.cached_tempo = Bpm::new(self.base_tempo.as_f32() * speed_ratio);
     }
 
     /// Collect events that should trigger at the current tick.
     fn collect_events_at_tick(&mut self, events: &mut Vec<SequencerEvent>) {
-        // First, collect all the note data we need while holding the lock
-        let notes_to_trigger: Vec<_> = {
+        // First, collect all the note and effect data we need while holding the lock
+        let (notes_to_trigger, effect_events_to_process): (Vec<_>, Vec<_>) = {
             let Ok(song) = self.song.read() else {
                 return;
             };
 
             let mut notes = Vec::new();
+            let mut effect_events = Vec::new();
 
             // Check each placement that might be active at this tick
             for placement in song.arrangement() {
@@ -293,9 +322,17 @@ impl SequencerEngine {
                         note.track,
                     ));
                 }
+
+                // Collect effect-only events at this pattern tick
+                for effect_event in pattern.effect_events() {
+                    if effect_event.tick.0 != pattern_tick {
+                        continue;
+                    }
+                    effect_events.push((effect_event.track, effect_event.effects.clone()));
+                }
             }
 
-            notes
+            (notes, effect_events)
         }; // Lock released here
 
         // Now process the collected notes without holding the lock
@@ -322,10 +359,16 @@ impl SequencerEngine {
                 for cmd in global_commands {
                     match cmd {
                         GlobalCommand::SetTempo(bpm) => {
-                            self.cached_tempo = Bpm::new(f32::from(bpm));
+                            // Update base tempo and recalculate effective tempo
+                            self.base_tempo = Bpm::new(f32::from(bpm));
+                            self.recalculate_effective_tempo();
                         }
-                        GlobalCommand::SetSpeed(_speed) => {
-                            // Speed affects ticks per row - handled by effect processor
+                        GlobalCommand::SetSpeed(speed) => {
+                            // Tracker speed affects timing: lower speed = faster playback
+                            // At speed 6 (default), tempo is used as-is
+                            // At speed 3, playback is 2x faster (6/3 = 2)
+                            self.tracker_speed = speed.as_u8().max(1); // Prevent division by zero
+                            self.recalculate_effective_tempo();
                         }
                         // Pattern navigation effects would require additional state
                         GlobalCommand::PatternBreak(_)
@@ -374,6 +417,43 @@ impl SequencerEngine {
                     instrument,
                     effects,
                     voice_index: None, // No track = polyphonic mode
+                });
+            }
+        }
+
+        // Process effect-only events (tracker-style rows with effects but no note)
+        for (track_id, effects) in effect_events_to_process {
+            // Process effects through the effect processor to handle global commands
+            let global_commands = self
+                .effect_processor
+                .process_row_start(track_id, &effects, None);
+
+            // Handle global commands from effect-only rows
+            for cmd in global_commands {
+                match cmd {
+                    GlobalCommand::SetTempo(bpm) => {
+                        self.base_tempo = Bpm::new(f32::from(bpm));
+                        self.recalculate_effective_tempo();
+                    }
+                    GlobalCommand::SetSpeed(speed) => {
+                        self.tracker_speed = speed.as_u8().max(1);
+                        self.recalculate_effective_tempo();
+                    }
+                    GlobalCommand::PatternBreak(_)
+                    | GlobalCommand::PatternJump(_)
+                    | GlobalCommand::SetLoopStart
+                    | GlobalCommand::PatternLoop(_)
+                    | GlobalCommand::PatternDelay(_) => {
+                        // TODO: Implement pattern navigation
+                    }
+                }
+            }
+
+            // Emit effect events for channel-level processing
+            for effect in effects {
+                events.push(SequencerEvent::Effect {
+                    tick: self.current_tick,
+                    effect,
                 });
             }
         }

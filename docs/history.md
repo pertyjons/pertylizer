@@ -1,5 +1,40 @@
 # Version History
 
+## [0.56.0] - 2025
+### Fixed - XM Import Key Off and Effect-Only Rows
+
+Fixade tre kritiska buggar i XM tracker import/uppspelning som gjorde att musiken lät fel.
+
+#### Problemen
+1. **Key Off ignorerades helt** - Noter utan explicit duration spelades för evigt (loopade stråkar, pads slutade aldrig)
+2. **Effect-only rows ignorerades** - Rader med bara effekter (volume slides, vibrato continuation) kastades bort
+3. **SetSpeed runtime ignorerades** - Tempo-ändringar via Fxx-effekt (x < 0x20) fungerade inte under uppspelning
+
+#### Lösningen
+
+**Key Off:**
+- Lade till `last_note_index` och `last_note_start_tick` i `ChannelState` för att spåra aktiva noter
+- Vid Key Off: beräknar duration från föregående not och sätter `note.duration`
+- Vid ny not på samma kanal: implicit note-off på föregående not (tracker-beteende)
+
+**Effect-only rows:**
+- Ny `EffectOnlyEvent` typ i `synth_sequencer::pattern`
+- Import skapar `EffectOnlyEvent` för rader utan noter men med effekter
+- `SequencerEngine` emittar `SequencerEvent::Effect` för dessa
+
+**SetSpeed runtime:**
+- Nya fält `base_tempo` och `tracker_speed` i `SequencerEngine`
+- `GlobalCommand::SetSpeed` justerar `cached_tempo` via formeln: `effective_tempo = base_tempo * (6 / speed)`
+- Ny metod `recalculate_effective_tempo()` för konsistent tempo-hantering
+
+#### Filer som ändrats
+- `crates/synth_sequencer/src/pattern.rs` - Ny `EffectOnlyEvent` typ, `note_by_index_mut()`, `effect_events` fält
+- `crates/synth_sequencer/src/lib.rs` - Export av `EffectOnlyEvent`
+- `crates/synth_engine/src/sequencer_engine.rs` - SetSpeed runtime, effect-only event emission
+- `crates/modular_synth/src/io/import/tracker.rs` - Key Off och effect-only row hantering
+
+---
+
 ## [0.55.0] - 2025
 ### Fixed - XM/MOD Import Pitch Accuracy
 

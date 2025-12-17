@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
 use super::effects::EffectCommand;
-use super::ids::{NoteId, PatternId, SeqInstrumentId};
+use super::ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
@@ -236,6 +236,40 @@ impl TrackerGrid {
     }
 }
 
+// ============================================================================
+// EffectOnlyEvent - Effect events without notes
+// ============================================================================
+
+/// An effect event without an associated note.
+///
+/// Used for tracker-style effect-only rows where effects like volume slides,
+/// vibrato continuation, or panning changes occur without triggering a new note.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EffectOnlyEvent {
+    /// Position within the pattern.
+    pub tick: PatternTick,
+    /// Track/channel this effect applies to.
+    pub track: TrackId,
+    /// Effects to apply.
+    pub effects: Vec<EffectCommand>,
+}
+
+impl EffectOnlyEvent {
+    /// Create a new effect-only event.
+    #[must_use]
+    pub fn new(tick: PatternTick, track: TrackId, effects: Vec<EffectCommand>) -> Self {
+        Self {
+            tick,
+            track,
+            effects,
+        }
+    }
+}
+
+// ============================================================================
+// RowResolution - Grid timing configuration
+// ============================================================================
+
 /// Row resolution configuration for tracker view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowResolution {
@@ -331,6 +365,9 @@ pub struct Pattern {
     pub length: Duration,
     /// All notes, sorted by start tick (piano roll representation).
     notes: Vec<Note>,
+    /// Effect-only events (tracker-style rows with effects but no note).
+    #[serde(default)]
+    effect_events: Vec<EffectOnlyEvent>,
     /// Automation lanes.
     pub automation: Vec<AutomationLane>,
     /// Row resolution for tracker view.
@@ -359,6 +396,7 @@ impl Pattern {
             name: String::new(),
             length,
             notes: Vec::new(),
+            effect_events: Vec::new(),
             automation: Vec::new(),
             row_resolution: RowResolution::standard_64(),
             grid: None,
@@ -733,7 +771,43 @@ impl Pattern {
 
     /// Check if pattern is empty.
     pub fn is_empty(&self) -> bool {
-        self.notes.is_empty() && self.automation.iter().all(|l| l.is_empty())
+        self.notes.is_empty()
+            && self.effect_events.is_empty()
+            && self.automation.iter().all(|l| l.is_empty())
+    }
+
+    // === Effect-only events ===
+
+    /// Add an effect-only event (for tracker-style effect rows without notes).
+    pub fn add_effect_event(&mut self, event: EffectOnlyEvent) {
+        // Insert sorted by tick
+        let pos = self
+            .effect_events
+            .partition_point(|e| e.tick <= event.tick);
+        self.effect_events.insert(pos, event);
+    }
+
+    /// Get all effect-only events.
+    pub fn effect_events(&self) -> &[EffectOnlyEvent] {
+        &self.effect_events
+    }
+
+    /// Get effect-only events at a specific tick.
+    pub fn effect_events_at(&self, tick: PatternTick) -> impl Iterator<Item = &EffectOnlyEvent> {
+        self.effect_events.iter().filter(move |e| e.tick == tick)
+    }
+
+    /// Clear all effect-only events.
+    pub fn clear_effect_events(&mut self) {
+        self.effect_events.clear();
+    }
+
+    /// Get a mutable note by its index (for tracker import key-off handling).
+    ///
+    /// This is used during import to set duration on a previously added note
+    /// when a key-off marker is encountered.
+    pub fn note_by_index_mut(&mut self, index: usize) -> Option<&mut Note> {
+        self.notes.get_mut(index)
     }
 
     // === Automation ===

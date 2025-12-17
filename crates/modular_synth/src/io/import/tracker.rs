@@ -525,25 +525,80 @@ fn convert_pattern(
                 .get(channel_idx)
                 .copied()
                 .unwrap_or_else(|| TrackId::new(channel_idx as u16));
-            if let Some(note_event) =
-                process_track_unit(track_unit, &mut channel_state[channel_idx], track_id)
-            {
-                // Create note with track info for mono-per-track behavior
-                let mut note = synth_sequencer::Note::new(
-                    synth_sequencer::NoteId(0), // ID will be reassigned by insert_note
-                    row_tick,
-                    note_event.pitch,
-                    note_event.velocity,
-                    note_event.instrument,
-                )
-                .with_track(note_event.track);
 
-                // Add effects to the note
-                if !note_event.effects.is_empty() {
-                    note = note.with_effects(note_event.effects);
+            let state = &mut channel_state[channel_idx];
+            let result = process_track_unit(track_unit, state, track_id);
+
+            // Helper to set duration on previous note
+            let set_prev_note_duration = |pattern: &mut synth_sequencer::Pattern,
+                                          state: &ChannelState,
+                                          current_tick: u32| {
+                if let (Some(prev_note_idx), Some(prev_start)) =
+                    (state.last_note_index, state.last_note_start_tick)
+                {
+                    let duration = current_tick.saturating_sub(prev_start);
+                    if duration > 0
+                        && let Some(prev_note) = pattern.note_by_index_mut(prev_note_idx)
+                    {
+                        prev_note.duration = Some(synth_sequencer::Duration(duration));
+                    }
+                }
+            };
+
+            match result {
+                TrackUnitResult::Note(note_event) => {
+                    // If there was a previous note on this channel without key-off,
+                    // the new note implicitly ends it (tracker behavior)
+                    set_prev_note_duration(pattern, state, row_tick.0);
+
+                    // Create note with track info for mono-per-track behavior
+                    let mut note = synth_sequencer::Note::new(
+                        synth_sequencer::NoteId(0), // ID will be reassigned by insert_note
+                        row_tick,
+                        note_event.pitch,
+                        note_event.velocity,
+                        note_event.instrument,
+                    )
+                    .with_track(note_event.track);
+
+                    // Add effects to the note
+                    if !note_event.effects.is_empty() {
+                        note = note.with_effects(note_event.effects);
+                    }
+
+                    // Track this note for key-off handling
+                    let note_idx = pattern.note_count();
+                    pattern.insert_note(note);
+                    state.last_note_index = Some(note_idx);
+                    state.last_note_start_tick = Some(row_tick.0);
                 }
 
-                pattern.insert_note(note);
+                TrackUnitResult::KeyOff { effects } => {
+                    // Key-off: set duration on the previous note for this channel
+                    set_prev_note_duration(pattern, state, row_tick.0);
+
+                    // Clear tracking - note has ended
+                    state.last_note_index = None;
+                    state.last_note_start_tick = None;
+
+                    // If key-off has effects, add them as effect-only event
+                    if !effects.is_empty() {
+                        pattern.add_effect_event(synth_sequencer::EffectOnlyEvent::new(
+                            row_tick, track_id, effects,
+                        ));
+                    }
+                }
+
+                TrackUnitResult::EffectsOnly { track, effects } => {
+                    // Add effect-only event
+                    pattern.add_effect_event(synth_sequencer::EffectOnlyEvent::new(
+                        row_tick, track, effects,
+                    ));
+                }
+
+                TrackUnitResult::Empty => {
+                    // Nothing to do
+                }
             }
         }
     }
@@ -565,6 +620,10 @@ struct ChannelState {
     /// Last tremolo settings
     last_tremolo_speed: u8,
     last_tremolo_depth: u8,
+    /// Index of the last note added for this channel (for key-off duration setting)
+    last_note_index: Option<usize>,
+    /// Start tick of the last note (for calculating duration on key-off)
+    last_note_start_tick: Option<u32>,
 }
 
 impl Default for ChannelState {
@@ -577,6 +636,8 @@ impl Default for ChannelState {
             last_vibrato_depth: 0,
             last_tremolo_speed: 0,
             last_tremolo_depth: 0,
+            last_note_index: None,
+            last_note_start_tick: None,
         }
     }
 }
@@ -590,12 +651,28 @@ struct NoteEvent {
     effects: Vec<EffectCommand>,
 }
 
-/// Process a track unit and return a note event if one should be triggered.
-fn process_track_unit(
-    unit: &TrackUnit,
-    state: &mut ChannelState,
-    track: TrackId,
-) -> Option<NoteEvent> {
+/// Result of processing a track unit - can be a note, key-off, or effect-only.
+enum TrackUnitResult {
+    /// A regular note event.
+    Note(NoteEvent),
+    /// Key-off marker - should set duration on the previous note.
+    KeyOff {
+        /// Effects that may accompany the key-off.
+        effects: Vec<EffectCommand>,
+    },
+    /// Effect-only row - no note but has effects to apply.
+    EffectsOnly {
+        /// Track/channel this applies to.
+        track: TrackId,
+        /// Effects to apply.
+        effects: Vec<EffectCommand>,
+    },
+    /// Nothing to do (empty row).
+    Empty,
+}
+
+/// Process a track unit and return the appropriate result.
+fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState, track: TrackId) -> TrackUnitResult {
     // Check for instrument change
     // Note: xmrs uses 0-indexed instruments, matching our SeqInstrumentId
     if let Some(inst) = unit.instrument {
@@ -624,13 +701,20 @@ fn process_track_unit(
         }
     }
 
-    // Check for note using the Pitch enum
-    // Pitch::None and Pitch::Off should not trigger a note
-    if unit.note.is_none() || unit.note.is_keyoff() {
-        // Even without a note, we might have effects to apply
-        // For now, effects are attached to notes only
-        // TODO: Support effect-only rows
-        return None;
+    // Check for key-off (=== in tracker, triggers note release)
+    if unit.note.is_keyoff() {
+        // Clear the note tracking since we're releasing
+        state.last_note_index = None;
+        state.last_note_start_tick = None;
+        return TrackUnitResult::KeyOff { effects };
+    }
+
+    // Check for no note (effect-only row)
+    if unit.note.is_none() {
+        if effects.is_empty() {
+            return TrackUnitResult::Empty;
+        }
+        return TrackUnitResult::EffectsOnly { track, effects };
     }
 
     // Get the note value as u8 (C0=0, C1=12, etc.)
@@ -641,7 +725,10 @@ fn process_track_unit(
     // Let's shift up by 12 to be safe
     let midi_note = note_value.saturating_add(12).min(127);
 
-    let pitch = Pitch::new(midi_note)?;
+    let Some(pitch) = Pitch::new(midi_note) else {
+        // Invalid pitch - treat as empty
+        return TrackUnitResult::Empty;
+    };
 
     // Update portamento target for tone portamento
     state.last_porta_target = Some(pitch);
@@ -652,7 +739,7 @@ fn process_track_unit(
     #[allow(clippy::cast_possible_truncation)]
     let instrument = SeqInstrumentId(state.last_instrument as u16);
 
-    Some(NoteEvent {
+    TrackUnitResult::Note(NoteEvent {
         pitch,
         velocity,
         instrument,
