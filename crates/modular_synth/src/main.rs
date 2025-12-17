@@ -178,12 +178,26 @@ fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             .sample_index
             .map(|i| format!("sample[{}]", i))
             .unwrap_or_else(|| "NO SAMPLE".to_string());
+        let env_info = if inst.envelope_points.is_empty() {
+            "no envelope".to_string()
+        } else {
+            let sustain = inst
+                .envelope_sustain
+                .map(|s| format!(" sus={s}"))
+                .unwrap_or_default();
+            let loop_info = inst
+                .envelope_loop
+                .map(|(s, e)| format!(" loop={s}-{e}"))
+                .unwrap_or_default();
+            format!("{} pts{}{}", inst.envelope_points.len(), sustain, loop_info)
+        };
         println!(
-            "  [{:02}] '{}' - {} (vol={:.2})",
+            "  [{:02}] '{}' - {} (vol={:.2}) [{}]",
             idx,
             inst.name,
             sample_info,
-            inst.global_volume.as_f32()
+            inst.global_volume.as_f32(),
+            env_info
         );
     }
 

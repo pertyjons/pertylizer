@@ -80,6 +80,9 @@ pub enum ModuleType {
     KeyboardPanner,
     BodyResonance,
     MechanicalNoise,
+    // Tracker-specific modules (XM/IT compatibility)
+    MultiPointEnvelope,
+    TrackerFilter,
 }
 
 impl ModuleType {
@@ -109,6 +112,9 @@ impl ModuleType {
                 | Self::KeyboardPanner
                 | Self::BodyResonance
                 | Self::MechanicalNoise
+                // Tracker-specific modules (per-voice)
+                | Self::MultiPointEnvelope
+                | Self::TrackerFilter
         )
     }
 
@@ -194,6 +200,9 @@ impl ModuleType {
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
             Self::MechanicalNoise => "Mechanical Noise",
+            // Tracker-specific
+            Self::MultiPointEnvelope => "Multi-Point Envelope",
+            Self::TrackerFilter => "Tracker Filter",
         }
     }
 
@@ -228,6 +237,9 @@ impl ModuleType {
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
             Self::MechanicalNoise => "mec",
+            // Tracker-specific
+            Self::MultiPointEnvelope => "mpe",
+            Self::TrackerFilter => "tfl",
         }
     }
 
@@ -262,6 +274,9 @@ impl ModuleType {
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
             "mec" => Some(Self::MechanicalNoise),
+            // Tracker-specific
+            "mpe" => Some(Self::MultiPointEnvelope),
+            "tfl" => Some(Self::TrackerFilter),
             _ => None,
         }
     }

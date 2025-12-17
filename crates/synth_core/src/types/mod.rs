@@ -39,6 +39,7 @@ mod sample;
 mod samples;
 mod state;
 mod time;
+mod tracker;
 
 pub use amplitude::*;
 pub use audio::*;
@@ -51,6 +52,7 @@ pub use sample::*;
 pub use samples::*;
 pub use state::*;
 pub use time::*;
+pub use tracker::*;
 
 /// Trait for types that can be clamped to a valid range.
 pub trait Clampable: Sized {

@@ -24,11 +24,13 @@ pub mod envelope;
 pub mod filter;
 pub mod lfo;
 pub mod math_oscillator;
+pub mod multi_point_envelope;
 pub mod noise;
 pub mod oscillator;
 pub mod output;
 pub mod sample_player;
 pub mod sub_osc;
+pub mod tracker_filter;
 
 // Physical modeling modules
 pub mod body_resonance;
@@ -41,7 +43,9 @@ pub mod effects;
 // Module exports
 pub use amplifier::{Amplifier, Mixer};
 pub use envelope::{Envelope, EnvelopeStage};
+pub use multi_point_envelope::{MultiPointEnvelope, MultiPointStage, MAX_ENVELOPE_POINTS};
 pub use filter::{Filter, LadderFilter};
+pub use tracker_filter::TrackerFilter;
 pub use lfo::Lfo;
 pub use math_oscillator::MathOscillator;
 pub use noise::NoiseGenerator;

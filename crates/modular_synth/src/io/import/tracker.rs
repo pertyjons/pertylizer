@@ -211,7 +211,10 @@ fn extract_samples(module: &Module, freq_type: FrequencyType) -> ImportResult<Ve
     Ok(samples)
 }
 
-/// Extract instrument metadata with ADSR envelope info.
+/// Extract instrument metadata with envelope info.
+///
+/// Extracts both the ADSR approximation (for legacy compatibility) and
+/// the raw envelope points (for MultiPointEnvelope).
 fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
     let mut sample_offset = 0usize;
 
@@ -222,9 +225,43 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
         .map(|(idx, inst)| {
             match &inst.instr_type {
                 InstrumentType::Default(instr) => {
-                    // Convert envelope to ADSR
+                    // Convert envelope to ADSR (legacy compatibility)
                     let volume_envelope =
                         convert_envelope_to_adsr(&instr.volume_envelope, instr.volume_fadeout, bpm);
+
+                    // Extract raw envelope points for MultiPointEnvelope
+                    // xmrs uses usize for frame, we convert to u16 (safe for tracker formats)
+                    #[allow(clippy::cast_possible_truncation)]
+                    let envelope_points: Vec<(u16, f32)> = instr
+                        .volume_envelope
+                        .point
+                        .iter()
+                        .map(|p| (p.frame as u16, p.value))
+                        .collect();
+
+                    // Extract sustain point
+                    let envelope_sustain = if instr.volume_envelope.sustain_enabled
+                        && instr.volume_envelope.sustain_start_point < envelope_points.len()
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some(instr.volume_envelope.sustain_start_point as u8)
+                    } else {
+                        None
+                    };
+
+                    // Extract loop region
+                    let envelope_loop = if instr.volume_envelope.loop_enabled
+                        && instr.volume_envelope.loop_start_point < envelope_points.len()
+                        && instr.volume_envelope.loop_end_point < envelope_points.len()
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some((
+                            instr.volume_envelope.loop_start_point as u8,
+                            instr.volume_envelope.loop_end_point as u8,
+                        ))
+                    } else {
+                        None
+                    };
 
                     // Find first sample index for this instrument
                     // Samples are flattened across all instruments, so we track offset
@@ -244,6 +281,10 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                         name: inst.name.clone(),
                         sample_index,
                         volume_envelope,
+                        envelope_points,
+                        envelope_sustain,
+                        envelope_loop,
+                        fadeout: instr.volume_fadeout,
                         global_volume: Gain::new(instr.global_volume),
                         default_pan,
                     }
@@ -252,6 +293,10 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                     name: format!("Instrument {}", idx + 1),
                     sample_index: None,
                     volume_envelope: ImportedAdsr::default(),
+                    envelope_points: Vec::new(),
+                    envelope_sustain: None,
+                    envelope_loop: None,
+                    fadeout: 0.0,
                     global_volume: Gain::UNITY,
                     default_pan: BipolarValue::CENTER,
                 },

@@ -1,5 +1,60 @@
 # Version History
 
+## [0.58.0] - 2025
+### Added - Tracker-Compatible Modules (MultiPointEnvelope & TrackerFilter)
+
+Implementerade två nya moduler for forbattrad XM/IT tracker-kompatibilitet.
+
+#### MultiPointEnvelope
+Full XM/IT envelope-support med:
+- Upp till 25 arbitrara punkter
+- Linear interpolation mellan punkter
+- Sustain-punkt (haller tills note-off)
+- Loop-region (loopar medan sustained)
+- Fadeout efter release
+- Heap-fri implementation med ArrayVec
+
+#### TrackerFilter
+IT-kompatibelt resonant lowpass-filter med:
+- Zxx-kontroll (0-127 cutoff/resonance)
+- SVF (State Variable Filter) implementation
+- Exponentiell cutoff-kurva (~110 Hz till ~10 kHz)
+- Q-faktor 0.5-12.0
+
+#### Nya typer i synth_core
+- `EnvelopeFrame` - Envelope frame position (0-65535)
+- `EnvelopeValue` - Envelope value (0.0-1.0)
+- `EnvelopePointIndex` - Point index (0-24)
+- `FadeoutRate` - Fadeout rate
+- `TrackerCutoff` - Filter cutoff (0-127)
+- `TrackerResonance` - Filter resonance (0-127)
+
+#### XM Import Integration
+- `ImportedInstrument` utokad med:
+  - `envelope_points: Vec<(u16, f32)>` - Ra envelope-punkter
+  - `envelope_sustain: Option<u8>` - Sustain-punkt index
+  - `envelope_loop: Option<(u8, u8)>` - Loop region
+  - `fadeout: f32` - Fadeout rate
+- Debug import visar nu envelope-info per instrument
+
+#### ModuleType registrering
+- `ModuleType::MultiPointEnvelope`
+- `ModuleType::TrackerFilter`
+
+#### Filer som andrats
+- `crates/synth_core/src/types/tracker.rs` - NY FIL: Alla tracker-newtypes
+- `crates/synth_core/src/types/mod.rs` - Export tracker module
+- `crates/synth_core/src/params/mod.rs` - Nya ModuleType varianter
+- `crates/synth_modules/src/multi_point_envelope.rs` - NY FIL: MultiPointEnvelope
+- `crates/synth_modules/src/tracker_filter.rs` - NY FIL: TrackerFilter
+- `crates/synth_modules/src/lib.rs` - Export nya moduler
+- `crates/modular_synth/src/io/import/mod.rs` - Utokad ImportedInstrument
+- `crates/modular_synth/src/io/import/tracker.rs` - Extraherar envelope-data
+- `crates/modular_synth/src/main.rs` - Debug output for envelope info
+- `Cargo.toml` - arrayvec beroende
+
+---
+
 ## [0.57.0] - 2025
 ### Added - CLI Debug Import Command
 
