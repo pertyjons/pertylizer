@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{
     Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, NoteReleaseState,
@@ -513,6 +513,10 @@ impl Describable for SamplePlayer {
                 .description("Sample interpolation quality")
                 .widget(WidgetHint::Dropdown),
             )
+            .port(
+                PortDescriptor::control_input("pitch_mod", "Pitch")
+                    .description("Pitch modulation in semitones"),
+            )
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .port(PortDescriptor::audio_output("out", "Out").description("Mono output"))
@@ -522,7 +526,7 @@ impl Describable for SamplePlayer {
 impl PolyModule for SamplePlayer {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<String, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -552,12 +556,20 @@ impl PolyModule for SamplePlayer {
             }
         };
 
-        let speed = self.effective_speed();
+        let base_speed = self.effective_speed();
         let level = self.effective_level();
         let sample_len = self.sample_len();
 
+        // Get pitch modulation input (semitones)
+        let pitch_mod = inputs.get(PortName::intern("pitch_mod"));
+
         for i in 0..context.samples.as_usize() {
             if self.playback_state.is_playing() {
+                // Apply per-sample pitch modulation
+                // pitch_mod is in semitones: speed_ratio = 2^(semitones/12)
+                let pitch_offset = pitch_mod.map(|cv| cv[i]).unwrap_or(0.0);
+                let speed = base_speed * 2.0_f64.powf(pitch_offset as f64 / 12.0);
+
                 let (left, right) = self.read_with_crossfade(&sample, self.position);
                 self.output_left[i] = left.as_f32() * level;
                 self.output_right[i] = right.as_f32() * level;

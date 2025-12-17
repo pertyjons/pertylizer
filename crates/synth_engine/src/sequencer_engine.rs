@@ -15,7 +15,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::tracker_effects::{ChannelEffectProcessor, GlobalCommand};
-use synth_core::{Bpm, SampleCount, SampleRate, VoiceIndex};
+use synth_core::{BipolarValue, Bpm, Cents, NormalizedValue, SampleCount, SampleRate, VoiceIndex};
 use synth_sequencer::{
     Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackMode,
 };
@@ -228,6 +228,21 @@ impl SequencerEngine {
 
             // Check for note-offs from active notes
             self.check_note_offs(events);
+
+            // Process tick-based effects (vibrato, portamento, volume slide, etc.)
+            // This generates modulation events for channels with active continuous effects.
+            let modulations = self.effect_processor.process_tick();
+            for modulation in modulations {
+                events.push(SequencerEvent::Modulation {
+                    tick: self.current_tick,
+                    track: modulation.track,
+                    pitch_cents: Cents::new(modulation.pitch_cents.as_f32()),
+                    volume: NormalizedValue::new(modulation.volume.as_f32()),
+                    panning: BipolarValue::new(modulation.panning.as_f32()),
+                    note_cut: modulation.note_cut,
+                    tone_porta_pitch: modulation.tone_porta_pitch,
+                });
+            }
 
             // Advance position
             self.current_tick = Tick(self.current_tick.0 + 1);

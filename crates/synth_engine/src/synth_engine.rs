@@ -1579,6 +1579,32 @@ impl AudioProcessor for SynthEngine {
                         first.note_off(note);
                     }
                 }
+                synth_sequencer::SequencerEvent::Modulation {
+                    track,
+                    pitch_cents,
+                    volume,
+                    panning,
+                    note_cut,
+                    ..
+                } => {
+                    // Tracker modulation: apply to voice at track index
+                    // In tracker mode, track index maps directly to voice index
+                    let voice_idx = track.0 as usize;
+
+                    // Apply to first instrument (tracker mode uses single instrument)
+                    if let Some(first) = self.instruments.first_mut()
+                        && let Some(voice) =
+                            first.allocator_mut().voices_mut().get_mut(voice_idx)
+                    {
+                        voice.tracker_pitch_cents = *pitch_cents;
+                        voice.tracker_volume = *volume;
+                        voice.tracker_panning = *panning;
+
+                        if *note_cut {
+                            voice.note_off();
+                        }
+                    }
+                }
                 _ => {}
             }
         }

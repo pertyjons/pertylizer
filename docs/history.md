@@ -1,5 +1,51 @@
 # Version History
 
+## [0.59.0] - 2025
+### Fixed - Tracker Effects (Vibrato, Portamento, Volume Slide)
+
+Fixade två buggar som förhindrade tracker-effekter från att höras:
+
+#### Problem 1: process_tick() anropades aldrig
+- `ChannelEffectProcessor::process_tick()` beräknade effekter men resultaten ignorerades
+- **Lösning**: Anropa `process_tick()` varje tick och emittera `Modulation` events
+
+#### Problem 2: Steppy pitch modulation
+- `SamplePlayer::effective_speed()` beräknades en gång per buffer (~5.3ms)
+- **Lösning**: Lade till `pitch_mod` CV-input för per-sample pitch modulation
+
+#### Nya typer och events
+- `SequencerEvent::Modulation` - Per-tick modulation från tracker-effekter
+  - `pitch_cents: Cents` - Pitch offset (100 cents = 1 halvton)
+  - `volume: NormalizedValue` - Volymmodulation
+  - `panning: BipolarValue` - Panoreringsmodulation
+  - `note_cut: bool` - Note cut flag
+  - `tone_porta_pitch: Option<f32>` - Tone portamento target
+
+#### Voice tracker modulation
+- Nya fält i `Voice`:
+  - `tracker_pitch_cents: Cents`
+  - `tracker_volume: NormalizedValue`
+  - `tracker_panning: BipolarValue`
+- Tracker pitch appliceras både på oscillatorfrekvens och SamplePlayer
+
+#### SamplePlayer pitch_mod input
+- Ny CV-input `pitch_mod` (semitones)
+- Per-sample pitch modulation: `speed = base_speed * 2^(pitch_offset/12)`
+
+#### ModuleGraph extern pitch modulation
+- `set_sample_player_pitch_mod(semitones: f32)` - Sätter extern pitch modulation
+- Automatisk injektion av pitch_mod buffer till SamplePlayer-moduler
+
+#### Filer som ändrats
+- `crates/synth_sequencer/src/events.rs` - `SequencerEvent::Modulation`
+- `crates/synth_engine/src/sequencer_engine.rs` - Anropar `process_tick()`
+- `crates/synth_engine/src/synth_engine.rs` - Hanterar `Modulation` events
+- `crates/synth_engine/src/voice.rs` - Tracker modulation fält och applicering
+- `crates/synth_engine/src/graph.rs` - Extern pitch mod infrastruktur
+- `crates/synth_modules/src/sample_player.rs` - `pitch_mod` CV-input
+
+---
+
 ## [0.58.0] - 2025
 ### Added - Tracker-Compatible Modules (MultiPointEnvelope & TrackerFilter)
 
