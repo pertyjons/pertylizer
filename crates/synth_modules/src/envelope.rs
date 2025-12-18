@@ -1,6 +1,8 @@
 //! ADSR Envelope generator module.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -22,6 +24,99 @@ pub enum EnvelopeStage {
     Release,
 }
 
+impl EnvelopeStage {
+    /// Convert stage to u32 for atomic storage.
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::Idle => 0,
+            Self::Attack => 1,
+            Self::Decay => 2,
+            Self::Sustain => 3,
+            Self::Release => 4,
+        }
+    }
+
+    /// Convert u32 back to stage.
+    #[must_use]
+    pub const fn from_u32(val: u32) -> Self {
+        match val {
+            1 => Self::Attack,
+            2 => Self::Decay,
+            3 => Self::Sustain,
+            4 => Self::Release,
+            _ => Self::Idle,
+        }
+    }
+}
+
+// ============================================================================
+// ENVELOPE POSITION BUFFER
+// ============================================================================
+
+/// Lock-free buffer for sharing envelope time position with GUI.
+///
+/// Stores the current stage and time elapsed in that stage for visualization.
+/// All voices write to the same buffer - the GUI shows the most recent state.
+#[derive(Debug, Default)]
+pub struct EnvelopePositionBuffer {
+    /// Current stage (0=Idle, 1=Attack, 2=Decay, 3=Sustain, 4=Release).
+    stage: AtomicU32,
+    /// Time elapsed in current stage (seconds, stored as f32 bits).
+    time_in_stage: AtomicU32,
+}
+
+impl EnvelopePositionBuffer {
+    /// Create a new position buffer.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            stage: AtomicU32::new(0),
+            time_in_stage: AtomicU32::new(0.0f32.to_bits()),
+        }
+    }
+
+    /// Set the envelope state (called from audio thread).
+    pub fn set(&self, stage: EnvelopeStage, time_in_stage: f32) {
+        self.stage.store(stage.as_u32(), Ordering::Relaxed);
+        self.time_in_stage.store(time_in_stage.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Get the envelope state (called from GUI thread).
+    /// Returns (stage, time_in_stage_seconds).
+    #[must_use]
+    pub fn get(&self) -> (EnvelopeStage, f32) {
+        let stage = EnvelopeStage::from_u32(self.stage.load(Ordering::Relaxed));
+        let time = f32::from_bits(self.time_in_stage.load(Ordering::Relaxed));
+        (stage, time)
+    }
+
+    /// Get just the stage.
+    #[must_use]
+    pub fn stage(&self) -> EnvelopeStage {
+        EnvelopeStage::from_u32(self.stage.load(Ordering::Relaxed))
+    }
+
+    /// Get time in current stage (seconds).
+    #[must_use]
+    pub fn time_in_stage(&self) -> f32 {
+        f32::from_bits(self.time_in_stage.load(Ordering::Relaxed))
+    }
+}
+
+impl Clone for EnvelopePositionBuffer {
+    fn clone(&self) -> Self {
+        Self {
+            stage: AtomicU32::new(self.stage.load(Ordering::Relaxed)),
+            time_in_stage: AtomicU32::new(self.time_in_stage.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+// ============================================================================
+// ADSR ENVELOPE
+// ============================================================================
+
 /// ADSR envelope generator.
 #[derive(Clone)]
 pub struct Envelope {
@@ -39,6 +134,10 @@ pub struct Envelope {
     sample_rate: SampleRate,
     target_level: NormalizedValue,
     output_buffer: AudioBuffer,
+    /// Time elapsed in current stage (seconds).
+    time_in_stage: f32,
+    /// Position buffer for GUI visualization.
+    position_buffer: Arc<EnvelopePositionBuffer>,
 }
 
 impl Envelope {
@@ -58,7 +157,15 @@ impl Envelope {
             sample_rate: SampleRate::DVD_QUALITY,
             target_level: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(256),
+            time_in_stage: 0.0,
+            position_buffer: Arc::new(EnvelopePositionBuffer::new()),
         }
+    }
+
+    /// Get the position buffer for GUI sync.
+    #[must_use]
+    pub fn position_buffer(&self) -> Arc<EnvelopePositionBuffer> {
+        Arc::clone(&self.position_buffer)
     }
 
     pub fn stage(&self) -> EnvelopeStage {
@@ -73,12 +180,14 @@ impl Envelope {
         self.velocity = NormalizedValue::new(velocity);
         self.stage = EnvelopeStage::Attack;
         self.target_level = NormalizedValue::MAX;
+        self.time_in_stage = 0.0;
     }
 
     pub fn release(&mut self) {
         if self.stage != EnvelopeStage::Idle {
             self.stage = EnvelopeStage::Release;
             self.target_level = NormalizedValue::MIN;
+            self.time_in_stage = 0.0;
         }
     }
 
@@ -86,6 +195,8 @@ impl Envelope {
     fn process_sample(&mut self) -> f32 {
         let velocity_scale =
             1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32());
+
+        let prev_stage = self.stage;
 
         match self.stage {
             EnvelopeStage::Idle => {
@@ -173,6 +284,15 @@ impl Envelope {
                     }
                 }
             }
+        }
+
+        // Update time tracking
+        if self.stage != prev_stage {
+            // Stage changed - reset time
+            self.time_in_stage = 0.0;
+        } else if self.stage != EnvelopeStage::Idle {
+            // Increment time (1 sample)
+            self.time_in_stage += 1.0 / self.sample_rate.as_f32();
         }
 
         self.level.as_f32() * velocity_scale
@@ -308,6 +428,9 @@ impl PolyModule for Envelope {
         if let Some(out) = outputs.get_mut("out") {
             out.copy_from(&self.output_buffer);
         }
+
+        // Update position buffer for GUI visualization (stage + time)
+        self.position_buffer.set(self.stage, self.time_in_stage);
     }
 
     fn set_param(&mut self, param: Param) {
@@ -364,6 +487,7 @@ impl PolyModule for Envelope {
     fn reset(&mut self) {
         self.stage = EnvelopeStage::Idle;
         self.level = NormalizedValue::MIN;
+        self.time_in_stage = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {

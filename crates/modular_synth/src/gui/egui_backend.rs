@@ -37,7 +37,7 @@ use synth_core::{
     EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
 };
 use synth_core::{Describable, ModuleCategory, PolyModule};
-use synth_core::{Gain, LoopMode, NormalizedValue, ReleaseMode};
+use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
@@ -49,8 +49,8 @@ use synth_engine::{
 };
 use synth_modules::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use synth_modules::{
-    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
-    SamplePlayer, StereoOutput, SubOscillator,
+    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, MultiPointEnvelope, NoiseGenerator,
+    Oscillator, SamplePlayer, StereoOutput, SubOscillator,
 };
 use synth_sequencer::Song;
 
@@ -232,13 +232,16 @@ struct SynthApp {
 
     // Loaded song for sequencer
     song: Option<Song>,
+
+    // Pending import file (processed on first update)
+    pending_import: Option<PathBuf>,
 }
 
 impl SynthApp {
     fn new(
         mut handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
-        _config: SynthGuiConfig, // Used only for initial setup, not stored
+        config: SynthGuiConfig,
         latency: std::time::Duration,
     ) -> Self {
         // IMPORTANT: We use a startup patch instead of manually building GUI state.
@@ -311,6 +314,7 @@ impl SynthApp {
             active_view: AppView::default(),
             tracker_state: synth_sequencer::view::TrackerViewState::default(),
             song: None,
+            pending_import: config.import_file,
         }
     }
 
@@ -350,6 +354,11 @@ impl SynthApp {
 
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle pending import from CLI (first update only)
+        if let Some(path) = self.pending_import.take() {
+            self.import_song_file(&path);
+        }
+
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
 
@@ -860,46 +869,54 @@ impl SynthApp {
     /// for real-time safe addition to the audio engine.
     fn add_module_of_category(&mut self, category: ModuleCategory) {
         // Create module in GUI thread (real-time safe allocation)
-        let (module, descriptor, module_type): (
+        let (module, descriptor, module_type, envelope_pos): (
             Box<dyn synth_core::PolyModule>,
             _,
             TypedModuleType,
+            Option<std::sync::Arc<synth_modules::EnvelopePositionBuffer>>,
         ) = match category {
             ModuleCategory::Oscillator => {
                 let m = Oscillator::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Oscillator)
+                (Box::new(m), d, TypedModuleType::Oscillator, None)
             }
             ModuleCategory::Filter => {
                 let m = Filter::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Filter)
+                (Box::new(m), d, TypedModuleType::Filter, None)
             }
             ModuleCategory::Envelope => {
                 let m = Envelope::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Envelope)
+                let pos_buf = m.position_buffer();
+                (Box::new(m), d, TypedModuleType::Envelope, Some(pos_buf))
             }
             ModuleCategory::LFO => {
                 let m = Lfo::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Lfo)
+                (Box::new(m), d, TypedModuleType::Lfo, None)
             }
             ModuleCategory::Amplifier => {
                 let m = Amplifier::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Amplifier)
+                (Box::new(m), d, TypedModuleType::Amplifier, None)
             }
             ModuleCategory::Mixer => {
                 let m = Mixer::new();
                 let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Mixer)
+                (Box::new(m), d, TypedModuleType::Mixer, None)
             }
             _ => return, // Effects handled separately
         };
 
         let next_id = self.next_module_id(module_type);
         self.active_patch_editor().add_module(next_id, descriptor);
+
+        // Set envelope position buffer for visualization
+        if let Some(pos_buf) = envelope_pos {
+            self.active_patch_editor()
+                .set_module_envelope_position(next_id, pos_buf);
+        }
 
         // Send pre-created module to engine (active instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
@@ -1386,13 +1403,8 @@ impl SynthApp {
     }
 
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
-        // Get the MIDI channel for the active instrument
-        let active_channel = self
-            .instruments
-            .iter()
-            .find(|p| p.id == self.active_instrument_id)
-            .map(|p| p.channel)
-            .unwrap_or(MidiChannel::CH1);
+        // Always use CH1 for keyboard input - focused_instrument handles routing
+        let active_channel = MidiChannel::CH1;
 
         ui.horizontal(|ui| {
             // Panic button (moved here since keyboard handles its own header)
@@ -1440,13 +1452,8 @@ impl SynthApp {
     }
 
     fn process_keyboard_input(&mut self, ctx: &egui::Context) {
-        // Get the MIDI channel for the active instrument
-        let active_channel = self
-            .instruments
-            .iter()
-            .find(|p| p.id == self.active_instrument_id)
-            .map(|p| p.channel)
-            .unwrap_or(MidiChannel::CH1);
+        // Always use CH1 for keyboard input - focused_instrument handles routing
+        let active_channel = MidiChannel::CH1;
 
         handle_keyboard_input(
             ctx,
@@ -1772,26 +1779,74 @@ impl SynthApp {
                                 .set_module_waveform(sample_player_id, waveform.clone());
                         }
 
-                        // === Create ADSR Envelope + Amplifier if envelope is enabled ===
-                        let envelope_amplifier = if inst_meta.volume_envelope.enabled {
-                            // Create Envelope module with imported ADSR parameters
-                            let mut envelope = Envelope::new();
-                            envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
-                                inst_meta.volume_envelope.attack,
-                            )));
-                            envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
-                                inst_meta.volume_envelope.decay,
-                            )));
-                            envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
-                                inst_meta.volume_envelope.sustain,
-                            )));
-                            envelope.set_param(Param::Envelope(EnvelopeParam::Release(
-                                inst_meta.volume_envelope.release,
-                            )));
+                        // Set position buffer for real-time playback position display
+                        let position_buffer = sample_player.position_buffer();
+                        ui_state
+                            .patch_editor
+                            .set_module_position_buffer(sample_player_id, position_buffer);
 
-                            let envelope_desc = envelope.descriptor();
-                            let envelope_id = self.next_module_id(TypedModuleType::Envelope);
-                            ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+                        // === Create Envelope + Amplifier if envelope is enabled ===
+                        // Use MultiPointEnvelope for tracker files with envelope points,
+                        // fall back to ADSR Envelope for simple cases
+                        let envelope_amplifier = if inst_meta.volume_envelope.enabled {
+                            // Create the appropriate envelope module
+                            let (envelope_id, envelope_module): (ModuleId, Box<dyn PolyModule>) =
+                                if !inst_meta.envelope_points.is_empty() {
+                                    // Use MultiPointEnvelope for accurate XM/IT envelope playback
+                                    let mut mp_env =
+                                        MultiPointEnvelope::with_points(&inst_meta.envelope_points);
+
+                                    // Set sustain point (holds until note-off)
+                                    mp_env.set_sustain_point(inst_meta.envelope_sustain);
+
+                                    // Set loop region (loops while sustained)
+                                    if let Some((loop_start, loop_end)) = inst_meta.envelope_loop {
+                                        mp_env.set_loop(Some(loop_start), Some(loop_end));
+                                    }
+
+                                    // Set fadeout rate from instrument metadata
+                                    // XM fadeout is stored as f32 (0.0-65535.0 range)
+                                    #[allow(
+                                        clippy::cast_possible_truncation,
+                                        clippy::cast_sign_loss
+                                    )]
+                                    let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
+                                    mp_env.set_fadeout_rate(fadeout_rate);
+
+                                    let envelope_desc = mp_env.descriptor();
+                                    let envelope_id =
+                                        self.next_module_id(TypedModuleType::MultiPointEnvelope);
+                                    ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+
+                                    (envelope_id, Box::new(mp_env))
+                                } else {
+                                    // Fall back to ADSR Envelope for simple cases
+                                    let mut envelope = Envelope::new();
+                                    envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
+                                        inst_meta.volume_envelope.attack,
+                                    )));
+                                    envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
+                                        inst_meta.volume_envelope.decay,
+                                    )));
+                                    envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                                        inst_meta.volume_envelope.sustain,
+                                    )));
+                                    envelope.set_param(Param::Envelope(EnvelopeParam::Release(
+                                        inst_meta.volume_envelope.release,
+                                    )));
+
+                                    let envelope_desc = envelope.descriptor();
+                                    let position_buffer = envelope.position_buffer();
+                                    let envelope_id =
+                                        self.next_module_id(TypedModuleType::Envelope);
+                                    ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+                                    ui_state.patch_editor.set_module_envelope_position(
+                                        envelope_id,
+                                        position_buffer,
+                                    );
+
+                                    (envelope_id, Box::new(envelope))
+                                };
 
                             // Create Amplifier (VCA) with global volume and pan
                             let mut amplifier = Amplifier::new();
@@ -1808,7 +1863,7 @@ impl SynthApp {
                                 .patch_editor
                                 .add_module(amplifier_id, amplifier_desc);
 
-                            Some((envelope_id, envelope, amplifier_id, amplifier))
+                            Some((envelope_id, envelope_module, amplifier_id, amplifier))
                         } else {
                             None
                         };
@@ -1867,7 +1922,8 @@ impl SynthApp {
 
                         // === Create engine instrument with tracker voice config ===
                         // Use min_voices from import to ensure enough voices for all channels
-                        let min_voices = imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
+                        let min_voices =
+                            imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
                         let voice_config = AllocatorConfig {
                             max_voices: min_voices,
                             mode: AllocationMode::Tracker,
@@ -1893,13 +1949,13 @@ impl SynthApp {
                             module: Box::new(stereo_output),
                         });
 
-                        if let Some((envelope_id, envelope, amplifier_id, amplifier)) =
+                        if let Some((envelope_id, envelope_module, amplifier_id, amplifier)) =
                             envelope_amplifier
                         {
                             self.handle.send_blocking(EngineCommand::AddModuleInstance {
                                 instrument_id: Some(inst_id),
                                 id: envelope_id,
-                                module: Box::new(envelope),
+                                module: envelope_module, // Already boxed
                             });
                             self.handle.send_blocking(EngineCommand::AddModuleInstance {
                                 instrument_id: Some(inst_id),
@@ -1996,8 +2052,8 @@ impl SynthApp {
 
                 // Switch to sequencer view to show the imported song
                 self.active_view = AppView::Sequencer;
-                // Clear focused instrument so all instruments play in sequencer view
-                self.handle.set_focused_instrument(None);
+                // Keep focused instrument set - keyboard input goes to active instrument,
+                // sequencer plays all instruments regardless of focus
             }
             Err(e) => {
                 self.dialog_state.set_status(format!("Import failed: {e}"));

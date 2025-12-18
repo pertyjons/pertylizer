@@ -284,11 +284,13 @@ impl SamplePlayer {
         let start = self.start_frame() as f64;
         let end = self.end_frame() as f64;
 
-        // When releasing, don't loop
+        // When releasing, don't loop - play to end and stop
         if self.note_release_state.is_released() {
-            if pos >= end || pos < start {
+            // Account for position being clamped to sample_len-1
+            let at_end = pos >= end || pos >= (self.sample_len().saturating_sub(1)) as f64;
+            if at_end || pos < start {
                 self.playback_state = PlaybackState::Stopped;
-                self.position = if pos >= end {
+                self.position = if at_end {
                     PlaybackPosition::new(end - 1.0)
                 } else {
                     PlaybackPosition::new(start)
@@ -310,10 +312,19 @@ impl SamplePlayer {
                 }
             }
             LoopMode::Forward => {
-                if pos >= loop_end {
-                    self.position = PlaybackPosition::new(
-                        loop_start + (pos - loop_end).rem_euclid(loop_end - loop_start),
-                    );
+                // Note: pos is clamped to sample_len-1, so we need to check >= loop_end - 1
+                // when loop_end equals sample_len
+                let at_loop_end = pos >= loop_end || (loop_end >= end && pos >= end - 1.0);
+                if at_loop_end {
+                    let overshoot = pos - loop_end;
+                    let new_pos = if overshoot >= 0.0 {
+                        // Actual overshoot - wrap within loop region
+                        loop_start + overshoot.rem_euclid(loop_end - loop_start)
+                    } else {
+                        // Triggered by clamping (pos at end-1) - go directly to loop start
+                        loop_start
+                    };
+                    self.position = PlaybackPosition::new(new_pos);
                 }
             }
             LoopMode::Backward => {
@@ -324,12 +335,14 @@ impl SamplePlayer {
                 }
             }
             LoopMode::PingPong => {
-                if self.direction == PlaybackDirection::Forward && pos >= loop_end {
+                // Account for position being clamped to sample_len-1
+                let at_loop_end = pos >= loop_end || (loop_end >= end && pos >= end - 1.0);
+                if self.direction == PlaybackDirection::Forward && at_loop_end {
                     self.direction = PlaybackDirection::Backward;
-                    self.position = PlaybackPosition::new(loop_end - (pos - loop_end));
-                } else if self.direction == PlaybackDirection::Backward && pos < loop_start {
+                    self.position = PlaybackPosition::new((loop_end - 1.0).max(loop_start));
+                } else if self.direction == PlaybackDirection::Backward && pos <= loop_start {
                     self.direction = PlaybackDirection::Forward;
-                    self.position = PlaybackPosition::new(loop_start + (loop_start - pos));
+                    self.position = PlaybackPosition::new(loop_start);
                 }
             }
         }

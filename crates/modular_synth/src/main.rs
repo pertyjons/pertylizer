@@ -10,10 +10,14 @@
 //! # Run with default GUI (egui)
 //! cargo run
 //!
+//! # Import a tracker file on startup
+//! cargo run -- song.xm
+//! cargo run -- --import /path/to/song.xm
+//!
 //! # Run with console interface
 //! cargo run -- --gui console
 //!
-//! # Debug import a tracker file
+//! # Debug import a tracker file (no GUI)
 //! cargo run -- --debug-import /path/to/song.xm
 //!
 //! # Or compile with only console support
@@ -21,7 +25,7 @@
 //! ```
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use modular_synth::audio::{
     self, AudioHostTrait, BufferSize, ChannelCount, SampleRate, StreamConfig,
@@ -33,8 +37,8 @@ use modular_synth::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
 
 /// Command-line action to perform.
 enum CliAction {
-    /// Run the GUI (default behavior).
-    RunGui(GuiType),
+    /// Run the GUI (default behavior), optionally with a file to import.
+    RunGui(GuiType, Option<PathBuf>),
     /// Import a tracker file and print debug information.
     DebugImport(String),
     /// List available backends and exit.
@@ -53,15 +57,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::ListBackends => {
             print_available_backends();
         }
-        CliAction::RunGui(gui_type) => {
-            run_gui(gui_type)?;
+        CliAction::RunGui(gui_type, import_file) => {
+            run_gui(gui_type, import_file)?;
         }
     }
 
     Ok(())
 }
 
-fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gui(gui_type: GuiType, import_file: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: VoiceCount::OCTO,
@@ -97,6 +101,7 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
         height: 800,
         allocator_config,
         stream_config,
+        import_file,
     };
 
     // Create and run the selected GUI backend
@@ -109,6 +114,9 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> {
+    let mut gui_type: Option<GuiType> = None;
+    let mut import_file: Option<PathBuf> = None;
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -118,17 +126,26 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
                 }
                 return Err("--debug-import requires a file path".into());
             }
+            "--import" | "-i" => {
+                if i + 1 < args.len() {
+                    import_file = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
+                } else {
+                    return Err("--import requires a file path".into());
+                }
+            }
             "--gui" | "-g" => {
                 if i + 1 < args.len() {
                     let gui_name = &args[i + 1];
-                    let gui_type = GuiType::from_arg(gui_name).ok_or_else(|| {
+                    gui_type = Some(GuiType::from_arg(gui_name).ok_or_else(|| {
                         eprintln!("Unknown GUI type: {}", gui_name);
                         print_available_backends();
                         "Invalid GUI type"
-                    })?;
-                    return Ok(CliAction::RunGui(gui_type));
+                    })?);
+                    i += 1;
+                } else {
+                    return Err("--gui requires an argument".into());
                 }
-                return Err("--gui requires an argument".into());
             }
             "--help" | "-h" => {
                 print_help();
@@ -138,13 +155,16 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
                 return Ok(CliAction::ListBackends);
             }
             "--console" | "-c" => {
-                return Ok(CliAction::RunGui(GuiType::Console));
+                gui_type = Some(GuiType::Console);
             }
             _ => {
                 if args[i].starts_with('-') {
                     eprintln!("Unknown option: {}", args[i]);
                     print_help();
                     std::process::exit(1);
+                } else {
+                    // Positional argument: treat as import file
+                    import_file = Some(PathBuf::from(&args[i]));
                 }
             }
         }
@@ -152,7 +172,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
     }
 
     // Default to egui if available, otherwise console
-    Ok(CliAction::RunGui(default_gui_type()))
+    Ok(CliAction::RunGui(gui_type.unwrap_or_else(default_gui_type), import_file))
 }
 
 fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -181,6 +201,7 @@ fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let env_info = if inst.envelope_points.is_empty() {
             "no envelope".to_string()
         } else {
+            let enabled = if inst.volume_envelope.enabled { "ON" } else { "OFF" };
             let sustain = inst
                 .envelope_sustain
                 .map(|s| format!(" sus={s}"))
@@ -189,7 +210,7 @@ fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 .envelope_loop
                 .map(|(s, e)| format!(" loop={s}-{e}"))
                 .unwrap_or_default();
-            format!("{} pts{}{}", inst.envelope_points.len(), sustain, loop_info)
+            format!("{} pts {} {}{}", inst.envelope_points.len(), enabled, sustain, loop_info)
         };
         println!(
             "  [{:02}] '{}' - {} (vol={:.2}) [{}]",
@@ -336,13 +357,17 @@ fn print_help() {
     println!("Modular Synthesizer v0.6.0");
     println!();
     println!("USAGE:");
-    println!("    modular-synth [OPTIONS]");
+    println!("    modular-synth [OPTIONS] [FILE]");
+    println!();
+    println!("ARGS:");
+    println!("    [FILE]                 Tracker file to import on startup (MOD, XM, S3M)");
     println!();
     println!("OPTIONS:");
+    println!("    -i, --import <FILE>    Import tracker file on startup");
     println!("    -g, --gui <TYPE>       Select GUI backend (egui, console)");
     println!("    -c, --console          Shortcut for --gui console");
     println!("    -d, --debug-import <FILE>");
-    println!("                           Import tracker file and print debug info");
+    println!("                           Import tracker file and print debug info (no GUI)");
     println!("    --list-backends        List available GUI backends");
     println!("    -h, --help             Print this help message");
     println!();
@@ -354,6 +379,8 @@ fn print_help() {
     println!();
     println!("EXAMPLES:");
     println!("    modular-synth                      # Run with graphical interface");
+    println!("    modular-synth song.xm              # Import and play tracker file");
+    println!("    modular-synth -i song.xm           # Same as above");
     println!("    modular-synth --gui console        # Run with text interface");
-    println!("    modular-synth -d song.xm           # Debug import tracker file");
+    println!("    modular-synth -d song.xm           # Debug import (no GUI)");
 }

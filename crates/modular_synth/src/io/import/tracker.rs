@@ -156,8 +156,14 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Convert patterns
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
-        let pattern_id =
-            convert_pattern(&mut song, pattern_data, pat_idx, num_channels, speed, &track_ids)?;
+        let pattern_id = convert_pattern(
+            &mut song,
+            pattern_data,
+            pat_idx,
+            num_channels,
+            speed,
+            &track_ids,
+        )?;
         pattern_ids.push(pattern_id);
     }
 
@@ -575,20 +581,21 @@ fn convert_pattern(
             let result = process_track_unit(track_unit, state, track_id);
 
             // Helper to set duration on previous note
-            let set_prev_note_duration = |pattern: &mut synth_sequencer::Pattern,
-                                          state: &ChannelState,
-                                          current_tick: u32| {
-                if let (Some(prev_note_idx), Some(prev_start)) =
-                    (state.last_note_index, state.last_note_start_tick)
-                {
-                    let duration = current_tick.saturating_sub(prev_start);
-                    if duration > 0
-                        && let Some(prev_note) = pattern.note_by_index_mut(prev_note_idx)
+            let set_prev_note_duration =
+                |pattern: &mut synth_sequencer::Pattern,
+                 state: &ChannelState,
+                 current_tick: u32| {
+                    if let (Some(prev_note_idx), Some(prev_start)) =
+                        (state.last_note_index, state.last_note_start_tick)
                     {
-                        prev_note.duration = Some(synth_sequencer::Duration(duration));
+                        let duration = current_tick.saturating_sub(prev_start);
+                        if duration > 0
+                            && let Some(prev_note) = pattern.note_by_index_mut(prev_note_idx)
+                        {
+                            prev_note.duration = Some(synth_sequencer::Duration(duration));
+                        }
                     }
-                }
-            };
+                };
 
             match result {
                 TrackUnitResult::Note(note_event) => {
@@ -717,7 +724,11 @@ enum TrackUnitResult {
 }
 
 /// Process a track unit and return the appropriate result.
-fn process_track_unit(unit: &TrackUnit, state: &mut ChannelState, track: TrackId) -> TrackUnitResult {
+fn process_track_unit(
+    unit: &TrackUnit,
+    state: &mut ChannelState,
+    track: TrackId,
+) -> TrackUnitResult {
     // Check for instrument change
     // Note: xmrs uses 0-indexed instruments, matching our SeqInstrumentId
     if let Some(inst) = unit.instrument {

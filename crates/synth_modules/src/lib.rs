@@ -42,17 +42,17 @@ pub mod effects;
 
 // Module exports
 pub use amplifier::{Amplifier, Mixer};
-pub use envelope::{Envelope, EnvelopeStage};
-pub use multi_point_envelope::{MultiPointEnvelope, MultiPointStage, MAX_ENVELOPE_POINTS};
+pub use envelope::{Envelope, EnvelopePositionBuffer, EnvelopeStage};
 pub use filter::{Filter, LadderFilter};
-pub use tracker_filter::TrackerFilter;
 pub use lfo::Lfo;
 pub use math_oscillator::MathOscillator;
+pub use multi_point_envelope::{MAX_ENVELOPE_POINTS, MultiPointEnvelope, MultiPointStage};
 pub use noise::NoiseGenerator;
 pub use oscillator::Oscillator;
 pub use output::StereoOutput;
-pub use sample_player::SamplePlayer;
+pub use sample_player::{PlaybackPositionBuffer, SamplePlayer};
 pub use sub_osc::SubOscillator;
+pub use tracker_filter::TrackerFilter;
 
 // Physical modeling exports
 pub use body_resonance::BodyResonance;

@@ -114,7 +114,11 @@ impl TrackerFilter {
         let cutoff_hz = TrackerCutoff::new(mod_cutoff).to_hertz();
 
         // Clamp to Nyquist
-        let cutoff = Hertz::new(cutoff_hz.as_f32().clamp(20.0, self.sample_rate.as_f32() * 0.49));
+        let cutoff = Hertz::new(
+            cutoff_hz
+                .as_f32()
+                .clamp(20.0, self.sample_rate.as_f32() * 0.49),
+        );
 
         // SVF coefficients
         let g = cutoff.to_tan_coeff(self.sample_rate);
@@ -351,10 +355,10 @@ mod tests {
         let min_q = TrackerResonance::MIN.to_q();
         let max_q = TrackerResonance::MAX.to_q();
 
+        assert!(min_q > 0.4 && min_q < 0.6, "Min resonance Q should be ~0.5");
         assert!(
-            min_q > 0.4 && min_q < 0.6,
-            "Min resonance Q should be ~0.5"
+            max_q > 11.0 && max_q < 13.0,
+            "Max resonance Q should be ~12"
         );
-        assert!(max_q > 11.0 && max_q < 13.0, "Max resonance Q should be ~12");
     }
 }

@@ -5,6 +5,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Ui, Vec2};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use synth_core::Param;
 use synth_core::WaveformOverview;
@@ -13,6 +14,7 @@ use synth_core::{
     PortType as CorePortType, WidgetHint,
 };
 use synth_engine::ModuleId;
+use synth_modules::{EnvelopePositionBuffer, PlaybackPositionBuffer};
 
 use super::theme::theme;
 use super::widgets::{Knob, PortWidget, WidgetPortDirection, WidgetPortType};
@@ -35,6 +37,10 @@ pub struct ModulePanelState {
     pub dragging: bool,
     /// Waveform overview for sample-based modules (SamplePlayer).
     pub waveform_overview: Option<WaveformOverview>,
+    /// Playback position buffer for sample-based modules (lock-free GUI sync).
+    pub position_buffer: Option<Arc<PlaybackPositionBuffer>>,
+    /// Envelope position buffer for envelope modules (lock-free GUI sync).
+    pub envelope_position: Option<Arc<EnvelopePositionBuffer>>,
 }
 
 impl ModulePanelState {
@@ -46,6 +52,8 @@ impl ModulePanelState {
             selected: false,
             dragging: false,
             waveform_overview: None,
+            position_buffer: None,
+            envelope_position: None,
         }
     }
 }

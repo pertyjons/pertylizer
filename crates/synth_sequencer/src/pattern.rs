@@ -781,9 +781,7 @@ impl Pattern {
     /// Add an effect-only event (for tracker-style effect rows without notes).
     pub fn add_effect_event(&mut self, event: EffectOnlyEvent) {
         // Insert sorted by tick
-        let pos = self
-            .effect_events
-            .partition_point(|e| e.tick <= event.tick);
+        let pos = self.effect_events.partition_point(|e| e.tick <= event.tick);
         self.effect_events.insert(pos, event);
     }
 

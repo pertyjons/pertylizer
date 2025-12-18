@@ -255,7 +255,9 @@ fn load_module(
         PatchModuleType::Envelope => {
             let m = Envelope::new();
             let descriptor = m.descriptor();
+            let position_buffer = m.position_buffer();
             patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            patch_editor.set_module_envelope_position(module_id, position_buffer);
             handle.send(EngineCommand::AddModuleInstance {
                 instrument_id: Some(instrument_id),
                 id: module_id,

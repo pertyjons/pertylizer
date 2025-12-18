@@ -55,6 +55,16 @@ pub struct VisualizationBuffer {
     /// Snapshot of samples for GUI (updated periodically).
     snapshot_l: parking_lot::Mutex<Vec<f32>>,
     snapshot_r: parking_lot::Mutex<Vec<f32>>,
+
+    // Sample playback visualization data (lock-free)
+    /// Normalized playback position (0.0-1.0).
+    sample_position: AtomicF32,
+    /// Normalized loop start position (0.0-1.0).
+    sample_loop_start: AtomicF32,
+    /// Normalized loop end position (0.0-1.0).
+    sample_loop_end: AtomicF32,
+    /// Loop enabled flag (1.0 = enabled, 0.0 = disabled).
+    sample_loop_enabled: AtomicF32,
 }
 
 impl std::fmt::Debug for VisualizationBuffer {
@@ -85,6 +95,11 @@ impl VisualizationBuffer {
             rms_r: AtomicF32::new(0.0),
             snapshot_l: parking_lot::Mutex::new(vec![0.0; size]),
             snapshot_r: parking_lot::Mutex::new(vec![0.0; size]),
+            // Sample playback visualization defaults
+            sample_position: AtomicF32::new(0.0),
+            sample_loop_start: AtomicF32::new(0.0),
+            sample_loop_end: AtomicF32::new(1.0),
+            sample_loop_enabled: AtomicF32::new(0.0),
         }
     }
 
@@ -249,6 +264,51 @@ impl VisualizationBuffer {
     pub fn reset_peaks(&self) {
         self.peak_l.store(0.0);
         self.peak_r.store(0.0);
+    }
+
+    // ==================== Sample Playback Visualization ====================
+
+    /// Update sample playback visualization data (called from audio thread).
+    ///
+    /// All values are normalized (0.0-1.0).
+    /// This is lock-free and safe to call from the audio thread.
+    pub fn set_sample_playback(
+        &self,
+        position: f32,
+        loop_start: f32,
+        loop_end: f32,
+        loop_enabled: bool,
+    ) {
+        self.sample_position.store(position);
+        self.sample_loop_start.store(loop_start);
+        self.sample_loop_end.store(loop_end);
+        self.sample_loop_enabled
+            .store(if loop_enabled { 1.0 } else { 0.0 });
+    }
+
+    /// Get sample playback visualization data (called from GUI thread).
+    ///
+    /// Returns `(position, loop_start, loop_end, loop_enabled)`.
+    /// All position values are normalized (0.0-1.0).
+    #[must_use]
+    pub fn get_sample_playback(&self) -> (f32, f32, f32, bool) {
+        (
+            self.sample_position.load(),
+            self.sample_loop_start.load(),
+            self.sample_loop_end.load(),
+            self.sample_loop_enabled.load() > 0.5,
+        )
+    }
+
+    /// Update only the playback position (for efficiency when loop params don't change).
+    pub fn set_sample_position(&self, position: f32) {
+        self.sample_position.store(position);
+    }
+
+    /// Get current sample playback position (lock-free).
+    #[must_use]
+    pub fn get_sample_position(&self) -> f32 {
+        self.sample_position.load()
     }
 }
 

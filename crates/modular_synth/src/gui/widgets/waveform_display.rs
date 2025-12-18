@@ -14,6 +14,7 @@ use synth_core::WaveformOverview;
 /// * `ui` - The egui UI context
 /// * `overview` - The pre-computed waveform overview
 /// * `playback_position` - Current playback position (0.0 to 1.0), or None
+/// * `loop_region` - Optional loop region as (start, end) normalized (0.0 to 1.0)
 /// * `width` - Display width in pixels
 /// * `height` - Display height in pixels
 /// * `color` - Waveform color
@@ -21,6 +22,7 @@ pub fn draw_sample_waveform(
     ui: &mut Ui,
     overview: &WaveformOverview,
     playback_position: Option<f32>,
+    loop_region: Option<(f32, f32)>,
     width: f32,
     height: f32,
     color: Color32,
@@ -30,6 +32,54 @@ pub fn draw_sample_waveform(
 
     // Background
     painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+
+    // Draw loop region if enabled
+    if let Some((loop_start, loop_end)) = loop_region {
+        let loop_start = loop_start.clamp(0.0, 1.0);
+        let loop_end = loop_end.clamp(0.0, 1.0);
+
+        if loop_start < loop_end {
+            // Semi-transparent loop region background
+            let loop_x_start = rect.left() + loop_start * width;
+            let loop_x_end = rect.left() + loop_end * width;
+            let loop_rect = eframe::egui::Rect::from_min_max(
+                Pos2::new(loop_x_start, rect.top()),
+                Pos2::new(loop_x_end, rect.bottom()),
+            );
+            let loop_color = Color32::from_rgba_unmultiplied(100, 180, 100, 40);
+            painter.rect_filled(loop_rect, 0.0, loop_color);
+
+            // Loop start marker (dashed vertical line)
+            let marker_color = Color32::from_rgb(100, 200, 100);
+            draw_dashed_vline(
+                painter,
+                loop_x_start,
+                rect.top(),
+                rect.bottom(),
+                marker_color,
+            );
+
+            // Loop end marker
+            draw_dashed_vline(painter, loop_x_end, rect.top(), rect.bottom(), marker_color);
+
+            // Small labels at bottom
+            let label_color = Color32::from_rgba_premultiplied(100, 200, 100, 180);
+            painter.text(
+                Pos2::new(loop_x_start + 2.0, rect.bottom() - 10.0),
+                eframe::egui::Align2::LEFT_BOTTOM,
+                "L",
+                eframe::egui::FontId::monospace(8.0),
+                label_color,
+            );
+            painter.text(
+                Pos2::new(loop_x_end - 2.0, rect.bottom() - 10.0),
+                eframe::egui::Align2::RIGHT_BOTTOM,
+                "L",
+                eframe::egui::FontId::monospace(8.0),
+                label_color,
+            );
+        }
+    }
 
     // Grid color
     let grid_color = Color32::from_rgba_premultiplied(60, 65, 75, 100);
@@ -147,6 +197,28 @@ pub fn draw_sample_waveform(
         Stroke::new(1.0, theme().colors.border),
         eframe::egui::StrokeKind::Outside,
     );
+}
+
+/// Draw a dashed vertical line.
+fn draw_dashed_vline(
+    painter: &eframe::egui::Painter,
+    x: f32,
+    y_start: f32,
+    y_end: f32,
+    color: Color32,
+) {
+    let dash_length = 4.0;
+    let gap_length = 3.0;
+    let mut y = y_start;
+
+    while y < y_end {
+        let y_next = (y + dash_length).min(y_end);
+        painter.line_segment(
+            [Pos2::new(x, y), Pos2::new(x, y_next)],
+            Stroke::new(1.5, color),
+        );
+        y = y_next + gap_length;
+    }
 }
 
 /// Draw a single channel's waveform as filled area between min/max peaks.

@@ -271,7 +271,14 @@ impl MultiPointEnvelope {
                 if let Some(last) = self.points.last()
                     && self.current_frame >= last.frame.as_u16() as f32
                 {
-                    self.stage = MultiPointStage::Fadeout;
+                    if self.stage == MultiPointStage::Releasing {
+                        // Note released - go to fadeout
+                        self.stage = MultiPointStage::Fadeout;
+                    } else {
+                        // Key still held - stay at final value (implicit sustain at end)
+                        // This matches XM behavior: without sustain point, envelope holds at end
+                        self.current_frame = last.frame.as_u16() as f32;
+                    }
                 }
 
                 value.as_f32() * self.velocity.as_f32()

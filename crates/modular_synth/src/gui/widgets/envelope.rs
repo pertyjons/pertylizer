@@ -4,6 +4,7 @@ use eframe::egui::{self, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 use synth_core::{NormalizedValue, Seconds};
+use synth_modules::EnvelopeStage;
 
 /// Draw an ADSR envelope visualization (non-interactive).
 pub fn draw_adsr_curve(
@@ -109,6 +110,8 @@ pub struct EnvelopeEditor<'a> {
     height: f32,
     /// Maximum time value for A/D/R (seconds).
     max_time: f32,
+    /// Current playback position for visualization (stage, time_in_stage_seconds).
+    playback_position: Option<(EnvelopeStage, f32)>,
 }
 
 impl<'a> EnvelopeEditor<'a> {
@@ -129,6 +132,7 @@ impl<'a> EnvelopeEditor<'a> {
             width: 200.0,
             height: 100.0,
             max_time: 10.0,
+            playback_position: None,
         }
     }
 
@@ -151,6 +155,16 @@ impl<'a> EnvelopeEditor<'a> {
     #[must_use]
     pub fn max_time(mut self, max: f32) -> Self {
         self.max_time = max;
+        self
+    }
+
+    /// Set the current playback position for visualization.
+    ///
+    /// A vertical time indicator line will be drawn at the position
+    /// corresponding to the current envelope stage and elapsed time.
+    #[must_use]
+    pub fn playback_position(mut self, stage: EnvelopeStage, time_in_stage: f32) -> Self {
+        self.playback_position = Some((stage, time_in_stage));
         self
     }
 
@@ -269,6 +283,56 @@ impl<'a> EnvelopeEditor<'a> {
             points.to_vec(),
             Stroke::new(2.5, self.accent_color),
         ));
+
+        // Draw playback time indicator (vertical line)
+        if let Some((stage, time_in_stage)) = self.playback_position {
+            let playhead_x = match stage {
+                EnvelopeStage::Idle => None,
+                EnvelopeStage::Attack => {
+                    // Time progress through attack phase
+                    let attack_time = (*self.attack).max(0.001);
+                    let progress = (time_in_stage / attack_time).clamp(0.0, 1.0);
+                    Some(left + progress * (attack_x - left))
+                }
+                EnvelopeStage::Decay => {
+                    // Time progress through decay phase
+                    let decay_time = (*self.decay).max(0.001);
+                    let progress = (time_in_stage / decay_time).clamp(0.0, 1.0);
+                    Some(attack_x + progress * (decay_x - attack_x))
+                }
+                EnvelopeStage::Sustain => {
+                    // Sustain holds at decay_x (or animate through sustain section)
+                    let sustain_progress = (time_in_stage / sustain_hold).clamp(0.0, 1.0);
+                    Some(decay_x + sustain_progress * (sustain_x - decay_x))
+                }
+                EnvelopeStage::Release => {
+                    // Time progress through release phase
+                    let release_time = (*self.release).max(0.001);
+                    let progress = (time_in_stage / release_time).clamp(0.0, 1.0);
+                    Some(sustain_x + progress * (release_x - sustain_x))
+                }
+            };
+
+            if let Some(x) = playhead_x {
+                let playhead_color = Color32::from_rgb(255, 200, 50);
+                // Vertical line from top to bottom
+                painter.line_segment(
+                    [Pos2::new(x, top), Pos2::new(x, bottom)],
+                    Stroke::new(2.0, playhead_color),
+                );
+                // Small triangle indicator at top
+                let tri_size = 5.0;
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        Pos2::new(x, top),
+                        Pos2::new(x - tri_size, top - tri_size),
+                        Pos2::new(x + tri_size, top - tri_size),
+                    ],
+                    playhead_color,
+                    Stroke::NONE,
+                ));
+            }
+        }
 
         // Control point info with correct formatting
         // A, D, R: time in seconds/ms

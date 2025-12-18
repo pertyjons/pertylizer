@@ -1,5 +1,24 @@
 # Version History
 
+## [0.60.0] - 2025
+### Fixed - SamplePlayer Loop & Keyboard Routing
+
+#### SamplePlayer loop fix
+- **Problem**: Loop returnerade till fel position (stannade vid slutet istället för loop_start)
+- **Orsak**: När `loop_end == sample_len`, klampas position till `sample_len-1`, vilket gav negativt overshoot i loop-beräkningen
+- **Lösning**: Om overshoot är negativt (triggered by clamping), hoppa direkt till `loop_start`
+
+#### Keyboard routing fix
+- **Problem**: Flera instrument spelade samtidigt vid tangentbordsinput efter XM-import
+- **Orsak**: Tangentbordet skickade noter på instrumentets MIDI-kanal, men `focused_instrument` filtrerade bara på kanal 0
+- **Lösning**: Tangentbord skickar alltid på CH1, `focused_instrument` styr routing
+
+#### Sequencer routing
+- Sekvensern spelar nu alla instrument oavsett `focused_instrument`-inställning
+- `focused_instrument` påverkar endast tangentbordsinput, inte sekvenser-uppspelning
+
+---
+
 ## [0.59.0] - 2025
 ### Fixed - Tracker Effects (Vibrato, Portamento, Volume Slide)
 

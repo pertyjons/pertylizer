@@ -174,6 +174,28 @@ impl PatchEditor {
         }
     }
 
+    /// Set position buffer for a module (used for SamplePlayer playback position).
+    pub fn set_module_position_buffer(
+        &mut self,
+        id: ModuleId,
+        buffer: std::sync::Arc<synth_modules::PlaybackPositionBuffer>,
+    ) {
+        if let Some(panel) = self.panels.get_mut(&id) {
+            panel.position_buffer = Some(buffer);
+        }
+    }
+
+    /// Set envelope position buffer for a module (used for Envelope visualization).
+    pub fn set_module_envelope_position(
+        &mut self,
+        id: ModuleId,
+        buffer: std::sync::Arc<synth_modules::EnvelopePositionBuffer>,
+    ) {
+        if let Some(panel) = self.panels.get_mut(&id) {
+            panel.envelope_position = Some(buffer);
+        }
+    }
+
     /// Remove a module from the rack.
     pub fn remove_module(&mut self, id: ModuleId) {
         self.panels.remove(&id);
@@ -1315,10 +1337,27 @@ fn draw_module_panel_params(
         ui.add_space(4.0);
         let width = ui.available_width().clamp(150.0, 300.0);
         let height = if overview.is_stereo { 80.0 } else { 60.0 };
+
+        // Get playback position from position buffer (lock-free)
+        let playback_position = state.position_buffer.as_ref().map(|buf| buf.get());
+
+        // Get loop region from module parameters
+        // Loop mode: 0 = Off, 1 = Forward, 2 = Backward, 3 = PingPong
+        let loop_mode = state.param_values.get("Loop").copied().unwrap_or(0.0);
+        let loop_region = if loop_mode > 0.5 {
+            // Loop is enabled (any mode other than Off)
+            let loop_start = state.param_values.get("Loop Start").copied().unwrap_or(0.0);
+            let loop_end = state.param_values.get("Loop End").copied().unwrap_or(1.0);
+            Some((loop_start, loop_end))
+        } else {
+            None
+        };
+
         super::widgets::draw_sample_waveform(
             ui,
             overview,
-            None, // TODO: playback position from VisualizationBuffer
+            playback_position,
+            loop_region,
             width,
             height,
             accent_color,
@@ -1334,18 +1373,29 @@ fn draw_module_panel_params(
         let mut sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
         let mut release = state.param_values.get("Release").copied().unwrap_or(0.3);
 
+        // Get envelope playback position (lock-free)
+        let envelope_pos = state
+            .envelope_position
+            .as_ref()
+            .map(|buf| buf.get());
+
         // Draw the interactive envelope editor
         ui.add_space(4.0);
         let width = ui.available_width().clamp(150.0, 250.0);
         let height = (width * 0.5).clamp(80.0, 120.0);
 
-        if let Some(changes) =
+        let mut editor =
             EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
                 .accent_color(accent_color)
                 .size(width, height)
-                .max_time(10.0)
-                .show(ui)
-        {
+                .max_time(10.0);
+
+        // Add playback position if available
+        if let Some((stage, level)) = envelope_pos {
+            editor = editor.playback_position(stage, level);
+        }
+
+        if let Some(changes) = editor.show(ui) {
             // Find parameter descriptors and push changes
             for param in &descriptor.parameters {
                 if param.name == "Attack" && changes.attack.is_some() {

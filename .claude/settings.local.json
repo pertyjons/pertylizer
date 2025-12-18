@@ -59,7 +59,12 @@
       "Bash(for f in amplifier.rs envelope.rs filter.rs lfo.rs math_oscillator.rs noise.rs oscillator.rs output.rs sample_player.rs sub_osc.rs body_resonance.rs keyboard_panner.rs mechanical_noise.rs)",
       "Bash(do perl -i -pe 's/, ModuleType, ParameterDescriptor/, ParameterDescriptor/g; s/, Param\\}/\\}/g' \"$f\")",
       "Bash(for:*)",
-      "Bash(do perl -i -pe 's/, ModuleType, ParameterDescriptor/, ParameterDescriptor/g; s/, ModuleType, NormalizedValue/, NormalizedValue/g; s/, Param\\}/, /g; s/, NormalizedValue, ParameterDescriptor/, ParameterDescriptor/g; s/, SampleCount, WidgetHint/, WidgetHint/g' \"$f\")"
+      "Bash(do perl -i -pe 's/, ModuleType, ParameterDescriptor/, ParameterDescriptor/g; s/, ModuleType, NormalizedValue/, NormalizedValue/g; s/, Param\\}/, /g; s/, NormalizedValue, ParameterDescriptor/, ParameterDescriptor/g; s/, SampleCount, WidgetHint/, WidgetHint/g' \"$f\")",
+      "Bash(git restore:*)",
+      "Bash(cat:*)",
+      "Bash(target/release/modular_synth:*)",
+      "Bash(target/release/modular-synth:*)",
+      "Bash(timeout 5 target/release/modular-synth:*)"
     ],
     "deny": [],
     "ask": []

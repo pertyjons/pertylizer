@@ -94,6 +94,8 @@ pub struct SynthGuiConfig {
     pub allocator_config: AllocatorConfig,
     /// Audio stream configuration.
     pub stream_config: StreamConfig,
+    /// Optional file to import on startup (tracker file: MOD, XM, S3M).
+    pub import_file: Option<std::path::PathBuf>,
 }
 
 impl Default for SynthGuiConfig {
@@ -104,6 +106,7 @@ impl Default for SynthGuiConfig {
             height: 800,
             allocator_config: AllocatorConfig::default(),
             stream_config: StreamConfig::default(),
+            import_file: None,
         }
     }
 }

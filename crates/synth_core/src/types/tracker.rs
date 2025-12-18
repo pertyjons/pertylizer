@@ -15,7 +15,9 @@ use super::{Clampable, Hertz, Seconds};
 ///
 /// XM/IT envelopes use frame-based timing where frames advance
 /// at a rate of `BPM * 2 / 5` Hz (50 Hz at 125 BPM).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct EnvelopeFrame(pub u16);
@@ -148,7 +150,9 @@ impl std::fmt::Display for EnvelopeValue {
 ///
 /// IT format supports up to 25 envelope points, XM supports 12.
 /// Using IT's limit as the maximum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct EnvelopePointIndex(pub u8);
@@ -204,7 +208,9 @@ impl std::fmt::Display for EnvelopePointIndex {
 /// Controls how quickly volume fades after note-off.
 /// Higher values = faster fade. 0 = no fadeout.
 /// XM fadeout: `volume -= fadeout / 32768` per tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct FadeoutRate(pub u16);
@@ -294,7 +300,9 @@ impl std::fmt::Display for FadeoutRate {
 /// - Z80-Z8F: Set resonance (0-15)
 ///
 /// Cutoff maps approximately logarithmically from ~130 Hz to ~8 kHz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct TrackerCutoff(pub u8);
@@ -377,7 +385,9 @@ impl std::fmt::Display for TrackerCutoff {
 /// range for extended formats and smoother control.
 ///
 /// Resonance maps from Q=0.5 (no resonance) to Q=12 (high resonance).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct TrackerResonance(pub u8);

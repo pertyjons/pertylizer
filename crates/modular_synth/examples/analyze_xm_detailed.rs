@@ -2,8 +2,9 @@
 //!
 //! Usage: cargo run --example analyze_xm_detailed -- /path/to/file.xm
 
-use std::collections::HashSet;
-use std::path::Path;
+#![allow(clippy::expect_used)]
+
+use std::collections::{HashMap, HashSet};
 
 use xmrs::import::xm::xmmodule::XmModule;
 use xmrs::prelude::*;
@@ -77,7 +78,9 @@ fn main() {
             println!("\nsample_for_pitch:");
             println!("  Unique sample indices used: {:?}", unique_samples);
             if unique_samples.len() > 1 {
-                println!("  WARNING: Multi-sample instrument - different samples for different notes!");
+                println!(
+                    "  WARNING: Multi-sample instrument - different samples for different notes!"
+                );
                 // Show mapping
                 let mut current_sample = instr.sample_for_pitch[0];
                 let mut range_start = 0;
@@ -103,7 +106,11 @@ fn main() {
                 if let Some(sample) = sample_opt {
                     println!("  [{}] '{}'", smp_idx, sample.name);
                     println!("      relative_pitch: {} semitones", sample.relative_pitch);
-                    println!("      finetune: {:.4} ({:.1} cents)", sample.finetune, sample.finetune * 100.0);
+                    println!(
+                        "      finetune: {:.4} ({:.1} cents)",
+                        sample.finetune,
+                        sample.finetune * 100.0
+                    );
                     println!("      volume: {:.3}", sample.volume);
                     println!("      panning: {:.3}", sample.panning);
                     println!("      loop_flag: {:?}", sample.loop_flag);
@@ -117,7 +124,10 @@ fn main() {
                             SampleDataType::StereoFloat(v) => (v.len(), "StereoFloat", 2),
                         };
                         let frame_count = len / channels;
-                        println!("      data: {} samples, {} frames ({})", len, frame_count, typ);
+                        println!(
+                            "      data: {} samples, {} frames ({})",
+                            len, frame_count, typ
+                        );
 
                         // Show sample data stats to verify encoding
                         let (min, max, first_10) = match data {
@@ -144,8 +154,8 @@ fn main() {
                         );
                         if sample.loop_length > 0 {
                             let loop_start_norm = sample.loop_start as f32 / frame_count as f32;
-                            let loop_end_norm =
-                                (sample.loop_start + sample.loop_length) as f32 / frame_count as f32;
+                            let loop_end_norm = (sample.loop_start + sample.loop_length) as f32
+                                / frame_count as f32;
                             println!(
                                 "      -> loop normalized: {:.4} - {:.4} ({}% - {}%)",
                                 loop_start_norm,
@@ -157,7 +167,10 @@ fn main() {
                             // Check if loop extends past sample end
                             let loop_end = sample.loop_start + sample.loop_length;
                             if loop_end > frame_count as u32 {
-                                println!("      WARNING: Loop end ({}) > frame count ({})!", loop_end, frame_count);
+                                println!(
+                                    "      WARNING: Loop end ({}) > frame count ({})!",
+                                    loop_end, frame_count
+                                );
                             }
                         }
 
@@ -172,9 +185,11 @@ fn main() {
                         };
                         let finetune_adj = 2.0_f32.powf(sample.finetune / 12.0);
                         let sample_rate = base_rate * finetune_adj;
-                        let root_midi =
-                            (60 + sample.relative_pitch as i16).clamp(0, 127) as u8;
-                        println!("      -> Base rate ({:?}): {:.1} Hz", module.frequency_type, base_rate);
+                        let root_midi = (60 + sample.relative_pitch as i16).clamp(0, 127) as u8;
+                        println!(
+                            "      -> Base rate ({:?}): {:.1} Hz",
+                            module.frequency_type, base_rate
+                        );
                         println!("      -> Calculated sample_rate: {:.1} Hz", sample_rate);
                         println!(
                             "      -> Calculated root_note: {} (MIDI {})",
@@ -192,23 +207,129 @@ fn main() {
     if let Some(pattern) = module.pattern.first() {
         println!("=== FIRST PATTERN NOTES (first 16 rows) ===");
         for (row_idx, row) in pattern.iter().take(16).enumerate() {
-            let notes: Vec<String> = row.iter().enumerate().map(|(ch, unit)| {
-                if unit.note.is_none() {
-                    "---".to_string()
-                } else if unit.note.is_keyoff() {
-                    "===".to_string()
-                } else {
-                    let note_val = unit.note as u8;
-                    format!("{}", note_name(note_val))
-                }
-            }).collect();
+            let notes: Vec<String> = row
+                .iter()
+                .map(|unit| {
+                    if unit.note.is_none() {
+                        "---".to_string()
+                    } else if unit.note.is_keyoff() {
+                        "===".to_string()
+                    } else {
+                        let note_val = unit.note as u8;
+                        note_name(note_val)
+                    }
+                })
+                .collect();
             println!("  Row {:2}: {}", row_idx, notes.join(" | "));
         }
     }
+
+    // Analyze effects used
+    analyze_effects(&module);
+}
+
+fn analyze_effects(module: &Module) {
+    use xmrs::effect::{GlobalEffect, TrackEffect};
+
+    let mut track_effect_counts: HashMap<String, u32> = HashMap::new();
+    let mut global_effect_counts: HashMap<String, u32> = HashMap::new();
+
+    for pattern in &module.pattern {
+        for row in pattern.iter() {
+            for slot in row.iter() {
+                // Track effects
+                for effect in &slot.effects {
+                    let name = match effect {
+                        TrackEffect::Arpeggio { .. } => "Arpeggio",
+                        TrackEffect::ChannelVolume(_) => "ChannelVolume",
+                        TrackEffect::ChannelVolumeSlide { .. } => "ChannelVolumeSlide",
+                        TrackEffect::Glissando(_) => "Glissando",
+                        TrackEffect::InstrumentFineTune(_) => "InstrumentFineTune",
+                        TrackEffect::InstrumentNewNoteAction(_) => "InstrumentNewNoteAction",
+                        TrackEffect::InstrumentPanningEnvelopePosition(_) => {
+                            "InstrumentPanningEnvelopePosition"
+                        }
+                        TrackEffect::InstrumentPanningEnvelope(_) => "InstrumentPanningEnvelope",
+                        TrackEffect::InstrumentPitchEnvelope(_) => "InstrumentPitchEnvelope",
+                        TrackEffect::InstrumentSampleOffset(_) => "InstrumentSampleOffset",
+                        TrackEffect::InstrumentSurround(_) => "InstrumentSurround",
+                        TrackEffect::InstrumentVolumeEnvelopePosition(_) => {
+                            "InstrumentVolumeEnvelopePosition"
+                        }
+                        TrackEffect::InstrumentVolumeEnvelope(_) => "InstrumentVolumeEnvelope",
+                        TrackEffect::NoteCut { .. } => "NoteCut",
+                        TrackEffect::NoteDelay(_) => "NoteDelay",
+                        TrackEffect::NoteFadeOut { .. } => "NoteFadeOut",
+                        TrackEffect::NoteOff { .. } => "NoteOff",
+                        TrackEffect::NoteRetrig { .. } => "NoteRetrig",
+                        TrackEffect::Panbrello { .. } => "Panbrello",
+                        TrackEffect::PanbrelloWaveform { .. } => "PanbrelloWaveform",
+                        TrackEffect::Panning(_) => "Panning",
+                        TrackEffect::PanningSlide { .. } => "PanningSlide",
+                        TrackEffect::Portamento(_) => "Portamento",
+                        TrackEffect::TonePortamento(_) => "TonePortamento",
+                        TrackEffect::Tremolo { .. } => "Tremolo",
+                        TrackEffect::TremoloWaveform { .. } => "TremoloWaveform",
+                        TrackEffect::Tremor { .. } => "Tremor",
+                        TrackEffect::Vibrato { .. } => "Vibrato",
+                        TrackEffect::VibratoSpeed(_) => "VibratoSpeed",
+                        TrackEffect::VibratoDepth(_) => "VibratoDepth",
+                        TrackEffect::VibratoWaveform { .. } => "VibratoWaveform",
+                        TrackEffect::Volume { .. } => "Volume",
+                        TrackEffect::VolumeSlide { .. } => "VolumeSlide",
+                    };
+                    *track_effect_counts.entry(name.to_string()).or_insert(0) += 1;
+                }
+
+                // Global effects
+                for effect in &slot.global_effects {
+                    let name = match effect {
+                        GlobalEffect::Bpm(_) => "Bpm",
+                        GlobalEffect::BpmSlide(_) => "BpmSlide",
+                        GlobalEffect::MidiMacro(_) => "MidiMacro",
+                        GlobalEffect::PatternBreak(_) => "PatternBreak",
+                        GlobalEffect::PatternDelay { .. } => "PatternDelay",
+                        GlobalEffect::PatternLoop(_) => "PatternLoop",
+                        GlobalEffect::PositionJump(_) => "PositionJump",
+                        GlobalEffect::Speed(_) => "Speed",
+                        GlobalEffect::Volume(_) => "GlobalVolume",
+                        GlobalEffect::VolumeSlide { .. } => "GlobalVolumeSlide",
+                    };
+                    *global_effect_counts.entry(name.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    println!("\n=== TRACK EFFECTS ===");
+    let mut track_vec: Vec<_> = track_effect_counts.iter().collect();
+    track_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (name, count) in track_vec {
+        println!("  {:40} {:5}", name, count);
+    }
+
+    println!("\n=== GLOBAL EFFECTS ===");
+    let mut global_vec: Vec<_> = global_effect_counts.iter().collect();
+    global_vec.sort_by(|a, b| b.1.cmp(a.1));
+    for (name, count) in global_vec {
+        println!("  {:40} {:5}", name, count);
+    }
+
+    println!("\n=== TOTALS ===");
+    println!(
+        "  Track effects: {}",
+        track_effect_counts.values().sum::<u32>()
+    );
+    println!(
+        "  Global effects: {}",
+        global_effect_counts.values().sum::<u32>()
+    );
 }
 
 fn note_name(midi: u8) -> String {
-    let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let names = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
     let octave = midi / 12;
     let note = (midi % 12) as usize;
     format!("{}-{}", names[note], octave)
