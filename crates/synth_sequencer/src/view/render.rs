@@ -19,6 +19,7 @@ use egui_extras::{Column, TableBuilder};
 
 use super::state::{TrackerColumn, TrackerViewState};
 use super::tracker::TrackerViewConfig;
+use crate::ids::TrackId;
 use crate::pattern::TrackCell;
 use crate::song::Song;
 
@@ -266,11 +267,39 @@ pub fn draw_tracker_grid(
             });
             for track_idx in 0..num_tracks {
                 header.col(|ui| {
-                    ui.label(
-                        RichText::new(format!("Track {}", track_idx + 1))
-                            .color(colors.row_number)
-                            .small(),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("T{}", track_idx + 1))
+                                .color(colors.row_number)
+                                .small(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let track_id = TrackId::new(track_idx as u16);
+                            let is_solo = state.solo_track == Some(track_id);
+                            let (btn_fill, btn_text_color) = if is_solo {
+                                (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                            } else {
+                                (Color32::from_rgb(60, 60, 60), colors.row_number)
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("S").color(btn_text_color).small(),
+                                    )
+                                    .fill(btn_fill)
+                                    .corner_radius(3.0)
+                                    .min_size(egui::vec2(16.0, 14.0)),
+                                )
+                                .clicked()
+                            {
+                                if is_solo {
+                                    state.solo_track = None;
+                                } else {
+                                    state.solo_track = Some(track_id);
+                                }
+                            }
+                        });
+                    });
                 });
             }
         })
@@ -646,11 +675,39 @@ pub fn draw_tracker_grid_from_pattern(
             for track_idx in 0..num_tracks.min(state.visible_tracks) {
                 header.col(|ui| {
                     let track_num = state.first_visible_track + track_idx;
-                    ui.label(
-                        RichText::new(format!("Track {}", track_num + 1))
-                            .color(colors.row_number)
-                            .small(),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("T{}", track_num + 1))
+                                .color(colors.row_number)
+                                .small(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let track_id = TrackId::new(track_num as u16);
+                            let is_solo = state.solo_track == Some(track_id);
+                            let (btn_fill, btn_text_color) = if is_solo {
+                                (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                            } else {
+                                (Color32::from_rgb(60, 60, 60), colors.row_number)
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("S").color(btn_text_color).small(),
+                                    )
+                                    .fill(btn_fill)
+                                    .corner_radius(3.0)
+                                    .min_size(egui::vec2(16.0, 14.0)),
+                                )
+                                .clicked()
+                            {
+                                if is_solo {
+                                    state.solo_track = None;
+                                } else {
+                                    state.solo_track = Some(track_id);
+                                }
+                            }
+                        });
+                    });
                 });
             }
         })

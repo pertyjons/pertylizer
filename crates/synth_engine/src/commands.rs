@@ -13,6 +13,7 @@ use std::str::FromStr;
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use synth_core::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones};
 use synth_core::{ModuleType, Param};
+use synth_sequencer::TrackId;
 
 /// Unique identifier for a module instance.
 ///
@@ -414,6 +415,10 @@ pub enum EngineCommand {
 
     /// Reset to beginning.
     Rewind,
+
+    /// Set solo track for sequencer playback.
+    /// When Some(track), only that track plays. When None, all tracks play.
+    SetSoloTrack(Option<TrackId>),
 
     // === Engine control ===
     /// Reset the engine state.
@@ -841,6 +846,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::Stop => write!(f, "Stop"),
             Self::Pause => write!(f, "Pause"),
             Self::Rewind => write!(f, "Rewind"),
+            Self::SetSoloTrack(track) => write!(f, "SetSoloTrack({track:?})"),
             Self::Reset => write!(f, "Reset"),
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),

@@ -560,7 +560,8 @@ impl Pattern {
                         pitch,
                         velocity,
                         SeqInstrumentId(instrument as u16),
-                    );
+                    )
+                    .with_track(TrackId::new(track as u16));
 
                     // Look for note-off in subsequent rows
                     for end_row in (row + 1)..grid.rows {
@@ -871,13 +872,16 @@ impl Pattern {
             // NoteOn
             if note.start >= local_start && note.start < local_end {
                 let absolute_tick = Tick(pattern_start.0 + note.start.0 as u64);
+                // Convert track to voice_index for tracker-style mono-per-track playback
+                let voice_index =
+                    note.track.map(|t| synth_core::VoiceIndex::new(t.0 as u8));
                 events.push(SequencerEvent::NoteOn {
                     tick: absolute_tick,
                     pitch: transposed_pitch,
                     velocity: note.velocity,
                     instrument,
                     effects: note.effects.clone(),
-                    voice_index: None, // Pattern events use dynamic allocation
+                    voice_index,
                 });
             }
 

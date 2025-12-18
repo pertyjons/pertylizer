@@ -304,6 +304,12 @@ impl EngineHandle {
     pub fn get_focused_instrument(&self) -> Option<u32> {
         self.state.get_focused_instrument()
     }
+
+    /// Set the solo track for sequencer playback.
+    /// When set, only that track plays. When None, all tracks play.
+    pub fn set_solo_track(&mut self, track: Option<synth_sequencer::TrackId>) -> bool {
+        self.send(EngineCommand::SetSoloTrack(track))
+    }
 }
 
 /// The main synthesizer engine with polyphony.
@@ -352,6 +358,8 @@ pub struct SynthEngine {
     sequencer: SequencerEngine,
     /// Pre-allocated buffer for sequencer events (real-time safe).
     sequencer_event_buffer: Vec<SequencerEvent>,
+    /// Solo track - only this track plays when Some.
+    solo_track: Option<synth_sequencer::TrackId>,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -415,6 +423,7 @@ impl SynthEngine {
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
+            solo_track: None,
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -776,6 +785,9 @@ impl SynthEngine {
             EngineCommand::Rewind => {
                 let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
+            }
+            EngineCommand::SetSoloTrack(track) => {
+                self.solo_track = track;
             }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
@@ -1527,6 +1539,15 @@ impl AudioProcessor for SynthEngine {
                     voice_index,
                     ..
                 } => {
+                    // Filter by solo track (if set)
+                    if let Some(solo) = self.solo_track {
+                        if let Some(v_idx) = voice_index {
+                            if v_idx.as_usize() != solo.0 as usize {
+                                continue;
+                            }
+                        }
+                    }
+
                     let note = MidiNote::new(pitch.as_midi());
                     let vel = velocity.as_f32();
                     let instrument_index = instrument.0 as usize;
@@ -1575,6 +1596,13 @@ impl AudioProcessor for SynthEngine {
                     // Tracker modulation: apply to voice at track index
                     // In tracker mode, track index maps directly to voice index
                     let voice_idx = track.0 as usize;
+
+                    // Filter by solo track (if set)
+                    if let Some(solo) = self.solo_track {
+                        if voice_idx != solo.0 as usize {
+                            continue;
+                        }
+                    }
 
                     // Apply to first instrument (tracker mode uses single instrument)
                     if let Some(first) = self.instruments.first_mut()

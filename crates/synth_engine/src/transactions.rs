@@ -460,6 +460,7 @@ impl Clone for EngineCommand {
             EngineCommand::Stop => EngineCommand::Stop,
             EngineCommand::Pause => EngineCommand::Pause,
             EngineCommand::Rewind => EngineCommand::Rewind,
+            EngineCommand::SetSoloTrack(t) => EngineCommand::SetSoloTrack(*t),
             EngineCommand::Reset => EngineCommand::Reset,
             EngineCommand::ClearAllModules => EngineCommand::ClearAllModules,
             EngineCommand::SetMasterVolume(v) => EngineCommand::SetMasterVolume(*v),

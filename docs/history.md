@@ -1,5 +1,31 @@
 # Version History
 
+## [0.61.0] - 2025
+### Added - Track Solo & UI Improvements
+
+#### Track Solo Button
+- Ny solo-knapp per track i tracker-vyn
+- Klicka "S" för att isolera en track (endast den tracken spelar)
+- Klicka igen för att stänga av solo
+- Orange bakgrund när aktiv, grå när inaktiv
+- Filtrerar NoteOn/Modulation events baserat på voice_index/track
+
+#### UI-förbättringar
+- **Instrumentval-knapp**: Nu synlig som radio-knapp (● fylld / ○ tom)
+- **Solo-knapp**: Tydlig toggle-stil med synlig bakgrund
+
+#### Borttaget: TrackerFilter
+- Tog bort oanvänd `TrackerFilter` modul
+- XM-formatet stödjer inte Zxx filter-effekter (endast IT-format)
+- Relaterade typer `TrackerCutoff` och `TrackerResonance` borttagna
+
+#### Optimering: Tomma instrument
+- Instrument utan giltiga samples skapas nu utan moduler
+- Sparar minne och CPU för tomma instrument-platser i XM-filer
+- Indexering bevaras för korrekt MIDI-kanal-routing
+
+---
+
 ## [0.60.0] - 2025
 ### Fixed - SamplePlayer Loop & Keyboard Routing
 

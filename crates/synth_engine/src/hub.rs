@@ -346,6 +346,7 @@ impl EngineHub {
             | EngineCommand::Stop
             | EngineCommand::Pause
             | EngineCommand::Rewind
+            | EngineCommand::SetSoloTrack(_)
             | EngineCommand::SetTempo(_)
             | EngineCommand::SetSong { .. } => perms.can_control_transport,
 

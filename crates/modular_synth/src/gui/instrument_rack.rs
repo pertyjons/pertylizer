@@ -6,7 +6,7 @@
 use super::patch_editor::PatchEditor;
 use super::theme::theme;
 use super::widgets::Knob;
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Color32, RichText, Ui};
 use synth_core::{BipolarValue, Gain, MidiNote, Semitones, WaveformOverview};
 use synth_engine::{
     EngineCommand, EngineHandle, InstrumentParam,
@@ -187,7 +187,22 @@ pub fn show_instrument_rack(
                             ui.horizontal(|ui| {
                                 // Selection indicator / radio button
                                 // Active instrument receives keyboard input
-                                let response = ui.selectable_label(is_active, "");
+                                let btn_text = if is_active { "●" } else { "○" };
+                                let btn_color = if is_active {
+                                    theme().colors.accent_orange
+                                } else {
+                                    theme().colors.text_secondary
+                                };
+                                let response = ui.add(
+                                    egui::Button::new(
+                                        RichText::new(btn_text)
+                                            .color(btn_color)
+                                            .size(t.fonts.size_small),
+                                    )
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(egui::Stroke::new(1.0, btn_color))
+                                    .min_size(egui::vec2(20.0, 20.0)),
+                                );
                                 if response.clicked() {
                                     *active_instrument_id = instrument_id;
                                     result.active_instrument_changed = Some(instrument_id);

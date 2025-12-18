@@ -12,7 +12,7 @@ use synth_sequencer::song::Song;
 use synth_sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
-use synth_sequencer::{PatternTick, Tick};
+use synth_sequencer::{PatternTick, Tick, TrackId};
 
 /// Transport action requested from the sequencer view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,8 @@ pub struct SequencerResult {
     pub stop_note: Option<u8>,
     /// Transport action requested.
     pub transport: Option<TransportAction>,
+    /// Solo track changed (Some(Some(track)) = solo track, Some(None) = no solo).
+    pub solo_track_changed: Option<Option<TrackId>>,
 }
 
 /// Show the sequencer view.
@@ -93,9 +95,13 @@ pub fn show(
                         }
                     });
 
-                    // Draw the tracker grid
+                    // Draw the tracker grid (track solo changes)
+                    let solo_before = tracker_state.solo_track;
                     let config = TrackerViewConfig::fasttracker();
                     draw_tracker_grid(ui, tracker_state, song, &config, playback_row);
+                    if tracker_state.solo_track != solo_before {
+                        result.solo_track_changed = Some(tracker_state.solo_track);
+                    }
                 }
                 None => {
                     draw_no_song_placeholder(ui);

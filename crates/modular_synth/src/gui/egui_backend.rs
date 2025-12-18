@@ -844,6 +844,11 @@ impl eframe::App for SynthApp {
                         }
                     }
                 }
+
+                // Handle solo track changes
+                if let Some(solo) = result.solo_track_changed {
+                    self.handle.set_solo_track(solo);
+                }
             }
             AppView::Mixer => {
                 crate::gui::views::mixer::show(ctx);
@@ -1634,14 +1639,19 @@ impl SynthApp {
                 } else {
                     // Create one synth instrument per imported instrument
                     for (idx, inst_meta) in imported.instruments.iter().enumerate() {
-                        let inst_id = InstrumentId::new(self.next_instrument_id);
-                        self.next_instrument_id += 1;
-
                         // Get sample for this instrument (if any)
                         let sample = inst_meta
                             .sample_index
                             .and_then(|i| imported.samples.get(i))
                             .cloned();
+
+                        // Check if instrument has a valid (non-empty) sample
+                        let has_valid_sample = sample
+                            .as_ref()
+                            .is_some_and(|s| s.len().0 > 0);
+
+                        let inst_id = InstrumentId::new(self.next_instrument_id);
+                        self.next_instrument_id += 1;
 
                         // Use instrument name or generate one
                         let inst_name = if inst_meta.name.is_empty() {
@@ -1656,6 +1666,32 @@ impl SynthApp {
 
                         let mut ui_state = InstrumentUiState::new(inst_id, &inst_name);
                         ui_state.channel = channel;
+
+                        // === Create engine instrument (always, to preserve indexing) ===
+                        let min_voices =
+                            imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
+                        let voice_config = AllocatorConfig {
+                            max_voices: min_voices,
+                            mode: AllocationMode::Tracker,
+                            ..Default::default()
+                        };
+                        let mut engine_inst =
+                            Instrument::with_config(inst_id, &inst_name, voice_config);
+                        engine_inst.set_midi_channel(channel);
+                        self.handle.send_blocking(EngineCommand::AddInstrument {
+                            instrument: Box::new(engine_inst),
+                        });
+
+                        // === Only create modules if instrument has a valid sample ===
+                        if !has_valid_sample {
+                            // Empty instrument - just add to UI and continue
+                            self.instruments.push(ui_state);
+                            if idx == 0 {
+                                self.active_instrument_id = inst_id;
+                                self.handle.set_focused_instrument(Some(inst_id));
+                            }
+                            continue;
+                        }
 
                         // Generate waveform overview for GUI visualization
                         if let Some(ref smp) = sample {
@@ -1919,22 +1955,6 @@ impl SynthApp {
                                 "in_r",
                             ));
                         }
-
-                        // === Create engine instrument with tracker voice config ===
-                        // Use min_voices from import to ensure enough voices for all channels
-                        let min_voices =
-                            imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
-                        let voice_config = AllocatorConfig {
-                            max_voices: min_voices,
-                            mode: AllocationMode::Tracker,
-                            ..Default::default()
-                        };
-                        let mut engine_inst =
-                            Instrument::with_config(inst_id, &inst_name, voice_config);
-                        engine_inst.set_midi_channel(channel);
-                        self.handle.send_blocking(EngineCommand::AddInstrument {
-                            instrument: Box::new(engine_inst),
-                        });
 
                         // === Send modules to engine (all modules BEFORE connections) ===
                         self.handle.send_blocking(EngineCommand::AddModuleInstance {

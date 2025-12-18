@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::PatternId;
+use crate::ids::{PatternId, TrackId};
 
 /// Stark typ for row index in the tracker.
 /// Prevents confusion between row indices and other integer values.
@@ -124,6 +124,9 @@ pub struct TrackerViewState {
     /// Flag set when user wants to navigate to next pattern (cleared after handling).
     #[serde(skip)]
     pub navigate_pattern_next: bool,
+    /// Solo track - if Some, only this track plays.
+    #[serde(skip)]
+    pub solo_track: Option<TrackId>,
 }
 
 impl Default for TrackerViewState {
@@ -141,6 +144,7 @@ impl Default for TrackerViewState {
             first_visible_track: 0,
             navigate_pattern_prev: false,
             navigate_pattern_next: false,
+            solo_track: None,
         }
     }
 }

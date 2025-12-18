@@ -82,7 +82,6 @@ pub enum ModuleType {
     MechanicalNoise,
     // Tracker-specific modules (XM/IT compatibility)
     MultiPointEnvelope,
-    TrackerFilter,
 }
 
 impl ModuleType {
@@ -114,7 +113,6 @@ impl ModuleType {
                 | Self::MechanicalNoise
                 // Tracker-specific modules (per-voice)
                 | Self::MultiPointEnvelope
-                | Self::TrackerFilter
         )
     }
 
@@ -202,7 +200,6 @@ impl ModuleType {
             Self::MechanicalNoise => "Mechanical Noise",
             // Tracker-specific
             Self::MultiPointEnvelope => "Multi-Point Envelope",
-            Self::TrackerFilter => "Tracker Filter",
         }
     }
 
@@ -239,7 +236,6 @@ impl ModuleType {
             Self::MechanicalNoise => "mec",
             // Tracker-specific
             Self::MultiPointEnvelope => "mpe",
-            Self::TrackerFilter => "tfl",
         }
     }
 
@@ -276,7 +272,6 @@ impl ModuleType {
             "mec" => Some(Self::MechanicalNoise),
             // Tracker-specific
             "mpe" => Some(Self::MultiPointEnvelope),
-            "tfl" => Some(Self::TrackerFilter),
             _ => None,
         }
     }

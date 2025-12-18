@@ -30,7 +30,6 @@ pub mod oscillator;
 pub mod output;
 pub mod sample_player;
 pub mod sub_osc;
-pub mod tracker_filter;
 
 // Physical modeling modules
 pub mod body_resonance;
@@ -52,7 +51,6 @@ pub use oscillator::Oscillator;
 pub use output::StereoOutput;
 pub use sample_player::{PlaybackPositionBuffer, SamplePlayer};
 pub use sub_osc::SubOscillator;
-pub use tracker_filter::TrackerFilter;
 
 // Physical modeling exports
 pub use body_resonance::BodyResonance;
