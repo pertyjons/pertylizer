@@ -12,12 +12,15 @@
 //!
 //! This prevents common errors like mixing up samples and ticks.
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::tracker_effects::{ChannelEffectProcessor, GlobalCommand};
 use synth_core::{BipolarValue, Bpm, Cents, NormalizedValue, SampleCount, SampleRate, VoiceIndex};
+use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::{
-    Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackMode,
+    Pitch, RowIndex, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
+    TrackMode, Velocity,
 };
 
 /// Playback state of the sequencer.
@@ -78,9 +81,22 @@ pub struct SequencerEngine {
     loop_end: Tick,
     /// Tracker effect processor for handling per-channel effects.
     effect_processor: ChannelEffectProcessor,
+    /// Last instrument used per track (for TrackerPattern instrument inheritance).
+    /// When a Cell::Note has instrument: None, the engine uses the last instrument
+    /// that was played on that track.
+    track_last_instruments: HashMap<TrackId, SeqInstrumentId>,
+    /// Song ticks per tracker tick for effect processing.
+    /// With 960 PPQN and 24 tracker ticks per beat, this is 960/24 = 40.
+    /// Effects are processed at tracker-tick rate, not song-tick rate.
+    song_ticks_per_tracker_tick: u32,
+    /// Counter for song ticks since last effect tick.
+    effect_tick_accumulator: u32,
 }
 
 impl SequencerEngine {
+    /// Song ticks per tracker tick: 960 PPQN / 24 tracker ticks per beat = 40.
+    const SONG_TICKS_PER_TRACKER_TICK: u32 = TICKS_PER_QUARTER / 24;
+
     /// Create a new sequencer engine with the given sample rate.
     pub fn new(sample_rate: SampleRate) -> Self {
         let default_tempo = Bpm::new(120.0);
@@ -98,6 +114,9 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             effect_processor: ChannelEffectProcessor::default(),
+            track_last_instruments: HashMap::new(),
+            song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
+            effect_tick_accumulator: 0,
         }
     }
 
@@ -122,6 +141,9 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             effect_processor: ChannelEffectProcessor::default(),
+            track_last_instruments: HashMap::new(),
+            song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
+            effect_tick_accumulator: 0,
         }
     }
 
@@ -230,18 +252,24 @@ impl SequencerEngine {
             self.check_note_offs(events);
 
             // Process tick-based effects (vibrato, portamento, volume slide, etc.)
-            // This generates modulation events for channels with active continuous effects.
-            let modulations = self.effect_processor.process_tick();
-            for modulation in modulations {
-                events.push(SequencerEvent::Modulation {
-                    tick: self.current_tick,
-                    track: modulation.track,
-                    pitch_cents: Cents::new(modulation.pitch_cents.as_f32()),
-                    volume: NormalizedValue::new(modulation.volume.as_f32()),
-                    panning: BipolarValue::new(modulation.panning.as_f32()),
-                    note_cut: modulation.note_cut,
-                    tone_porta_pitch: modulation.tone_porta_pitch,
-                });
+            // Effects are processed at tracker-tick rate (24 per beat), not song-tick rate (960 per beat).
+            // This ensures vibrato/portamento speeds match original tracker behavior.
+            self.effect_tick_accumulator += 1;
+            if self.effect_tick_accumulator >= self.song_ticks_per_tracker_tick {
+                self.effect_tick_accumulator = 0;
+
+                let modulations = self.effect_processor.process_tick();
+                for modulation in modulations {
+                    events.push(SequencerEvent::Modulation {
+                        tick: self.current_tick,
+                        track: modulation.track,
+                        pitch_cents: Cents::new(modulation.pitch_cents.as_f32()),
+                        volume: NormalizedValue::new(modulation.volume.as_f32()),
+                        panning: BipolarValue::new(modulation.panning.as_f32()),
+                        note_cut: modulation.note_cut,
+                        tone_porta_pitch: modulation.tone_porta_pitch,
+                    });
+                }
             }
 
             // Advance position
@@ -287,17 +315,54 @@ impl SequencerEngine {
 
     /// Collect events that should trigger at the current tick.
     fn collect_events_at_tick(&mut self, events: &mut Vec<SequencerEvent>) {
+        // Collect tracker pattern data that needs mutable processing
+        // (instrument inheritance requires &mut self)
+        struct TrackerPatternData {
+            pattern: TrackerPattern,
+            pattern_tick: u32,
+            transpose: synth_core::Semitones,
+        }
+
         // First, collect all the note and effect data we need while holding the lock
-        let (notes_to_trigger, effect_events_to_process): (Vec<_>, Vec<_>) = {
+        let (notes_to_trigger, effect_events_to_process, tracker_patterns): (
+            Vec<_>,
+            Vec<_>,
+            Vec<TrackerPatternData>,
+        ) = {
             let Ok(song) = self.song.read() else {
                 return;
             };
 
             let mut notes = Vec::new();
             let mut effect_events = Vec::new();
+            let mut tracker_data = Vec::new();
 
             // Check each placement that might be active at this tick
             for placement in song.arrangement() {
+                // First check for TrackerPattern
+                if let Some(tracker_pattern) = song.tracker_pattern(placement.pattern_id) {
+                    // Calculate pattern length in ticks
+                    let pattern_length_ticks = tracker_pattern.length_ticks().0 as u64;
+                    let pattern_end = Tick(placement.start.0 + pattern_length_ticks);
+
+                    if self.current_tick < placement.start || self.current_tick >= pattern_end {
+                        continue;
+                    }
+
+                    // Calculate position within the pattern
+                    let pattern_tick = (self.current_tick.0 - placement.start.0) as u32;
+
+                    // Clone pattern for processing outside the lock
+                    // (needed because collect_tracker_pattern_events takes &mut self)
+                    tracker_data.push(TrackerPatternData {
+                        pattern: tracker_pattern.clone(),
+                        pattern_tick,
+                        transpose: placement.transpose,
+                    });
+                    continue;
+                }
+
+                // Fall back to regular Pattern
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
                 };
@@ -335,6 +400,7 @@ impl SequencerEngine {
                         note.effects.clone(),
                         end_tick,
                         note.track,
+                        true, // Regular Pattern notes always have explicit instruments
                     ));
                 }
 
@@ -347,11 +413,29 @@ impl SequencerEngine {
                 }
             }
 
-            (notes, effect_events)
+            (notes, effect_events, tracker_data)
         }; // Lock released here
 
+        // Process TrackerPatterns (requires &mut self for instrument inheritance)
+        let mut notes_to_trigger = notes_to_trigger;
+        let mut effect_events_to_process = effect_events_to_process;
+        let mut note_offs_to_process = Vec::new();
+
+        for data in tracker_patterns {
+            self.collect_tracker_pattern_events(
+                &data.pattern,
+                data.pattern_tick,
+                data.transpose,
+                &mut notes_to_trigger,
+                &mut effect_events_to_process,
+                &mut note_offs_to_process,
+            );
+        }
+
         // Now process the collected notes without holding the lock
-        for (pitch, velocity, instrument, effects, end_tick, track) in notes_to_trigger {
+        for (pitch, velocity, instrument, effects, end_tick, track, has_explicit_instrument) in
+            notes_to_trigger
+        {
             // Determine voice_index based on track mode
             let voice_index = self.get_voice_index_for_track(track);
 
@@ -365,10 +449,22 @@ impl SequencerEngine {
                 }
                 // MonoVoice mode - don't stop, voice will be retriggered without envelope reset
 
+                // XM behavior: When a new note with explicit instrument is played,
+                // reset channel volume to the note's velocity (or 1.0 if no velocity).
+                // This ensures volume slide effects don't carry over to new notes.
+                let instrument_volume = if has_explicit_instrument {
+                    Some(NormalizedValue::new(velocity.as_f32()))
+                } else {
+                    None // Inherit instrument - don't reset volume
+                };
+
                 // Process effects for this channel
-                let global_commands =
-                    self.effect_processor
-                        .process_row_start(track_id, &effects, Some(pitch));
+                let global_commands = self.effect_processor.process_row_start(
+                    track_id,
+                    &effects,
+                    Some(pitch),
+                    instrument_volume,
+                );
 
                 // Handle global commands (tempo changes, etc.)
                 for cmd in global_commands {
@@ -436,12 +532,42 @@ impl SequencerEngine {
             }
         }
 
+        // Process explicit NoteOff events from TrackerPattern (Cell::NoteOff)
+        // These represent === markers in tracker files and should release the voice
+        for track_id in note_offs_to_process {
+            // Get voice index for this track
+            let voice_index = self.get_voice_index_for_track(Some(track_id));
+
+            // Find and remove the active note on this track
+            // Then emit a NoteOff event
+            if let Some(idx) = self
+                .active_notes
+                .iter()
+                .position(|n| n.track == Some(track_id))
+            {
+                let note = self.active_notes.swap_remove(idx);
+                events.push(SequencerEvent::NoteOff {
+                    tick: self.current_tick,
+                    pitch: note.pitch,
+                    instrument: note.instrument,
+                });
+            } else if let Some(vi) = voice_index {
+                // No active note tracked, but we have a voice index
+                // Emit a generic voice release event for tracker mode
+                events.push(SequencerEvent::VoiceOff {
+                    tick: self.current_tick,
+                    voice_index: vi,
+                });
+            }
+        }
+
         // Process effect-only events (tracker-style rows with effects but no note)
         for (track_id, effects) in effect_events_to_process {
             // Process effects through the effect processor to handle global commands
+            // No instrument_volume - effect-only rows don't reset channel volume
             let global_commands = self
                 .effect_processor
-                .process_row_start(track_id, &effects, None);
+                .process_row_start(track_id, &effects, None, None);
 
             // Handle global commands from effect-only rows
             for cmd in global_commands {
@@ -492,6 +618,117 @@ impl SequencerEngine {
             }
         }
         None
+    }
+
+    /// Collect events from a TrackerPattern at the given pattern tick.
+    ///
+    /// TrackerPattern semantics:
+    /// - Each track maps 1:1 to a voice (TrackIndex N → VoiceIndex N)
+    /// - Cell::Note triggers a note, automatically cutting any previous note on that voice
+    /// - Cell::NoteOff explicitly releases the note (enters envelope release)
+    /// - Cell::Empty does nothing (previous note continues)
+    ///
+    /// Instrument inheritance:
+    /// - When a note has `instrument: Some(id)`, that instrument is used and remembered
+    /// - When a note has `instrument: None`, the last instrument for that track is used
+    /// - If no previous instrument exists, defaults to instrument 0
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::type_complexity)]
+    fn collect_tracker_pattern_events(
+        &mut self,
+        pattern: &TrackerPattern,
+        pattern_tick: u32,
+        transpose: synth_core::Semitones,
+        notes: &mut Vec<(
+            Pitch,
+            Velocity,
+            SeqInstrumentId,
+            Vec<synth_sequencer::EffectCommand>,
+            Option<Tick>,
+            Option<TrackId>,
+            bool, // has_explicit_instrument - true if instrument was specified on this note
+        )>,
+        effect_events: &mut Vec<(TrackId, Vec<synth_sequencer::EffectCommand>)>,
+        note_offs: &mut Vec<TrackId>,
+    ) {
+        // Convert pattern tick to row index
+        let ticks_per_row = pattern.ticks_per_row().as_u32();
+        if ticks_per_row == 0 {
+            return;
+        }
+
+        // Only process on row boundaries
+        if !pattern_tick.is_multiple_of(ticks_per_row) {
+            return;
+        }
+
+        let row_idx = pattern_tick / ticks_per_row;
+        if row_idx >= pattern.num_rows().as_u16() as u32 {
+            return;
+        }
+
+        let row_index = RowIndex::new(row_idx as u16);
+
+        // Process each track at this row
+        for (track_index, row) in pattern.row_across_tracks(row_index) {
+            // Create a TrackId from the track index (for compatibility with existing code)
+            let track_id = TrackId::new(track_index.as_u8() as u16);
+
+            match &row.cell {
+                Cell::Note {
+                    pitch,
+                    instrument,
+                    velocity,
+                } => {
+                    // Apply transposition
+                    let transposed_pitch = pitch.transpose(transpose).unwrap_or(*pitch);
+
+                    // Use provided velocity or default
+                    let note_velocity = velocity.unwrap_or(Velocity::FF);
+
+                    // Instrument inheritance:
+                    // - Some(id) → use that instrument and remember it
+                    // - None → use the last instrument for this track (or default to 0)
+                    let has_explicit_instrument = instrument.is_some();
+                    let note_instrument = if let Some(inst) = instrument {
+                        // Explicit instrument - remember it for future notes on this track
+                        self.track_last_instruments.insert(track_id, *inst);
+                        *inst
+                    } else {
+                        // Inherit from previous note on this track
+                        self.track_last_instruments
+                            .get(&track_id)
+                            .copied()
+                            .unwrap_or(SeqInstrumentId(0))
+                    };
+
+                    notes.push((
+                        transposed_pitch,
+                        note_velocity,
+                        note_instrument,
+                        row.effects.clone(),
+                        None, // TrackerPattern notes don't have explicit duration
+                        Some(track_id),
+                        has_explicit_instrument,
+                    ));
+                }
+                Cell::NoteOff => {
+                    // Explicit note-off - mark this track for note release
+                    note_offs.push(track_id);
+
+                    // Also process any effects on this row
+                    if !row.effects.is_empty() {
+                        effect_events.push((track_id, row.effects.clone()));
+                    }
+                }
+                Cell::Empty => {
+                    // No note, but may have effects
+                    if !row.effects.is_empty() {
+                        effect_events.push((track_id, row.effects.clone()));
+                    }
+                }
+            }
+        }
     }
 
     /// Stop all active notes on the given track (mono-per-track behavior).

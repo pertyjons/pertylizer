@@ -220,12 +220,23 @@ impl ChannelEffectProcessor {
     /// This should be called when a new row starts. It processes immediate effects
     /// (tick 0) and sets up continuous effects for subsequent ticks.
     ///
+    /// # Arguments
+    ///
+    /// * `track` - The track/channel to process
+    /// * `effects` - Effects to process for this row
+    /// * `base_pitch` - The note pitch (if a note is playing)
+    /// * `instrument_volume` - Volume to reset to when a new note with explicit instrument
+    ///   is played. This follows XM behavior: new note with instrument resets channel volume
+    ///   to the sample's default_volume (or the volume column value if present).
+    ///   Pass `None` for notes that inherit instrument (no volume reset) or effect-only rows.
+    ///
     /// Returns any global commands that need sequencer-level handling.
     pub fn process_row_start(
         &mut self,
         track: TrackId,
         effects: &[EffectCommand],
         base_pitch: Option<Pitch>,
+        instrument_volume: Option<NormalizedValue>,
     ) -> Vec<GlobalCommand> {
         self.tick_in_row = TickInRow::ZERO;
         let mut global_commands = Vec::new();
@@ -238,6 +249,15 @@ impl ChannelEffectProcessor {
                 .resize_with(channel_idx + 1, ChannelEffectState::default);
         }
         let state = &mut self.channels[channel_idx];
+
+        // XM behavior: When a new note with explicit instrument is played,
+        // reset channel volume to the instrument's default volume.
+        // This MUST happen BEFORE effect processing so SetVolume can override.
+        if let Some(volume) = instrument_volume {
+            state.volume = volume;
+            // Also reset volume slide to stop any ongoing slide
+            state.volume_slide = 0.0;
+        }
 
         // Update base pitch for portamento target
         if let Some(pitch) = base_pitch {
@@ -816,7 +836,7 @@ mod tests {
         let track = TrackId::new(0);
 
         // Set volume to 50%
-        processor.process_row_start(track, &[EffectCommand::SetVolume(32)], None);
+        processor.process_row_start(track, &[EffectCommand::SetVolume(32)], None, None);
 
         let mod_val = processor.get_channel_modulation(track);
         assert!((mod_val.volume.as_f32() - 0.5).abs() < 0.01);
@@ -831,6 +851,7 @@ mod tests {
         processor.process_row_start(
             track,
             &[EffectCommand::VolumeSlide { up: 0, down: 4 }],
+            None,
             None,
         );
 
@@ -853,6 +874,7 @@ mod tests {
             track,
             &[EffectCommand::Vibrato { speed: 8, depth: 8 }],
             None,
+            None,
         );
 
         // Process several ticks
@@ -871,17 +893,17 @@ mod tests {
         let track = TrackId::new(0);
 
         // Full left
-        processor.process_row_start(track, &[EffectCommand::SetPanning(0)], None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(0)], None, None);
         let left = processor.get_channel_modulation(track);
         assert!((left.panning.as_f32() - (-1.0)).abs() < 0.02);
 
         // Center
-        processor.process_row_start(track, &[EffectCommand::SetPanning(128)], None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(128)], None, None);
         let center = processor.get_channel_modulation(track);
         assert!(center.panning.as_f32().abs() < 0.02);
 
         // Full right
-        processor.process_row_start(track, &[EffectCommand::SetPanning(255)], None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(255)], None, None);
         let right = processor.get_channel_modulation(track);
         assert!((right.panning.as_f32() - 1.0).abs() < 0.02);
     }
@@ -894,6 +916,7 @@ mod tests {
         let commands = processor.process_row_start(
             track,
             &[EffectCommand::SetTempo(140), EffectCommand::SetSpeed(4)],
+            None,
             None,
         );
 
@@ -911,7 +934,7 @@ mod tests {
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
-        processor.process_row_start(track, &[EffectCommand::NoteCut(3)], None);
+        processor.process_row_start(track, &[EffectCommand::NoteCut(3)], None, None);
 
         // Ticks 1, 2: no cut
         processor.process_tick();
@@ -929,7 +952,7 @@ mod tests {
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
-        processor.process_row_start(track, &[EffectCommand::Arpeggio { x: 4, y: 7 }], None);
+        processor.process_row_start(track, &[EffectCommand::Arpeggio { x: 4, y: 7 }], None, None);
 
         // Process a tick
         processor.process_tick();
@@ -951,5 +974,115 @@ mod tests {
         let b = PitchCents::new(50.0);
         let sum = a + b;
         assert!((sum.as_f32() - 150.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_volume_reset_on_new_instrument() {
+        // This test verifies XM behavior: when a new note with explicit instrument
+        // is played, channel volume resets to the instrument's default volume.
+        // This fixes the bug where volume slide brings volume to 0 and new notes stay silent.
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Start at full volume, slide down to near zero
+        processor.process_row_start(
+            track,
+            &[EffectCommand::VolumeSlide { up: 0, down: 16 }],
+            None,
+            None,
+        );
+
+        // Process several ticks to slide volume down
+        for _ in 0..6 {
+            processor.process_tick();
+        }
+
+        // Volume should be very low after slide
+        let mod_after_slide = processor.get_channel_modulation(track);
+        assert!(
+            mod_after_slide.volume.as_f32() < 0.1,
+            "Volume should be low after slide: {}",
+            mod_after_slide.volume.as_f32()
+        );
+
+        // Now play a new note with explicit instrument (volume reset to 0.75)
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(synth_sequencer::Pitch::new(60).unwrap()),
+            Some(NormalizedValue::new(0.75)), // Instrument default volume
+        );
+
+        // Volume should be reset to 0.75
+        let mod_after_reset = processor.get_channel_modulation(track);
+        assert!(
+            (mod_after_reset.volume.as_f32() - 0.75).abs() < 0.01,
+            "Volume should be reset to 0.75: {}",
+            mod_after_reset.volume.as_f32()
+        );
+
+        // Also verify that volume slide was stopped
+        assert!(
+            processor.channels[0].volume_slide.abs() < 0.001,
+            "Volume slide should be stopped"
+        );
+    }
+
+    #[test]
+    fn test_volume_not_reset_on_inherit_instrument() {
+        // This test verifies that when a note inherits instrument (no explicit instrument),
+        // the channel volume is NOT reset - existing volume continues.
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Set volume to 0.3 via SetVolume effect
+        processor.process_row_start(track, &[EffectCommand::SetVolume(19)], None, None); // 19/64 ≈ 0.3
+
+        let mod_after_set = processor.get_channel_modulation(track);
+        assert!(
+            (mod_after_set.volume.as_f32() - 0.297).abs() < 0.02,
+            "Volume should be ~0.3: {}",
+            mod_after_set.volume.as_f32()
+        );
+
+        // Now play a note that inherits instrument (instrument_volume = None)
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(synth_sequencer::Pitch::new(60).unwrap()),
+            None, // Inherit instrument - don't reset volume
+        );
+
+        // Volume should still be ~0.3
+        let mod_after_note = processor.get_channel_modulation(track);
+        assert!(
+            (mod_after_note.volume.as_f32() - 0.297).abs() < 0.02,
+            "Volume should remain ~0.3: {}",
+            mod_after_note.volume.as_f32()
+        );
+    }
+
+    #[test]
+    fn test_set_volume_overrides_instrument_default() {
+        // This test verifies that SetVolume effect can override the instrument's default volume
+        // even when both are on the same row.
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Play note with instrument default 1.0, but SetVolume to 0.5
+        processor.process_row_start(
+            track,
+            &[EffectCommand::SetVolume(32)], // 32/64 = 0.5
+            Some(synth_sequencer::Pitch::new(60).unwrap()),
+            Some(NormalizedValue::new(1.0)), // Instrument default = 1.0
+        );
+
+        // Volume should be 0.5 (SetVolume overrides instrument default)
+        let modulation = processor.get_channel_modulation(track);
+        assert!(
+            (modulation.volume.as_f32() - 0.5).abs() < 0.01,
+            "Volume should be 0.5 (SetVolume overrides default): {}",
+            modulation.volume.as_f32()
+        );
     }
 }

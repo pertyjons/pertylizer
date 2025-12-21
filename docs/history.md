@@ -1,5 +1,31 @@
 # Version History
 
+## [0.62.0] - 2025
+### Fixed - Volume Reset Bug in Tracker Effects
+
+#### Bugfix: Kanalvolym återställs vid ny not med instrument
+- **Problem**: Efter volume slide down (t.ex. `A05`) gick kanalvolymen till 0, och nya noter med instrument förblev tysta
+- **Orsak**: `process_row_start()` i effektprocessorn fick aldrig information om instrumentbyte, så volymen återställdes aldrig
+- **Lösning**:
+  - Ny parameter `instrument_volume: Option<NormalizedValue>` i `process_row_start()`
+  - När en not med explicit instrument spelas, återställs kanalvolymen till notens velocity
+  - Volume slide nollställs för att stoppa pågående slide
+  - SetVolume-effekter kan fortfarande override:a default-volymen
+
+#### XM-beteende implementerat
+| Scenario | Beteende |
+|----------|----------|
+| Not + explicit instrument | Återställ volym till notens velocity |
+| Not + ärvt instrument (inherit) | Behåll nuvarande kanalvolym |
+| SetVolume på samma rad | Override:ar default-volymen |
+
+#### Nya tester
+- `test_volume_reset_on_new_instrument` - Verifierar volymåterställning
+- `test_volume_not_reset_on_inherit_instrument` - Verifierar att inherit behåller volym
+- `test_set_volume_overrides_instrument_default` - Verifierar SetVolume override
+
+---
+
 ## [0.61.0] - 2025
 ### Added - Track Solo & UI Improvements
 

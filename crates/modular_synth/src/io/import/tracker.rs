@@ -24,11 +24,11 @@ use synth_core::{
     SampleRate, SampleValue, Seconds, VoiceCount, VoiceIndex,
 };
 use synth_sequencer::effects::EffectCommand;
-use synth_sequencer::pattern::RowResolution;
 use synth_sequencer::pitch::{Pitch, Velocity};
 use synth_sequencer::time::Duration;
 use synth_sequencer::track::TrackMode;
-use synth_sequencer::{PatternId, SeqInstrumentId, Song, Tick, TrackId};
+use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
+use synth_sequencer::{PatternId, RowCount, RowIndex, SeqInstrumentId, Song, Tick, TicksPerRow, TrackCount, TrackId, TrackIndex};
 
 /// Importer for tracker files (MOD, XM, S3M).
 pub struct TrackerImporter;
@@ -153,17 +153,16 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Use the first track for pattern placement (patterns span all channels)
     let main_track_id = track_ids.first().copied().unwrap_or(TrackId::new(0));
 
-    // Convert patterns
+    // Convert patterns to TrackerPattern format
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
-        let pattern_id = convert_pattern(
-            &mut song,
+        let tracker_pattern = convert_pattern_to_tracker(
             pattern_data,
             pat_idx,
             num_channels,
             speed,
-            &track_ids,
         )?;
+        let pattern_id = song.add_tracker_pattern(tracker_pattern);
         pattern_ids.push(pattern_id);
     }
 
@@ -177,11 +176,14 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
         }
 
         let pattern_id = pattern_ids[order_idx];
-        let pattern = song
-            .pattern(pattern_id)
-            .ok_or_else(|| ImportError::InvalidData("Pattern not found".to_string()))?;
+        let tracker_pattern = song
+            .tracker_pattern(pattern_id)
+            .ok_or_else(|| ImportError::InvalidData("TrackerPattern not found".to_string()))?;
 
-        let length = pattern.length;
+        // Calculate length from TrackerPattern
+        let length_ticks = tracker_pattern.length_ticks();
+        // Convert PatternTick to Duration (both are u32)
+        let length = Duration(length_ticks.0);
 
         song.place_pattern(pattern_id, main_track_id, current_tick);
         current_tick = Tick(current_tick.0 + length.0 as u64);
@@ -518,219 +520,111 @@ fn convert_sample_data(data: &SampleDataType) -> ImportResult<(Vec<SampleValue>,
     }
 }
 
-/// Convert an xmrs pattern to our Pattern format.
-fn convert_pattern(
-    song: &mut Song,
+/// Convert an xmrs pattern to TrackerPattern format.
+///
+/// This creates a proper TrackerPattern with explicit rows and cells,
+/// following tracker semantics:
+/// - Each track maps 1:1 to a voice
+/// - NoteOff cells are ONLY created for explicit key-off markers
+/// - New notes on same track implicitly cut previous notes (handled by engine)
+/// - Instrument 0 means "inherit previous instrument"
+#[allow(clippy::cast_possible_truncation)]
+fn convert_pattern_to_tracker(
     pattern_data: &XmrsPattern,
     pat_idx: usize,
     num_channels: usize,
     speed: f32,
-    track_ids: &[TrackId],
-) -> ImportResult<PatternId> {
-    // Pattern data is organized as: pattern[row][channel] = Vec<Vec<TrackUnit>>
+) -> ImportResult<TrackerPattern> {
     let num_rows = pattern_data.len();
     if num_rows == 0 {
         // Empty pattern - create minimal
-        let pattern_id = song.create_pattern(Duration(960)); // One bar
-        if let Some(pattern) = song.pattern_mut(pattern_id) {
-            pattern.name = format!("Pattern {pat_idx:02X}");
-        }
-        return Ok(pattern_id);
+        let mut pattern = TrackerPattern::new(
+            PatternId::new(pat_idx as u32),
+            TrackCount::new(num_channels as u8),
+            RowCount::new(1),
+        );
+        pattern.set_name(format!("Pattern {pat_idx:02X}"));
+        return Ok(pattern);
     }
 
-    // Calculate ticks per row based on speed
-    // Standard: speed=6 means 6 ticks per row
-    // We use 960 PPQN, so we scale accordingly
-    // At speed 6 and BPM 125: one row = 6 ticks = 1/4 beat
-    // Our quarter note = 960 ticks, so one tracker row ≈ 960/4 = 240 ticks at speed 6
-    let ticks_per_row = (240.0 * speed / 6.0) as u32;
-    let pattern_length = Duration(num_rows as u32 * ticks_per_row);
+    // Convert tracker speed to song ticks per row
+    // Tracker speed 6 at 24 ticks/beat = 240 song ticks/row (at 960 PPQN)
+    let ticks_per_row = TicksPerRow::from_tracker_speed(speed as u8);
 
-    let pattern_id = song.create_pattern(pattern_length);
-    let pattern = song
-        .pattern_mut(pattern_id)
-        .ok_or_else(|| ImportError::InvalidData("Failed to get pattern".to_string()))?;
+    let mut pattern = TrackerPattern::new(
+        PatternId::new(pat_idx as u32),
+        TrackCount::new(num_channels as u8),
+        RowCount::new(num_rows as u16),
+    );
+    pattern.set_name(format!("Pattern {pat_idx:02X}"));
+    pattern.set_ticks_per_row(ticks_per_row);
 
-    pattern.name = format!("Pattern {pat_idx:02X}");
-
-    // Set up row resolution and channel count for tracker view
-    pattern.row_resolution = RowResolution::custom(num_rows as u16, ticks_per_row as u16);
-    #[allow(clippy::cast_possible_truncation)]
-    pattern.set_num_tracks(num_channels as u8);
-
-    // Track state per channel (for volume/instrument memory)
-    let mut channel_state: Vec<ChannelState> = vec![ChannelState::default(); num_channels];
+    // Track state per channel (for instrument/volume memory)
+    let mut channel_state: Vec<TrackerChannelState> =
+        vec![TrackerChannelState::default(); num_channels];
 
     // Convert each row
     for (row_idx, row_data) in pattern_data.iter().enumerate() {
-        let row_tick = synth_sequencer::PatternTick(row_idx as u32 * ticks_per_row);
+        let row_index = RowIndex::new(row_idx as u16);
 
         for (channel_idx, track_unit) in row_data.iter().enumerate() {
             if channel_idx >= num_channels {
                 break;
             }
 
-            // Update channel state and create note if needed
-            // Use the track_id from song.create_track() to ensure TrackMode::MonoVoice is found
-            let track_id = track_ids
-                .get(channel_idx)
-                .copied()
-                .unwrap_or_else(|| TrackId::new(channel_idx as u16));
-
+            let track_index = TrackIndex::new(channel_idx as u8);
             let state = &mut channel_state[channel_idx];
-            let result = process_track_unit(track_unit, state, track_id);
 
-            // Helper to set duration on previous note
-            let set_prev_note_duration =
-                |pattern: &mut synth_sequencer::Pattern,
-                 state: &ChannelState,
-                 current_tick: u32| {
-                    if let (Some(prev_note_idx), Some(prev_start)) =
-                        (state.last_note_index, state.last_note_start_tick)
-                    {
-                        let duration = current_tick.saturating_sub(prev_start);
-                        if duration > 0
-                            && let Some(prev_note) = pattern.note_by_index_mut(prev_note_idx)
-                        {
-                            prev_note.duration = Some(synth_sequencer::Duration(duration));
-                        }
-                    }
-                };
+            // Process the track unit and get the cell
+            let (cell, effects) = process_track_unit_to_cell(track_unit, state);
 
-            match result {
-                TrackUnitResult::Note(note_event) => {
-                    // If there was a previous note on this channel without key-off,
-                    // the new note implicitly ends it (tracker behavior)
-                    set_prev_note_duration(pattern, state, row_tick.0);
+            // Set cell if not empty
+            if !cell.is_empty() {
+                pattern.set_cell(track_index, row_index, cell);
+            }
 
-                    // Create note with track info for mono-per-track behavior
-                    let mut note = synth_sequencer::Note::new(
-                        synth_sequencer::NoteId(0), // ID will be reassigned by insert_note
-                        row_tick,
-                        note_event.pitch,
-                        note_event.velocity,
-                        note_event.instrument,
-                    )
-                    .with_track(note_event.track);
-
-                    // Add effects to the note
-                    if !note_event.effects.is_empty() {
-                        note = note.with_effects(note_event.effects);
-                    }
-
-                    // Track this note for key-off handling
-                    let note_idx = pattern.note_count();
-                    pattern.insert_note(note);
-                    state.last_note_index = Some(note_idx);
-                    state.last_note_start_tick = Some(row_tick.0);
-                }
-
-                TrackUnitResult::KeyOff { effects } => {
-                    // Key-off: set duration on the previous note for this channel
-                    set_prev_note_duration(pattern, state, row_tick.0);
-
-                    // Clear tracking - note has ended
-                    state.last_note_index = None;
-                    state.last_note_start_tick = None;
-
-                    // If key-off has effects, add them as effect-only event
-                    if !effects.is_empty() {
-                        pattern.add_effect_event(synth_sequencer::EffectOnlyEvent::new(
-                            row_tick, track_id, effects,
-                        ));
-                    }
-                }
-
-                TrackUnitResult::EffectsOnly { track, effects } => {
-                    // Add effect-only event
-                    pattern.add_effect_event(synth_sequencer::EffectOnlyEvent::new(
-                        row_tick, track, effects,
-                    ));
-                }
-
-                TrackUnitResult::Empty => {
-                    // Nothing to do
-                }
+            // Add effects if any
+            if !effects.is_empty() {
+                pattern.set_effects(track_index, row_index, effects);
             }
         }
     }
 
-    Ok(pattern_id)
+    Ok(pattern)
 }
 
-/// Channel state for tracking volume/instrument between rows.
-#[derive(Clone)]
-struct ChannelState {
+/// Channel state for TrackerPattern conversion.
+#[derive(Clone, Default)]
+struct TrackerChannelState {
+    /// Last instrument used (0 = none yet).
     last_instrument: usize,
     /// Volume (0.0-1.0), defaults to 1.0 (full volume) as per tracker convention.
     last_volume: f32,
-    /// Last portamento target (for tone portamento continuation)
+    /// Last portamento target (for tone portamento continuation).
     last_porta_target: Option<Pitch>,
-    /// Last vibrato settings
+    /// Last vibrato settings.
     last_vibrato_speed: u8,
     last_vibrato_depth: u8,
-    /// Last tremolo settings
+    /// Last tremolo settings.
     last_tremolo_speed: u8,
     last_tremolo_depth: u8,
-    /// Index of the last note added for this channel (for key-off duration setting)
-    last_note_index: Option<usize>,
-    /// Start tick of the last note (for calculating duration on key-off)
-    last_note_start_tick: Option<u32>,
 }
 
-impl Default for ChannelState {
-    fn default() -> Self {
-        Self {
-            last_instrument: 0,
-            last_volume: 1.0, // Full volume by default
-            last_porta_target: None,
-            last_vibrato_speed: 0,
-            last_vibrato_depth: 0,
-            last_tremolo_speed: 0,
-            last_tremolo_depth: 0,
-            last_note_index: None,
-            last_note_start_tick: None,
-        }
-    }
-}
 
-/// A note event to be added to the pattern.
-struct NoteEvent {
-    pitch: Pitch,
-    velocity: Velocity,
-    instrument: SeqInstrumentId,
-    track: TrackId,
-    effects: Vec<EffectCommand>,
-}
-
-/// Result of processing a track unit - can be a note, key-off, or effect-only.
-enum TrackUnitResult {
-    /// A regular note event.
-    Note(NoteEvent),
-    /// Key-off marker - should set duration on the previous note.
-    KeyOff {
-        /// Effects that may accompany the key-off.
-        effects: Vec<EffectCommand>,
-    },
-    /// Effect-only row - no note but has effects to apply.
-    EffectsOnly {
-        /// Track/channel this applies to.
-        track: TrackId,
-        /// Effects to apply.
-        effects: Vec<EffectCommand>,
-    },
-    /// Nothing to do (empty row).
-    Empty,
-}
-
-/// Process a track unit and return the appropriate result.
-fn process_track_unit(
+/// Process a track unit and return a Cell and effects for TrackerPattern.
+///
+/// Key differences from Pattern-based processing:
+/// - Returns Cell instead of creating Note
+/// - NoteOff only for explicit key-off (not implicit cuts)
+/// - Instrument 0 → None (inherit previous)
+#[allow(clippy::cast_possible_truncation)]
+fn process_track_unit_to_cell(
     unit: &TrackUnit,
-    state: &mut ChannelState,
-    track: TrackId,
-) -> TrackUnitResult {
+    state: &mut TrackerChannelState,
+) -> (Cell, Vec<EffectCommand>) {
     // Check for instrument change
-    // Note: xmrs uses 0-indexed instruments, matching our SeqInstrumentId
+    // Note: xmrs uses 0-indexed instruments
+    let has_new_instrument = unit.instrument.is_some();
     if let Some(inst) = unit.instrument {
         state.last_instrument = inst;
     }
@@ -745,7 +639,7 @@ fn process_track_unit(
 
     // Process track effects
     for effect in &unit.effects {
-        if let Some(cmd) = convert_track_effect(effect, state) {
+        if let Some(cmd) = convert_track_effect_for_tracker(effect, state) {
             effects.push(cmd);
         }
     }
@@ -757,56 +651,60 @@ fn process_track_unit(
         }
     }
 
-    // Check for key-off (=== in tracker, triggers note release)
+    // Check for explicit key-off (=== in tracker)
+    // CRITICAL: Only create NoteOff for explicit key-off markers!
     if unit.note.is_keyoff() {
-        // Clear the note tracking since we're releasing
-        state.last_note_index = None;
-        state.last_note_start_tick = None;
-        return TrackUnitResult::KeyOff { effects };
+        return (Cell::note_off(), effects);
     }
 
-    // Check for no note (effect-only row)
+    // Check for no note (effect-only row or empty)
     if unit.note.is_none() {
-        if effects.is_empty() {
-            return TrackUnitResult::Empty;
-        }
-        return TrackUnitResult::EffectsOnly { track, effects };
+        return (Cell::Empty, effects);
     }
 
     // Get the note value as u8 (C0=0, C1=12, etc.)
     let note_value = unit.note as u8;
 
     // xmrs Pitch values match MIDI directly (C0=0, C1=12, etc.)
-    // But tracker convention often has C0 = MIDI 12 (C-1)
-    // Let's shift up by 12 to be safe
+    // Shift up by 12 for tracker convention (C0 = MIDI 12)
     let midi_note = note_value.saturating_add(12).min(127);
 
     let Some(pitch) = Pitch::new(midi_note) else {
         // Invalid pitch - treat as empty
-        return TrackUnitResult::Empty;
+        return (Cell::Empty, effects);
     };
 
     // Update portamento target for tone portamento
     state.last_porta_target = Some(pitch);
 
-    // Use the channel's current volume (defaults to 1.0 if never set)
-    let velocity = Velocity::new(state.last_volume);
+    // Determine instrument
+    // - If unit has explicit instrument, use it
+    // - If no instrument specified, use None (inherit from previous)
+    let instrument = if has_new_instrument {
+        Some(SeqInstrumentId(state.last_instrument as u16))
+    } else {
+        // No instrument specified on this row - inherit
+        // The engine will use the last instrument for this voice
+        None
+    };
 
-    #[allow(clippy::cast_possible_truncation)]
-    let instrument = SeqInstrumentId(state.last_instrument as u16);
+    // Use the channel's current volume
+    let velocity = if state.last_volume < 1.0 {
+        Some(Velocity::new(state.last_volume))
+    } else {
+        None // Default velocity
+    };
 
-    TrackUnitResult::Note(NoteEvent {
-        pitch,
-        velocity,
-        instrument,
-        track,
-        effects,
-    })
+    (Cell::note_full(pitch, instrument, velocity), effects)
 }
 
-/// Convert an xmrs track effect to our EffectCommand.
+/// Convert an xmrs track effect for TrackerPattern.
+/// Similar to convert_track_effect but uses TrackerChannelState.
 #[allow(clippy::cast_possible_truncation)]
-fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Option<EffectCommand> {
+fn convert_track_effect_for_tracker(
+    effect: &TrackEffect,
+    state: &mut TrackerChannelState,
+) -> Option<EffectCommand> {
     match effect {
         // === Pitch effects ===
         TrackEffect::Arpeggio { half1, half2 } => Some(EffectCommand::Arpeggio {
@@ -815,8 +713,6 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
         }),
 
         TrackEffect::Portamento(speed) => {
-            // Positive = up, negative = down
-            // Scale from xmrs float to tracker units (0-255)
             let scaled = (speed.abs() * 16.0).min(255.0) as u8;
             if *speed > 0.0 {
                 Some(EffectCommand::PortamentoUp(scaled))
@@ -836,7 +732,6 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
         }
 
         TrackEffect::Vibrato { speed, depth } => {
-            // Update state for memory
             if *speed > 0.0 {
                 state.last_vibrato_speed = (speed * 16.0).min(15.0) as u8;
             }
@@ -872,14 +767,12 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
         TrackEffect::Glissando(enabled) => Some(EffectCommand::Glissando(*enabled)),
 
         TrackEffect::InstrumentFineTune(tune) => {
-            // Convert from semitones to cents (-128 to +127)
             let cents = (tune * 100.0).clamp(-128.0, 127.0) as i8;
             Some(EffectCommand::FineTune(cents))
         }
 
         // === Volume effects ===
         TrackEffect::Volume { value, .. } => {
-            // Convert 0.0-1.0 to 0-64
             let vol = (value * 64.0).min(64.0) as u8;
             Some(EffectCommand::SetVolume(vol))
         }
@@ -893,26 +786,14 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
-                    Some(EffectCommand::FineVolumeSlide {
-                        up: scaled,
-                        down: 0,
-                    })
+                    Some(EffectCommand::FineVolumeSlide { up: scaled, down: 0 })
                 } else {
-                    Some(EffectCommand::FineVolumeSlide {
-                        up: 0,
-                        down: scaled,
-                    })
+                    Some(EffectCommand::FineVolumeSlide { up: 0, down: scaled })
                 }
             } else if *speed > 0.0 {
-                Some(EffectCommand::VolumeSlide {
-                    up: scaled,
-                    down: 0,
-                })
+                Some(EffectCommand::VolumeSlide { up: scaled, down: 0 })
             } else {
-                Some(EffectCommand::VolumeSlide {
-                    up: 0,
-                    down: scaled,
-                })
+                Some(EffectCommand::VolumeSlide { up: 0, down: scaled })
             }
         }
 
@@ -920,26 +801,14 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
-                    Some(EffectCommand::FineVolumeSlide {
-                        up: scaled,
-                        down: 0,
-                    })
+                    Some(EffectCommand::FineVolumeSlide { up: scaled, down: 0 })
                 } else {
-                    Some(EffectCommand::FineVolumeSlide {
-                        up: 0,
-                        down: scaled,
-                    })
+                    Some(EffectCommand::FineVolumeSlide { up: 0, down: scaled })
                 }
             } else if *speed > 0.0 {
-                Some(EffectCommand::VolumeSlide {
-                    up: scaled,
-                    down: 0,
-                })
+                Some(EffectCommand::VolumeSlide { up: scaled, down: 0 })
             } else {
-                Some(EffectCommand::VolumeSlide {
-                    up: 0,
-                    down: scaled,
-                })
+                Some(EffectCommand::VolumeSlide { up: 0, down: scaled })
             }
         }
 
@@ -962,7 +831,6 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
 
         // === Panning effects ===
         TrackEffect::Panning(pan) => {
-            // Convert 0.0-1.0 to 0-255 (0=left, 128=center, 255=right)
             let p = (pan * 255.0).min(255.0) as u8;
             Some(EffectCommand::SetPanning(p))
         }
@@ -970,34 +838,23 @@ fn convert_track_effect(effect: &TrackEffect, state: &mut ChannelState) -> Optio
         TrackEffect::PanningSlide { speed, .. } => {
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *speed < 0.0 {
-                Some(EffectCommand::PanningSlide {
-                    left: scaled,
-                    right: 0,
-                })
+                Some(EffectCommand::PanningSlide { left: scaled, right: 0 })
             } else {
-                Some(EffectCommand::PanningSlide {
-                    left: 0,
-                    right: scaled,
-                })
+                Some(EffectCommand::PanningSlide { left: 0, right: scaled })
             }
         }
 
         // === Sample/playback effects ===
         TrackEffect::InstrumentSampleOffset(offset) => {
-            // Convert from samples to 256ths
             let off = (*offset as u32 / 256).min(u16::MAX as u32) as u16;
             Some(EffectCommand::SampleOffset(off))
         }
 
-        TrackEffect::NoteRetrig {
-            speed,
-            volume_modifier,
-        } => {
+        TrackEffect::NoteRetrig { speed, volume_modifier } => {
             let vol_change = match volume_modifier {
                 xmrs::effect::NoteRetrigOperator::None => 0i8,
                 xmrs::effect::NoteRetrigOperator::Sum(v) => (v * 16.0).clamp(-128.0, 127.0) as i8,
                 xmrs::effect::NoteRetrigOperator::Mul(v) => {
-                    // Approximate multiplication as addition
                     ((v - 1.0) * 16.0).clamp(-128.0, 127.0) as i8
                 }
             };

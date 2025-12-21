@@ -42,6 +42,7 @@ pub mod pitch;
 pub mod song;
 pub mod time;
 pub mod track;
+pub mod tracker_pattern;
 pub mod view;
 
 // Re-export commonly used types
@@ -49,7 +50,7 @@ pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
 pub use effects::{EffectCommand, EffectWaveform};
 pub use events::{EventSorting, SequencerEvent};
-pub use ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
+pub use ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex};
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::Note;
 pub use pattern::{EffectOnlyEvent, Pattern, RowResolution, TrackCell, TrackerGrid};
@@ -57,8 +58,10 @@ pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{SequencerTrack, TrackColor, TrackMode};
+pub use tracker_pattern::{Cell, Row, Track, TrackerPattern};
 pub use view::tracker::{
-    PatternTrackerView, TrackerCell, TrackerNoteDisplay, TrackerRow, TrackerViewConfig,
+    PatternTrackerView, TrackerCell, TrackerNoteDisplay, TrackerPatternTrackerView, TrackerRow,
+    TrackerViewConfig,
 };
 
 /// Prelude module for convenient imports.
@@ -66,7 +69,7 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::effects::EffectCommand;
     pub use super::events::SequencerEvent;
-    pub use super::ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
+    pub use super::ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex};
     pub use super::input::{InputCommand, InputSource};
     pub use super::note::Note;
     pub use super::pattern::{Pattern, RowResolution};
@@ -74,5 +77,8 @@ pub mod prelude {
     pub use super::song::Song;
     pub use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
     pub use super::track::SequencerTrack;
-    pub use super::view::tracker::{PatternTrackerView, TrackerRow, TrackerViewConfig};
+    pub use super::tracker_pattern::{Cell, Row, Track, TrackerPattern};
+    pub use super::view::tracker::{
+        PatternTrackerView, TrackerPatternTrackerView, TrackerRow, TrackerViewConfig,
+    };
 }

@@ -1,35 +1,8 @@
 # CLAUDE.md - Projektinstruktioner för modular-synth
 
-## Meta: Uppdatera detta dokument
-
-När användaren anger nya krav, kodstilsregler, eller arbetssätt som ska gälla framöver:
-1. Lägg till dem i relevant sektion i denna fil (CLAUDE.md)
-2. Bekräfta ändringen för användaren
-3. Om kravet inte passar någon befintlig sektion, skapa en ny
-
 ## Projektfas
 
 Vi är i aktiv utveckling - **ingen bakåtkompatibilitet krävs**. Bryt API:er fritt för att förbättra koden.
-
----
-
-## Beroenden och versioner
-
-### Rust-version
-Använd alltid senaste stabila Rust-version. Uppdatera `rust-toolchain.toml` om den finns, eller skapa en:
-```toml
-[toolchain]
-channel = "stable"
-```
-
-### Cargo-beroenden
-Håll alla beroenden uppdaterade till senaste version. Vid uppdatering av beroenden:
-1. Kör `cargo update` för att uppdatera Cargo.lock
-2. Kör `cargo outdated` (om installerat) för att se om det finns nyare major-versioner
-3. Uppdatera Cargo.toml manuellt för major-versioner om det behövs
-4. Verifiera att allt kompilerar och tester passerar
-
----
 
 ## Kommandon
 
@@ -44,12 +17,6 @@ git commit -m "<kort beskrivning av ändringarna>"
 1. Uppdatera `docs/history.md` med nytt versionsnummer och ändringar sedan senaste versionen
 2. Granska `docs/TODO.md` och markera avklarade uppgifter som klara
 3. Uppdatera versionsnummer i `Cargo.toml`
-
-### `uppdatera beroenden`
-1. Kör `cargo update`
-2. Kör `cargo outdated` om installerat
-3. Uppdatera Cargo.toml vid behov
-4. Verifiera att allt kompilerar och tester passerar
 
 ---
 
@@ -97,7 +64,7 @@ Innan en uppgift anses klar MÅSTE följande passera utan varningar eller fel:
 
 ```bash
 # Steg 1: Kompilera med alla varningar som fel
-RUSTFLAGS="-D warnings" cargo build --release
+RUSTFLAGS="-D warnings" cargo build
 
 # Steg 2: Clippy med rimliga lints
 cargo clippy --all-targets -- \
@@ -311,4 +278,4 @@ impl Hertz {
 
 ## Efter varje svar
 
-Skriv ut `/usage` så jag ser hur mycket som är kvar.
+Kör Claude Code kommandot `/usage` så jag ser hur mycket som är kvar.

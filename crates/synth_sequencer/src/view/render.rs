@@ -18,7 +18,7 @@ use eframe::egui::{self, Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use super::state::{TrackerColumn, TrackerViewState};
-use super::tracker::TrackerViewConfig;
+use super::tracker::{TrackerRow, TrackerViewConfig};
 use crate::ids::TrackId;
 use crate::pattern::TrackCell;
 use crate::song::Song;
@@ -75,7 +75,12 @@ pub fn render_cell_text(cell: &TrackCell, col: ColumnType) -> Cow<'static, str> 
         // Note cell
         (TrackCell::Note { pitch, .. }, ColumnType::Note) => Cow::Owned(format_pitch(*pitch)),
         (TrackCell::Note { instrument, .. }, ColumnType::Instrument) => {
-            Cow::Owned(format!("{instrument:02X}"))
+            // Instrument 0 means "inherit previous" in tracker format
+            if *instrument == 0 {
+                Cow::Borrowed(static_strings::EMPTY_INST)
+            } else {
+                Cow::Owned(format!("{:02}", instrument))
+            }
         }
         (TrackCell::Note { velocity, .. }, ColumnType::Volume) => {
             // Convert normalized velocity (0.0-1.0) to tracker volume (00-40)
@@ -198,36 +203,41 @@ pub fn draw_tracker_grid(
 ) -> bool {
     let colors = TrackerColors::default();
 
-    // Get the active pattern
-    let pattern = match state.active_pattern {
-        Some(id) => match song.pattern(id) {
-            Some(p) => p,
-            None => {
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("Pattern not found").color(colors.empty));
-                });
-                return false;
-            }
-        },
-        None => {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    RichText::new("No Pattern Selected")
-                        .color(colors.empty)
-                        .size(16.0),
-                );
-            });
-            return false;
-        }
+    // Get the active pattern - try TrackerPattern first, then regular Pattern
+    let Some(pattern_id) = state.active_pattern else {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                RichText::new("No Pattern Selected")
+                    .color(colors.empty)
+                    .size(16.0),
+            );
+        });
+        return false;
     };
 
-    // Get number of tracks from pattern (dynamic)
-    let num_tracks = pattern.num_tracks() as usize;
+    // Try to get TrackerPattern first (native tracker format)
+    // If not found, fall back to regular Pattern
+    let (rows, num_tracks): (Vec<TrackerRow>, usize) =
+        if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
+            let num_tracks = tracker_pattern.num_tracks().as_u8() as usize;
+            let mut config_with_tracks = config.clone();
+            config_with_tracks.num_channels = num_tracks;
+            let rows =
+                super::tracker::tracker_pattern_to_tracker_rows(tracker_pattern, &config_with_tracks);
+            (rows, num_tracks)
+        } else if let Some(pattern) = song.pattern(pattern_id) {
+            let num_tracks = pattern.num_tracks() as usize;
+            let mut config_with_tracks = config.clone();
+            config_with_tracks.num_channels = num_tracks;
+            let rows = super::tracker::to_tracker_rows(pattern, &config_with_tracks);
+            (rows, num_tracks)
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new("Pattern not found").color(colors.empty));
+            });
+            return false;
+        };
 
-    // Convert pattern to tracker rows using pattern's track count
-    let mut config_with_tracks = config.clone();
-    config_with_tracks.num_channels = num_tracks;
-    let rows = super::tracker::to_tracker_rows(pattern, &config_with_tracks);
     let num_rows = rows.len();
 
     if num_rows == 0 {
@@ -248,20 +258,24 @@ pub fn draw_tracker_grid(
 
     let interaction = false;
 
-    // Build the table with dynamic track count
-    let mut table = TableBuilder::new(ui)
-        .striped(false)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::exact(30.0)) // Row number
-        .columns(Column::exact(calculate_track_width(config)), num_tracks);
+    // Wrap table in horizontal scroll area for many tracks
+    egui::ScrollArea::horizontal()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            // Build the table with dynamic track count
+            let mut table = TableBuilder::new(ui)
+                .striped(false)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::exact(30.0)) // Row number
+                .columns(Column::exact(calculate_track_width(config)), num_tracks);
 
-    // Scroll to keep the target row visible
-    if let Some(row) = scroll_to {
-        table = table.scroll_to_row(row, Some(egui::Align::Center));
-    }
+            // Scroll to keep the target row visible
+            if let Some(row) = scroll_to {
+                table = table.scroll_to_row(row, Some(egui::Align::Center));
+            }
 
-    table
-        .header(ROW_HEIGHT, |mut header| {
+            table
+                .header(ROW_HEIGHT, |mut header| {
             header.col(|ui| {
                 ui.label(RichText::new("Row").color(colors.row_number).small());
             });
@@ -376,6 +390,7 @@ pub fn draw_tracker_grid(
                 }
             });
         });
+        }); // Close ScrollArea::show
 
     interaction
 }
@@ -442,9 +457,11 @@ fn draw_cell(
             colors.instrument
         };
 
+        // Instrument 0 means "inherit previous" in tracker format, show as ".."
         let inst_text = cell
             .instrument
-            .map(|i| format!("{:02X}", i.0))
+            .filter(|i| i.0 > 0)
+            .map(|i| format!("{:02}", i.0))
             .unwrap_or_else(|| "..".to_string());
 
         ui.label(RichText::new(inst_text).color(inst_color).monospace());
@@ -659,16 +676,20 @@ pub fn draw_tracker_grid_from_pattern(
     let num_tracks = grid.tracks as usize;
     let interaction = false;
 
-    // Build the table with virtual scrolling
-    TableBuilder::new(ui)
-        .striped(false)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::exact(30.0)) // Row number
-        .columns(
-            Column::exact(calculate_track_width(config)),
-            num_tracks.min(state.visible_tracks),
-        )
-        .header(ROW_HEIGHT, |mut header| {
+    // Wrap table in horizontal scroll area for many tracks
+    egui::ScrollArea::horizontal()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            // Build the table with virtual scrolling
+            TableBuilder::new(ui)
+                .striped(false)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::exact(30.0)) // Row number
+                .columns(
+                    Column::exact(calculate_track_width(config)),
+                    num_tracks.min(state.visible_tracks),
+                )
+                .header(ROW_HEIGHT, |mut header| {
             header.col(|ui| {
                 ui.label(RichText::new("Row").color(colors.row_number).small());
             });
@@ -776,6 +797,7 @@ pub fn draw_tracker_grid_from_pattern(
                 }
             });
         });
+        }); // Close ScrollArea::show
 
     interaction
 }

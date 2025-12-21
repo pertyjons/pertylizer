@@ -4,10 +4,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{PatternId, TrackId};
+use super::ids::{PatternId, RowCount, TrackCount, TrackId};
 use super::pattern::Pattern;
 use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
+use super::tracker_pattern::TrackerPattern;
 use synth_core::{Bpm, Gain, Semitones};
 
 /// Tempo change event.
@@ -81,9 +82,13 @@ pub struct Song {
     /// Song author.
     pub author: String,
 
-    // Pattern storage
+    // Pattern storage (piano roll style)
     patterns: HashMap<PatternId, Pattern>,
     next_pattern_id: u32,
+
+    // Tracker pattern storage (tracker style)
+    #[serde(default)]
+    tracker_patterns: HashMap<PatternId, TrackerPattern>,
 
     // Track storage
     tracks: HashMap<TrackId, SequencerTrack>,
@@ -109,6 +114,7 @@ impl Song {
             author: String::new(),
             patterns: HashMap::new(),
             next_pattern_id: 0,
+            tracker_patterns: HashMap::new(),
             tracks: HashMap::new(),
             next_track_id: 0,
             arrangement: Vec::new(),
@@ -191,6 +197,64 @@ impl Song {
 
         self.patterns.insert(new_id, new_pattern);
         Some(new_id)
+    }
+
+    // === Tracker pattern management ===
+
+    /// Create a new tracker pattern and add it to the song.
+    pub fn create_tracker_pattern(
+        &mut self,
+        num_tracks: TrackCount,
+        num_rows: RowCount,
+    ) -> PatternId {
+        let id = PatternId(self.next_pattern_id);
+        self.next_pattern_id += 1;
+        self.tracker_patterns
+            .insert(id, TrackerPattern::new(id, num_tracks, num_rows));
+        id
+    }
+
+    /// Add a tracker pattern directly (e.g., from import).
+    pub fn add_tracker_pattern(&mut self, pattern: TrackerPattern) -> PatternId {
+        let id = pattern.id();
+        // Update next_pattern_id if needed
+        if id.0 >= self.next_pattern_id {
+            self.next_pattern_id = id.0 + 1;
+        }
+        self.tracker_patterns.insert(id, pattern);
+        id
+    }
+
+    /// Get a tracker pattern by ID.
+    pub fn tracker_pattern(&self, id: PatternId) -> Option<&TrackerPattern> {
+        self.tracker_patterns.get(&id)
+    }
+
+    /// Get a mutable tracker pattern by ID.
+    pub fn tracker_pattern_mut(&mut self, id: PatternId) -> Option<&mut TrackerPattern> {
+        self.tracker_patterns.get_mut(&id)
+    }
+
+    /// Get all tracker patterns.
+    pub fn tracker_patterns(&self) -> impl Iterator<Item = &TrackerPattern> {
+        self.tracker_patterns.values()
+    }
+
+    /// Get the number of tracker patterns.
+    pub fn tracker_pattern_count(&self) -> usize {
+        self.tracker_patterns.len()
+    }
+
+    /// Check if a pattern ID refers to a tracker pattern.
+    pub fn is_tracker_pattern(&self, id: PatternId) -> bool {
+        self.tracker_patterns.contains_key(&id)
+    }
+
+    /// Delete a tracker pattern.
+    pub fn delete_tracker_pattern(&mut self, id: PatternId) -> Option<TrackerPattern> {
+        // Also remove from arrangement
+        self.arrangement.retain(|p| p.pattern_id != id);
+        self.tracker_patterns.remove(&id)
     }
 
     // === Track management ===
@@ -302,10 +366,19 @@ impl Song {
     pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
         // Find placement that contains this tick
         for placement in &self.arrangement {
+            // Check regular patterns first
             if let Some(pattern) = self.patterns.get(&placement.pattern_id) {
                 let pattern_end = placement.end(pattern.length);
                 if tick >= placement.start && tick < pattern_end {
-                    // Calculate offset within pattern
+                    let offset = Tick(tick.0.saturating_sub(placement.start.0));
+                    return Some((placement.pattern_id, offset));
+                }
+            }
+            // Check tracker patterns
+            else if let Some(tracker_pattern) = self.tracker_patterns.get(&placement.pattern_id) {
+                let length = Duration(tracker_pattern.length_ticks().0);
+                let pattern_end = placement.end(length);
+                if tick >= placement.start && tick < pattern_end {
                     let offset = Tick(tick.0.saturating_sub(placement.start.0));
                     return Some((placement.pattern_id, offset));
                 }

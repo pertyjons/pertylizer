@@ -58,9 +58,11 @@ pub fn show(
                 Some(song) => {
                     // Handle pattern navigation (if buttons were clicked)
                     if tracker_state.navigate_pattern_prev || tracker_state.navigate_pattern_next {
-                        // Collect and sort pattern IDs
+                        // Collect and sort pattern IDs from both regular and tracker patterns
                         let mut pattern_ids: Vec<_> = song.patterns().map(|p| p.id).collect();
+                        pattern_ids.extend(song.tracker_patterns().map(|p| p.id()));
                         pattern_ids.sort_by_key(|id| id.0);
+                        pattern_ids.dedup(); // Remove duplicates if any
                         tracker_state.navigate_to_pattern(&pattern_ids);
                     }
 
@@ -82,10 +84,17 @@ pub fn show(
 
                             // Calculate row within the pattern
                             if tracker_state.active_pattern == Some(pattern_id) {
-                                song.pattern(pattern_id).map(|pattern| {
+                                // Try TrackerPattern first (native tracker format)
+                                if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
                                     let pattern_tick = PatternTick(offset.0 as u32);
-                                    pattern.row_resolution.tick_to_row(pattern_tick) as usize
-                                })
+                                    Some(tracker_pattern.tick_to_row(pattern_tick).as_usize())
+                                } else if let Some(pattern) = song.pattern(pattern_id) {
+                                    // Fall back to regular Pattern
+                                    let pattern_tick = PatternTick(offset.0 as u32);
+                                    Some(pattern.row_resolution.tick_to_row(pattern_tick) as usize)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -230,13 +239,17 @@ fn draw_toolbar(
             state.navigate_pattern_prev = true;
         }
 
-        // Show current/total pattern count
-        let pattern_count = song.map(|s| s.pattern_count()).unwrap_or(0);
+        // Show current/total pattern count (including tracker patterns)
+        let pattern_count = song
+            .map(|s| s.pattern_count() + s.tracker_pattern_count())
+            .unwrap_or(0);
         let current_index = song
             .and_then(|s| {
                 state.active_pattern.and_then(|active_id| {
                     let mut ids: Vec<_> = s.patterns().map(|p| p.id).collect();
+                    ids.extend(s.tracker_patterns().map(|p| p.id()));
                     ids.sort_by_key(|id| id.0);
+                    ids.dedup();
                     ids.iter().position(|&id| id == active_id)
                 })
             })
@@ -285,18 +298,24 @@ fn handle_tracker_input(
     song: &Song,
     result: &mut SequencerResult,
 ) {
-    // Get pattern row count for bounds checking
+    // Get pattern row count for bounds checking (check TrackerPattern first)
     let max_rows = state
         .active_pattern
-        .and_then(|id| song.pattern(id))
-        .map(|p| p.row_resolution.rows as usize)
+        .and_then(|id| {
+            song.tracker_pattern(id)
+                .map(|p| p.num_rows().as_usize())
+                .or_else(|| song.pattern(id).map(|p| p.row_resolution.rows as usize))
+        })
         .unwrap_or(64);
 
-    // Get track count from active pattern
+    // Get track count from active pattern (check TrackerPattern first)
     let num_tracks = state
         .active_pattern
-        .and_then(|id| song.pattern(id))
-        .map(|p| p.num_tracks() as usize)
+        .and_then(|id| {
+            song.tracker_pattern(id)
+                .map(|p| p.num_tracks().as_usize())
+                .or_else(|| song.pattern(id).map(|p| p.num_tracks() as usize))
+        })
         .unwrap_or(4);
 
     // Navigation keys

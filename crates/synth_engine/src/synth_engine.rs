@@ -1540,12 +1540,11 @@ impl AudioProcessor for SynthEngine {
                     ..
                 } => {
                     // Filter by solo track (if set)
-                    if let Some(solo) = self.solo_track {
-                        if let Some(v_idx) = voice_index {
-                            if v_idx.as_usize() != solo.0 as usize {
-                                continue;
-                            }
-                        }
+                    if let Some(solo) = self.solo_track
+                        && let Some(v_idx) = voice_index
+                        && v_idx.as_usize() != solo.0 as usize
+                    {
+                        continue;
                     }
 
                     let note = MidiNote::new(pitch.as_midi());
@@ -1598,23 +1597,41 @@ impl AudioProcessor for SynthEngine {
                     let voice_idx = track.0 as usize;
 
                     // Filter by solo track (if set)
-                    if let Some(solo) = self.solo_track {
-                        if voice_idx != solo.0 as usize {
-                            continue;
-                        }
+                    if let Some(solo) = self.solo_track
+                        && voice_idx != solo.0 as usize
+                    {
+                        continue;
                     }
 
-                    // Apply to first instrument (tracker mode uses single instrument)
-                    if let Some(first) = self.instruments.first_mut()
-                        && let Some(voice) = first.allocator_mut().voices_mut().get_mut(voice_idx)
-                    {
-                        voice.tracker_pitch_cents = *pitch_cents;
-                        voice.tracker_volume = *volume;
-                        voice.tracker_panning = *panning;
+                    // Apply to all instruments (voice might be on any of them)
+                    for instrument in &mut self.instruments {
+                        if let Some(voice) = instrument.allocator_mut().voices_mut().get_mut(voice_idx)
+                        {
+                            voice.tracker_pitch_cents = *pitch_cents;
+                            voice.tracker_volume = *volume;
+                            voice.tracker_panning = *panning;
 
-                        if *note_cut {
-                            voice.note_off();
+                            if *note_cut {
+                                voice.note_off();
+                            }
                         }
+                    }
+                }
+                synth_sequencer::SequencerEvent::VoiceOff { voice_index, .. } => {
+                    // Tracker-style voice release (=== marker)
+                    // Release the specific voice on all instruments
+                    let voice_idx = voice_index.as_usize();
+
+                    // Filter by solo track (if set)
+                    if let Some(solo) = self.solo_track
+                        && voice_idx != solo.0 as usize
+                    {
+                        continue;
+                    }
+
+                    // Release voice on all instruments (voice might be active on any of them)
+                    for instrument in &mut self.instruments {
+                        instrument.allocator_mut().note_off_fixed_voice(*voice_index);
                     }
                 }
                 _ => {}

@@ -77,6 +77,16 @@ pub enum SequencerEvent {
         /// Tone portamento target pitch in semitones (if active).
         tone_porta_pitch: Option<f32>,
     },
+    /// Voice release event for tracker-style playback.
+    ///
+    /// Used when we have a NoteOff (=== marker) but no active note tracked.
+    /// This tells the engine to release a specific voice directly.
+    VoiceOff {
+        /// Absolute position in the song.
+        tick: Tick,
+        /// Voice index to release.
+        voice_index: VoiceIndex,
+    },
 }
 
 impl SequencerEvent {
@@ -87,7 +97,8 @@ impl SequencerEvent {
             | Self::NoteOff { tick, .. }
             | Self::Effect { tick, .. }
             | Self::Parameter { tick, .. }
-            | Self::Modulation { tick, .. } => *tick,
+            | Self::Modulation { tick, .. }
+            | Self::VoiceOff { tick, .. } => *tick,
         }
     }
 
@@ -114,6 +125,11 @@ impl SequencerEvent {
     /// Check if this is a modulation event.
     pub fn is_modulation(&self) -> bool {
         matches!(self, Self::Modulation { .. })
+    }
+
+    /// Check if this is a voice off event.
+    pub fn is_voice_off(&self) -> bool {
+        matches!(self, Self::VoiceOff { .. })
     }
 
     /// Get the instrument ID if this is a note event.

@@ -1,11 +1,13 @@
 //! Tracker view helpers.
 //!
 //! Structures for rendering Pattern data as tracker-style rows and columns.
+//! Supports both Pattern (piano-roll style) and TrackerPattern (native tracker).
 
 use crate::effects::EffectCommand;
 use crate::ids::SeqInstrumentId;
 use crate::pattern::Pattern;
 use crate::pitch::Pitch;
+use crate::tracker_pattern::{Cell, TrackerPattern};
 use synth_core::Velocity;
 
 /// Display representation of a note in the tracker.
@@ -97,10 +99,10 @@ impl TrackerCell {
             parts.push("---".to_string());
         }
 
-        // Instrument
+        // Instrument (0 means "inherit previous", shown as "..")
         if config.show_instrument {
-            if let Some(inst) = self.instrument {
-                parts.push(format!("{:02X}", inst.0));
+            if let Some(inst) = self.instrument.filter(|i| i.0 > 0) {
+                parts.push(format!("{:02}", inst.0));
             } else {
                 parts.push("..".to_string());
             }
@@ -346,6 +348,87 @@ pub trait PatternTrackerView {
 impl PatternTrackerView for Pattern {
     fn to_tracker_rows(&self, config: &TrackerViewConfig) -> Vec<TrackerRow> {
         to_tracker_rows(self, config)
+    }
+}
+
+/// Convert a TrackerPattern to tracker rows for rendering.
+///
+/// This is a direct conversion since TrackerPattern already uses native tracker structure.
+pub fn tracker_pattern_to_tracker_rows(
+    pattern: &TrackerPattern,
+    config: &TrackerViewConfig,
+) -> Vec<TrackerRow> {
+    let num_rows = pattern.num_rows().as_u16() as usize;
+    let num_tracks = pattern.num_tracks().as_u8() as usize;
+
+    let mut rows: Vec<TrackerRow> = (0..num_rows)
+        .map(|i| TrackerRow::with_columns(i as u16, num_tracks))
+        .collect();
+
+    // Iterate through all rows and tracks
+    for row_idx in 0..num_rows {
+        let row_index = crate::ids::RowIndex::new(row_idx as u16);
+
+        for (track_index, row_data) in pattern.row_across_tracks(row_index) {
+            let col_idx = track_index.as_u8() as usize;
+            let row = &mut rows[row_idx];
+
+            // Ensure we have enough columns
+            while row.columns.len() <= col_idx {
+                row.columns.push(TrackerCell::default());
+            }
+
+            let cell = &mut row.columns[col_idx];
+
+            // Convert Cell to TrackerCell
+            match &row_data.cell {
+                Cell::Note {
+                    pitch,
+                    instrument,
+                    velocity,
+                } => {
+                    cell.note = Some(TrackerNoteDisplay {
+                        pitch: *pitch,
+                        is_note_off: false,
+                    });
+                    cell.instrument = *instrument;
+                    cell.volume = velocity.map(|v| (v.as_f32() * 64.0) as u8);
+                }
+                Cell::NoteOff => {
+                    // Note-off marker (===)
+                    // We use a dummy pitch since it's not displayed for note-off
+                    cell.note = Some(TrackerNoteDisplay {
+                        pitch: Pitch::MIDDLE_C,
+                        is_note_off: true,
+                    });
+                }
+                Cell::Empty => {
+                    // No note data
+                }
+            }
+
+            // Copy effects (up to configured limit)
+            cell.effects = row_data
+                .effects
+                .iter()
+                .take(config.effect_columns as usize)
+                .cloned()
+                .collect();
+        }
+    }
+
+    rows
+}
+
+/// Extension trait for TrackerPattern to add tracker view conversion.
+pub trait TrackerPatternTrackerView {
+    /// Convert this tracker pattern to tracker rows.
+    fn to_tracker_rows(&self, config: &TrackerViewConfig) -> Vec<TrackerRow>;
+}
+
+impl TrackerPatternTrackerView for TrackerPattern {
+    fn to_tracker_rows(&self, config: &TrackerViewConfig) -> Vec<TrackerRow> {
+        tracker_pattern_to_tracker_rows(self, config)
     }
 }
 
