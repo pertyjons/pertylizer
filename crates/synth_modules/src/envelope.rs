@@ -1,8 +1,8 @@
 //! ADSR Envelope generator module.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -79,7 +79,8 @@ impl EnvelopePositionBuffer {
     /// Set the envelope state (called from audio thread).
     pub fn set(&self, stage: EnvelopeStage, time_in_stage: f32) {
         self.stage.store(stage.as_u32(), Ordering::Relaxed);
-        self.time_in_stage.store(time_in_stage.to_bits(), Ordering::Relaxed);
+        self.time_in_stage
+            .store(time_in_stage.to_bits(), Ordering::Relaxed);
     }
 
     /// Get the envelope state (called from GUI thread).

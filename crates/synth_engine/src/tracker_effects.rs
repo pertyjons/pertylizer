@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use synth_core::{BipolarValue, NormalizedValue};
+use synth_core::{BipolarValue, NormalizedValue, Phase, Semitones};
 use synth_sequencer::TrackId;
 use synth_sequencer::effects::{EffectCommand, EffectWaveform};
 use synth_sequencer::pitch::Pitch;
@@ -26,12 +26,69 @@ use synth_sequencer::pitch::Pitch;
 pub const MAX_CHANNELS: usize = 64;
 
 // ============================================================================
+// Note Trigger Types
+// ============================================================================
+
+/// Default values from instrument/sample for note triggering.
+///
+/// Used to reset channel state when a note with explicit instrument is triggered.
+/// These values should come from the sample/instrument, not be hardcoded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct InstrumentDefaults {
+    /// Sample's default volume (0.0-1.0). Use 1.0 if not specified.
+    pub volume: NormalizedValue,
+    /// Sample's default panning (-1.0 to 1.0). Use 0.0 (center) if not specified.
+    pub panning: BipolarValue,
+}
+
+impl Default for InstrumentDefaults {
+    fn default() -> Self {
+        Self {
+            volume: NormalizedValue::MAX,
+            panning: BipolarValue::CENTER,
+        }
+    }
+}
+
+impl InstrumentDefaults {
+    /// Create from sample default values.
+    ///
+    /// # Arguments
+    /// * `volume` - Optional volume from sample (0.0-1.0), defaults to 1.0
+    /// * `panning` - Optional panning from sample (0.0=left, 0.5=center, 1.0=right), defaults to center
+    #[must_use]
+    pub fn from_sample(volume: Option<f32>, panning: Option<f32>) -> Self {
+        Self {
+            volume: NormalizedValue::new(volume.unwrap_or(1.0)),
+            // Convert from tracker panning (0.0-1.0) to bipolar (-1.0 to 1.0)
+            panning: BipolarValue::new(panning.map_or(0.0, |p| (p * 2.0) - 1.0)),
+        }
+    }
+}
+
+/// Information needed to trigger a note on a channel.
+///
+/// Used by `process_row_start()` to correctly handle the state machine
+/// for note triggering (fresh attack vs tone portamento).
+#[derive(Debug, Clone)]
+pub struct NoteTriggerInfo {
+    /// The pitch of the new note.
+    pub pitch: Pitch,
+    /// Instrument defaults if an explicit instrument was specified.
+    /// `Some` = reset volume/panning to these values.
+    /// `None` = inherit current channel state (no volume/panning reset).
+    pub instrument_defaults: Option<InstrumentDefaults>,
+}
+
+// ============================================================================
 // Type-safe wrappers
 // ============================================================================
 
 /// Speed value (ticks per row) - newtype for type safety.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct TrackerSpeed(u8);
+#[must_use]
+pub struct TrackerSpeed(pub(crate) u8);
 
 impl TrackerSpeed {
     /// Default tracker speed (6 ticks per row).
@@ -52,6 +109,7 @@ impl TrackerSpeed {
 
 /// Tick position within a row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
 pub struct TickInRow(u8);
 
 impl TickInRow {
@@ -79,6 +137,7 @@ impl TickInRow {
 
 /// Sample offset for tracker sample playback start position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
 pub struct TrackerSampleOffset(u16);
 
 impl TrackerSampleOffset {
@@ -106,7 +165,10 @@ impl TrackerSampleOffset {
 }
 
 /// Pitch offset in cents for effect modulation.
+///
+/// 100 cents = 1 semitone. Used for vibrato, portamento, and other pitch effects.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[must_use]
 pub struct PitchCents(f32);
 
 impl PitchCents {
@@ -135,7 +197,7 @@ impl PitchCents {
 impl std::ops::Add for PitchCents {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self {
+    fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
     }
 }
@@ -144,6 +206,395 @@ impl std::ops::AddAssign for PitchCents {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
+}
+
+impl std::ops::Sub for PitchCents {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::SubAssign for PitchCents {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl std::ops::Neg for PitchCents {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self(-self.0)
+    }
+}
+
+/// Effect speed value (for vibrato/tremolo speed parameters).
+///
+/// Higher values mean faster oscillation.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct EffectSpeed(f32);
+
+impl EffectSpeed {
+    /// No speed (effect disabled).
+    pub const ZERO: Self = Self(0.0);
+
+    /// Create a new effect speed.
+    #[must_use]
+    pub fn new(speed: f32) -> Self {
+        Self(speed)
+    }
+
+    /// Create from tracker effect parameter (0-15).
+    #[must_use]
+    pub fn from_param(param: u8) -> Self {
+        Self(f32::from(param))
+    }
+
+    /// Get the raw value.
+    #[must_use]
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Check if the speed is non-zero (effect active).
+    #[must_use]
+    pub fn is_active(self) -> bool {
+        self.0 > 0.0
+    }
+}
+
+/// Per-tick slide rate for volume and panning effects.
+///
+/// Represents the amount to change per tick. Positive = up/right, negative = down/left.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct SlideRate(f32);
+
+impl SlideRate {
+    /// No slide.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Create a new slide rate.
+    #[must_use]
+    pub fn new(rate: f32) -> Self {
+        Self(rate)
+    }
+
+    /// Create from tracker volume slide parameters.
+    ///
+    /// # Arguments
+    /// * `up` - Slide up value (0-15)
+    /// * `down` - Slide down value (0-15)
+    #[must_use]
+    pub fn from_volume_slide(up: u8, down: u8) -> Self {
+        Self((f32::from(up) - f32::from(down)) / 64.0)
+    }
+
+    /// Create from tracker panning slide parameters.
+    #[must_use]
+    pub fn from_panning_slide(left: u8, right: u8) -> Self {
+        Self((f32::from(right) - f32::from(left)) / 128.0)
+    }
+
+    /// Get the raw value.
+    #[must_use]
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Check if the slide is active (non-zero).
+    #[must_use]
+    pub fn is_active(self) -> bool {
+        self.0.abs() > f32::EPSILON
+    }
+}
+
+/// Depth/intensity for tremolo effect (0.0-1.0).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct TremoloDepth(f32);
+
+impl TremoloDepth {
+    /// No tremolo.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Create a new tremolo depth.
+    #[must_use]
+    pub fn new(depth: f32) -> Self {
+        Self(depth.clamp(0.0, 1.0))
+    }
+
+    /// Create from tracker effect parameter (0-15).
+    #[must_use]
+    pub fn from_param(param: u8) -> Self {
+        Self(f32::from(param) / 64.0)
+    }
+
+    /// Get the raw value.
+    #[must_use]
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Check if tremolo is active.
+    #[must_use]
+    pub fn is_active(self) -> bool {
+        self.0 > 0.0
+    }
+}
+
+/// Retrigger effect state.
+///
+/// Controls automatic note retriggering at regular intervals,
+/// optionally with volume change per retrigger.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct RetriggerState {
+    /// Interval in ticks between retriggers. 0 = disabled.
+    interval: TickCount,
+    /// Current tick counter.
+    counter: TickCount,
+    /// Volume change per retrigger.
+    volume_change: SlideRate,
+}
+
+impl RetriggerState {
+    /// Disabled retrigger state.
+    pub const DISABLED: Self = Self {
+        interval: TickCount::ZERO,
+        counter: TickCount::ZERO,
+        volume_change: SlideRate::ZERO,
+    };
+
+    /// Create a new retrigger state.
+    #[must_use]
+    pub fn new(interval: TickCount, volume_change: SlideRate) -> Self {
+        Self {
+            interval,
+            counter: TickCount::ZERO,
+            volume_change,
+        }
+    }
+
+    /// Check if retrigger is active.
+    #[must_use]
+    pub fn is_active(self) -> bool {
+        self.interval.0 > 0
+    }
+
+    /// Get the interval.
+    #[must_use]
+    pub fn interval(self) -> TickCount {
+        self.interval
+    }
+
+    /// Get the volume change per retrigger.
+    #[must_use]
+    pub fn volume_change(self) -> SlideRate {
+        self.volume_change
+    }
+
+    /// Advance the counter and return true if a retrigger should occur.
+    pub fn tick(&mut self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+
+        self.counter.0 += 1;
+        if self.counter.0 >= self.interval.0 {
+            self.counter = TickCount::ZERO;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset the counter.
+    pub fn reset_counter(&mut self) {
+        self.counter = TickCount::ZERO;
+    }
+}
+
+/// Tick count for retrigger intervals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct TickCount(u8);
+
+impl TickCount {
+    /// Zero ticks.
+    pub const ZERO: Self = Self(0);
+
+    /// Create a new tick count.
+    #[must_use]
+    pub const fn new(count: u8) -> Self {
+        Self(count)
+    }
+
+    /// Get the raw value.
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+/// Glissando mode for tone portamento.
+///
+/// When enabled, portamento slides are quantized to semitones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Glissando {
+    /// Smooth portamento (default).
+    #[default]
+    Smooth,
+    /// Quantize portamento to semitones.
+    Quantized,
+}
+
+impl Glissando {
+    /// Check if glissando (semitone quantization) is enabled.
+    #[must_use]
+    pub fn is_quantized(self) -> bool {
+        matches!(self, Self::Quantized)
+    }
+}
+
+impl From<bool> for Glissando {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::Quantized
+        } else {
+            Self::Smooth
+        }
+    }
+}
+
+/// Current note state flags for a channel.
+///
+/// Tracks whether a note is playing and pending trigger/cut actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct NoteState {
+    /// Whether a note is currently playing on this channel.
+    playing: PlayingState,
+    /// Whether note should trigger this tick (after delay, retrigger).
+    trigger: TriggerAction,
+    /// Whether note should cut this tick.
+    cut: CutAction,
+}
+
+impl NoteState {
+    /// Default state: not playing, no pending actions.
+    pub const SILENT: Self = Self {
+        playing: PlayingState::Stopped,
+        trigger: TriggerAction::None,
+        cut: CutAction::None,
+    };
+
+    /// Create a new playing state.
+    #[must_use]
+    pub fn playing() -> Self {
+        Self {
+            playing: PlayingState::Playing,
+            trigger: TriggerAction::Trigger,
+            cut: CutAction::None,
+        }
+    }
+
+    /// Check if a note is currently playing.
+    #[must_use]
+    pub fn is_playing(self) -> bool {
+        matches!(self.playing, PlayingState::Playing)
+    }
+
+    /// Check if a note trigger is pending.
+    #[must_use]
+    pub fn should_trigger(self) -> bool {
+        matches!(self.trigger, TriggerAction::Trigger)
+    }
+
+    /// Check if a note cut is pending.
+    #[must_use]
+    pub fn should_cut(self) -> bool {
+        matches!(self.cut, CutAction::Cut)
+    }
+
+    /// Set the playing state.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = if playing {
+            PlayingState::Playing
+        } else {
+            PlayingState::Stopped
+        };
+    }
+
+    /// Set the trigger action for this tick.
+    pub fn set_trigger(&mut self, trigger: bool) {
+        self.trigger = if trigger {
+            TriggerAction::Trigger
+        } else {
+            TriggerAction::None
+        };
+    }
+
+    /// Set the cut action for this tick.
+    pub fn set_cut(&mut self, cut: bool) {
+        self.cut = if cut { CutAction::Cut } else { CutAction::None };
+    }
+
+    /// Clear per-tick actions (trigger, cut) but keep playing state.
+    pub fn clear_actions(&mut self) {
+        self.trigger = TriggerAction::None;
+        self.cut = CutAction::None;
+    }
+
+    /// Trigger the note (set playing and trigger).
+    pub fn trigger(&mut self) {
+        self.playing = PlayingState::Playing;
+        self.trigger = TriggerAction::Trigger;
+        self.cut = CutAction::None;
+    }
+
+    /// Cut the note (set not playing and cut).
+    pub fn cut(&mut self) {
+        self.cut = CutAction::Cut;
+    }
+
+    /// Stop the note (set not playing).
+    pub fn stop(&mut self) {
+        self.playing = PlayingState::Stopped;
+    }
+}
+
+/// Whether a note is currently playing on a channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PlayingState {
+    /// No note is playing.
+    #[default]
+    Stopped,
+    /// A note is playing.
+    Playing,
+}
+
+/// Whether a note trigger is pending this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TriggerAction {
+    /// No trigger pending.
+    #[default]
+    None,
+    /// Note should be triggered.
+    Trigger,
+}
+
+/// Whether a note cut is pending this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CutAction {
+    /// No cut pending.
+    #[default]
+    None,
+    /// Note should be cut.
+    Cut,
 }
 
 // ============================================================================
@@ -224,19 +675,22 @@ impl ChannelEffectProcessor {
     ///
     /// * `track` - The track/channel to process
     /// * `effects` - Effects to process for this row
-    /// * `base_pitch` - The note pitch (if a note is playing)
-    /// * `instrument_volume` - Volume to reset to when a new note with explicit instrument
-    ///   is played. This follows XM behavior: new note with instrument resets channel volume
-    ///   to the sample's default_volume (or the volume column value if present).
-    ///   Pass `None` for notes that inherit instrument (no volume reset) or effect-only rows.
+    /// * `trigger_info` - Note trigger information if a note is being triggered on this row.
+    ///   Contains the pitch and optional instrument defaults for proper state reset.
+    ///   Pass `None` for effect-only rows (no note trigger).
+    ///
+    /// # State Machine Order (CRITICAL!)
+    ///
+    /// 1. First: Scan effects to detect tone portamento and sample offset
+    /// 2. Then: Call `trigger_note()` if a note is present
+    /// 3. Finally: Process all effects (these can override trigger_note values)
     ///
     /// Returns any global commands that need sequencer-level handling.
     pub fn process_row_start(
         &mut self,
         track: TrackId,
         effects: &[EffectCommand],
-        base_pitch: Option<Pitch>,
-        instrument_volume: Option<NormalizedValue>,
+        trigger_info: Option<NoteTriggerInfo>,
     ) -> Vec<GlobalCommand> {
         self.tick_in_row = TickInRow::ZERO;
         let mut global_commands = Vec::new();
@@ -250,21 +704,28 @@ impl ChannelEffectProcessor {
         }
         let state = &mut self.channels[channel_idx];
 
-        // XM behavior: When a new note with explicit instrument is played,
-        // reset channel volume to the instrument's default volume.
-        // This MUST happen BEFORE effect processing so SetVolume can override.
-        if let Some(volume) = instrument_volume {
-            state.volume = volume;
-            // Also reset volume slide to stop any ongoing slide
-            state.volume_slide = 0.0;
+        // STEP 1: Scan effects to determine trigger type
+        // This must happen BEFORE trigger_note() to correctly identify tone portamento
+        let is_tone_portamento = effects
+            .iter()
+            .any(|e| matches!(e, EffectCommand::TonePortamento { .. }));
+
+        let has_sample_offset = effects
+            .iter()
+            .any(|e| matches!(e, EffectCommand::SampleOffset(_)));
+
+        // STEP 2: Trigger note if present (BEFORE effect processing!)
+        // This resets the appropriate state based on trigger type
+        if let Some(trigger) = trigger_info {
+            state.trigger_note(
+                trigger.pitch,
+                trigger.instrument_defaults,
+                is_tone_portamento,
+                has_sample_offset,
+            );
         }
 
-        // Update base pitch for portamento target
-        if let Some(pitch) = base_pitch {
-            state.last_note = Some(pitch);
-        }
-
-        // Process each effect
+        // STEP 3: Process each effect (can override trigger_note values)
         for effect in effects {
             match effect {
                 // === Immediate effects (tick 0 only) ===
@@ -319,7 +780,7 @@ impl ChannelEffectProcessor {
 
                 EffectCommand::Vibrato { speed, depth } => {
                     if *speed > 0 {
-                        state.vibrato_speed = f32::from(*speed);
+                        state.vibrato_speed = EffectSpeed::from_param(*speed);
                     }
                     if *depth > 0 {
                         state.vibrato_depth = PitchCents::new(f32::from(*depth) * 4.0);
@@ -331,23 +792,22 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::VolumeSlide { up, down } => {
-                    let delta = (f32::from(*up) - f32::from(*down)) / 64.0;
-                    state.volume_slide = delta;
+                    state.volume_slide = SlideRate::from_volume_slide(*up, *down);
                 }
 
                 EffectCommand::FineVolumeSlide { up, down } => {
                     // Fine slide: apply once at tick 0
-                    let delta = (f32::from(*up) - f32::from(*down)) / 64.0;
-                    let new_vol = (state.volume.as_f32() + delta).clamp(0.0, 1.0);
+                    let delta = SlideRate::from_volume_slide(*up, *down);
+                    let new_vol = (state.volume.as_f32() + delta.as_f32()).clamp(0.0, 1.0);
                     state.volume = NormalizedValue::new(new_vol);
                 }
 
                 EffectCommand::Tremolo { speed, depth } => {
                     if *speed > 0 {
-                        state.tremolo_speed = f32::from(*speed);
+                        state.tremolo_speed = EffectSpeed::from_param(*speed);
                     }
                     if *depth > 0 {
-                        state.tremolo_depth = f32::from(*depth) / 64.0;
+                        state.tremolo_depth = TremoloDepth::from_param(*depth);
                     }
                 }
 
@@ -356,7 +816,7 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::PanningSlide { left, right } => {
-                    state.panning_slide = (f32::from(*right) - f32::from(*left)) / 128.0;
+                    state.panning_slide = SlideRate::from_panning_slide(*left, *right);
                 }
 
                 EffectCommand::NoteCut(tick) => {
@@ -371,9 +831,10 @@ impl ChannelEffectProcessor {
                     interval,
                     volume_change,
                 } => {
-                    state.retrigger_interval = *interval;
-                    state.retrigger_volume_change = f32::from(*volume_change) / 64.0;
-                    state.retrigger_counter = 0;
+                    state.retrigger = RetriggerState::new(
+                        TickCount::new(*interval),
+                        SlideRate::new(f32::from(*volume_change) / 64.0),
+                    );
                 }
 
                 EffectCommand::NoteFadeOut(tick) => {
@@ -381,7 +842,7 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::Glissando(enabled) => {
-                    state.glissando = *enabled;
+                    state.glissando = Glissando::from(*enabled);
                 }
 
                 // === Global effects ===
@@ -476,6 +937,10 @@ pub enum PortamentoDirection {
 }
 
 /// Per-channel effect state.
+///
+/// Tracks all effect state for a single tracker channel, including
+/// pitch modulation (vibrato, portamento), volume modulation (tremolo, slides),
+/// and timing effects (note delay, cut, retrigger).
 #[derive(Debug, Clone)]
 pub struct ChannelEffectState {
     // === Current values ===
@@ -495,52 +960,70 @@ pub struct ChannelEffectState {
     pub last_note: Option<Pitch>,
 
     // === Arpeggio ===
+    /// Current arpeggio state (if active).
     pub arpeggio: Option<ArpeggioState>,
 
     // === Portamento ===
+    /// Portamento slide speed in cents per tick.
     pub portamento_speed: PitchCents,
+    /// Current portamento direction.
     pub portamento_direction: PortamentoDirection,
 
     // === Tone portamento (glide to note) ===
+    /// Tone portamento speed in cents per tick.
     pub tone_porta_speed: PitchCents,
+    /// Target pitch for tone portamento.
     pub tone_porta_target: Option<Pitch>,
-    pub current_pitch: f32, // Current pitch in semitones for glide
+    /// Current pitch in semitones for glide interpolation.
+    pub current_pitch: Semitones,
 
     // === Vibrato ===
-    pub vibrato_speed: f32,
+    /// Vibrato oscillation speed.
+    pub vibrato_speed: EffectSpeed,
+    /// Vibrato pitch modulation depth.
     pub vibrato_depth: PitchCents,
-    pub vibrato_phase: f32, // 0.0-1.0
+    /// Current vibrato phase (0.0-1.0).
+    pub vibrato_phase: Phase,
+    /// Vibrato waveform shape.
     pub vibrato_waveform: EffectWaveform,
 
     // === Volume slide ===
-    pub volume_slide: f32, // Per-tick change
+    /// Per-tick volume change rate.
+    pub volume_slide: SlideRate,
 
     // === Tremolo ===
-    pub tremolo_speed: f32,
-    pub tremolo_depth: f32,
-    pub tremolo_phase: f32,
+    /// Tremolo oscillation speed.
+    pub tremolo_speed: EffectSpeed,
+    /// Tremolo volume modulation depth.
+    pub tremolo_depth: TremoloDepth,
+    /// Current tremolo phase (0.0-1.0).
+    pub tremolo_phase: Phase,
+    /// Tremolo waveform shape.
     pub tremolo_waveform: EffectWaveform,
 
     // === Panning slide ===
-    pub panning_slide: f32,
+    /// Per-tick panning change rate.
+    pub panning_slide: SlideRate,
 
     // === Timing effects ===
+    /// Tick at which to cut the note.
     pub note_cut_tick: Option<TickInRow>,
+    /// Tick at which to delay/trigger the note.
     pub note_delay_tick: Option<TickInRow>,
+    /// Tick at which to start fade out.
     pub fade_out_tick: Option<TickInRow>,
 
     // === Retrigger ===
-    pub retrigger_interval: u8,
-    pub retrigger_volume_change: f32,
-    pub retrigger_counter: u8,
+    /// Retrigger effect state.
+    pub retrigger: RetriggerState,
 
     // === Glissando ===
-    pub glissando: bool,
+    /// Portamento quantization mode.
+    pub glissando: Glissando,
 
     // === Note state ===
-    pub is_playing: bool,
-    pub note_triggered: bool, // Set true when note should trigger (after delay)
-    pub note_cut: bool,       // Set true when note should cut
+    /// Current note state (playing, trigger, cut).
+    pub note_state: NoteState,
 }
 
 impl Default for ChannelEffectState {
@@ -557,27 +1040,23 @@ impl Default for ChannelEffectState {
             portamento_direction: PortamentoDirection::Off,
             tone_porta_speed: PitchCents::ZERO,
             tone_porta_target: None,
-            current_pitch: 0.0,
-            vibrato_speed: 0.0,
+            current_pitch: Semitones::ZERO,
+            vibrato_speed: EffectSpeed::ZERO,
             vibrato_depth: PitchCents::ZERO,
-            vibrato_phase: 0.0,
+            vibrato_phase: Phase::ZERO,
             vibrato_waveform: EffectWaveform::Sine,
-            volume_slide: 0.0,
-            tremolo_speed: 0.0,
-            tremolo_depth: 0.0,
-            tremolo_phase: 0.0,
+            volume_slide: SlideRate::ZERO,
+            tremolo_speed: EffectSpeed::ZERO,
+            tremolo_depth: TremoloDepth::ZERO,
+            tremolo_phase: Phase::ZERO,
             tremolo_waveform: EffectWaveform::Sine,
-            panning_slide: 0.0,
+            panning_slide: SlideRate::ZERO,
             note_cut_tick: None,
             note_delay_tick: None,
             fade_out_tick: None,
-            retrigger_interval: 0,
-            retrigger_volume_change: 0.0,
-            retrigger_counter: 0,
-            glissando: false,
-            is_playing: false,
-            note_triggered: false,
-            note_cut: false,
+            retrigger: RetriggerState::DISABLED,
+            glissando: Glissando::Smooth,
+            note_state: NoteState::SILENT,
         }
     }
 }
@@ -588,16 +1067,94 @@ impl ChannelEffectState {
         *self = Self::default();
     }
 
+    /// Trigger a new note on this channel.
+    ///
+    /// This method implements the tracker "Note Trigger State Machine" which
+    /// correctly handles all state transitions when a new note is triggered.
+    ///
+    /// # Arguments
+    ///
+    /// * `pitch` - The pitch of the new note
+    /// * `instrument_defaults` - `Some` if explicit instrument was specified (reset volume/panning),
+    ///                           `None` if inheriting instrument (keep current volume/panning)
+    /// * `is_tone_portamento` - `true` if effect 3xx (tone portamento) or 5xx is active on this row
+    /// * `has_sample_offset` - `true` if effect 9xx (sample offset) is active on this row
+    ///
+    /// # Tone Portamento vs Fresh Attack
+    ///
+    /// - **Tone Portamento (3xx/5xx):** Only sets the target pitch for glide. All other state
+    ///   (volume, vibrato, etc.) is preserved. This creates a legato/glide effect.
+    /// - **Fresh Attack:** Resets all pitch modulation, oscillator phases, slides, and retrigger.
+    ///   Volume/panning is only reset if an explicit instrument is specified.
+    pub fn trigger_note(
+        &mut self,
+        pitch: Pitch,
+        instrument_defaults: Option<InstrumentDefaults>,
+        is_tone_portamento: bool,
+        has_sample_offset: bool,
+    ) {
+        // STEP 1: ALWAYS clear per-row timing effects (prevents "ghosting")
+        self.note_delay_tick = None;
+        self.note_cut_tick = None;
+        self.fade_out_tick = None;
+
+        // STEP 2: Tone portamento is a special case - only set target, keep everything else
+        if is_tone_portamento {
+            self.tone_porta_target = Some(pitch);
+            return; // Early return - preserve all other state!
+        }
+
+        // STEP 3: Fresh Attack - this is a "clean" new note
+
+        // 3a. Reset pitch modulation
+        self.pitch_offset = PitchCents::ZERO;
+        self.portamento_speed = PitchCents::ZERO;
+        self.portamento_direction = PortamentoDirection::Off;
+        self.vibrato_depth = PitchCents::ZERO;
+        self.vibrato_phase = Phase::ZERO; // Start vibrato from beginning of cycle
+        self.arpeggio = None;
+        self.current_pitch = Semitones::new(f32::from(pitch.as_midi())); // Set current pitch for future glides
+
+        // 3b. Reset volume/pan modulation (the movements, not the values)
+        self.tremolo_depth = TremoloDepth::ZERO;
+        self.tremolo_phase = Phase::ZERO; // Start tremolo from beginning of cycle
+        self.volume_slide = SlideRate::ZERO; // Stop any ongoing volume slide
+        self.panning_slide = SlideRate::ZERO; // Stop any ongoing panning slide
+
+        // 3c. Reset retrigger
+        self.retrigger = RetriggerState::DISABLED;
+
+        // 3d. Handle sample offset - only keep if explicitly set on this row
+        if !has_sample_offset {
+            self.sample_offset = TrackerSampleOffset::ZERO;
+        }
+
+        // 3e. Handle explicit instrument (CRITICAL!)
+        // If instrument is explicit: reset volume/panning to instrument's defaults
+        // If instrument is inherited (None): keep current volume/panning
+        if let Some(defaults) = instrument_defaults {
+            // IMPORTANT: Use instrument defaults, NOT hardcoded values!
+            self.volume = defaults.volume;
+            self.panning = defaults.panning;
+            self.fine_tune = PitchCents::ZERO;
+        }
+        // If instrument_defaults is None: keep self.volume and self.panning
+
+        // 3f. Update note state
+        self.last_note = Some(pitch);
+        self.note_state.trigger();
+    }
+
     /// Process one tick and return modulation.
     pub fn process_tick(&mut self, tick: TickInRow, track: TrackId) -> ChannelModulation {
-        self.note_triggered = false;
-        self.note_cut = false;
+        // Clear per-tick actions from previous tick
+        self.note_state.clear_actions();
 
         // Note delay check
         if let Some(delay_tick) = self.note_delay_tick
             && tick.as_u8() == delay_tick.as_u8()
         {
-            self.note_triggered = true;
+            self.note_state.trigger();
             self.note_delay_tick = None;
         }
 
@@ -605,7 +1162,7 @@ impl ChannelEffectState {
         if let Some(cut_tick) = self.note_cut_tick
             && tick.as_u8() >= cut_tick.as_u8()
         {
-            self.note_cut = true;
+            self.note_state.cut();
             self.volume = NormalizedValue::MIN;
             self.note_cut_tick = None;
         }
@@ -617,19 +1174,19 @@ impl ChannelEffectState {
             let new_vol = self.volume.as_f32() * 0.9;
             self.volume = NormalizedValue::new(new_vol);
             if self.volume.as_f32() < 0.001 {
-                self.note_cut = true;
+                self.note_state.cut();
             }
         }
 
         // Volume slide (runs from tick 1 onwards)
-        if tick.as_u8() > 0 && self.volume_slide != 0.0 {
-            let new_vol = (self.volume.as_f32() + self.volume_slide).clamp(0.0, 1.0);
+        if tick.as_u8() > 0 && self.volume_slide.is_active() {
+            let new_vol = (self.volume.as_f32() + self.volume_slide.as_f32()).clamp(0.0, 1.0);
             self.volume = NormalizedValue::new(new_vol);
         }
 
         // Panning slide
-        if tick.as_u8() > 0 && self.panning_slide != 0.0 {
-            let new_pan = (self.panning.as_f32() + self.panning_slide).clamp(-1.0, 1.0);
+        if tick.as_u8() > 0 && self.panning_slide.is_active() {
+            let new_pan = (self.panning.as_f32() + self.panning_slide.as_f32()).clamp(-1.0, 1.0);
             self.panning = BipolarValue::new(new_pan);
         }
 
@@ -654,42 +1211,44 @@ impl ChannelEffectState {
             && let Some(target) = self.tone_porta_target
         {
             let target_pitch = f32::from(target.as_midi());
-            let diff = target_pitch - self.current_pitch;
+            let current = self.current_pitch.as_f32();
+            let diff = target_pitch - current;
             if diff.abs() > 0.01 {
                 let step = self.tone_porta_speed.as_f32() / 100.0; // Convert cents to semitones
                 if diff > 0.0 {
-                    self.current_pitch = (self.current_pitch + step).min(target_pitch);
+                    self.current_pitch = Semitones::new((current + step).min(target_pitch));
                 } else {
-                    self.current_pitch = (self.current_pitch - step).max(target_pitch);
+                    self.current_pitch = Semitones::new((current - step).max(target_pitch));
                 }
             }
         }
 
         // Vibrato
         if self.vibrato_depth.as_f32() > 0.0 {
-            self.vibrato_phase += self.vibrato_speed / 64.0;
-            if self.vibrato_phase >= 1.0 {
-                self.vibrato_phase -= 1.0;
-            }
+            let new_phase = self.vibrato_phase.as_f32() + self.vibrato_speed.as_f32() / 64.0;
+            self.vibrato_phase = Phase::new(if new_phase >= 1.0 {
+                new_phase - 1.0
+            } else {
+                new_phase
+            });
         }
 
         // Tremolo
-        if self.tremolo_depth > 0.0 {
-            self.tremolo_phase += self.tremolo_speed / 64.0;
-            if self.tremolo_phase >= 1.0 {
-                self.tremolo_phase -= 1.0;
-            }
+        if self.tremolo_depth.is_active() {
+            let new_phase = self.tremolo_phase.as_f32() + self.tremolo_speed.as_f32() / 64.0;
+            self.tremolo_phase = Phase::new(if new_phase >= 1.0 {
+                new_phase - 1.0
+            } else {
+                new_phase
+            });
         }
 
         // Retrigger
-        if self.retrigger_interval > 0 {
-            self.retrigger_counter += 1;
-            if self.retrigger_counter >= self.retrigger_interval {
-                self.retrigger_counter = 0;
-                self.note_triggered = true;
-                let new_vol = (self.volume.as_f32() + self.retrigger_volume_change).clamp(0.0, 1.0);
-                self.volume = NormalizedValue::new(new_vol);
-            }
+        if self.retrigger.tick() {
+            self.note_state.set_trigger(true);
+            let new_vol =
+                (self.volume.as_f32() + self.retrigger.volume_change().as_f32()).clamp(0.0, 1.0);
+            self.volume = NormalizedValue::new(new_vol);
         }
 
         self.current_modulation(track)
@@ -703,15 +1262,15 @@ impl ChannelEffectState {
 
         // Add vibrato
         if self.vibrato_depth.as_f32() > 0.0 {
-            let vibrato =
-                self.vibrato_waveform.sample(self.vibrato_phase) * self.vibrato_depth.as_f32();
+            let vibrato = self.vibrato_waveform.sample(self.vibrato_phase.as_f32())
+                * self.vibrato_depth.as_f32();
             pitch_mod += PitchCents::new(vibrato);
         }
 
         // Calculate arpeggio offset
         let arpeggio_semitones = self.arpeggio.as_ref().map_or(0, |arp| {
             // Cycle through base, +x, +y based on phase
-            match (self.vibrato_phase * 3.0) as u8 % 3 {
+            match (self.vibrato_phase.as_f32() * 3.0) as u8 % 3 {
                 0 => 0,
                 1 => arp.semitone1,
                 _ => arp.semitone2,
@@ -723,8 +1282,9 @@ impl ChannelEffectState {
         let mut volume_mod = self.volume.as_f32();
 
         // Add tremolo
-        if self.tremolo_depth > 0.0 {
-            let tremolo = self.tremolo_waveform.sample(self.tremolo_phase) * self.tremolo_depth;
+        if self.tremolo_depth.is_active() {
+            let tremolo = self.tremolo_waveform.sample(self.tremolo_phase.as_f32())
+                * self.tremolo_depth.as_f32();
             volume_mod *= 1.0 + tremolo;
             volume_mod = volume_mod.clamp(0.0, 1.0);
         }
@@ -734,11 +1294,11 @@ impl ChannelEffectState {
             pitch_cents: pitch_mod,
             volume: NormalizedValue::new(volume_mod),
             panning: self.panning,
-            note_triggered: self.note_triggered,
-            note_cut: self.note_cut,
+            note_triggered: self.note_state.should_trigger(),
+            note_cut: self.note_state.should_cut(),
             sample_offset: self.sample_offset,
             tone_porta_pitch: if self.tone_porta_target.is_some() {
-                Some(self.current_pitch)
+                Some(self.current_pitch.as_f32())
             } else {
                 None
             },
@@ -750,15 +1310,24 @@ impl ChannelEffectState {
 // Supporting Types
 // ============================================================================
 
-/// Arpeggio state.
-#[derive(Debug, Clone, Copy)]
+/// Arpeggio state for cycling between note pitches.
+///
+/// Cycles through base note, base + semitone1, base + semitone2 on each tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub struct ArpeggioState {
+    /// First arpeggio semitone offset (0-15).
     pub semitone1: u8,
+    /// Second arpeggio semitone offset (0-15).
     pub semitone2: u8,
 }
 
-/// Modulation values for a channel.
+/// Modulation values for a channel at a specific tick.
+///
+/// Contains all the per-tick modulation values that should be applied
+/// to the channel's sound: pitch, volume, panning, and note triggers.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct ChannelModulation {
     /// Track/channel ID.
     pub track: TrackId,
@@ -830,13 +1399,32 @@ pub enum GlobalCommand {
 mod tests {
     use super::*;
 
+    /// Helper to create a NoteTriggerInfo with explicit instrument defaults.
+    fn trigger_with_defaults(pitch: u8, volume: f32) -> NoteTriggerInfo {
+        NoteTriggerInfo {
+            pitch: synth_sequencer::Pitch::new(pitch).unwrap(),
+            instrument_defaults: Some(InstrumentDefaults {
+                volume: NormalizedValue::new(volume),
+                panning: BipolarValue::CENTER,
+            }),
+        }
+    }
+
+    /// Helper to create a NoteTriggerInfo that inherits instrument (no volume reset).
+    fn trigger_inherit(pitch: u8) -> NoteTriggerInfo {
+        NoteTriggerInfo {
+            pitch: synth_sequencer::Pitch::new(pitch).unwrap(),
+            instrument_defaults: None, // Inherit - don't reset volume
+        }
+    }
+
     #[test]
     fn test_volume_effect() {
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
         // Set volume to 50%
-        processor.process_row_start(track, &[EffectCommand::SetVolume(32)], None, None);
+        processor.process_row_start(track, &[EffectCommand::SetVolume(32)], None);
 
         let mod_val = processor.get_channel_modulation(track);
         assert!((mod_val.volume.as_f32() - 0.5).abs() < 0.01);
@@ -851,7 +1439,6 @@ mod tests {
         processor.process_row_start(
             track,
             &[EffectCommand::VolumeSlide { up: 0, down: 4 }],
-            None,
             None,
         );
 
@@ -874,7 +1461,6 @@ mod tests {
             track,
             &[EffectCommand::Vibrato { speed: 8, depth: 8 }],
             None,
-            None,
         );
 
         // Process several ticks
@@ -893,17 +1479,17 @@ mod tests {
         let track = TrackId::new(0);
 
         // Full left
-        processor.process_row_start(track, &[EffectCommand::SetPanning(0)], None, None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(0)], None);
         let left = processor.get_channel_modulation(track);
         assert!((left.panning.as_f32() - (-1.0)).abs() < 0.02);
 
         // Center
-        processor.process_row_start(track, &[EffectCommand::SetPanning(128)], None, None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(128)], None);
         let center = processor.get_channel_modulation(track);
         assert!(center.panning.as_f32().abs() < 0.02);
 
         // Full right
-        processor.process_row_start(track, &[EffectCommand::SetPanning(255)], None, None);
+        processor.process_row_start(track, &[EffectCommand::SetPanning(255)], None);
         let right = processor.get_channel_modulation(track);
         assert!((right.panning.as_f32() - 1.0).abs() < 0.02);
     }
@@ -916,7 +1502,6 @@ mod tests {
         let commands = processor.process_row_start(
             track,
             &[EffectCommand::SetTempo(140), EffectCommand::SetSpeed(4)],
-            None,
             None,
         );
 
@@ -934,7 +1519,7 @@ mod tests {
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
-        processor.process_row_start(track, &[EffectCommand::NoteCut(3)], None, None);
+        processor.process_row_start(track, &[EffectCommand::NoteCut(3)], None);
 
         // Ticks 1, 2: no cut
         processor.process_tick();
@@ -952,7 +1537,7 @@ mod tests {
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
-        processor.process_row_start(track, &[EffectCommand::Arpeggio { x: 4, y: 7 }], None, None);
+        processor.process_row_start(track, &[EffectCommand::Arpeggio { x: 4, y: 7 }], None);
 
         // Process a tick
         processor.process_tick();
@@ -989,7 +1574,6 @@ mod tests {
             track,
             &[EffectCommand::VolumeSlide { up: 0, down: 16 }],
             None,
-            None,
         );
 
         // Process several ticks to slide volume down
@@ -1009,8 +1593,7 @@ mod tests {
         processor.process_row_start(
             track,
             &[], // No effects
-            Some(synth_sequencer::Pitch::new(60).unwrap()),
-            Some(NormalizedValue::new(0.75)), // Instrument default volume
+            Some(trigger_with_defaults(60, 0.75)),
         );
 
         // Volume should be reset to 0.75
@@ -1023,7 +1606,7 @@ mod tests {
 
         // Also verify that volume slide was stopped
         assert!(
-            processor.channels[0].volume_slide.abs() < 0.001,
+            !processor.channels[0].volume_slide.is_active(),
             "Volume slide should be stopped"
         );
     }
@@ -1036,7 +1619,7 @@ mod tests {
         let track = TrackId::new(0);
 
         // Set volume to 0.3 via SetVolume effect
-        processor.process_row_start(track, &[EffectCommand::SetVolume(19)], None, None); // 19/64 ≈ 0.3
+        processor.process_row_start(track, &[EffectCommand::SetVolume(19)], None); // 19/64 ≈ 0.3
 
         let mod_after_set = processor.get_channel_modulation(track);
         assert!(
@@ -1045,12 +1628,11 @@ mod tests {
             mod_after_set.volume.as_f32()
         );
 
-        // Now play a note that inherits instrument (instrument_volume = None)
+        // Now play a note that inherits instrument (instrument_defaults = None)
         processor.process_row_start(
             track,
             &[], // No effects
-            Some(synth_sequencer::Pitch::new(60).unwrap()),
-            None, // Inherit instrument - don't reset volume
+            Some(trigger_inherit(60)),
         );
 
         // Volume should still be ~0.3
@@ -1073,8 +1655,7 @@ mod tests {
         processor.process_row_start(
             track,
             &[EffectCommand::SetVolume(32)], // 32/64 = 0.5
-            Some(synth_sequencer::Pitch::new(60).unwrap()),
-            Some(NormalizedValue::new(1.0)), // Instrument default = 1.0
+            Some(trigger_with_defaults(60, 1.0)),
         );
 
         // Volume should be 0.5 (SetVolume overrides instrument default)
@@ -1083,6 +1664,255 @@ mod tests {
             (modulation.volume.as_f32() - 0.5).abs() < 0.01,
             "Volume should be 0.5 (SetVolume overrides default): {}",
             modulation.volume.as_f32()
+        );
+    }
+
+    // ========================================================================
+    // New tests for the Note Trigger State Machine
+    // ========================================================================
+
+    #[test]
+    fn test_tone_portamento_preserves_state() {
+        // Test 3: Tone portamento should preserve volume and other state
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Start with C-4, volume at 1.0
+        processor.process_row_start(track, &[], Some(trigger_with_defaults(60, 1.0)));
+
+        // Slide volume down to 0.5
+        processor.process_row_start(
+            track,
+            &[EffectCommand::VolumeSlide { up: 0, down: 8 }],
+            None,
+        );
+        for _ in 0..4 {
+            processor.process_tick();
+        }
+
+        let vol_after_slide = processor.get_channel_modulation(track).volume.as_f32();
+        assert!(vol_after_slide < 1.0, "Volume should have slid down");
+
+        // Now do tone portamento to E-4 - volume should be PRESERVED
+        let tone_porta_trigger = NoteTriggerInfo {
+            pitch: synth_sequencer::Pitch::new(64).unwrap(), // E-4
+            instrument_defaults: Some(InstrumentDefaults::default()), // Even with explicit instrument!
+        };
+        processor.process_row_start(
+            track,
+            &[EffectCommand::TonePortamento {
+                speed: 4,
+                target: None,
+            }],
+            Some(tone_porta_trigger),
+        );
+
+        // Volume should be preserved (not reset to 1.0)
+        let vol_after_porta = processor.get_channel_modulation(track).volume.as_f32();
+        assert!(
+            (vol_after_porta - vol_after_slide).abs() < 0.01,
+            "Volume should be preserved during tone portamento: {} vs {}",
+            vol_after_porta,
+            vol_after_slide
+        );
+
+        // Tone porta target should be set
+        let state = &processor.channels[0];
+        assert!(state.tone_porta_target.is_some());
+        assert_eq!(state.tone_porta_target.unwrap().as_midi(), 64);
+    }
+
+    #[test]
+    fn test_vibrato_reset_on_fresh_attack() {
+        // Test 5: Vibrato should be stopped on fresh attack
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Start with C-4 and vibrato
+        processor.process_row_start(
+            track,
+            &[EffectCommand::Vibrato { speed: 8, depth: 8 }],
+            Some(trigger_with_defaults(60, 1.0)),
+        );
+
+        // Process some ticks so vibrato accumulates phase
+        for _ in 0..4 {
+            processor.process_tick();
+        }
+
+        let state = &processor.channels[0];
+        assert!(
+            state.vibrato_depth.as_f32() > 0.0,
+            "Vibrato should be active"
+        );
+        assert!(
+            state.vibrato_phase.as_f32() > 0.0,
+            "Vibrato phase should have advanced"
+        );
+
+        // Fresh attack on E-4 - vibrato should be STOPPED
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(trigger_with_defaults(64, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert!(
+            state.vibrato_depth.as_f32().abs() < 0.001,
+            "Vibrato depth should be reset on fresh attack"
+        );
+        assert!(
+            state.vibrato_phase.as_f32().abs() < 0.001,
+            "Vibrato phase should be reset on fresh attack"
+        );
+    }
+
+    #[test]
+    fn test_sample_with_custom_default_volume() {
+        // Test 6: Sample with custom default_volume should use that value
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Create trigger with custom volume (simulating sample with default_volume = 0.6)
+        let trigger = NoteTriggerInfo {
+            pitch: synth_sequencer::Pitch::new(60).unwrap(),
+            instrument_defaults: Some(InstrumentDefaults {
+                volume: NormalizedValue::new(0.6),
+                panning: BipolarValue::CENTER,
+            }),
+        };
+
+        processor.process_row_start(track, &[], Some(trigger));
+
+        let modulation = processor.get_channel_modulation(track);
+        assert!(
+            (modulation.volume.as_f32() - 0.6).abs() < 0.01,
+            "Volume should be 0.6 (sample default): {}",
+            modulation.volume.as_f32()
+        );
+    }
+
+    #[test]
+    fn test_instrument_defaults_from_sample() {
+        // Test the InstrumentDefaults::from_sample helper
+        let defaults = InstrumentDefaults::from_sample(Some(0.5), Some(0.75));
+        assert!((defaults.volume.as_f32() - 0.5).abs() < 0.01);
+        // 0.75 in tracker panning (0-1) = 0.5 in bipolar (-1 to 1)
+        assert!((defaults.panning.as_f32() - 0.5).abs() < 0.01);
+
+        // Test with None values (should use defaults)
+        let defaults = InstrumentDefaults::from_sample(None, None);
+        assert!((defaults.volume.as_f32() - 1.0).abs() < 0.01);
+        assert!(defaults.panning.as_f32().abs() < 0.01); // Center
+    }
+
+    #[test]
+    fn test_arpeggio_reset_on_fresh_attack() {
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Start with C-4 and arpeggio
+        processor.process_row_start(
+            track,
+            &[EffectCommand::Arpeggio { x: 4, y: 7 }],
+            Some(trigger_with_defaults(60, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert!(state.arpeggio.is_some(), "Arpeggio should be set");
+
+        // Fresh attack - arpeggio should be STOPPED
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(trigger_with_defaults(64, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert!(
+            state.arpeggio.is_none(),
+            "Arpeggio should be reset on fresh attack"
+        );
+    }
+
+    #[test]
+    fn test_retrigger_reset_on_fresh_attack() {
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // Start with retrigger
+        processor.process_row_start(
+            track,
+            &[EffectCommand::Retrigger {
+                interval: 3,
+                volume_change: 0,
+            }],
+            Some(trigger_with_defaults(60, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert!(state.retrigger.is_active(), "Retrigger should be set");
+
+        // Fresh attack - retrigger should be STOPPED
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(trigger_with_defaults(64, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert!(
+            !state.retrigger.is_active(),
+            "Retrigger should be reset on fresh attack"
+        );
+    }
+
+    #[test]
+    fn test_sample_offset_kept_when_specified() {
+        let mut processor = ChannelEffectProcessor::new(1);
+        let track = TrackId::new(0);
+
+        // First note with sample offset
+        processor.process_row_start(
+            track,
+            &[EffectCommand::SampleOffset(128)],
+            Some(trigger_with_defaults(60, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert_eq!(
+            state.sample_offset.as_u16(),
+            128,
+            "Sample offset should be set"
+        );
+
+        // Second note WITHOUT sample offset - offset should be cleared
+        processor.process_row_start(
+            track,
+            &[], // No effects
+            Some(trigger_with_defaults(64, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert_eq!(
+            state.sample_offset.as_u16(),
+            0,
+            "Sample offset should be cleared on fresh attack"
+        );
+
+        // Third note WITH sample offset - offset should be set again
+        processor.process_row_start(
+            track,
+            &[EffectCommand::SampleOffset(200)],
+            Some(trigger_with_defaults(60, 1.0)),
+        );
+
+        let state = &processor.channels[0];
+        assert_eq!(
+            state.sample_offset.as_u16(),
+            200,
+            "Sample offset should be set from effect"
         );
     }
 }

@@ -22,7 +22,9 @@ impl PatternId {
 ///
 /// Track index maps directly to voice index during playback:
 /// `TrackIndex(0)` → `VoiceIndex(0)`, `TrackIndex(1)` → `VoiceIndex(1)`, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct TrackIndex(u8);
 
 impl TrackIndex {
@@ -73,7 +75,9 @@ impl std::fmt::Display for TrackIndex {
 }
 
 /// Index for row within a pattern (0-65535).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct RowIndex(u16);
 
 impl RowIndex {
@@ -315,7 +319,8 @@ impl TicksPerRow {
     #[must_use]
     pub fn from_tracker_speed(speed: u8) -> Self {
         let speed = speed.clamp(1, 31) as u32;
-        let song_ticks = (crate::time::TICKS_PER_QUARTER * speed / Self::TRACKER_TICKS_PER_BEAT) as u16;
+        let song_ticks =
+            (crate::time::TICKS_PER_QUARTER * speed / Self::TRACKER_TICKS_PER_BEAT) as u16;
         Self(song_ticks.max(1))
     }
 

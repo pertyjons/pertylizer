@@ -217,26 +217,27 @@ pub fn draw_tracker_grid(
 
     // Try to get TrackerPattern first (native tracker format)
     // If not found, fall back to regular Pattern
-    let (rows, num_tracks): (Vec<TrackerRow>, usize) =
-        if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
-            let num_tracks = tracker_pattern.num_tracks().as_u8() as usize;
-            let mut config_with_tracks = config.clone();
-            config_with_tracks.num_channels = num_tracks;
-            let rows =
-                super::tracker::tracker_pattern_to_tracker_rows(tracker_pattern, &config_with_tracks);
-            (rows, num_tracks)
-        } else if let Some(pattern) = song.pattern(pattern_id) {
-            let num_tracks = pattern.num_tracks() as usize;
-            let mut config_with_tracks = config.clone();
-            config_with_tracks.num_channels = num_tracks;
-            let rows = super::tracker::to_tracker_rows(pattern, &config_with_tracks);
-            (rows, num_tracks)
-        } else {
-            ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Pattern not found").color(colors.empty));
-            });
-            return false;
-        };
+    let (rows, num_tracks): (Vec<TrackerRow>, usize) = if let Some(tracker_pattern) =
+        song.tracker_pattern(pattern_id)
+    {
+        let num_tracks = tracker_pattern.num_tracks().as_u8() as usize;
+        let mut config_with_tracks = config.clone();
+        config_with_tracks.num_channels = num_tracks;
+        let rows =
+            super::tracker::tracker_pattern_to_tracker_rows(tracker_pattern, &config_with_tracks);
+        (rows, num_tracks)
+    } else if let Some(pattern) = song.pattern(pattern_id) {
+        let num_tracks = pattern.num_tracks() as usize;
+        let mut config_with_tracks = config.clone();
+        config_with_tracks.num_channels = num_tracks;
+        let rows = super::tracker::to_tracker_rows(pattern, &config_with_tracks);
+        (rows, num_tracks)
+    } else {
+        ui.centered_and_justified(|ui| {
+            ui.label(RichText::new("Pattern not found").color(colors.empty));
+        });
+        return false;
+    };
 
     let num_rows = rows.len();
 
@@ -276,120 +277,127 @@ pub fn draw_tracker_grid(
 
             table
                 .header(ROW_HEIGHT, |mut header| {
-            header.col(|ui| {
-                ui.label(RichText::new("Row").color(colors.row_number).small());
-            });
-            for track_idx in 0..num_tracks {
-                header.col(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("T{}", track_idx + 1))
-                                .color(colors.row_number)
-                                .small(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let track_id = TrackId::new(track_idx as u16);
-                            let is_solo = state.solo_track == Some(track_id);
-                            let (btn_fill, btn_text_color) = if is_solo {
-                                (Color32::from_rgb(255, 180, 60), Color32::BLACK)
-                            } else {
-                                (Color32::from_rgb(60, 60, 60), colors.row_number)
-                            };
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("S").color(btn_text_color).small(),
-                                    )
-                                    .fill(btn_fill)
-                                    .corner_radius(3.0)
-                                    .min_size(egui::vec2(16.0, 14.0)),
-                                )
-                                .clicked()
-                            {
-                                if is_solo {
-                                    state.solo_track = None;
-                                } else {
-                                    state.solo_track = Some(track_id);
-                                }
-                            }
-                        });
+                    header.col(|ui| {
+                        ui.label(RichText::new("Row").color(colors.row_number).small());
                     });
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(ROW_HEIGHT, num_rows, |mut row| {
-                let row_idx = row.index();
-                let tracker_row = &rows[row_idx];
-                let is_cursor_row = state.cursor_row.get() == row_idx;
-                let is_playback_row = playback_row == Some(row_idx);
-                let is_highlight = config.should_highlight(row_idx as u16);
+                    for track_idx in 0..num_tracks {
+                        header.col(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("T{}", track_idx + 1))
+                                        .color(colors.row_number)
+                                        .small(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let track_id = TrackId::new(track_idx as u16);
+                                        let is_solo = state.solo_track == Some(track_id);
+                                        let (btn_fill, btn_text_color) = if is_solo {
+                                            (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                                        } else {
+                                            (Color32::from_rgb(60, 60, 60), colors.row_number)
+                                        };
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new("S")
+                                                        .color(btn_text_color)
+                                                        .small(),
+                                                )
+                                                .fill(btn_fill)
+                                                .corner_radius(3.0)
+                                                .min_size(egui::vec2(16.0, 14.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            if is_solo {
+                                                state.solo_track = None;
+                                            } else {
+                                                state.solo_track = Some(track_id);
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                    }
+                })
+                .body(|body| {
+                    body.rows(ROW_HEIGHT, num_rows, |mut row| {
+                        let row_idx = row.index();
+                        let tracker_row = &rows[row_idx];
+                        let is_cursor_row = state.cursor_row.get() == row_idx;
+                        let is_playback_row = playback_row == Some(row_idx);
+                        let is_highlight = config.should_highlight(row_idx as u16);
 
-                // Row number column
-                row.col(|ui| {
-                    let bg = if is_playback_row && is_cursor_row {
-                        // Both cursor and playback on same row - blend colors
-                        Color32::from_rgb(70, 100, 90)
-                    } else if is_playback_row {
-                        colors.playback_row
-                    } else if is_cursor_row {
-                        colors.cursor_row
-                    } else if is_highlight {
-                        colors.row_highlight
-                    } else {
-                        colors.background
-                    };
+                        // Row number column
+                        row.col(|ui| {
+                            let bg = if is_playback_row && is_cursor_row {
+                                // Both cursor and playback on same row - blend colors
+                                Color32::from_rgb(70, 100, 90)
+                            } else if is_playback_row {
+                                colors.playback_row
+                            } else if is_cursor_row {
+                                colors.cursor_row
+                            } else if is_highlight {
+                                colors.row_highlight
+                            } else {
+                                colors.background
+                            };
 
-                    let rect = ui.available_rect_before_wrap();
-                    ui.painter().rect_filled(rect, 0.0, bg);
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, bg);
 
-                    ui.label(
-                        RichText::new(tracker_row.format_row_number(config.hex_row_numbers))
-                            .color(colors.row_number)
-                            .monospace(),
-                    );
-                });
-
-                // Track columns
-                for track_idx in 0..num_tracks {
-                    row.col(|ui| {
-                        let is_cursor_track = state.cursor_track == track_idx;
-
-                        let bg = if is_cursor_row && is_cursor_track {
-                            colors.cursor_cell
-                        } else if is_playback_row && is_cursor_row {
-                            Color32::from_rgb(70, 100, 90)
-                        } else if is_playback_row {
-                            colors.playback_row
-                        } else if is_cursor_row {
-                            colors.cursor_row
-                        } else if is_highlight {
-                            colors.row_highlight
-                        } else {
-                            colors.background
-                        };
-
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().rect_filled(rect, 0.0, bg);
-
-                        // Get cell data
-                        let cell = tracker_row.columns.get(track_idx);
-
-                        // Draw cell contents
-                        ui.horizontal(|ui| {
-                            draw_cell(
-                                ui,
-                                cell,
-                                config,
-                                &colors,
-                                is_cursor_row && is_cursor_track,
-                                state.cursor_column,
+                            ui.label(
+                                RichText::new(
+                                    tracker_row.format_row_number(config.hex_row_numbers),
+                                )
+                                .color(colors.row_number)
+                                .monospace(),
                             );
                         });
+
+                        // Track columns
+                        for track_idx in 0..num_tracks {
+                            row.col(|ui| {
+                                let is_cursor_track = state.cursor_track == track_idx;
+
+                                let bg = if is_cursor_row && is_cursor_track {
+                                    colors.cursor_cell
+                                } else if is_playback_row && is_cursor_row {
+                                    Color32::from_rgb(70, 100, 90)
+                                } else if is_playback_row {
+                                    colors.playback_row
+                                } else if is_cursor_row {
+                                    colors.cursor_row
+                                } else if is_highlight {
+                                    colors.row_highlight
+                                } else {
+                                    colors.background
+                                };
+
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, bg);
+
+                                // Get cell data
+                                let cell = tracker_row.columns.get(track_idx);
+
+                                // Draw cell contents
+                                ui.horizontal(|ui| {
+                                    draw_cell(
+                                        ui,
+                                        cell,
+                                        config,
+                                        &colors,
+                                        is_cursor_row && is_cursor_track,
+                                        state.cursor_column,
+                                    );
+                                });
+                            });
+                        }
                     });
-                }
-            });
-        });
+                });
         }); // Close ScrollArea::show
 
     interaction
@@ -690,113 +698,119 @@ pub fn draw_tracker_grid_from_pattern(
                     num_tracks.min(state.visible_tracks),
                 )
                 .header(ROW_HEIGHT, |mut header| {
-            header.col(|ui| {
-                ui.label(RichText::new("Row").color(colors.row_number).small());
-            });
-            for track_idx in 0..num_tracks.min(state.visible_tracks) {
-                header.col(|ui| {
-                    let track_num = state.first_visible_track + track_idx;
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("T{}", track_num + 1))
-                                .color(colors.row_number)
-                                .small(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let track_id = TrackId::new(track_num as u16);
-                            let is_solo = state.solo_track == Some(track_id);
-                            let (btn_fill, btn_text_color) = if is_solo {
-                                (Color32::from_rgb(255, 180, 60), Color32::BLACK)
-                            } else {
-                                (Color32::from_rgb(60, 60, 60), colors.row_number)
-                            };
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("S").color(btn_text_color).small(),
-                                    )
-                                    .fill(btn_fill)
-                                    .corner_radius(3.0)
-                                    .min_size(egui::vec2(16.0, 14.0)),
-                                )
-                                .clicked()
-                            {
-                                if is_solo {
-                                    state.solo_track = None;
-                                } else {
-                                    state.solo_track = Some(track_id);
-                                }
-                            }
-                        });
+                    header.col(|ui| {
+                        ui.label(RichText::new("Row").color(colors.row_number).small());
                     });
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(ROW_HEIGHT, num_rows, |mut row| {
-                let row_idx = row.index();
-                let is_cursor_row = state.cursor_row.get() == row_idx;
-                // Highlight every 4th row (beat marker)
-                let is_highlight = config.should_highlight(row_idx as u16);
+                    for track_idx in 0..num_tracks.min(state.visible_tracks) {
+                        header.col(|ui| {
+                            let track_num = state.first_visible_track + track_idx;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("T{}", track_num + 1))
+                                        .color(colors.row_number)
+                                        .small(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let track_id = TrackId::new(track_num as u16);
+                                        let is_solo = state.solo_track == Some(track_id);
+                                        let (btn_fill, btn_text_color) = if is_solo {
+                                            (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                                        } else {
+                                            (Color32::from_rgb(60, 60, 60), colors.row_number)
+                                        };
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new("S")
+                                                        .color(btn_text_color)
+                                                        .small(),
+                                                )
+                                                .fill(btn_fill)
+                                                .corner_radius(3.0)
+                                                .min_size(egui::vec2(16.0, 14.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            if is_solo {
+                                                state.solo_track = None;
+                                            } else {
+                                                state.solo_track = Some(track_id);
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                    }
+                })
+                .body(|body| {
+                    body.rows(ROW_HEIGHT, num_rows, |mut row| {
+                        let row_idx = row.index();
+                        let is_cursor_row = state.cursor_row.get() == row_idx;
+                        // Highlight every 4th row (beat marker)
+                        let is_highlight = config.should_highlight(row_idx as u16);
 
-                // Row number column
-                row.col(|ui| {
-                    let bg = if is_cursor_row {
-                        colors.cursor_row
-                    } else if is_highlight {
-                        colors.row_highlight
-                    } else {
-                        colors.background
-                    };
+                        // Row number column
+                        row.col(|ui| {
+                            let bg = if is_cursor_row {
+                                colors.cursor_row
+                            } else if is_highlight {
+                                colors.row_highlight
+                            } else {
+                                colors.background
+                            };
 
-                    let rect = ui.available_rect_before_wrap();
-                    ui.painter().rect_filled(rect, 0.0, bg);
+                            let rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(rect, 0.0, bg);
 
-                    let row_text = format_row_number(row_idx as u16, config.hex_row_numbers);
-                    ui.label(
-                        RichText::new(row_text.as_ref())
-                            .color(colors.row_number)
-                            .monospace(),
-                    );
-                });
-
-                // Track columns
-                for track_idx in 0..num_tracks.min(state.visible_tracks) {
-                    row.col(|ui| {
-                        let actual_track = state.first_visible_track + track_idx;
-                        let is_cursor_track = state.cursor_track == actual_track;
-
-                        let bg = if is_cursor_row && is_cursor_track {
-                            colors.cursor_cell
-                        } else if is_cursor_row {
-                            colors.cursor_row
-                        } else if is_highlight {
-                            colors.row_highlight
-                        } else {
-                            colors.background
-                        };
-
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().rect_filled(rect, 0.0, bg);
-
-                        // Get cell from grid
-                        let cell = grid.get(row_idx as u16, actual_track as u8);
-
-                        // Draw cell using View Adapter
-                        ui.horizontal(|ui| {
-                            draw_track_cell(
-                                ui,
-                                &cell,
-                                config,
-                                &colors,
-                                is_cursor_row && is_cursor_track,
-                                state.cursor_column,
+                            let row_text =
+                                format_row_number(row_idx as u16, config.hex_row_numbers);
+                            ui.label(
+                                RichText::new(row_text.as_ref())
+                                    .color(colors.row_number)
+                                    .monospace(),
                             );
                         });
+
+                        // Track columns
+                        for track_idx in 0..num_tracks.min(state.visible_tracks) {
+                            row.col(|ui| {
+                                let actual_track = state.first_visible_track + track_idx;
+                                let is_cursor_track = state.cursor_track == actual_track;
+
+                                let bg = if is_cursor_row && is_cursor_track {
+                                    colors.cursor_cell
+                                } else if is_cursor_row {
+                                    colors.cursor_row
+                                } else if is_highlight {
+                                    colors.row_highlight
+                                } else {
+                                    colors.background
+                                };
+
+                                let rect = ui.available_rect_before_wrap();
+                                ui.painter().rect_filled(rect, 0.0, bg);
+
+                                // Get cell from grid
+                                let cell = grid.get(row_idx as u16, actual_track as u8);
+
+                                // Draw cell using View Adapter
+                                ui.horizontal(|ui| {
+                                    draw_track_cell(
+                                        ui,
+                                        &cell,
+                                        config,
+                                        &colors,
+                                        is_cursor_row && is_cursor_track,
+                                        state.cursor_column,
+                                    );
+                                });
+                            });
+                        }
                     });
-                }
-            });
-        });
+                });
         }); // Close ScrollArea::show
 
     interaction

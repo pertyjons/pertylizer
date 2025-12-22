@@ -15,7 +15,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::tracker_effects::{ChannelEffectProcessor, GlobalCommand};
+use crate::tracker_effects::{
+    ChannelEffectProcessor, GlobalCommand, InstrumentDefaults, NoteTriggerInfo,
+};
 use synth_core::{BipolarValue, Bpm, Cents, NormalizedValue, SampleCount, SampleRate, VoiceIndex};
 use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::{
@@ -449,22 +451,28 @@ impl SequencerEngine {
                 }
                 // MonoVoice mode - don't stop, voice will be retriggered without envelope reset
 
+                // Build trigger info for the note trigger state machine.
                 // XM behavior: When a new note with explicit instrument is played,
-                // reset channel volume to the note's velocity (or 1.0 if no velocity).
-                // This ensures volume slide effects don't carry over to new notes.
-                let instrument_volume = if has_explicit_instrument {
-                    Some(NormalizedValue::new(velocity.as_f32()))
-                } else {
-                    None // Inherit instrument - don't reset volume
+                // reset channel volume/panning to the instrument's default values.
+                // When inheriting instrument (no explicit), keep current state.
+                let trigger_info = NoteTriggerInfo {
+                    pitch,
+                    instrument_defaults: if has_explicit_instrument {
+                        // TODO: Get actual sample defaults from instrument mapping.
+                        // For now, use velocity as volume (which is how tracker formats work).
+                        Some(InstrumentDefaults {
+                            volume: NormalizedValue::new(velocity.as_f32()),
+                            panning: BipolarValue::CENTER,
+                        })
+                    } else {
+                        None // Inherit instrument - don't reset volume/panning
+                    },
                 };
 
-                // Process effects for this channel
-                let global_commands = self.effect_processor.process_row_start(
-                    track_id,
-                    &effects,
-                    Some(pitch),
-                    instrument_volume,
-                );
+                // Process effects for this channel using the Note Trigger State Machine
+                let global_commands =
+                    self.effect_processor
+                        .process_row_start(track_id, &effects, Some(trigger_info));
 
                 // Handle global commands (tempo changes, etc.)
                 for cmd in global_commands {
@@ -563,11 +571,11 @@ impl SequencerEngine {
 
         // Process effect-only events (tracker-style rows with effects but no note)
         for (track_id, effects) in effect_events_to_process {
-            // Process effects through the effect processor to handle global commands
-            // No instrument_volume - effect-only rows don't reset channel volume
+            // Process effects through the effect processor to handle global commands.
+            // No trigger_info - effect-only rows don't trigger a new note.
             let global_commands = self
                 .effect_processor
-                .process_row_start(track_id, &effects, None, None);
+                .process_row_start(track_id, &effects, None);
 
             // Handle global commands from effect-only rows
             for cmd in global_commands {

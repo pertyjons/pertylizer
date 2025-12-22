@@ -17,28 +17,81 @@ use crate::visualizers::VisualizationBuffer;
 use synth_core::ModuleType;
 use synth_core::{AudioBuffer, AudioEffect, ProcessContext, SampleRate};
 
+// ============================================================================
+// EnabledState - Descriptive enum for on/off state
+// ============================================================================
+
+/// Enabled state for effects and visualizers.
+///
+/// Using an enum instead of bool makes the code more readable:
+/// `EnabledState::Active` vs `true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnabledState {
+    /// The slot is active and will process audio.
+    #[default]
+    Active,
+    /// The slot is bypassed and will not process audio.
+    Bypassed,
+}
+
+impl EnabledState {
+    /// Check if the slot is active (enabled).
+    #[inline]
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    /// Check if the slot is bypassed (disabled).
+    #[inline]
+    #[must_use]
+    pub const fn is_bypassed(self) -> bool {
+        matches!(self, Self::Bypassed)
+    }
+
+    /// Toggle the enabled state.
+    #[inline]
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Active => Self::Bypassed,
+            Self::Bypassed => Self::Active,
+        }
+    }
+}
+
+impl From<bool> for EnabledState {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::Active
+        } else {
+            Self::Bypassed
+        }
+    }
+}
+
 /// Effect slot in the effect chain.
 pub struct EffectSlot {
-    /// Unique module ID
+    /// Unique module ID.
     pub module_id: ModuleId,
-    /// The effect processor
+    /// The effect processor.
     pub effect: Box<dyn AudioEffect>,
-    /// Module type for type-safe lookup
+    /// Module type for type-safe lookup.
     pub module_type: ModuleType,
-    /// Whether the effect is enabled
-    pub enabled: bool,
+    /// Whether the effect is active or bypassed.
+    pub state: EnabledState,
 }
 
 /// Visualizer slot with shared buffer.
 pub struct VisualizerSlot {
-    /// Unique module ID
+    /// Unique module ID.
     pub module_id: ModuleId,
-    /// The visualizer processor
+    /// The visualizer processor.
     pub visualizer: Box<dyn AudioEffect>,
-    /// Shared buffer for visualization data
+    /// Shared buffer for visualization data.
     pub buffer: Arc<VisualizationBuffer>,
-    /// Whether the visualizer is enabled
-    pub enabled: bool,
+    /// Whether the visualizer is active or bypassed.
+    pub state: EnabledState,
 }
 
 /// A slot in the effect chain that can be either an effect or a visualizer.
@@ -54,6 +107,7 @@ pub enum ChainSlot {
 
 impl ChainSlot {
     /// Get the module ID of this slot.
+    #[must_use]
     pub fn module_id(&self) -> ModuleId {
         match self {
             Self::Effect(slot) => slot.module_id,
@@ -61,20 +115,32 @@ impl ChainSlot {
         }
     }
 
-    /// Check if this slot is enabled.
-    pub fn is_enabled(&self) -> bool {
+    /// Get the enabled state of this slot.
+    #[must_use]
+    pub fn state(&self) -> EnabledState {
         match self {
-            Self::Effect(slot) => slot.enabled,
-            Self::Visualizer(slot) => slot.enabled,
+            Self::Effect(slot) => slot.state,
+            Self::Visualizer(slot) => slot.state,
         }
     }
 
+    /// Check if this slot is active (enabled).
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.state().is_active()
+    }
+
     /// Set enabled state.
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub fn set_state(&mut self, state: EnabledState) {
         match self {
-            Self::Effect(slot) => slot.enabled = enabled,
-            Self::Visualizer(slot) => slot.enabled = enabled,
+            Self::Effect(slot) => slot.state = state,
+            Self::Visualizer(slot) => slot.state = state,
         }
+    }
+
+    /// Set enabled state from boolean (for backwards compatibility).
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.set_state(EnabledState::from(enabled));
     }
 }
 
@@ -142,7 +208,7 @@ impl EffectChain {
             module_id: id,
             module_type,
             effect,
-            enabled: true,
+            state: EnabledState::Active,
         }));
     }
 
@@ -163,7 +229,7 @@ impl EffectChain {
             module_id: id,
             visualizer,
             buffer,
-            enabled: true,
+            state: EnabledState::Active,
         }));
     }
 
@@ -213,7 +279,7 @@ impl EffectChain {
         for slot in &mut self.slots {
             match slot {
                 ChainSlot::Effect(effect_slot) => {
-                    if effect_slot.enabled {
+                    if effect_slot.state.is_active() {
                         // Copy mix to working buffer
                         self.working_buffer.copy_from(mix_buffer);
 
@@ -226,7 +292,7 @@ impl EffectChain {
                     }
                 }
                 ChainSlot::Visualizer(viz_slot) => {
-                    if viz_slot.enabled {
+                    if viz_slot.state.is_active() {
                         // Visualizers capture audio data but don't modify the signal
                         viz_slot.buffer.write_interleaved(mix_buffer.as_slice());
                         viz_slot

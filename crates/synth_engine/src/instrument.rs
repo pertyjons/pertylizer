@@ -20,7 +20,8 @@ use crate::graph::ModuleGraph;
 use crate::voice::VoiceState;
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, NormalizedValue, ProcessContext, Semitones,
+    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
+    Semitones, SoloState,
 };
 
 // ============================================================================
@@ -377,11 +378,11 @@ pub struct Instrument {
     volume: Gain,
     /// Stereo pan position.
     pan: BipolarValue,
-    /// Whether this instrument is enabled (mute = !enabled).
-    enabled: bool,
-    /// Whether this instrument is soloed.
+    /// Mute state (Unmuted = enabled, Muted = disabled).
+    mute_state: MuteState,
+    /// Solo state.
     /// When any instrument is soloed, only soloed instruments produce sound.
-    solo: bool,
+    solo_state: SoloState,
     /// Left channel buffer for voice summing.
     voice_left: AudioBuffer,
     /// Right channel buffer for voice summing.
@@ -416,8 +417,8 @@ impl Instrument {
             effect_chain: EffectChain::new(),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
-            enabled: true,
-            solo: false,
+            mute_state: MuteState::Unmuted,
+            solo_state: SoloState::Normal,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
@@ -445,8 +446,8 @@ impl Instrument {
             effect_chain: EffectChain::new(),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
-            enabled: true,
-            solo: false,
+            mute_state: MuteState::Unmuted,
+            solo_state: SoloState::Normal,
             voice_left: AudioBuffer::new(MAX_BUFFER_SIZE),
             voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             effect_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2), // Interleaved stereo
@@ -530,7 +531,7 @@ impl Instrument {
     /// Returns true if the note is within the key range and the instrument is enabled.
     #[inline]
     pub fn should_play_note(&self, note: MidiNote) -> bool {
-        self.enabled && self.key_range.contains(note)
+        self.mute_state.is_unmuted() && self.key_range.contains(note)
     }
 
     /// Handle a note for MIDI learn functionality.
@@ -640,34 +641,58 @@ impl Instrument {
         self.pan = pan;
     }
 
-    /// Check if this instrument is enabled.
+    /// Get the mute state.
+    #[inline]
+    pub fn mute_state(&self) -> MuteState {
+        self.mute_state
+    }
+
+    /// Check if this instrument is enabled (not muted).
     #[inline]
     pub fn is_enabled(&self) -> bool {
-        self.enabled
+        self.mute_state.is_unmuted()
     }
 
     /// Enable or disable this instrument.
     #[inline]
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+        self.mute_state = MuteState::from(!enabled);
+    }
+
+    /// Set the mute state directly.
+    #[inline]
+    pub fn set_mute_state(&mut self, state: MuteState) {
+        self.mute_state = state;
+    }
+
+    /// Get the solo state.
+    #[inline]
+    pub fn solo_state(&self) -> SoloState {
+        self.solo_state
     }
 
     /// Check if this instrument is soloed.
     #[inline]
     pub fn is_solo(&self) -> bool {
-        self.solo
+        self.solo_state.is_solo()
     }
 
     /// Set the solo state for this instrument.
     #[inline]
     pub fn set_solo(&mut self, solo: bool) {
-        self.solo = solo;
+        self.solo_state = SoloState::from(solo);
+    }
+
+    /// Set the solo state directly.
+    #[inline]
+    pub fn set_solo_state(&mut self, state: SoloState) {
+        self.solo_state = state;
     }
 
     /// Check if this instrument should respond to a MIDI event on the given channel.
     #[inline]
     pub fn responds_to_channel(&self, channel: u8) -> bool {
-        self.enabled && self.midi_channel.matches(channel)
+        self.mute_state.is_unmuted() && self.midi_channel.matches(channel)
     }
 
     /// Get velocity-to-amplitude sensitivity.
@@ -715,7 +740,7 @@ impl Instrument {
     /// Returns the voice ID if a voice was allocated.
     /// The note is checked against the key range and transposed before playing.
     pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
-        if !self.enabled {
+        if self.mute_state.is_muted() {
             return None;
         }
 
@@ -771,7 +796,7 @@ impl Instrument {
     /// # Returns
     /// The number of active voices processed.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) -> u32 {
-        if !self.enabled {
+        if self.mute_state.is_muted() {
             return 0;
         }
 
@@ -911,8 +936,8 @@ impl fmt::Debug for Instrument {
             .field("midi_channel", &self.midi_channel)
             .field("volume", &self.volume)
             .field("pan", &self.pan)
-            .field("enabled", &self.enabled)
-            .field("solo", &self.solo)
+            .field("mute_state", &self.mute_state)
+            .field("solo_state", &self.solo_state)
             .field("active_voices", &self.active_voice_count())
             .finish()
     }

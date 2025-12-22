@@ -8,6 +8,110 @@ use serde::{Deserialize, Serialize};
 use super::commands::ModuleId;
 use synth_core::Param;
 
+// ============================================================================
+// Port State Enums - Descriptive types instead of booleans
+// ============================================================================
+
+/// Connection state for a port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConnectionState {
+    /// Port is not connected to anything.
+    #[default]
+    Disconnected,
+    /// Port is connected to one or more cables.
+    Connected,
+}
+
+impl ConnectionState {
+    /// Check if the port is connected.
+    #[inline]
+    #[must_use]
+    pub const fn is_connected(self) -> bool {
+        matches!(self, Self::Connected)
+    }
+}
+
+impl From<bool> for ConnectionState {
+    fn from(connected: bool) -> Self {
+        if connected {
+            Self::Connected
+        } else {
+            Self::Disconnected
+        }
+    }
+}
+
+/// Signal activity state for a port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SignalActivity {
+    /// No signal is flowing through the port.
+    #[default]
+    Inactive,
+    /// Signal is actively flowing through the port.
+    Active,
+}
+
+impl SignalActivity {
+    /// Check if signal is active.
+    #[inline]
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Active)
+    }
+}
+
+impl From<bool> for SignalActivity {
+    fn from(active: bool) -> Self {
+        if active { Self::Active } else { Self::Inactive }
+    }
+}
+
+/// Count of connections to/from a port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[must_use]
+pub struct ConnectionCount(usize);
+
+impl ConnectionCount {
+    /// No connections.
+    pub const ZERO: Self = Self(0);
+
+    /// Create a new connection count.
+    #[inline]
+    pub const fn new(count: usize) -> Self {
+        Self(count)
+    }
+
+    /// Get the raw count value.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+
+    /// Check if there are any connections.
+    #[inline]
+    pub const fn has_connections(self) -> bool {
+        self.0 > 0
+    }
+
+    /// Increment the count.
+    #[inline]
+    pub fn increment(&mut self) {
+        self.0 += 1;
+    }
+
+    /// Decrement the count (saturating at zero).
+    #[inline]
+    pub fn decrement(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
+}
+
+impl From<usize> for ConnectionCount {
+    fn from(count: usize) -> Self {
+        Self(count)
+    }
+}
+
 /// Module connectivity status for UI visualization.
 ///
 /// This indicates whether a module is contributing to the audio output,
@@ -161,6 +265,67 @@ impl ModuleErrorKind {
     }
 }
 
+/// Sample timestamp for error tracking.
+///
+/// Represents a sample position but with serde support for serialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct SampleTimestamp(u64);
+
+impl SampleTimestamp {
+    /// Create a new sample timestamp.
+    #[inline]
+    pub const fn new(samples: u64) -> Self {
+        Self(samples)
+    }
+
+    /// Get the raw sample count.
+    #[inline]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for SampleTimestamp {
+    fn from(samples: u64) -> Self {
+        Self(samples)
+    }
+}
+
+/// Count of error occurrences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[must_use]
+pub struct OccurrenceCount(u32);
+
+impl OccurrenceCount {
+    /// Single occurrence.
+    pub const ONE: Self = Self(1);
+
+    /// Create a new occurrence count.
+    #[inline]
+    pub const fn new(count: u32) -> Self {
+        Self(count)
+    }
+
+    /// Get the raw count value.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Increment the count.
+    #[inline]
+    pub fn increment(&mut self) {
+        self.0 = self.0.saturating_add(1);
+    }
+}
+
+impl From<u32> for OccurrenceCount {
+    fn from(count: u32) -> Self {
+        Self(count)
+    }
+}
+
 /// A module error event with context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModuleError {
@@ -169,19 +334,19 @@ pub struct ModuleError {
     /// The error kind.
     pub error: ModuleErrorKind,
     /// Sample position when error occurred.
-    pub timestamp: u64,
+    pub timestamp: SampleTimestamp,
     /// Number of times this error has occurred recently.
-    pub occurrence_count: u32,
+    pub occurrence_count: OccurrenceCount,
 }
 
 impl ModuleError {
     /// Create a new module error.
-    pub fn new(module_id: ModuleId, error: ModuleErrorKind, timestamp: u64) -> Self {
+    pub fn new(module_id: ModuleId, error: ModuleErrorKind, timestamp: SampleTimestamp) -> Self {
         Self {
             module_id,
             error,
             timestamp,
-            occurrence_count: 1,
+            occurrence_count: OccurrenceCount::ONE,
         }
     }
 }
@@ -190,30 +355,43 @@ impl ModuleError {
 #[derive(Debug, Clone, Default)]
 pub struct PortVisualState {
     /// Whether this port is connected.
-    pub connected: bool,
+    pub connection: ConnectionState,
     /// Current signal level through this port (0.0 - 1.0+).
     pub signal_level: f32,
     /// Whether signal is actively flowing.
-    pub is_active: bool,
+    pub activity: SignalActivity,
     /// Number of connections to/from this port.
-    pub connection_count: usize,
+    pub connection_count: ConnectionCount,
 }
 
 impl PortVisualState {
     /// Create a connected port state.
-    pub fn connected(connection_count: usize) -> Self {
+    #[must_use]
+    pub fn connected(count: ConnectionCount) -> Self {
         Self {
-            connected: true,
+            connection: ConnectionState::Connected,
             signal_level: 0.0,
-            is_active: false,
-            connection_count,
+            activity: SignalActivity::Inactive,
+            connection_count: count,
         }
+    }
+
+    /// Check if the port is connected.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        self.connection.is_connected()
+    }
+
+    /// Check if signal is active.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.activity.is_active()
     }
 
     /// Update the signal level with smoothing.
     pub fn update_level(&mut self, new_level: f32, smoothing: f32) {
         self.signal_level = self.signal_level * smoothing + new_level * (1.0 - smoothing);
-        self.is_active = new_level > 0.001;
+        self.activity = SignalActivity::from(new_level > 0.001);
     }
 }
 
@@ -248,12 +426,34 @@ mod tests {
 
     #[test]
     fn test_port_visual_state() {
-        let mut port = PortVisualState::connected(2);
-        assert!(port.connected);
-        assert_eq!(port.connection_count, 2);
+        let mut port = PortVisualState::connected(ConnectionCount::new(2));
+        assert!(port.is_connected());
+        assert_eq!(port.connection_count.as_usize(), 2);
 
         port.update_level(0.8, 0.5);
-        assert!(port.is_active);
+        assert!(port.is_active());
         assert!(port.signal_level > 0.0);
+    }
+
+    #[test]
+    fn test_connection_count() {
+        let mut count = ConnectionCount::ZERO;
+        assert!(!count.has_connections());
+
+        count.increment();
+        assert!(count.has_connections());
+        assert_eq!(count.as_usize(), 1);
+
+        count.decrement();
+        assert!(!count.has_connections());
+    }
+
+    #[test]
+    fn test_occurrence_count() {
+        let mut count = OccurrenceCount::ONE;
+        assert_eq!(count.as_u32(), 1);
+
+        count.increment();
+        assert_eq!(count.as_u32(), 2);
     }
 }

@@ -873,8 +873,7 @@ impl Pattern {
             if note.start >= local_start && note.start < local_end {
                 let absolute_tick = Tick(pattern_start.0 + note.start.0 as u64);
                 // Convert track to voice_index for tracker-style mono-per-track playback
-                let voice_index =
-                    note.track.map(|t| synth_core::VoiceIndex::new(t.0 as u8));
+                let voice_index = note.track.map(|t| synth_core::VoiceIndex::new(t.0 as u8));
                 events.push(SequencerEvent::NoteOn {
                     tick: absolute_tick,
                     pitch: transposed_pitch,

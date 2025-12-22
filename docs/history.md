@@ -1,5 +1,40 @@
 # Version History
 
+## [0.63.0] - 2025
+### Refactoring - Newtype Pattern för synth_engine
+
+#### tracker_effects.rs - Beskrivande typer
+- **`RetriggerState`** - Kapslar in retrigger-logik (interval, counter, volume_change)
+- **`TickCount`** - Newtype för tick-räkning
+- **`Glissando`** enum - `Smooth` / `Quantized` ersätter `bool`
+- **`NoteState`** - Ersätter tre booleans med:
+  - `PlayingState` enum: `Stopped`, `Playing`
+  - `TriggerAction` enum: `None`, `Trigger`
+  - `CutAction` enum: `None`, `Cut`
+
+#### effect_chain.rs - Slot-tillstånd
+- **`EnabledState`** enum - `Active` / `Bypassed` ersätter `enabled: bool`
+- Metoder: `is_active()`, `is_bypassed()`, `toggle()`
+
+#### connectivity.rs - Port och fel-typer
+- **`ConnectionState`** enum - `Disconnected` / `Connected`
+- **`SignalActivity`** enum - `Inactive` / `Active`
+- **`ConnectionCount`** newtype - Ersätter `usize`
+- **`SampleTimestamp`** newtype - Ersätter `timestamp: u64` (med serde)
+- **`OccurrenceCount`** newtype - Ersätter `occurrence_count: u32`
+
+#### instrument.rs - Mute/Solo med synth_core typer
+- Använder **`MuteState`** från synth_core istället för `enabled: bool`
+- Använder **`SoloState`** från synth_core istället för `solo: bool`
+- Nya metoder: `mute_state()`, `set_mute_state()`, `solo_state()`, `set_solo_state()`
+
+#### Förbättrad typsäkerhet
+- Följer CLAUDE.md regler för newtype-mönstret
+- Eliminerar primitiver i publika API:er
+- Alla 87 tester passerar
+
+---
+
 ## [0.62.0] - 2025
 ### Fixed - Volume Reset Bug in Tracker Effects
 

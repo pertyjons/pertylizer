@@ -28,7 +28,10 @@ use synth_sequencer::pitch::{Pitch, Velocity};
 use synth_sequencer::time::Duration;
 use synth_sequencer::track::TrackMode;
 use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
-use synth_sequencer::{PatternId, RowCount, RowIndex, SeqInstrumentId, Song, Tick, TicksPerRow, TrackCount, TrackId, TrackIndex};
+use synth_sequencer::{
+    PatternId, RowCount, RowIndex, SeqInstrumentId, Song, Tick, TicksPerRow, TrackCount, TrackId,
+    TrackIndex,
+};
 
 /// Importer for tracker files (MOD, XM, S3M).
 pub struct TrackerImporter;
@@ -156,12 +159,8 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Convert patterns to TrackerPattern format
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
-        let tracker_pattern = convert_pattern_to_tracker(
-            pattern_data,
-            pat_idx,
-            num_channels,
-            speed,
-        )?;
+        let tracker_pattern =
+            convert_pattern_to_tracker(pattern_data, pat_idx, num_channels, speed)?;
         let pattern_id = song.add_tracker_pattern(tracker_pattern);
         pattern_ids.push(pattern_id);
     }
@@ -610,7 +609,6 @@ struct TrackerChannelState {
     last_tremolo_depth: u8,
 }
 
-
 /// Process a track unit and return a Cell and effects for TrackerPattern.
 ///
 /// Key differences from Pattern-based processing:
@@ -786,14 +784,26 @@ fn convert_track_effect_for_tracker(
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
-                    Some(EffectCommand::FineVolumeSlide { up: scaled, down: 0 })
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: scaled,
+                        down: 0,
+                    })
                 } else {
-                    Some(EffectCommand::FineVolumeSlide { up: 0, down: scaled })
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: 0,
+                        down: scaled,
+                    })
                 }
             } else if *speed > 0.0 {
-                Some(EffectCommand::VolumeSlide { up: scaled, down: 0 })
+                Some(EffectCommand::VolumeSlide {
+                    up: scaled,
+                    down: 0,
+                })
             } else {
-                Some(EffectCommand::VolumeSlide { up: 0, down: scaled })
+                Some(EffectCommand::VolumeSlide {
+                    up: 0,
+                    down: scaled,
+                })
             }
         }
 
@@ -801,14 +811,26 @@ fn convert_track_effect_for_tracker(
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
-                    Some(EffectCommand::FineVolumeSlide { up: scaled, down: 0 })
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: scaled,
+                        down: 0,
+                    })
                 } else {
-                    Some(EffectCommand::FineVolumeSlide { up: 0, down: scaled })
+                    Some(EffectCommand::FineVolumeSlide {
+                        up: 0,
+                        down: scaled,
+                    })
                 }
             } else if *speed > 0.0 {
-                Some(EffectCommand::VolumeSlide { up: scaled, down: 0 })
+                Some(EffectCommand::VolumeSlide {
+                    up: scaled,
+                    down: 0,
+                })
             } else {
-                Some(EffectCommand::VolumeSlide { up: 0, down: scaled })
+                Some(EffectCommand::VolumeSlide {
+                    up: 0,
+                    down: scaled,
+                })
             }
         }
 
@@ -838,9 +860,15 @@ fn convert_track_effect_for_tracker(
         TrackEffect::PanningSlide { speed, .. } => {
             let scaled = (speed.abs() * 16.0).min(15.0) as u8;
             if *speed < 0.0 {
-                Some(EffectCommand::PanningSlide { left: scaled, right: 0 })
+                Some(EffectCommand::PanningSlide {
+                    left: scaled,
+                    right: 0,
+                })
             } else {
-                Some(EffectCommand::PanningSlide { left: 0, right: scaled })
+                Some(EffectCommand::PanningSlide {
+                    left: 0,
+                    right: scaled,
+                })
             }
         }
 
@@ -850,7 +878,10 @@ fn convert_track_effect_for_tracker(
             Some(EffectCommand::SampleOffset(off))
         }
 
-        TrackEffect::NoteRetrig { speed, volume_modifier } => {
+        TrackEffect::NoteRetrig {
+            speed,
+            volume_modifier,
+        } => {
             let vol_change = match volume_modifier {
                 xmrs::effect::NoteRetrigOperator::None => 0i8,
                 xmrs::effect::NoteRetrigOperator::Sum(v) => (v * 16.0).clamp(-128.0, 127.0) as i8,

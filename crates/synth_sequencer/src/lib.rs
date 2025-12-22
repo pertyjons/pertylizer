@@ -50,7 +50,10 @@ pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
 pub use effects::{EffectCommand, EffectWaveform};
 pub use events::{EventSorting, SequencerEvent};
-pub use ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex};
+pub use ids::{
+    NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
+    TrackIndex,
+};
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::Note;
 pub use pattern::{EffectOnlyEvent, Pattern, RowResolution, TrackCell, TrackerGrid};
@@ -69,7 +72,10 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::effects::EffectCommand;
     pub use super::events::SequencerEvent;
-    pub use super::ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex};
+    pub use super::ids::{
+        NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
+        TrackIndex,
+    };
     pub use super::input::{InputCommand, InputSource};
     pub use super::note::Note;
     pub use super::pattern::{Pattern, RowResolution};

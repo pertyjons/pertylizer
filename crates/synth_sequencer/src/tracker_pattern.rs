@@ -22,7 +22,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::effects::EffectCommand;
-use crate::ids::{PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackIndex};
+use crate::ids::{
+    PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackIndex,
+};
 use crate::pitch::{Pitch, Velocity};
 use crate::time::PatternTick;
 
@@ -143,7 +145,9 @@ impl TrackerPattern {
 
     /// Add an effect at the specified position.
     pub fn add_effect(&mut self, track: TrackIndex, row: RowIndex, effect: EffectCommand) {
-        self.tracks[track.as_usize()].rows[row.as_usize()].effects.push(effect);
+        self.tracks[track.as_usize()].rows[row.as_usize()]
+            .effects
+            .push(effect);
     }
 
     /// Clear the cell at the specified position (set to Empty).
@@ -153,7 +157,9 @@ impl TrackerPattern {
 
     /// Clear effects at the specified position.
     pub fn clear_effects(&mut self, track: TrackIndex, row: RowIndex) {
-        self.tracks[track.as_usize()].rows[row.as_usize()].effects.clear();
+        self.tracks[track.as_usize()].rows[row.as_usize()]
+            .effects
+            .clear();
     }
 
     // === Track access ===
@@ -184,19 +190,26 @@ impl TrackerPattern {
     /// Yields `(TrackIndex, RowIndex, &Row)` for each row that has
     /// a note, note-off, or effects.
     pub fn non_empty_rows(&self) -> impl Iterator<Item = (TrackIndex, RowIndex, &Row)> {
-        self.tracks.iter().enumerate().flat_map(|(track_idx, track)| {
-            track.rows.iter().enumerate().filter_map(move |(row_idx, row)| {
-                if !row.is_empty() {
-                    Some((
-                        TrackIndex::new(track_idx as u8),
-                        RowIndex::new(row_idx as u16),
-                        row,
-                    ))
-                } else {
-                    None
-                }
+        self.tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(track_idx, track)| {
+                track
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(row_idx, row)| {
+                        if !row.is_empty() {
+                            Some((
+                                TrackIndex::new(track_idx as u8),
+                                RowIndex::new(row_idx as u16),
+                                row,
+                            ))
+                        } else {
+                            None
+                        }
+                    })
             })
-        })
     }
 
     /// Iterate over all rows at a specific row index across all tracks.
@@ -205,7 +218,10 @@ impl TrackerPattern {
             .iter()
             .enumerate()
             .map(move |(track_idx, track)| {
-                (TrackIndex::new(track_idx as u8), &track.rows[row.as_usize()])
+                (
+                    TrackIndex::new(track_idx as u8),
+                    &track.rows[row.as_usize()],
+                )
             })
     }
 
@@ -481,11 +497,7 @@ mod tests {
 
     #[test]
     fn test_pattern_creation() {
-        let pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(4),
-            RowCount::new(64),
-        );
+        let pattern = TrackerPattern::new(PatternId::new(0), TrackCount::new(4), RowCount::new(64));
 
         assert_eq!(pattern.num_tracks().as_u8(), 4);
         assert_eq!(pattern.num_rows().as_u16(), 64);
@@ -495,11 +507,8 @@ mod tests {
 
     #[test]
     fn test_cell_access() {
-        let mut pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(4),
-            RowCount::new(64),
-        );
+        let mut pattern =
+            TrackerPattern::new(PatternId::new(0), TrackCount::new(4), RowCount::new(64));
 
         let pitch = Pitch::new(60).unwrap();
         let instrument = SeqInstrumentId::new(1);
@@ -521,18 +530,19 @@ mod tests {
         // This test documents the expected behavior:
         // NoteOff cells should only exist for explicit key-offs
 
-        let mut pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(1),
-            RowCount::new(4),
-        );
+        let mut pattern =
+            TrackerPattern::new(PatternId::new(0), TrackCount::new(1), RowCount::new(4));
 
         let pitch1 = Pitch::new(60).unwrap();
         let pitch2 = Pitch::new(64).unwrap();
         let instrument = SeqInstrumentId::new(1);
 
         // Row 0: Note C-4
-        pattern.set_cell(TrackIndex::ZERO, RowIndex::new(0), Cell::note(pitch1, instrument));
+        pattern.set_cell(
+            TrackIndex::ZERO,
+            RowIndex::new(0),
+            Cell::note(pitch1, instrument),
+        );
 
         // Row 1: Empty (note continues)
         // (default, no action needed)
@@ -541,12 +551,25 @@ mod tests {
         pattern.set_cell(TrackIndex::ZERO, RowIndex::new(2), Cell::note_off());
 
         // Row 3: New note (NO note-off before this!)
-        pattern.set_cell(TrackIndex::ZERO, RowIndex::new(3), Cell::note(pitch2, instrument));
+        pattern.set_cell(
+            TrackIndex::ZERO,
+            RowIndex::new(3),
+            Cell::note(pitch2, instrument),
+        );
 
         // Verify structure
         assert!(pattern.get(TrackIndex::ZERO, RowIndex::new(0)).has_note());
-        assert!(pattern.get(TrackIndex::ZERO, RowIndex::new(1)).cell.is_empty());
-        assert!(pattern.get(TrackIndex::ZERO, RowIndex::new(2)).has_note_off());
+        assert!(
+            pattern
+                .get(TrackIndex::ZERO, RowIndex::new(1))
+                .cell
+                .is_empty()
+        );
+        assert!(
+            pattern
+                .get(TrackIndex::ZERO, RowIndex::new(2))
+                .has_note_off()
+        );
         assert!(pattern.get(TrackIndex::ZERO, RowIndex::new(3)).has_note());
     }
 
@@ -565,18 +588,23 @@ mod tests {
 
     #[test]
     fn test_non_empty_rows_iteration() {
-        let mut pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(2),
-            RowCount::new(4),
-        );
+        let mut pattern =
+            TrackerPattern::new(PatternId::new(0), TrackCount::new(2), RowCount::new(4));
 
         let pitch = Pitch::new(60).unwrap();
         let instrument = SeqInstrumentId::new(1);
 
         // Add some notes
-        pattern.set_cell(TrackIndex::new(0), RowIndex::new(0), Cell::note(pitch, instrument));
-        pattern.set_cell(TrackIndex::new(1), RowIndex::new(2), Cell::note(pitch, instrument));
+        pattern.set_cell(
+            TrackIndex::new(0),
+            RowIndex::new(0),
+            Cell::note(pitch, instrument),
+        );
+        pattern.set_cell(
+            TrackIndex::new(1),
+            RowIndex::new(2),
+            Cell::note(pitch, instrument),
+        );
 
         let non_empty: Vec<_> = pattern.non_empty_rows().collect();
         assert_eq!(non_empty.len(), 2);
@@ -588,11 +616,7 @@ mod tests {
 
     #[test]
     fn test_row_to_tick_conversion() {
-        let pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(1),
-            RowCount::new(64),
-        );
+        let pattern = TrackerPattern::new(PatternId::new(0), TrackCount::new(1), RowCount::new(64));
 
         // Default is 240 song ticks per row (tracker speed 6)
         assert_eq!(pattern.row_to_tick(RowIndex::new(0)).0, 0);
@@ -607,11 +631,8 @@ mod tests {
 
     #[test]
     fn test_effects_on_row() {
-        let mut pattern = TrackerPattern::new(
-            PatternId::new(0),
-            TrackCount::new(1),
-            RowCount::new(4),
-        );
+        let mut pattern =
+            TrackerPattern::new(PatternId::new(0), TrackCount::new(1), RowCount::new(4));
 
         pattern.add_effect(
             TrackIndex::ZERO,

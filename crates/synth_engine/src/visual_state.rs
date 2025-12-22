@@ -121,13 +121,13 @@ impl ModuleVisualState {
         // Update port states
         for (port_name, &count) in &snapshot.input_connection_counts {
             let state = self.port_states.entry(port_name.clone()).or_default();
-            state.connected = count > 0;
-            state.connection_count = count;
+            state.connection = crate::connectivity::ConnectionState::from(count > 0);
+            state.connection_count = crate::connectivity::ConnectionCount::new(count);
         }
         for (port_name, &count) in &snapshot.output_connection_counts {
             let state = self.port_states.entry(port_name.clone()).or_default();
-            state.connected = count > 0;
-            state.connection_count = count;
+            state.connection = crate::connectivity::ConnectionState::from(count > 0);
+            state.connection_count = crate::connectivity::ConnectionCount::new(count);
         }
 
         // Update output levels in port states

@@ -65,7 +65,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_gui(gui_type: GuiType, import_file: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gui(
+    gui_type: GuiType,
+    import_file: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: VoiceCount::OCTO,
@@ -172,7 +175,10 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
     }
 
     // Default to egui if available, otherwise console
-    Ok(CliAction::RunGui(gui_type.unwrap_or_else(default_gui_type), import_file))
+    Ok(CliAction::RunGui(
+        gui_type.unwrap_or_else(default_gui_type),
+        import_file,
+    ))
 }
 
 fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,7 +207,11 @@ fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let env_info = if inst.envelope_points.is_empty() {
             "no envelope".to_string()
         } else {
-            let enabled = if inst.volume_envelope.enabled { "ON" } else { "OFF" };
+            let enabled = if inst.volume_envelope.enabled {
+                "ON"
+            } else {
+                "OFF"
+            };
             let sustain = inst
                 .envelope_sustain
                 .map(|s| format!(" sus={s}"))
@@ -210,7 +220,13 @@ fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 .envelope_loop
                 .map(|(s, e)| format!(" loop={s}-{e}"))
                 .unwrap_or_default();
-            format!("{} pts {} {}{}", inst.envelope_points.len(), enabled, sustain, loop_info)
+            format!(
+                "{} pts {} {}{}",
+                inst.envelope_points.len(),
+                enabled,
+                sustain,
+                loop_info
+            )
         };
         println!(
             "  [{:02}] '{}' - {} (vol={:.2}) [{}]",

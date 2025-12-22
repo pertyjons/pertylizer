@@ -1154,7 +1154,7 @@ impl SynthEngine {
                 .effect_chain_mut()
                 .find_effect_by_type(module.module_type)
             {
-                slot.enabled = !bypass;
+                slot.state = crate::effect_chain::EnabledState::from(!bypass);
                 break;
             }
         }
@@ -1171,13 +1171,13 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
                     slot.effect.set_param(param);
-                    slot.enabled = true;
+                    slot.state = crate::effect_chain::EnabledState::Active;
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
                     slot.effect.set_param(param);
-                    slot.enabled = true;
+                    slot.state = crate::effect_chain::EnabledState::Active;
                 }
             }
         }
@@ -1190,15 +1190,16 @@ impl SynthEngine {
         enabled: bool,
     ) {
         let mt = effect_type.to_module_type();
+        let state = crate::effect_chain::EnabledState::from(enabled);
         match instrument_id {
             Some(inst_id) => {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
-                    slot.enabled = enabled;
+                    slot.state = state;
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
-                    slot.enabled = enabled;
+                    slot.state = state;
                 }
             }
         }
@@ -1605,7 +1606,8 @@ impl AudioProcessor for SynthEngine {
 
                     // Apply to all instruments (voice might be on any of them)
                     for instrument in &mut self.instruments {
-                        if let Some(voice) = instrument.allocator_mut().voices_mut().get_mut(voice_idx)
+                        if let Some(voice) =
+                            instrument.allocator_mut().voices_mut().get_mut(voice_idx)
                         {
                             voice.tracker_pitch_cents = *pitch_cents;
                             voice.tracker_volume = *volume;
@@ -1631,7 +1633,9 @@ impl AudioProcessor for SynthEngine {
 
                     // Release voice on all instruments (voice might be active on any of them)
                     for instrument in &mut self.instruments {
-                        instrument.allocator_mut().note_off_fixed_voice(*voice_index);
+                        instrument
+                            .allocator_mut()
+                            .note_off_fixed_voice(*voice_index);
                     }
                 }
                 _ => {}

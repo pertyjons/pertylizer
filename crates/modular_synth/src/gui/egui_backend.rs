@@ -1646,9 +1646,7 @@ impl SynthApp {
                             .cloned();
 
                         // Check if instrument has a valid (non-empty) sample
-                        let has_valid_sample = sample
-                            .as_ref()
-                            .is_some_and(|s| s.len().0 > 0);
+                        let has_valid_sample = sample.as_ref().is_some_and(|s| s.len().0 > 0);
 
                         let inst_id = InstrumentId::new(self.next_instrument_id);
                         self.next_instrument_id += 1;
@@ -1876,10 +1874,9 @@ impl SynthApp {
                                     let envelope_id =
                                         self.next_module_id(TypedModuleType::Envelope);
                                     ui_state.patch_editor.add_module(envelope_id, envelope_desc);
-                                    ui_state.patch_editor.set_module_envelope_position(
-                                        envelope_id,
-                                        position_buffer,
-                                    );
+                                    ui_state
+                                        .patch_editor
+                                        .set_module_envelope_position(envelope_id, position_buffer);
 
                                     (envelope_id, Box::new(envelope))
                                 };

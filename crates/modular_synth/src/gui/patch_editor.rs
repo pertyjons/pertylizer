@@ -1374,21 +1374,17 @@ fn draw_module_panel_params(
         let mut release = state.param_values.get("Release").copied().unwrap_or(0.3);
 
         // Get envelope playback position (lock-free)
-        let envelope_pos = state
-            .envelope_position
-            .as_ref()
-            .map(|buf| buf.get());
+        let envelope_pos = state.envelope_position.as_ref().map(|buf| buf.get());
 
         // Draw the interactive envelope editor
         ui.add_space(4.0);
         let width = ui.available_width().clamp(150.0, 250.0);
         let height = (width * 0.5).clamp(80.0, 120.0);
 
-        let mut editor =
-            EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
-                .accent_color(accent_color)
-                .size(width, height)
-                .max_time(10.0);
+        let mut editor = EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
+            .accent_color(accent_color)
+            .size(width, height)
+            .max_time(10.0);
 
         // Add playback position if available
         if let Some((stage, level)) = envelope_pos {
