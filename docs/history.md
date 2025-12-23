@@ -1,5 +1,62 @@
 # Version History
 
+## [0.66.0] - 2025
+### Fixed - XM Vibrato/Tremolo Speed Import
+
+#### Korrigerad effect-skalning
+- **Problem**: Vibrato/tremolo visades som `412` istället för `462` i tracker-vyn
+- **Orsak**: xmrs normaliserar vibrato/tremolo speed med divisor 64, inte 16
+- **Lösning**: Ändrade multiplikator från `* 16.0` till `* 64.0` för speed-parametern
+
+#### xmrs Parameter Memory
+- Beslutat att förlita sig på xmrs's inbyggda "parameter memory"
+- Continuation effects (`400`) visas nu som resolved values (`462`)
+- Förenklar import-koden och följer xmrs design
+
+#### Kod-städning
+- Fixade clippy `double_must_use` varningar i `tracker_effects.rs`
+- Tog bort redundanta `#[must_use]` attribut på konstruktorer som returnerar Self
+- Nytt debug-verktyg: `dump_patterns.rs` example för XM pattern-analys
+
+---
+
+## [0.65.0] - 2025
+### Feature - Extended Tracker Navigation
+
+#### Pattern-navigering under uppspelning
+- `<`/`>` knappar fungerar nu även under uppspelning
+- Sequencern söker till det nya patterns startposition
+
+#### Play Pattern-funktion
+- Ny knapp (🔁) i tracker toolbar
+- Spelar endast aktivt pattern i loop
+- Nytt `EngineCommand::PlayPattern`
+
+#### Resume Song
+- Play-knappen (▶) startar nu från aktivt patterns början
+- Istället för att alltid starta från tick 0
+- Nytt `EngineCommand::PlayFromPattern`
+
+#### Nya EngineCommands
+- `Seek { tick }` - Hoppa till specifik tick-position
+- `PlayPattern { pattern_id }` - Loopa ett pattern
+- `PlayFromPattern { pattern_id }` - Starta från patterns början
+
+---
+
+## [0.64.0] - 2025
+### Documentation - ARCHITECTURE.md
+
+#### Ny arkitekturdokumentation
+- Skapad `ARCHITECTURE.md` för AI-assisterad utveckling
+- Dokumenterar crate-struktur och beroendekedja
+- Beskriver dataflöde mellan UI och audio-tråd
+- Definierar nyckelkoncept (Voice, Instrument, ModuleGraph, etc.)
+- Listar kritiska invarianter (realtidssäkerhet, newtype-mönster)
+- Inkluderar vanliga operationer (lägga till modul, effekt)
+
+---
+
 ## [0.63.0] - 2025
 ### Refactoring - Newtype Pattern för synth_engine
 

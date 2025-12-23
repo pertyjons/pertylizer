@@ -13,7 +13,7 @@ use std::str::FromStr;
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use synth_core::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones};
 use synth_core::{ModuleType, Param};
-use synth_sequencer::TrackId;
+use synth_sequencer::{PatternId, Tick, TrackId};
 
 /// Unique identifier for a module instance.
 ///
@@ -419,6 +419,17 @@ pub enum EngineCommand {
     /// Set solo track for sequencer playback.
     /// When Some(track), only that track plays. When None, all tracks play.
     SetSoloTrack(Option<TrackId>),
+
+    /// Seek to a specific tick position during playback.
+    Seek { tick: Tick },
+
+    /// Play only the specified pattern in a loop.
+    /// Finds pattern in arrangement, sets loop boundaries, and starts playing.
+    PlayPattern { pattern_id: PatternId },
+
+    /// Start playback from the beginning of a specific pattern.
+    /// Does not loop - plays through the entire song from that position.
+    PlayFromPattern { pattern_id: PatternId },
 
     // === Engine control ===
     /// Reset the engine state.
@@ -847,6 +858,9 @@ impl std::fmt::Debug for EngineCommand {
             Self::Pause => write!(f, "Pause"),
             Self::Rewind => write!(f, "Rewind"),
             Self::SetSoloTrack(track) => write!(f, "SetSoloTrack({track:?})"),
+            Self::Seek { tick } => write!(f, "Seek({tick:?})"),
+            Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
+            Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),
             Self::Reset => write!(f, "Reset"),
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),

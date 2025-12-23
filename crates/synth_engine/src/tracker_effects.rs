@@ -57,7 +57,6 @@ impl InstrumentDefaults {
     /// # Arguments
     /// * `volume` - Optional volume from sample (0.0-1.0), defaults to 1.0
     /// * `panning` - Optional panning from sample (0.0=left, 0.5=center, 1.0=right), defaults to center
-    #[must_use]
     pub fn from_sample(volume: Option<f32>, panning: Option<f32>) -> Self {
         Self {
             volume: NormalizedValue::new(volume.unwrap_or(1.0)),
@@ -95,7 +94,6 @@ impl TrackerSpeed {
     pub const DEFAULT: Self = Self(6);
 
     /// Create a new speed value.
-    #[must_use]
     pub const fn new(speed: u8) -> Self {
         Self(if speed == 0 { 1 } else { speed })
     }
@@ -117,7 +115,6 @@ impl TickInRow {
     pub const ZERO: Self = Self(0);
 
     /// Create a new tick position.
-    #[must_use]
     pub const fn new(tick: u8) -> Self {
         Self(tick)
     }
@@ -129,7 +126,6 @@ impl TickInRow {
     }
 
     /// Advance by one tick.
-    #[must_use]
     pub fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -145,7 +141,6 @@ impl TrackerSampleOffset {
     pub const ZERO: Self = Self(0);
 
     /// Create a new sample offset.
-    #[must_use]
     pub const fn new(offset: u16) -> Self {
         Self(offset)
     }
@@ -176,7 +171,6 @@ impl PitchCents {
     pub const ZERO: Self = Self(0.0);
 
     /// Create a new pitch offset.
-    #[must_use]
     pub fn new(cents: f32) -> Self {
         Self(cents)
     }
@@ -242,13 +236,11 @@ impl EffectSpeed {
     pub const ZERO: Self = Self(0.0);
 
     /// Create a new effect speed.
-    #[must_use]
     pub fn new(speed: f32) -> Self {
         Self(speed)
     }
 
     /// Create from tracker effect parameter (0-15).
-    #[must_use]
     pub fn from_param(param: u8) -> Self {
         Self(f32::from(param))
     }
@@ -278,7 +270,6 @@ impl SlideRate {
     pub const ZERO: Self = Self(0.0);
 
     /// Create a new slide rate.
-    #[must_use]
     pub fn new(rate: f32) -> Self {
         Self(rate)
     }
@@ -288,13 +279,11 @@ impl SlideRate {
     /// # Arguments
     /// * `up` - Slide up value (0-15)
     /// * `down` - Slide down value (0-15)
-    #[must_use]
     pub fn from_volume_slide(up: u8, down: u8) -> Self {
         Self((f32::from(up) - f32::from(down)) / 64.0)
     }
 
     /// Create from tracker panning slide parameters.
-    #[must_use]
     pub fn from_panning_slide(left: u8, right: u8) -> Self {
         Self((f32::from(right) - f32::from(left)) / 128.0)
     }
@@ -322,13 +311,11 @@ impl TremoloDepth {
     pub const ZERO: Self = Self(0.0);
 
     /// Create a new tremolo depth.
-    #[must_use]
     pub fn new(depth: f32) -> Self {
         Self(depth.clamp(0.0, 1.0))
     }
 
     /// Create from tracker effect parameter (0-15).
-    #[must_use]
     pub fn from_param(param: u8) -> Self {
         Self(f32::from(param) / 64.0)
     }
@@ -370,7 +357,6 @@ impl RetriggerState {
     };
 
     /// Create a new retrigger state.
-    #[must_use]
     pub fn new(interval: TickCount, volume_change: SlideRate) -> Self {
         Self {
             interval,
@@ -386,13 +372,11 @@ impl RetriggerState {
     }
 
     /// Get the interval.
-    #[must_use]
     pub fn interval(self) -> TickCount {
         self.interval
     }
 
     /// Get the volume change per retrigger.
-    #[must_use]
     pub fn volume_change(self) -> SlideRate {
         self.volume_change
     }
@@ -428,7 +412,6 @@ impl TickCount {
     pub const ZERO: Self = Self(0);
 
     /// Create a new tick count.
-    #[must_use]
     pub const fn new(count: u8) -> Self {
         Self(count)
     }
@@ -493,7 +476,6 @@ impl NoteState {
     };
 
     /// Create a new playing state.
-    #[must_use]
     pub fn playing() -> Self {
         Self {
             playing: PlayingState::Playing,
@@ -650,7 +632,6 @@ impl ChannelEffectProcessor {
     }
 
     /// Get the current speed (ticks per row).
-    #[must_use]
     pub fn speed(&self) -> TrackerSpeed {
         self.speed
     }
@@ -907,7 +888,6 @@ impl ChannelEffectProcessor {
     }
 
     /// Get the current modulation for a specific channel.
-    #[must_use]
     pub fn get_channel_modulation(&self, track: TrackId) -> ChannelModulation {
         let idx = track.0 as usize;
         self.channels
@@ -1076,7 +1056,7 @@ impl ChannelEffectState {
     ///
     /// * `pitch` - The pitch of the new note
     /// * `instrument_defaults` - `Some` if explicit instrument was specified (reset volume/panning),
-    ///                           `None` if inheriting instrument (keep current volume/panning)
+    ///   `None` if inheriting instrument (keep current volume/panning)
     /// * `is_tone_portamento` - `true` if effect 3xx (tone portamento) or 5xx is active on this row
     /// * `has_sample_offset` - `true` if effect 9xx (sample offset) is active on this row
     ///
@@ -1255,7 +1235,6 @@ impl ChannelEffectState {
     }
 
     /// Get the current modulation values.
-    #[must_use]
     pub fn current_modulation(&self, track: TrackId) -> ChannelModulation {
         // Calculate pitch modulation
         let mut pitch_mod = self.pitch_offset + self.fine_tune;
@@ -1349,7 +1328,6 @@ pub struct ChannelModulation {
 
 impl ChannelModulation {
     /// Create a default modulation for a track.
-    #[must_use]
     pub fn default_for(track: TrackId) -> Self {
         Self {
             track,

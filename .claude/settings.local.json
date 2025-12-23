@@ -65,7 +65,8 @@
       "Bash(target/release/modular_synth:*)",
       "Bash(target/release/modular-synth:*)",
       "Bash(timeout 5 target/release/modular-synth:*)",
-      "Bash(/usage)"
+      "Bash(/usage)",
+      "Bash(claude usage)"
     ],
     "deny": [],
     "ask": []

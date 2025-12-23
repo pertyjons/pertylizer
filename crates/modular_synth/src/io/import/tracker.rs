@@ -730,8 +730,10 @@ fn convert_track_effect_for_tracker(
         }
 
         TrackEffect::Vibrato { speed, depth } => {
+            // xmrs normalizes speed to 0-1 using 64 as denominator, depth uses 16
+            // xmrs applies parameter memory, so continuation effects have resolved values
             if *speed > 0.0 {
-                state.last_vibrato_speed = (speed * 16.0).min(15.0) as u8;
+                state.last_vibrato_speed = (speed * 64.0).min(15.0) as u8;
             }
             if *depth > 0.0 {
                 state.last_vibrato_depth = (depth * 16.0).min(15.0) as u8;
@@ -743,7 +745,8 @@ fn convert_track_effect_for_tracker(
         }
 
         TrackEffect::VibratoSpeed(speed) => {
-            state.last_vibrato_speed = (speed * 16.0).min(15.0) as u8;
+            // xmrs normalizes speed to 0-1 using 64 as denominator
+            state.last_vibrato_speed = (speed * 64.0).min(15.0) as u8;
             Some(EffectCommand::Vibrato {
                 speed: state.last_vibrato_speed,
                 depth: state.last_vibrato_depth,
@@ -835,8 +838,10 @@ fn convert_track_effect_for_tracker(
         }
 
         TrackEffect::Tremolo { speed, depth } => {
+            // xmrs normalizes speed to 0-1 using 64 as denominator, depth uses 16
+            // xmrs applies parameter memory, so continuation effects have resolved values
             if *speed > 0.0 {
-                state.last_tremolo_speed = (speed * 16.0).min(15.0) as u8;
+                state.last_tremolo_speed = (speed * 64.0).min(15.0) as u8;
             }
             if *depth > 0.0 {
                 state.last_tremolo_depth = (depth * 16.0).min(15.0) as u8;

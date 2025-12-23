@@ -834,7 +834,13 @@ impl eframe::App for SynthApp {
                     use crate::gui::views::sequencer::TransportAction;
                     match action {
                         TransportAction::Play => {
-                            self.handle.send(EngineCommand::Play);
+                            // Start from current pattern position
+                            if let Some(pattern_id) = self.tracker_state.active_pattern {
+                                self.handle
+                                    .send(EngineCommand::PlayFromPattern { pattern_id });
+                            } else {
+                                self.handle.send(EngineCommand::Play);
+                            }
                         }
                         TransportAction::Stop => {
                             self.handle.send(EngineCommand::Stop);
@@ -842,7 +848,18 @@ impl eframe::App for SynthApp {
                         TransportAction::Rewind => {
                             self.handle.send(EngineCommand::Rewind);
                         }
+                        TransportAction::PlayPattern => {
+                            // Loop only the active pattern
+                            if let Some(pattern_id) = self.tracker_state.active_pattern {
+                                self.handle.send(EngineCommand::PlayPattern { pattern_id });
+                            }
+                        }
                     }
+                }
+
+                // Handle seek requests (pattern navigation during playback)
+                if let Some(tick) = result.seek_to {
+                    self.handle.send(EngineCommand::Seek { tick });
                 }
 
                 // Handle solo track changes

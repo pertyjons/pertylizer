@@ -461,6 +461,13 @@ impl Clone for EngineCommand {
             EngineCommand::Pause => EngineCommand::Pause,
             EngineCommand::Rewind => EngineCommand::Rewind,
             EngineCommand::SetSoloTrack(t) => EngineCommand::SetSoloTrack(*t),
+            EngineCommand::Seek { tick } => EngineCommand::Seek { tick: *tick },
+            EngineCommand::PlayPattern { pattern_id } => EngineCommand::PlayPattern {
+                pattern_id: *pattern_id,
+            },
+            EngineCommand::PlayFromPattern { pattern_id } => EngineCommand::PlayFromPattern {
+                pattern_id: *pattern_id,
+            },
             EngineCommand::Reset => EngineCommand::Reset,
             EngineCommand::ClearAllModules => EngineCommand::ClearAllModules,
             EngineCommand::SetMasterVolume(v) => EngineCommand::SetMasterVolume(*v),

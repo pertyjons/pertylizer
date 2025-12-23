@@ -789,12 +789,86 @@ impl SynthEngine {
             EngineCommand::SetSoloTrack(track) => {
                 self.solo_track = track;
             }
+            EngineCommand::Seek { tick } => {
+                let _ = self.sequencer.seek(tick);
+                self.state.transport.set_ticks(tick.0);
+            }
+            EngineCommand::PlayPattern { pattern_id } => {
+                // Find pattern in arrangement and get boundaries
+                let bounds = self
+                    .sequencer
+                    .song()
+                    .read()
+                    .ok()
+                    .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
+
+                if let Some((start, end)) = bounds {
+                    // Important: play() first to avoid it resetting current_tick to 0
+                    self.sequencer.play();
+                    let _ = self.sequencer.seek(start);
+                    self.sequencer.set_loop(start, end, true);
+                    self.state.transport.set_playing(true);
+                    self.state.transport.set_ticks(start.0);
+                } else {
+                    // Fallback: pattern not in arrangement, just play from beginning
+                    self.sequencer.play();
+                    self.state.transport.set_playing(true);
+                }
+            }
+            EngineCommand::PlayFromPattern { pattern_id } => {
+                // Start playback from pattern start, no loop
+                let bounds = self
+                    .sequencer
+                    .song()
+                    .read()
+                    .ok()
+                    .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
+
+                if let Some((start, _end)) = bounds {
+                    // Important: play() first to avoid it resetting current_tick to 0
+                    self.sequencer.play();
+                    let _ = self.sequencer.seek(start);
+                    self.sequencer
+                        .set_loop(synth_sequencer::Tick::ZERO, synth_sequencer::Tick::ZERO, false);
+                    self.state.transport.set_playing(true);
+                    self.state.transport.set_ticks(start.0);
+                } else {
+                    // Fallback: pattern not in arrangement, just play from beginning
+                    self.sequencer.play();
+                    self.state.transport.set_playing(true);
+                }
+            }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
             }
 
             _ => {}
         }
+    }
+
+    // ========================================================================
+    // Pattern navigation helpers
+    // ========================================================================
+
+    /// Find the start and end tick for a pattern's first occurrence in the arrangement.
+    fn find_pattern_bounds(
+        song: &synth_sequencer::Song,
+        pattern_id: synth_sequencer::PatternId,
+    ) -> Option<(synth_sequencer::Tick, synth_sequencer::Tick)> {
+        for placement in song.arrangement() {
+            if placement.pattern_id == pattern_id {
+                // Try tracker pattern first
+                if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
+                    let length = synth_sequencer::Duration(tracker_pattern.length_ticks().0);
+                    return Some((placement.start, placement.end(length)));
+                }
+                // Fall back to regular pattern
+                if let Some(pattern) = song.pattern(pattern_id) {
+                    return Some((placement.start, placement.end(pattern.length)));
+                }
+            }
+        }
+        None
     }
 
     // ========================================================================

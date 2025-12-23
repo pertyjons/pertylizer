@@ -348,7 +348,10 @@ impl EngineHub {
             | EngineCommand::Rewind
             | EngineCommand::SetSoloTrack(_)
             | EngineCommand::SetTempo(_)
-            | EngineCommand::SetSong { .. } => perms.can_control_transport,
+            | EngineCommand::SetSong { .. }
+            | EngineCommand::Seek { .. }
+            | EngineCommand::PlayPattern { .. }
+            | EngineCommand::PlayFromPattern { .. } => perms.can_control_transport,
 
             // Note events - require param permission
             EngineCommand::NoteOn { .. }

@@ -12,14 +12,19 @@ use synth_sequencer::song::Song;
 use synth_sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
-use synth_sequencer::{PatternTick, Tick, TrackId};
+use synth_sequencer::{PatternId, PatternTick, Tick, TrackId};
 
 /// Transport action requested from the sequencer view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportAction {
+    /// Play song from current pattern position.
     Play,
+    /// Stop playback.
     Stop,
+    /// Rewind to beginning.
     Rewind,
+    /// Play only the active pattern in a loop.
+    PlayPattern,
 }
 
 /// Result of sequencer view interaction.
@@ -33,6 +38,8 @@ pub struct SequencerResult {
     pub transport: Option<TransportAction>,
     /// Solo track changed (Some(Some(track)) = solo track, Some(None) = no solo).
     pub solo_track_changed: Option<Option<TrackId>>,
+    /// Seek to this tick position (for pattern navigation during playback).
+    pub seek_to: Option<Tick>,
 }
 
 /// Show the sequencer view.
@@ -63,7 +70,15 @@ pub fn show(
                         pattern_ids.extend(song.tracker_patterns().map(|p| p.id()));
                         pattern_ids.sort_by_key(|id| id.0);
                         pattern_ids.dedup(); // Remove duplicates if any
-                        tracker_state.navigate_to_pattern(&pattern_ids);
+
+                        if let Some(new_pattern) = tracker_state.navigate_to_pattern(&pattern_ids) {
+                            // If playing, seek to the new pattern's start position
+                            if playback_tick.is_some()
+                                && let Some(start_tick) = find_pattern_start_tick(song, new_pattern)
+                            {
+                                result.seek_to = Some(start_tick);
+                            }
+                        }
                     }
 
                     // Handle keyboard input BEFORE drawing (to update state first)
@@ -167,6 +182,17 @@ fn draw_toolbar(
             .clicked()
         {
             // TODO: Implement record
+        }
+
+        ui.add_space(10.0);
+
+        // Play Pattern button (loops current pattern)
+        if ui
+            .button(RichText::new("🔁").size(18.0))
+            .on_hover_text("Play Pattern (loop current pattern)")
+            .clicked()
+        {
+            transport_action = Some(TransportAction::PlayPattern);
         }
 
         ui.add_space(20.0);
@@ -472,4 +498,12 @@ fn draw_no_song_placeholder(ui: &mut Ui) {
             });
         }
     });
+}
+
+/// Find the start tick for a pattern's first occurrence in the arrangement.
+fn find_pattern_start_tick(song: &Song, pattern_id: PatternId) -> Option<Tick> {
+    song.arrangement()
+        .iter()
+        .find(|p| p.pattern_id == pattern_id)
+        .map(|p| p.start)
 }
