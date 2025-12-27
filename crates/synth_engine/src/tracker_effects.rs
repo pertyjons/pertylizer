@@ -741,12 +741,18 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::PortamentoUp(speed) => {
-                    state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    // Effect memory: 100 means "continue with previous speed"
+                    if *speed > 0 {
+                        state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    }
                     state.portamento_direction = PortamentoDirection::Up;
                 }
 
                 EffectCommand::PortamentoDown(speed) => {
-                    state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    // Effect memory: 200 means "continue with previous speed"
+                    if *speed > 0 {
+                        state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    }
                     state.portamento_direction = PortamentoDirection::Down;
                 }
 
@@ -773,7 +779,11 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::VolumeSlide { up, down } => {
-                    state.volume_slide = SlideRate::from_volume_slide(*up, *down);
+                    // Effect memory: A00 means "continue with previous value"
+                    if *up > 0 || *down > 0 {
+                        state.volume_slide = SlideRate::from_volume_slide(*up, *down);
+                    }
+                    // If both are 0, keep the previous volume_slide value
                 }
 
                 EffectCommand::FineVolumeSlide { up, down } => {
@@ -797,7 +807,10 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::PanningSlide { left, right } => {
-                    state.panning_slide = SlideRate::from_panning_slide(*left, *right);
+                    // Effect memory: P00 means "continue with previous value"
+                    if *left > 0 || *right > 0 {
+                        state.panning_slide = SlideRate::from_panning_slide(*left, *right);
+                    }
                 }
 
                 EffectCommand::NoteCut(tick) => {
@@ -942,6 +955,8 @@ pub struct ChannelEffectState {
     // === Arpeggio ===
     /// Current arpeggio state (if active).
     pub arpeggio: Option<ArpeggioState>,
+    /// Current tick within the row (for arpeggio cycling).
+    pub current_tick: TickInRow,
 
     // === Portamento ===
     /// Portamento slide speed in cents per tick.
@@ -1016,6 +1031,7 @@ impl Default for ChannelEffectState {
             sample_offset: TrackerSampleOffset::ZERO,
             last_note: None,
             arpeggio: None,
+            current_tick: TickInRow::ZERO,
             portamento_speed: PitchCents::ZERO,
             portamento_direction: PortamentoDirection::Off,
             tone_porta_speed: PitchCents::ZERO,
@@ -1127,6 +1143,9 @@ impl ChannelEffectState {
 
     /// Process one tick and return modulation.
     pub fn process_tick(&mut self, tick: TickInRow, track: TrackId) -> ChannelModulation {
+        // Store current tick for arpeggio calculation
+        self.current_tick = tick;
+
         // Clear per-tick actions from previous tick
         self.note_state.clear_actions();
 
@@ -1248,8 +1267,8 @@ impl ChannelEffectState {
 
         // Calculate arpeggio offset
         let arpeggio_semitones = self.arpeggio.as_ref().map_or(0, |arp| {
-            // Cycle through base, +x, +y based on phase
-            match (self.vibrato_phase.as_f32() * 3.0) as u8 % 3 {
+            // Cycle through base, +x, +y based on tick
+            match self.current_tick.as_u8() % 3 {
                 0 => 0,
                 1 => arp.semitone1,
                 _ => arp.semitone2,

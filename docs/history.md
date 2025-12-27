@@ -1,5 +1,29 @@
 # Version History
 
+## [0.67.0] - 2025
+### Fixed - XM Effect Memory & Arpeggio Tick
+
+#### Effect Memory implementerad
+- **Problem**: `A00` (volume slide), `100`/`200` (portamento), `P00` (panning slide) nollställde effekten istället för att fortsätta med föregående värde
+- **Orsak**: XM-format använder parameter 0 för "fortsätt med föregående hastighet", men koden skrev alltid över effekt-state
+- **Lösning**: Lade till villkor `if param > 0` för:
+  - `VolumeSlide { up, down }` - behåller slide vid `up=0, down=0`
+  - `PortamentoUp(speed)` - behåller speed vid `speed=0`
+  - `PortamentoDown(speed)` - behåller speed vid `speed=0`
+  - `PanningSlide { left, right }` - behåller slide vid `left=0, right=0`
+
+#### Arpeggio tick-fix
+- **Problem**: Arpeggio (0xy) använde `vibrato_phase` för att cykla noter, vilket gjorde att arpeggio inte fungerade när vibrato var av
+- **Lösning**:
+  - Nytt fält `current_tick: TickInRow` i `ChannelEffectState`
+  - `process_tick()` sparar nu aktuell tick
+  - Arpeggio använder `self.current_tick.as_u8() % 3` för notcykling
+
+#### Påverkade låtar
+- `joli_suspiria.xm` position 3+ låter nu korrekt (massvis av `A00` kommandon)
+
+---
+
 ## [0.66.0] - 2025
 ### Fixed - XM Vibrato/Tremolo Speed Import
 

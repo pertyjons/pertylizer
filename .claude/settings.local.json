@@ -66,7 +66,10 @@
       "Bash(target/release/modular-synth:*)",
       "Bash(timeout 5 target/release/modular-synth:*)",
       "Bash(/usage)",
-      "Bash(claude usage)"
+      "Bash(claude usage)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:wiki.multimedia.cx)",
+      "WebFetch(domain:wiki.openmpt.org)"
     ],
     "deny": [],
     "ask": []
