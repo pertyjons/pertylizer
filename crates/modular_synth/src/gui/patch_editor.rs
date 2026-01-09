@@ -416,9 +416,18 @@ impl PatchEditor {
             let connectivity_status = self.get_connectivity(module_id);
             let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
 
+            // Global modules (effects, visualizers) are always "connected" since they
+            // process the final mixed output automatically via the effect chain
+            let is_global_module = matches!(
+                descriptor.category,
+                ModuleCategory::Effect | ModuleCategory::Visualizer
+            );
+
             // Dim modules that aren't connected to output, or are bypassed
             let opacity = if is_bypassed {
                 0.4 // Heavily dimmed when bypassed
+            } else if is_global_module {
+                1.0 // Global modules are always active
             } else {
                 match connectivity_status {
                     ModuleConnectivity::Connected => 1.0,
@@ -531,22 +540,31 @@ impl PatchEditor {
                         ui.add_space(2.0);
 
                         // Connectivity status indicator - diamond shapes
-                        let (conn_icon, conn_color, conn_tooltip) = match connectivity_status {
-                            ModuleConnectivity::Connected => (
+                        // Global modules (effects, visualizers) are always connected via effect chain
+                        let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
+                            (
                                 "◆",
-                                Color32::from_rgb(100, 200, 100),
-                                "🔗 Routed to Output\nAudio from this module reaches the output.",
-                            ),
-                            ModuleConnectivity::Orphaned => (
-                                "◇",
-                                Color32::from_rgb(200, 200, 100),
-                                "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
-                            ),
-                            ModuleConnectivity::Disconnected => (
-                                "◇",
-                                Color32::from_rgb(100, 100, 100),
-                                "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
-                            ),
+                                Color32::from_rgb(100, 180, 220),
+                                "⚡ Global Module\nProcessed automatically via effect chain.",
+                            )
+                        } else {
+                            match connectivity_status {
+                                ModuleConnectivity::Connected => (
+                                    "◆",
+                                    Color32::from_rgb(100, 200, 100),
+                                    "🔗 Routed to Output\nAudio from this module reaches the output.",
+                                ),
+                                ModuleConnectivity::Orphaned => (
+                                    "◇",
+                                    Color32::from_rgb(200, 200, 100),
+                                    "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                                ),
+                                ModuleConnectivity::Disconnected => (
+                                    "◇",
+                                    Color32::from_rgb(100, 100, 100),
+                                    "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                                ),
+                            }
                         };
                         ui.add(
                             egui::Button::new(
@@ -720,6 +738,46 @@ impl PatchEditor {
     ) {
         use synth_core::PortDirection as CorePortDirection;
 
+        let t = theme();
+        let port_label_size = 11.0;
+
+        // Effect chain modules and visualizers don't need port connections -
+        // show an informational label instead of ports.
+        let is_effect = descriptor.category == ModuleCategory::Effect;
+        let is_visualizer = descriptor.category == ModuleCategory::Visualizer;
+
+        if is_effect {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("⚡ Effect Chain")
+                        .size(port_label_size)
+                        .color(t.colors.text_dim),
+                );
+            });
+            ui.label(
+                egui::RichText::new("Applied automatically after voice mixing")
+                    .size(9.0)
+                    .color(t.colors.text_dim.gamma_multiply(0.7)),
+            );
+            return;
+        }
+
+        if is_visualizer {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("📊 Visualizer")
+                        .size(port_label_size)
+                        .color(t.colors.text_dim),
+                );
+            });
+            ui.label(
+                egui::RichText::new("Displays final output signal")
+                    .size(9.0)
+                    .color(t.colors.text_dim.gamma_multiply(0.7)),
+            );
+            return;
+        }
+
         let input_ports: Vec<_> = descriptor
             .ports
             .iter()
@@ -733,13 +791,12 @@ impl PatchEditor {
             .collect();
 
         let available_width = ui.available_width();
-        let t = theme();
-        let port_label_size = 11.0;
 
         // Check if we have a pending connection and extract info for highlighting
-        let pending_info = self.pending_connection.as_ref().map(|p| {
-            (p.from_module, p.from_type, p.from_direction)
-        });
+        let pending_info = self
+            .pending_connection
+            .as_ref()
+            .map(|p| (p.from_module, p.from_type, p.from_direction));
 
         ui.horizontal(|ui| {
             // Input ports - left aligned
@@ -757,11 +814,13 @@ impl PatchEditor {
                         let is_connected = connected_ports.contains(&port.name);
 
                         // Check if this port is a valid connection target
-                        let is_highlighted = pending_info.map(|(from_module, from_type, from_dir)| {
-                            from_module != module_id
-                                && from_dir != WidgetPortDirection::Input
-                                && from_type == port_type
-                        }).unwrap_or(false);
+                        let is_highlighted = pending_info
+                            .map(|(from_module, from_type, from_dir)| {
+                                from_module != module_id
+                                    && from_dir != WidgetPortDirection::Input
+                                    && from_type == port_type
+                            })
+                            .unwrap_or(false);
 
                         ui.horizontal(|ui| {
                             let (response, center) = super::widgets::PortWidget::new(
@@ -827,11 +886,13 @@ impl PatchEditor {
                         let is_connected = connected_ports.contains(&port.name);
 
                         // Check if this port is a valid connection target
-                        let is_highlighted = pending_info.map(|(from_module, from_type, from_dir)| {
-                            from_module != module_id
-                                && from_dir != WidgetPortDirection::Output
-                                && from_type == port_type
-                        }).unwrap_or(false);
+                        let is_highlighted = pending_info
+                            .map(|(from_module, from_type, from_dir)| {
+                                from_module != module_id
+                                    && from_dir != WidgetPortDirection::Output
+                                    && from_type == port_type
+                            })
+                            .unwrap_or(false);
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             let (response, center) = super::widgets::PortWidget::new(

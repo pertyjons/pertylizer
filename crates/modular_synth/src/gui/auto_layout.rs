@@ -41,6 +41,15 @@ fn is_modulation_module(category: ModuleCategory) -> bool {
     matches!(category, ModuleCategory::Envelope | ModuleCategory::LFO)
 }
 
+/// Check if a module category is a global module (effect chain or visualizer).
+/// These modules don't need connections - they're processed automatically.
+fn is_global_module(category: ModuleCategory) -> bool {
+    matches!(
+        category,
+        ModuleCategory::Effect | ModuleCategory::Visualizer
+    )
+}
+
 /// Check if a module has any connections.
 fn has_connections(module_id: ModuleId, connections: &[LayoutConnection]) -> bool {
     connections
@@ -53,8 +62,9 @@ fn has_connections(module_id: ModuleId, connections: &[LayoutConnection]) -> boo
 /// Layout rules:
 /// 1. Connected main modules: left-to-right by signal flow depth
 /// 2. Connected modulation modules: below their targets
-/// 3. Disconnected modules: stacked in bottom-right corner
-/// 4. ALL modules must fit within available_rect (no overflow)
+/// 3. Global modules (effects, visualizers): rightmost column (always active)
+/// 4. Disconnected modules: stacked in corner after global modules
+/// 5. ALL modules must fit within available_rect (no overflow)
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
@@ -74,13 +84,18 @@ pub fn calculate_layout(
     // Separate modules into categories
     let mut connected_main: Vec<&ModuleInfo> = Vec::new();
     let mut connected_modulation: Vec<&ModuleInfo> = Vec::new();
+    let mut global_modules: Vec<&ModuleInfo> = Vec::new();
     let mut disconnected: Vec<&ModuleInfo> = Vec::new();
 
     for module in modules {
         let is_connected = has_connections(module.id, connections);
         let is_modulation = is_modulation_module(module.category);
+        let is_global = is_global_module(module.category);
 
-        if !is_connected {
+        if is_global {
+            // Global modules (effects, visualizers) go to rightmost column
+            global_modules.push(module);
+        } else if !is_connected {
             disconnected.push(module);
         } else if is_modulation {
             connected_modulation.push(module);
@@ -165,27 +180,35 @@ pub fn calculate_layout(
     };
     let max_modules_per_column = columns.values().map(|v| v.len()).max().unwrap_or(0);
     let has_modulation = !connected_modulation.is_empty();
+    let has_global = !global_modules.is_empty();
     let has_disconnected = !disconnected.is_empty();
 
-    // Calculate total columns needed (signal + 1 for disconnected if any)
+    // Calculate total columns needed:
+    // signal columns + 1 for global modules + 1 for disconnected (if any)
+    let global_column = if has_global { 1 } else { 0 };
     let disconnected_column = if has_disconnected { 1 } else { 0 };
-    let total_columns = num_signal_columns.max(1) + disconnected_column;
+    let total_columns = num_signal_columns.max(1) + global_column + disconnected_column;
 
     // Calculate total rows needed
     let main_rows = max_modules_per_column.max(1);
     let modulation_rows = if has_modulation { 1 } else { 0 };
+    let global_rows = global_modules.len();
     let disconnected_rows = disconnected.len();
 
-    // For row calculation, disconnected modules stack vertically in their column
+    // For row calculation, global and disconnected modules stack vertically in their columns
+    let max_rows_in_global_col = if has_global { global_rows.max(1) } else { 0 };
     let max_rows_in_disconnected_col = if has_disconnected {
         disconnected_rows.max(1)
     } else {
         0
     };
 
-    // Total rows is max of: main signal rows + modulation, or disconnected stack
+    // Total rows is max of: main signal rows + modulation, global stack, or disconnected stack
     let rows_for_signal = main_rows + modulation_rows;
-    let total_rows = rows_for_signal.max(max_rows_in_disconnected_col).max(1);
+    let total_rows = rows_for_signal
+        .max(max_rows_in_global_col)
+        .max(max_rows_in_disconnected_col)
+        .max(1);
 
     // Calculate module size to fit within available space
     let available_width = available_rect.width();
@@ -281,20 +304,35 @@ pub fn calculate_layout(
         }
     }
 
-    // Place disconnected modules (bottom-right corner, stacked vertically)
-    if has_disconnected {
-        // Disconnected column is the rightmost
-        let disconnected_col_x = if num_signal_columns > 0 {
+    // Place global modules (effects, visualizers) - rightmost column after signal chain
+    if has_global {
+        let global_col_x = if num_signal_columns > 0 {
             start_x + num_signal_columns as f32 * cell_width
         } else {
-            // If no signal modules, start from right edge
+            start_x
+        };
+
+        // Stack global modules vertically
+        for (idx, module) in global_modules.iter().enumerate() {
+            let x = global_col_x.min(max_x);
+            let y = start_y + idx as f32 * cell_height;
+            result.positions.insert(module.id, clamp_pos(x, y));
+        }
+    }
+
+    // Place disconnected modules (after global modules, stacked vertically)
+    if has_disconnected {
+        // Disconnected column is after global modules
+        let disconnected_col_x = if num_signal_columns > 0 || has_global {
+            start_x + (num_signal_columns + global_column) as f32 * cell_width
+        } else {
+            // If no signal or global modules, start from right edge
             max_x
         };
 
-        // Stack from bottom up
+        // Stack from top
         for (idx, module) in disconnected.iter().enumerate() {
             let x = disconnected_col_x.min(max_x);
-            // Stack from top of disconnected area
             let y = start_y + idx as f32 * cell_height;
             result.positions.insert(module.id, clamp_pos(x, y));
         }

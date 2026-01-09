@@ -10,8 +10,8 @@
 use synth_core::{
     AudioEffect, BeatDivision, Bpm, BufferIndex, DelayMode, DelayParam, Describable, FilterState,
     Hertz, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
-    ParameterDescriptor, ParameterUnit, PortDescriptor, ProcessContext, ResponseCurve, SampleCount,
-    SampleRate, Seconds, StereoSample, TempoSyncState, WidgetHint,
+    ParameterDescriptor, ParameterUnit, ProcessContext, ResponseCurve, SampleCount, SampleRate,
+    Seconds, StereoSample, TempoSyncState, WidgetHint,
 };
 
 /// Maximum delay time in seconds.
@@ -120,14 +120,7 @@ impl Describable for Delay {
             .tag("delay")
             .tag("effect")
             .tag("time")
-            .port(PortDescriptor::audio_input("in_l", "In L").description("Left input"))
-            .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
-            .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
-            .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
-            .port(
-                PortDescriptor::control_input("time_cv", "Time CV")
-                    .description("Delay time modulation"),
-            )
+            // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::choice(
                     Param::Delay(DelayParam::Mode(DelayMode::Mono)),

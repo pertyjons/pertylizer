@@ -8,8 +8,8 @@
 
 use synth_core::{
     AudioEffect, Describable, FilterState, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PortDescriptor, ProcessContext,
-    ReverbParam, SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
+    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverbParam,
+    SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
 };
 
 /// Comb filter for reverb.
@@ -239,10 +239,7 @@ impl Describable for Reverb {
             .tag("reverb")
             .tag("effect")
             .tag("space")
-            .port(PortDescriptor::audio_input("in_l", "In L").description("Left input"))
-            .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
-            .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
-            .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
+            // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::float(
                     Param::Reverb(ReverbParam::RoomSize(NormalizedValue::CENTER)),

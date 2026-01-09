@@ -8,7 +8,7 @@
 
 use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PortDescriptor, ProcessContext, WidgetHint,
+    ProcessContext, WidgetHint,
 };
 use synth_core::{DistortionMode, DistortionParam, ModuleType, Param};
 use synth_core::{Hertz, NormalizedValue, SampleRate};
@@ -124,12 +124,7 @@ impl Describable for Distortion {
             .tag("distortion")
             .tag("effect")
             .tag("overdrive")
-            .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
-            .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
-            .port(
-                PortDescriptor::control_input("drive_cv", "Drive CV")
-                    .description("Drive modulation"),
-            )
+            // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::choice(
                     Param::Distortion(DistortionParam::Mode(DistortionMode::SoftClip)),

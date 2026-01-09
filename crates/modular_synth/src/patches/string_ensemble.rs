@@ -177,7 +177,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     patch.add_connection("lfo-1", "out", "mth-1", "fm"); // Vibrato to SuperSaw
     patch.add_connection("lfo-1", "out", "osc-1", "fm"); // Vibrato to Saw
 
-    // Output chain
+    // Voice output: amp -> stereo output (effects handled via effect chain)
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 

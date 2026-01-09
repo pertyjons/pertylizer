@@ -152,6 +152,32 @@ impl PatchModuleType {
             Self::MechanicalNoise => "mec",
         }
     }
+
+    /// Returns true if this module is processed via the global effect chain.
+    ///
+    /// Effect chain modules are applied automatically after all voices are mixed,
+    /// they don't require manual cable connections in the patch.
+    #[must_use]
+    pub const fn is_effect_chain_module(&self) -> bool {
+        matches!(
+            self,
+            Self::Delay | Self::Reverb | Self::Distortion | Self::Chorus
+        )
+    }
+
+    /// Returns true if this module is a visualizer (display only, no audio processing).
+    #[must_use]
+    pub const fn is_visualizer(&self) -> bool {
+        matches!(self, Self::Oscilloscope | Self::LevelMeter)
+    }
+
+    /// Returns true if this module doesn't need port connections in the UI.
+    ///
+    /// This includes effect chain modules (auto-processed) and visualizers (display only).
+    #[must_use]
+    pub const fn hides_ports(&self) -> bool {
+        self.is_effect_chain_module() || self.is_visualizer()
+    }
 }
 
 /// Parameter value for serialization.

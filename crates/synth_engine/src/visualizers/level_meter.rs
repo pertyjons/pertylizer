@@ -91,16 +91,7 @@ impl Describable for LevelMeter {
                 .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_input("in_l", "In L").description("Left input"))
-            .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
-            .port(
-                PortDescriptor::audio_output("out_l", "Out L")
-                    .description("Left output (pass-through)"),
-            )
-            .port(
-                PortDescriptor::audio_output("out_r", "Out R")
-                    .description("Right output (pass-through)"),
-            )
+        // No ports - visualizers receive the final output signal automatically
     }
 }
 

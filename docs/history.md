@@ -1,5 +1,30 @@
 # Version History
 
+## [0.72.0] - 2025
+### Improved - Global Module Handling
+
+#### Globala moduler utan portar
+- **Effektmoduler** (Reverb, Delay, Chorus, Distortion): Portarna borttagna
+- **Visualizer-moduler** (Oscilloscope, LevelMeter): Portarna borttagna
+- Tydliggör att globala moduler processas automatiskt via effect chain
+- Informativ text visas istället för portar: "Processed automatically via effect chain"
+
+#### Förbättrad visuell feedback för globala moduler
+- **Opacity**: Globala moduler dimmas inte längre (alltid full opacity)
+- **Ny indikator**: Blå diamant (◆) med tooltip "⚡ Global Module"
+- Tydligt att dessa moduler alltid är aktiva
+
+#### Auto-layout förbättringar
+- Globala moduler placeras nu längst till höger i rack-vyn
+- Egen kolumn efter signalkedjan, före bortkopplade moduler
+- Bättre visuell separation mellan signalflöde och globala effekter
+
+#### Patch-filer korrigerade
+- 13 exempelpatchar återställda från felaktig effekt-routing
+- Effekter hanteras via effect chain, inte via manuella kablar
+
+---
+
 ## [0.71.0] - 2025
 ### Improved - Rack GUI UX
 

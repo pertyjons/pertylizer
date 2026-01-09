@@ -7,7 +7,7 @@
 
 use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
-    PortDescriptor, ProcessContext, WidgetHint,
+    ProcessContext, WidgetHint,
 };
 use synth_core::{BufferIndex, Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
 use synth_core::{ChorusParam, ModuleType, Param};
@@ -85,13 +85,7 @@ impl Describable for Chorus {
             .tag("chorus")
             .tag("effect")
             .tag("modulation")
-            .port(PortDescriptor::audio_input("in_l", "In L").description("Left input"))
-            .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
-            .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
-            .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
-            .port(
-                PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"),
-            )
+            // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::float(
                     Param::Chorus(ChorusParam::Rate(Hertz::new(0.5))),
