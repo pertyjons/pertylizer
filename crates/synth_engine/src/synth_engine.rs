@@ -828,8 +828,11 @@ impl SynthEngine {
                     // Important: play() first to avoid it resetting current_tick to 0
                     self.sequencer.play();
                     let _ = self.sequencer.seek(start);
-                    self.sequencer
-                        .set_loop(synth_sequencer::Tick::ZERO, synth_sequencer::Tick::ZERO, false);
+                    self.sequencer.set_loop(
+                        synth_sequencer::Tick::ZERO,
+                        synth_sequencer::Tick::ZERO,
+                        false,
+                    );
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(start.0);
                 } else {

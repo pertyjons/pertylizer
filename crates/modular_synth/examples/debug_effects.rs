@@ -9,9 +9,7 @@ use xmrs::effect::TrackEffect;
 use xmrs::import::xm::xmmodule::XmModule;
 
 fn main() {
-    let path = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "test.xm".to_string());
+    let path = env::args().nth(1).unwrap_or_else(|| "test.xm".to_string());
     let target_pattern: Option<usize> = env::args().nth(2).and_then(|s| s.parse().ok());
     let target_channel: Option<usize> = env::args().nth(3).and_then(|s| s.parse().ok());
 
@@ -21,7 +19,10 @@ fn main() {
     let xm = XmModule::load(&data).expect("parse xm");
 
     println!("=== Raw XM pattern data (before xmrs conversion) ===");
-    println!("Targeting pattern {:?}, channel {:?}\n", target_pattern, target_channel);
+    println!(
+        "Targeting pattern {:?}, channel {:?}\n",
+        target_pattern, target_channel
+    );
 
     // Access raw pattern data - xm.pattern is Vec<XmPattern>
     // Each XmPattern has .pattern which is Vec<Vec<PatternSlot>>
@@ -45,7 +46,8 @@ fn main() {
                 if has_vibrato_effect || has_vibrato_volume {
                     println!(
                         "  Row {:2} Ch {:2}: effect_type={:X} effect_param=0x{:02X} ({}{:X}) vol=0x{:02X}",
-                        row_idx, ch,
+                        row_idx,
+                        ch,
                         slot.effect_type,
                         slot.effect_parameter,
                         slot.effect_parameter >> 4,
@@ -88,8 +90,10 @@ fn main() {
                         );
                         println!(
                             "                 -> *16: 4{:X}{:X}, *64 speed: 4{:X}{:X}",
-                            speed_16 & 0xF, depth_16 & 0xF,
-                            speed_64 & 0xF, depth_16 & 0xF
+                            speed_16 & 0xF,
+                            depth_16 & 0xF,
+                            speed_64 & 0xF,
+                            depth_16 & 0xF
                         );
                     }
                 }

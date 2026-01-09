@@ -136,7 +136,7 @@ impl Hertz {
     /// Clamp to a maximum (typically Nyquist).
     #[inline]
     #[must_use]
-    pub fn clamp_max(self, max: Hertz) -> Self {
+    pub fn clamp_max(self, max: Self) -> Self {
         Self(self.0.clamp(0.0, max.0))
     }
 

@@ -373,195 +373,193 @@ impl Clone for EngineCommand {
     fn clone(&self) -> Self {
         match self {
             // Commands that can be cloned
-            EngineCommand::NoteOn {
+            Self::NoteOn {
                 note,
                 velocity,
                 channel,
-            } => EngineCommand::NoteOn {
+            } => Self::NoteOn {
                 note: *note,
                 velocity: *velocity,
                 channel: *channel,
             },
-            EngineCommand::NoteOff { note, channel } => EngineCommand::NoteOff {
+            Self::NoteOff { note, channel } => Self::NoteOff {
                 note: *note,
                 channel: *channel,
             },
-            EngineCommand::AllNotesOff => EngineCommand::AllNotesOff,
-            EngineCommand::PitchBend { value, channel } => EngineCommand::PitchBend {
+            Self::AllNotesOff => Self::AllNotesOff,
+            Self::PitchBend { value, channel } => Self::PitchBend {
                 value: *value,
                 channel: *channel,
             },
-            EngineCommand::ModWheel { value, channel } => EngineCommand::ModWheel {
+            Self::ModWheel { value, channel } => Self::ModWheel {
                 value: *value,
                 channel: *channel,
             },
-            EngineCommand::Aftertouch { value, channel } => EngineCommand::Aftertouch {
+            Self::Aftertouch { value, channel } => Self::Aftertouch {
                 value: *value,
                 channel: *channel,
             },
-            EngineCommand::PolyAftertouch {
+            Self::PolyAftertouch {
                 note,
                 value,
                 channel,
-            } => EngineCommand::PolyAftertouch {
+            } => Self::PolyAftertouch {
                 note: *note,
                 value: *value,
                 channel: *channel,
             },
-            EngineCommand::SetVoiceParameter {
+            Self::SetVoiceParameter {
                 instrument_id,
                 target,
                 param,
-            } => EngineCommand::SetVoiceParameter {
+            } => Self::SetVoiceParameter {
                 instrument_id: *instrument_id,
                 target: *target,
                 param: *param,
             },
-            EngineCommand::SetModuleParameter {
+            Self::SetModuleParameter {
                 instrument_id,
                 module_id,
                 param,
-            } => EngineCommand::SetModuleParameter {
+            } => Self::SetModuleParameter {
                 instrument_id: *instrument_id,
                 module_id: *module_id,
                 param: *param,
             },
-            EngineCommand::RemoveModule { instrument_id, id } => EngineCommand::RemoveModule {
+            Self::RemoveModule { instrument_id, id } => Self::RemoveModule {
                 instrument_id: *instrument_id,
                 id: *id,
             },
-            EngineCommand::Connect {
+            Self::Connect {
                 instrument_id,
                 from,
                 to,
-            } => EngineCommand::Connect {
+            } => Self::Connect {
                 instrument_id: *instrument_id,
                 from: from.clone(),
                 to: to.clone(),
             },
-            EngineCommand::Disconnect {
+            Self::Disconnect {
                 instrument_id,
                 from,
                 to,
-            } => EngineCommand::Disconnect {
+            } => Self::Disconnect {
                 instrument_id: *instrument_id,
                 from: from.clone(),
                 to: to.clone(),
             },
-            EngineCommand::DisconnectAll {
+            Self::DisconnectAll {
                 instrument_id,
                 module,
-            } => EngineCommand::DisconnectAll {
+            } => Self::DisconnectAll {
                 instrument_id: *instrument_id,
                 module: *module,
             },
-            EngineCommand::SetTempo(t) => EngineCommand::SetTempo(*t),
-            EngineCommand::Play => EngineCommand::Play,
-            EngineCommand::Stop => EngineCommand::Stop,
-            EngineCommand::Pause => EngineCommand::Pause,
-            EngineCommand::Rewind => EngineCommand::Rewind,
-            EngineCommand::SetSoloTrack(t) => EngineCommand::SetSoloTrack(*t),
-            EngineCommand::Seek { tick } => EngineCommand::Seek { tick: *tick },
-            EngineCommand::PlayPattern { pattern_id } => EngineCommand::PlayPattern {
+            Self::SetTempo(t) => Self::SetTempo(*t),
+            Self::Play => Self::Play,
+            Self::Stop => Self::Stop,
+            Self::Pause => Self::Pause,
+            Self::Rewind => Self::Rewind,
+            Self::SetSoloTrack(t) => Self::SetSoloTrack(*t),
+            Self::Seek { tick } => Self::Seek { tick: *tick },
+            Self::PlayPattern { pattern_id } => Self::PlayPattern {
                 pattern_id: *pattern_id,
             },
-            EngineCommand::PlayFromPattern { pattern_id } => EngineCommand::PlayFromPattern {
+            Self::PlayFromPattern { pattern_id } => Self::PlayFromPattern {
                 pattern_id: *pattern_id,
             },
-            EngineCommand::Reset => EngineCommand::Reset,
-            EngineCommand::ClearAllModules => EngineCommand::ClearAllModules,
-            EngineCommand::SetMasterVolume(v) => EngineCommand::SetMasterVolume(*v),
-            EngineCommand::SetGlideTime(t) => EngineCommand::SetGlideTime(*t),
-            EngineCommand::SetFocusedInstrument(id) => EngineCommand::SetFocusedInstrument(*id),
-            EngineCommand::SetBypass { module, bypass } => EngineCommand::SetBypass {
+            Self::Reset => Self::Reset,
+            Self::ClearAllModules => Self::ClearAllModules,
+            Self::SetMasterVolume(v) => Self::SetMasterVolume(*v),
+            Self::SetGlideTime(t) => Self::SetGlideTime(*t),
+            Self::SetFocusedInstrument(id) => Self::SetFocusedInstrument(*id),
+            Self::SetBypass { module, bypass } => Self::SetBypass {
                 module: *module,
                 bypass: *bypass,
             },
-            EngineCommand::RemoveVisualizer { instrument_id, id } => {
-                EngineCommand::RemoveVisualizer {
-                    instrument_id: *instrument_id,
-                    id: *id,
-                }
-            }
-            EngineCommand::RemoveEffect { instrument_id, id } => EngineCommand::RemoveEffect {
+            Self::RemoveVisualizer { instrument_id, id } => Self::RemoveVisualizer {
                 instrument_id: *instrument_id,
                 id: *id,
             },
-            EngineCommand::SetEffectParameter {
+            Self::RemoveEffect { instrument_id, id } => Self::RemoveEffect {
+                instrument_id: *instrument_id,
+                id: *id,
+            },
+            Self::SetEffectParameter {
                 instrument_id,
                 effect_type,
                 param,
-            } => EngineCommand::SetEffectParameter {
+            } => Self::SetEffectParameter {
                 instrument_id: *instrument_id,
                 effect_type: *effect_type,
                 param: *param,
             },
-            EngineCommand::SetEffectEnabled {
+            Self::SetEffectEnabled {
                 instrument_id,
                 effect_type,
                 enabled,
-            } => EngineCommand::SetEffectEnabled {
+            } => Self::SetEffectEnabled {
                 instrument_id: *instrument_id,
                 effect_type: *effect_type,
                 enabled: *enabled,
             },
             // Instrument management commands
-            EngineCommand::RemoveInstrument { instrument_id } => EngineCommand::RemoveInstrument {
+            Self::RemoveInstrument { instrument_id } => Self::RemoveInstrument {
                 instrument_id: *instrument_id,
             },
-            EngineCommand::SetInstrumentParameter {
+            Self::SetInstrumentParameter {
                 instrument_id,
                 param,
-            } => EngineCommand::SetInstrumentParameter {
+            } => Self::SetInstrumentParameter {
                 instrument_id: *instrument_id,
                 param: *param,
             },
-            EngineCommand::SetInstrumentMidiChannel {
+            Self::SetInstrumentMidiChannel {
                 instrument_id,
                 channel,
-            } => EngineCommand::SetInstrumentMidiChannel {
+            } => Self::SetInstrumentMidiChannel {
                 instrument_id: *instrument_id,
                 channel: *channel,
             },
-            EngineCommand::SetInstrumentEnabled {
+            Self::SetInstrumentEnabled {
                 instrument_id,
                 enabled,
-            } => EngineCommand::SetInstrumentEnabled {
+            } => Self::SetInstrumentEnabled {
                 instrument_id: *instrument_id,
                 enabled: *enabled,
             },
-            EngineCommand::SetInstrumentSolo {
+            Self::SetInstrumentSolo {
                 instrument_id,
                 solo,
-            } => EngineCommand::SetInstrumentSolo {
+            } => Self::SetInstrumentSolo {
                 instrument_id: *instrument_id,
                 solo: *solo,
             },
             // Sample loading (Arc can be cloned)
-            EngineCommand::LoadSample {
+            Self::LoadSample {
                 instrument_id,
                 module_id,
                 sample,
-            } => EngineCommand::LoadSample {
+            } => Self::LoadSample {
                 instrument_id: *instrument_id,
                 module_id: *module_id,
                 sample: std::sync::Arc::clone(sample),
             },
             // Song (Arc can be cloned)
-            EngineCommand::SetSong { song } => EngineCommand::SetSong {
+            Self::SetSong { song } => Self::SetSong {
                 song: std::sync::Arc::clone(song),
             },
             // Commands with Box<dyn ...> cannot be cloned - panic if attempted
-            EngineCommand::AddInstrument { .. } => {
+            Self::AddInstrument { .. } => {
                 panic!("AddInstrument cannot be cloned - instrument instances are unique")
             }
-            EngineCommand::AddModuleInstance { .. } => {
+            Self::AddModuleInstance { .. } => {
                 panic!("AddModuleInstance cannot be cloned - module instances are unique")
             }
-            EngineCommand::AddEffectInstance { .. } => {
+            Self::AddEffectInstance { .. } => {
                 panic!("AddEffectInstance cannot be cloned - effect instances are unique")
             }
-            EngineCommand::AddVisualizer { .. } => {
+            Self::AddVisualizer { .. } => {
                 panic!("AddVisualizer cannot be cloned - visualizer buffers are shared")
             }
         }

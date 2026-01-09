@@ -23,7 +23,7 @@ pub struct ClientId(pub u64);
 
 impl ClientId {
     /// The primary/local GUI client ID.
-    pub const PRIMARY: Self = ClientId(0);
+    pub const PRIMARY: Self = Self(0);
 }
 
 /// Type of connected client.

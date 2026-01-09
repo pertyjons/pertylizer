@@ -519,7 +519,7 @@ impl Phase {
     ///
     /// Returns a value in [-0.5, 0.5], useful for phase comparisons.
     #[inline]
-    pub fn difference(self, other: Phase) -> f32 {
+    pub fn difference(self, other: Self) -> f32 {
         let diff = other.0 - self.0;
         if diff > 0.5 {
             diff - 1.0

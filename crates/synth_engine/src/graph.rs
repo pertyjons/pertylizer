@@ -480,7 +480,7 @@ impl ModuleGraph {
 
     /// Clone the graph structure.
     pub fn clone_structure(&self) -> Self {
-        let mut new_graph = ModuleGraph::new();
+        let mut new_graph = Self::new();
         new_graph.instance_counters = self.instance_counters.clone();
         new_graph.buffer_size = self.buffer_size;
 

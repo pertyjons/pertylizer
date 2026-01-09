@@ -713,7 +713,7 @@ impl PolyModule for SamplePlayer {
 
     fn load_sample(&mut self, sample: std::sync::Arc<Sample>) -> bool {
         // Use the existing load_sample method
-        SamplePlayer::load_sample(self, sample);
+        Self::load_sample(self, sample);
         true
     }
 

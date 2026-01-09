@@ -35,9 +35,9 @@ impl CpalBackend {
     }
 
     fn device_to_info(&self, device: &Device, device_type: DeviceType) -> AudioResult<DeviceInfo> {
-        let description = device
-            .description()
-            .map_err(|e| AudioError::BackendError(format!("Failed to get device description: {e}")))?;
+        let description = device.description().map_err(|e| {
+            AudioError::BackendError(format!("Failed to get device description: {e}"))
+        })?;
         let name = description.name().to_string();
 
         // Get supported output configs

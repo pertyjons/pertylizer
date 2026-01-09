@@ -269,7 +269,7 @@ impl From<BlockSize> for usize {
 
 impl From<BlockSize> for SampleCount {
     fn from(size: BlockSize) -> Self {
-        SampleCount(size.0)
+        Self(size.0)
     }
 }
 

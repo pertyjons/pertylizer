@@ -13,17 +13,9 @@ use xmrs::import::xm::xmmodule::XmModule;
 use xmrs::pitch::Pitch;
 
 fn main() {
-    let path = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "test.xm".to_string());
-    let num_patterns: usize = env::args()
-        .nth(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
-    let start_channel: usize = env::args()
-        .nth(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let path = env::args().nth(1).unwrap_or_else(|| "test.xm".to_string());
+    let num_patterns: usize = env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+    let start_channel: usize = env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
     let end_channel: Option<usize> = env::args().nth(4).and_then(|s| s.parse().ok());
 
     let data = std::fs::read(&path).expect("Failed to read file");
@@ -32,7 +24,10 @@ fn main() {
     println!("=== {} ===", xm.header.name.trim());
     println!("Channels: {}", xm.header.number_of_channels);
     println!("Patterns: {}", xm.pattern.len());
-    println!("BPM: {}, Speed: {}", xm.header.default_bpm, xm.header.default_tempo);
+    println!(
+        "BPM: {}, Speed: {}",
+        xm.header.default_bpm, xm.header.default_tempo
+    );
     println!();
 
     for (pat_idx, pattern) in xm.pattern.iter().take(num_patterns).enumerate() {
@@ -47,9 +42,20 @@ fn main() {
         let ch_start = start_channel.min(num_channels);
         let ch_end = end_channel.unwrap_or(ch_start + 8).min(num_channels);
 
-        println!("╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-        println!("║ Pattern {:02X} ({} rows, {} channels) - showing channels {}-{}", pat_idx, num_rows, num_channels, ch_start, ch_end - 1);
-        println!("╠══════════════════════════════════════════════════════════════════════════════════════════════════════════════╣");
+        println!(
+            "╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+        );
+        println!(
+            "║ Pattern {:02X} ({} rows, {} channels) - showing channels {}-{}",
+            pat_idx,
+            num_rows,
+            num_channels,
+            ch_start,
+            ch_end - 1
+        );
+        println!(
+            "╠══════════════════════════════════════════════════════════════════════════════════════════════════════════════╣"
+        );
 
         // Print header with channel numbers
         print!("║ Row │");
@@ -57,7 +63,9 @@ fn main() {
             print!("  Ch{:02}  │", ch);
         }
         println!();
-        println!("╟─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────╢");
+        println!(
+            "╟─────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────╢"
+        );
 
         for (row_idx, row) in pattern.pattern.iter().enumerate() {
             print!("║ {:3} │", row_idx);
@@ -78,7 +86,9 @@ fn main() {
             }
             println!();
         }
-        println!("╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝");
+        println!(
+            "╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝"
+        );
         println!();
     }
 }
@@ -90,7 +100,9 @@ fn format_note(pitch: Pitch) -> String {
         "=== ".to_string()
     } else {
         let note_val = pitch as u8;
-        let names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+        let names = [
+            "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-",
+        ];
         let octave = note_val / 12;
         let note = (note_val % 12) as usize;
         format!("{}{} ", names[note], octave)

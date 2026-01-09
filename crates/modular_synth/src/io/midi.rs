@@ -144,7 +144,7 @@ pub trait MidiCommandSender: Send + 'static {
 
 impl MidiCommandSender for CommandSender {
     fn send(&self, command: EngineCommand) -> bool {
-        CommandSender::send(self, command)
+        Self::send(self, command)
     }
 }
 

@@ -109,13 +109,13 @@ impl AudioBuffer {
     }
 
     /// Copy from another buffer.
-    pub fn copy_from(&mut self, other: &AudioBuffer) {
+    pub fn copy_from(&mut self, other: &Self) {
         let len = self.samples.len().min(other.samples.len());
         self.samples[..len].copy_from_slice(&other.samples[..len]);
     }
 
     /// Add another buffer to this one.
-    pub fn add_from(&mut self, other: &AudioBuffer) {
+    pub fn add_from(&mut self, other: &Self) {
         for (dst, src) in self.samples.iter_mut().zip(other.samples.iter()) {
             *dst += *src;
         }

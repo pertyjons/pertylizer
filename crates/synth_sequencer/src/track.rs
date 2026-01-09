@@ -121,42 +121,42 @@ pub struct TrackColor {
 }
 
 impl TrackColor {
-    pub const RED: TrackColor = TrackColor {
+    pub const RED: Self = Self {
         r: 255,
         g: 100,
         b: 100,
     };
-    pub const GREEN: TrackColor = TrackColor {
+    pub const GREEN: Self = Self {
         r: 100,
         g: 255,
         b: 100,
     };
-    pub const BLUE: TrackColor = TrackColor {
+    pub const BLUE: Self = Self {
         r: 100,
         g: 100,
         b: 255,
     };
-    pub const YELLOW: TrackColor = TrackColor {
+    pub const YELLOW: Self = Self {
         r: 255,
         g: 255,
         b: 100,
     };
-    pub const CYAN: TrackColor = TrackColor {
+    pub const CYAN: Self = Self {
         r: 100,
         g: 255,
         b: 255,
     };
-    pub const MAGENTA: TrackColor = TrackColor {
+    pub const MAGENTA: Self = Self {
         r: 255,
         g: 100,
         b: 255,
     };
-    pub const ORANGE: TrackColor = TrackColor {
+    pub const ORANGE: Self = Self {
         r: 255,
         g: 180,
         b: 100,
     };
-    pub const PURPLE: TrackColor = TrackColor {
+    pub const PURPLE: Self = Self {
         r: 180,
         g: 100,
         b: 255,
@@ -181,7 +181,7 @@ impl TrackColor {
     }
 
     /// Preset colors for cycling.
-    pub fn presets() -> &'static [TrackColor] {
+    pub fn presets() -> &'static [Self] {
         &[
             Self::RED,
             Self::GREEN,

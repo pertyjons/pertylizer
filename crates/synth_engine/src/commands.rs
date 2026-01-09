@@ -113,14 +113,14 @@ impl<'de> Deserialize<'de> for ModuleId {
         let s = String::deserialize(deserializer)?;
 
         // Try new format first "osc-1"
-        if let Ok(id) = s.parse::<ModuleId>() {
+        if let Ok(id) = s.parse::<Self>() {
             return Ok(id);
         }
 
         // Fall back to legacy u32 format for old patches
         if let Ok(num) = s.parse::<u32>() {
             #[allow(deprecated)]
-            return Ok(ModuleId::from_legacy(num));
+            return Ok(Self::from_legacy(num));
         }
 
         Err(serde::de::Error::custom(format!("Invalid ModuleId: {}", s)))
@@ -183,7 +183,7 @@ impl PolyModule {
     }
 
     /// All voice modules.
-    pub const ALL: &'static [PolyModule] = &[
+    pub const ALL: &[Self] = &[
         Self::Oscillator1,
         Self::Oscillator2,
         Self::Filter,

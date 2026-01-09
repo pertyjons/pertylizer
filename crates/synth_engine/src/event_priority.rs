@@ -27,20 +27,15 @@ pub enum EventPriority {
 
 impl EventPriority {
     /// Get all priority levels in order.
-    pub const ALL: [EventPriority; 4] = [
-        EventPriority::Critical,
-        EventPriority::High,
-        EventPriority::Normal,
-        EventPriority::Low,
-    ];
+    pub const ALL: [Self; 4] = [Self::Critical, Self::High, Self::Normal, Self::Low];
 
     /// Get the name of this priority level.
     pub fn name(&self) -> &'static str {
         match self {
-            EventPriority::Critical => "Critical",
-            EventPriority::High => "High",
-            EventPriority::Normal => "Normal",
-            EventPriority::Low => "Low",
+            Self::Critical => "Critical",
+            Self::High => "High",
+            Self::Normal => "Normal",
+            Self::Low => "Low",
         }
     }
 }

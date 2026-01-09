@@ -15,11 +15,11 @@ pub const TICKS_PER_QUARTER: u32 = 960;
 pub struct Tick(pub u64);
 
 impl Tick {
-    pub const ZERO: Tick = Tick(0);
+    pub const ZERO: Self = Self(0);
 
     /// Create a Tick from a pattern-local tick and the pattern's start position.
-    pub fn from_pattern_tick(pattern_start: Tick, offset: PatternTick) -> Self {
-        Tick(pattern_start.0 + offset.0 as u64)
+    pub fn from_pattern_tick(pattern_start: Self, offset: PatternTick) -> Self {
+        Self(pattern_start.0 + offset.0 as u64)
     }
 
     /// Convert to seconds at a given tempo.
@@ -31,7 +31,7 @@ impl Tick {
     /// Create from seconds at a given tempo.
     pub fn from_seconds(seconds: f64, tempo_bpm: f32) -> Self {
         let beats = seconds * tempo_bpm as f64 / 60.0;
-        Tick((beats * TICKS_PER_QUARTER as f64) as u64)
+        Self((beats * TICKS_PER_QUARTER as f64) as u64)
     }
 
     /// Convert to bar, beat, tick representation.
@@ -49,21 +49,21 @@ impl Tick {
     pub fn from_bar_beat_tick(bar: u32, beat: u32, tick: u32, time_sig: TimeSignature) -> Self {
         let ticks_per_bar = time_sig.ticks_per_bar();
         let ticks_per_beat = TICKS_PER_QUARTER * 4 / time_sig.denominator as u32;
-        Tick(bar as u64 * ticks_per_bar as u64 + beat as u64 * ticks_per_beat as u64 + tick as u64)
+        Self(bar as u64 * ticks_per_bar as u64 + beat as u64 * ticks_per_beat as u64 + tick as u64)
     }
 }
 
 impl Add for Tick {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        Tick(self.0 + rhs.0)
+        Self(self.0 + rhs.0)
     }
 }
 
 impl Sub for Tick {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
-        Tick(self.0.saturating_sub(rhs.0))
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -82,7 +82,7 @@ impl SubAssign for Tick {
 impl Add<Duration> for Tick {
     type Output = Self;
     fn add(self, rhs: Duration) -> Self::Output {
-        Tick(self.0 + rhs.0 as u64)
+        Self(self.0 + rhs.0 as u64)
     }
 }
 
@@ -93,20 +93,20 @@ impl Add<Duration> for Tick {
 pub struct PatternTick(pub u32);
 
 impl PatternTick {
-    pub const ZERO: PatternTick = PatternTick(0);
+    pub const ZERO: Self = Self(0);
 }
 
 impl Add for PatternTick {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        PatternTick(self.0 + rhs.0)
+        Self(self.0 + rhs.0)
     }
 }
 
 impl Sub for PatternTick {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
-        PatternTick(self.0.saturating_sub(rhs.0))
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -125,7 +125,7 @@ impl SubAssign for PatternTick {
 impl Add<Duration> for PatternTick {
     type Output = Self;
     fn add(self, rhs: Duration) -> Self::Output {
-        PatternTick(self.0 + rhs.0)
+        Self(self.0 + rhs.0)
     }
 }
 
@@ -137,39 +137,39 @@ pub struct Duration(pub u32);
 
 impl Duration {
     /// Whole note (4 beats).
-    pub const WHOLE: Duration = Duration(3840);
+    pub const WHOLE: Self = Self(3840);
     /// Half note (2 beats).
-    pub const HALF: Duration = Duration(1920);
+    pub const HALF: Self = Self(1920);
     /// Quarter note (1 beat).
-    pub const QUARTER: Duration = Duration(960);
+    pub const QUARTER: Self = Self(960);
     /// Eighth note (1/2 beat).
-    pub const EIGHTH: Duration = Duration(480);
+    pub const EIGHTH: Self = Self(480);
     /// Sixteenth note (1/4 beat).
-    pub const SIXTEENTH: Duration = Duration(240);
+    pub const SIXTEENTH: Self = Self(240);
     /// 32nd note.
-    pub const THIRTY_SECOND: Duration = Duration(120);
+    pub const THIRTY_SECOND: Self = Self(120);
     /// Triplet quarter note.
-    pub const TRIPLET_QUARTER: Duration = Duration(640);
+    pub const TRIPLET_QUARTER: Self = Self(640);
     /// Triplet eighth note.
-    pub const TRIPLET_EIGHTH: Duration = Duration(320);
+    pub const TRIPLET_EIGHTH: Self = Self(320);
 
     /// Create a dotted duration (1.5x length).
     pub fn dotted(self) -> Self {
-        Duration(self.0 + self.0 / 2)
+        Self(self.0 + self.0 / 2)
     }
 }
 
 impl Add for Duration {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        Duration(self.0 + rhs.0)
+        Self(self.0 + rhs.0)
     }
 }
 
 impl Sub for Duration {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
-        Duration(self.0.saturating_sub(rhs.0))
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -182,7 +182,7 @@ impl AddAssign for Duration {
 impl std::ops::Mul<u32> for Duration {
     type Output = Self;
     fn mul(self, rhs: u32) -> Self::Output {
-        Duration(self.0 * rhs)
+        Self(self.0 * rhs)
     }
 }
 
@@ -201,17 +201,17 @@ pub struct TimeSignature {
 
 impl TimeSignature {
     /// Common time (4/4).
-    pub const COMMON: TimeSignature = TimeSignature {
+    pub const COMMON: Self = Self {
         numerator: 4,
         denominator: 4,
     };
     /// Waltz time (3/4).
-    pub const WALTZ: TimeSignature = TimeSignature {
+    pub const WALTZ: Self = Self {
         numerator: 3,
         denominator: 4,
     };
     /// 6/8 time.
-    pub const SIX_EIGHT: TimeSignature = TimeSignature {
+    pub const SIX_EIGHT: Self = Self {
         numerator: 6,
         denominator: 8,
     };

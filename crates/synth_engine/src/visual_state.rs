@@ -211,13 +211,13 @@ impl Point {
     }
 
     /// Calculate distance to another point.
-    pub fn distance(&self, other: &Point) -> f32 {
+    pub fn distance(&self, other: &Self) -> f32 {
         ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
 
     /// Linear interpolation to another point.
-    pub fn lerp(&self, other: &Point, t: f32) -> Point {
-        Point {
+    pub fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
             x: self.x + (other.x - self.x) * t,
             y: self.y + (other.y - self.y) * t,
         }

@@ -68,11 +68,11 @@ impl Gain {
     /// Pan: -1.0 = full left, 0.0 = center, 1.0 = full right.
     /// Uses sine/cosine curves to maintain constant perceived loudness.
     #[inline]
-    pub fn from_pan(pan: BipolarValue) -> (Gain, Gain) {
+    pub fn from_pan(pan: BipolarValue) -> (Self, Self) {
         // Convert pan [-1, 1] to angle [0, π/2]
         let angle = (pan.as_f32() + 1.0) * FRAC_PI_4;
-        let left = Gain::new(angle.cos());
-        let right = Gain::new(angle.sin());
+        let left = Self::new(angle.cos());
+        let right = Self::new(angle.sin());
         (left, right)
     }
 }

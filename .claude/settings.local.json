@@ -70,7 +70,8 @@
       "WebFetch(domain:gist.github.com)",
       "WebFetch(domain:wiki.multimedia.cx)",
       "WebFetch(domain:wiki.openmpt.org)",
-      "Bash(/usr/bin/env bash -c 'claude usage 2>/dev/null || echo \"\"usage command not available\"\"')"
+      "Bash(/usr/bin/env bash -c 'claude usage 2>/dev/null || echo \"\"usage command not available\"\"')",
+      "Bash(cargo tree:*)"
     ],
     "deny": [],
     "ask": []

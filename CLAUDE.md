@@ -1,4 +1,4 @@
-# CLAUDE.md - Projektinstruktioner för modular-synth
+# Projektinstruktioner för modular-synth
 
 ## Projektfas
 
@@ -273,9 +273,3 @@ impl Hertz {
     pub const MAX_AUDIBLE: Self = Self(20_000.0);
 }
 ```
-
----
-
-## Efter varje svar
-
-Kör Claude Code kommandot `/usage` så jag ser hur mycket som är kvar.

@@ -449,7 +449,7 @@ impl From<VoiceCount> for u8 {
 
 impl From<VoiceCount> for usize {
     fn from(count: VoiceCount) -> Self {
-        count.0 as usize
+        count.0 as Self
     }
 }
 
@@ -510,7 +510,7 @@ impl From<usize> for VoiceIndex {
 
 impl From<VoiceIndex> for usize {
     fn from(index: VoiceIndex) -> Self {
-        index.0 as usize
+        index.0 as Self
     }
 }
 
@@ -1161,7 +1161,7 @@ impl From<RowIndex> for u32 {
 
 impl From<RowIndex> for usize {
     fn from(row: RowIndex) -> Self {
-        row.0 as usize
+        row.0 as Self
     }
 }
 

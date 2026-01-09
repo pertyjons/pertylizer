@@ -137,32 +137,30 @@ impl ModuleConnectivityStatus {
     /// Get the opacity value for rendering (0.0 - 1.0).
     pub fn opacity(&self) -> f32 {
         match self {
-            ModuleConnectivityStatus::Disconnected => 0.4,
-            ModuleConnectivityStatus::PartiallyConnected => 0.7,
-            ModuleConnectivityStatus::Connected => 1.0,
-            ModuleConnectivityStatus::Bypassed => 0.5,
+            Self::Disconnected => 0.4,
+            Self::PartiallyConnected => 0.7,
+            Self::Connected => 1.0,
+            Self::Bypassed => 0.5,
         }
     }
 
     /// Check if the module is "live" (contributing to output).
     pub fn is_live(&self) -> bool {
-        matches!(self, ModuleConnectivityStatus::Connected)
+        matches!(self, Self::Connected)
     }
 
     /// Check if the module has any connections.
     pub fn has_connections(&self) -> bool {
-        !matches!(self, ModuleConnectivityStatus::Disconnected)
+        !matches!(self, Self::Disconnected)
     }
 
     /// Get a description of this status.
     pub fn description(&self) -> &'static str {
         match self {
-            ModuleConnectivityStatus::Disconnected => "Not connected",
-            ModuleConnectivityStatus::PartiallyConnected => {
-                "Partially connected (not in signal path)"
-            }
-            ModuleConnectivityStatus::Connected => "Connected and active",
-            ModuleConnectivityStatus::Bypassed => "Bypassed",
+            Self::Disconnected => "Not connected",
+            Self::PartiallyConnected => "Partially connected (not in signal path)",
+            Self::Connected => "Connected and active",
+            Self::Bypassed => "Bypassed",
         }
     }
 }
@@ -187,11 +185,11 @@ impl VoiceStealReason {
     /// Get a human-readable description.
     pub fn description(&self) -> &'static str {
         match self {
-            VoiceStealReason::MaxPolyphonyReached => "Maximum polyphony reached",
-            VoiceStealReason::SameNoteRetrigger => "Note retriggered",
-            VoiceStealReason::PriorityBased => "Lower priority voice replaced",
-            VoiceStealReason::ReleasePhaseSteal => "Released voice replaced",
-            VoiceStealReason::QuietestVoiceSteal => "Quietest voice replaced",
+            Self::MaxPolyphonyReached => "Maximum polyphony reached",
+            Self::SameNoteRetrigger => "Note retriggered",
+            Self::PriorityBased => "Lower priority voice replaced",
+            Self::ReleasePhaseSteal => "Released voice replaced",
+            Self::QuietestVoiceSteal => "Quietest voice replaced",
         }
     }
 }
@@ -223,42 +221,39 @@ pub enum ModuleErrorKind {
 impl ModuleErrorKind {
     /// Check if this is a critical error that should stop processing.
     pub fn is_critical(&self) -> bool {
-        matches!(
-            self,
-            ModuleErrorKind::InvalidOutput | ModuleErrorKind::InitializationFailed(_)
-        )
+        matches!(self, Self::InvalidOutput | Self::InitializationFailed(_))
     }
 
     /// Check if this is a warning (non-critical).
     pub fn is_warning(&self) -> bool {
         matches!(
             self,
-            ModuleErrorKind::OutputClipping { .. }
-                | ModuleErrorKind::ProcessingOverload { .. }
-                | ModuleErrorKind::ParameterOutOfRange { .. }
+            Self::OutputClipping { .. }
+                | Self::ProcessingOverload { .. }
+                | Self::ParameterOutOfRange { .. }
         )
     }
 
     /// Get a short description for UI display.
     pub fn short_description(&self) -> String {
         match self {
-            ModuleErrorKind::ParameterOutOfRange { param, .. } => {
+            Self::ParameterOutOfRange { param, .. } => {
                 format!("Parameter out of range: {:?}", param)
             }
-            ModuleErrorKind::ProcessingOverload { cpu_percent } => {
+            Self::ProcessingOverload { cpu_percent } => {
                 format!("CPU overload: {:.1}%", cpu_percent)
             }
-            ModuleErrorKind::InvalidConnection { reason } => {
+            Self::InvalidConnection { reason } => {
                 format!("Invalid connection: {}", reason)
             }
-            ModuleErrorKind::InternalError(msg) => {
+            Self::InternalError(msg) => {
                 format!("Error: {}", msg)
             }
-            ModuleErrorKind::OutputClipping { peak_level } => {
+            Self::OutputClipping { peak_level } => {
                 format!("Clipping: {:.1} dB", 20.0 * peak_level.log10())
             }
-            ModuleErrorKind::InvalidOutput => "Invalid output (NaN/Inf)".to_string(),
-            ModuleErrorKind::InitializationFailed(msg) => {
+            Self::InvalidOutput => "Invalid output (NaN/Inf)".to_string(),
+            Self::InitializationFailed(msg) => {
                 format!("Init failed: {}", msg)
             }
         }

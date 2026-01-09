@@ -1,5 +1,25 @@
 # Version History
 
+## [0.69.0] - 2025
+### Refactoring - Clippy `use_self` Compliance
+
+#### Systematisk kodstädning
+- **Omfattning**: ~150 `use_self` varningar fixade i hela kodbasen
+- **Syfte**: Följer Rust best practice att använda `Self` istället för typnamn i impl-block
+
+#### Påverkade crates
+- **synth_core** (12 fixar): amplitude.rs, audio.rs, frequency.rs, normalized.rs, samples.rs, module_traits.rs
+- **synth_modules** (1 fix): sample_player.rs
+- **synth_sequencer** (64 fixar): time.rs, track.rs, pitch.rs, view/state.rs
+- **synth_engine** (~70 fixar): transactions.rs, connectivity.rs, event_priority.rs, visual_state.rs, commands.rs, hub.rs, graph.rs
+- **modular_synth** (2 fixar): midi.rs, debug_pattern.rs
+
+#### Övriga förbättringar
+- Fixade `collapsible_if` lint i debug_pattern.rs
+- Alla kontroller passerar: build, clippy, test, fmt
+
+---
+
 ## [0.68.0] - 2025
 ### Fixed - CPAL 0.17 API Compatibility
 

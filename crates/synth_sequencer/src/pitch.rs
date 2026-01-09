@@ -9,9 +9,9 @@ use synth_core::Semitones;
 pub struct Pitch(u8);
 
 impl Pitch {
-    pub const MIN: Pitch = Pitch(0);
-    pub const MAX: Pitch = Pitch(127);
-    pub const MIDDLE_C: Pitch = Pitch(60);
+    pub const MIN: Self = Self(0);
+    pub const MAX: Self = Self(127);
+    pub const MIDDLE_C: Self = Self(60);
 
     /// Create a new pitch from a MIDI note number.
     pub fn new(midi_note: u8) -> Option<Self> {
