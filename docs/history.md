@@ -1,5 +1,22 @@
 # Version History
 
+## [0.68.0] - 2025
+### Fixed - CPAL 0.17 API Compatibility
+
+#### Uppdaterad cpal-backend för cpal 0.17
+- **Problem**: Kompileringsfel efter cpal 0.17 uppgradering
+- **Orsak**: cpal 0.17 ändrade flera API:er:
+  - `SampleRate` är nu en type alias för `u32`, inte en tuple struct
+  - `min_sample_rate()`, `max_sample_rate()`, `sample_rate()` returnerar nu `u32` direkt
+  - `Device::name()` är deprecated
+
+#### Ändringar i cpal_backend.rs
+- Tog bort `cpal::SampleRate(...)` konstruktor, använder `u32` direkt
+- Tog bort `.0` access på sample rate-returvärden
+- Bytte från `device.name()` till `device.description().name()` för att undvika deprecation-varningar
+
+---
+
 ## [0.67.0] - 2025
 ### Fixed - XM Effect Memory & Arpeggio Tick
 

@@ -25,7 +25,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 
 # Audio I/O
-cpal = "0.16"
+cpal = "0.17"
 
 # MIDI I/O
 midir = "0.10"

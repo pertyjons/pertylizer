@@ -1,6 +1,6 @@
 [package]
 name = "modular_synth"
-version = "0.67.0"
+version = "0.68.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A modular synthesizer with abstract audio backend"
@@ -62,7 +62,7 @@ egui_extras = { workspace = true, optional = true }
 egui-file-dialog = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3.15"
+tempfile = "3.24.0"
 
 [[bin]]
 name = "modular-synth"

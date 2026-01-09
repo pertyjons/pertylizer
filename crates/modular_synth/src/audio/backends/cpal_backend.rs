@@ -35,9 +35,10 @@ impl CpalBackend {
     }
 
     fn device_to_info(&self, device: &Device, device_type: DeviceType) -> AudioResult<DeviceInfo> {
-        let name = device
-            .name()
-            .map_err(|e| AudioError::BackendError(format!("Failed to get device name: {e}")))?;
+        let description = device
+            .description()
+            .map_err(|e| AudioError::BackendError(format!("Failed to get device description: {e}")))?;
+        let name = description.name().to_string();
 
         // Get supported output configs
         let (output_channels, supported_sample_rates, min_buffer, max_buffer) =
@@ -55,8 +56,8 @@ impl CpalBackend {
                     let rates: Vec<SampleRate> = configs
                         .iter()
                         .flat_map(|c| {
-                            let min = c.min_sample_rate().0;
-                            let max = c.max_sample_rate().0;
+                            let min = c.min_sample_rate();
+                            let max = c.max_sample_rate();
                             [44100, 48000, 96000]
                                 .into_iter()
                                 .filter(move |&r| r >= min && r <= max)
@@ -113,8 +114,8 @@ impl CpalBackend {
             .map_err(|e| AudioError::BackendError(format!("Failed to enumerate devices: {e}")))?;
 
         for device in devices {
-            if let Ok(name) = device.name()
-                && name == device_id
+            if let Ok(desc) = device.description()
+                && desc.name() == device_id
             {
                 return Ok(device);
             }
@@ -212,7 +213,7 @@ impl CpalStream {
         // Build cpal config
         let cpal_config = CpalStreamConfig {
             channels,
-            sample_rate: cpal::SampleRate(config.sample_rate.0),
+            sample_rate: config.sample_rate.0,
             buffer_size: cpal::BufferSize::Fixed(config.buffer_size.0),
         };
 
@@ -222,7 +223,7 @@ impl CpalStream {
             .ok()
             .map(|c| {
                 let buffer_frames = config.buffer_size.0 as f64;
-                let sample_rate = c.sample_rate().0 as f64;
+                let sample_rate = c.sample_rate() as f64;
                 Duration::from_secs_f64(buffer_frames / sample_rate)
             })
             .unwrap_or(Duration::from_millis(10));
