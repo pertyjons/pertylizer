@@ -20,48 +20,48 @@ license = "MIT"
 
 [workspace.dependencies]
 # Core dependencies
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.17"
 
 # Audio I/O
-cpal = "0.17"
+cpal = "0.17.1"
 
 # MIDI I/O
-midir = "0.10"
+midir = "0.10.3"
 
 # Lock-free communication
-ringbuf = "0.4"
+ringbuf = "0.4.8"
 
 # Fast mutex for visualization buffers
-parking_lot = "0.12"
+parking_lot = "0.12.5"
 
 # Fast random number generation
-fastrand = "2.3"
+fastrand = "2.3.0"
 
 # Fixed-size heap-free collections
-arrayvec = "0.7"
+arrayvec = "0.7.6"
 
 # File system paths
-dirs = "6.0"
+dirs = "6.0.0"
 
 # WAV file reading for samples
-hound = "3.5"
+hound = "3.5.1"
 
 # Tracker module import (MOD, XM, S3M)
-xmrs = { version = "0.9", features = ["std", "import"] }
+xmrs = { version = "0.9.9", features = ["std", "import"] }
 
 # GUI - egui (optional)
-eframe = { version = "0.33", default-features = false, features = [
+eframe = { version = "0.33.3", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
     "x11",
 ] }
-egui = { version = "0.33" }
-egui_extras = { version = "0.33" }
-egui-file-dialog = { version = "0.12" }
+egui = { version = "0.33.3" }
+egui_extras = { version = "0.33.3" }
+egui-file-dialog = { version = "0.12.0" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

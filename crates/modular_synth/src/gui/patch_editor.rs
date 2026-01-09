@@ -61,8 +61,6 @@ pub struct PatchEditor {
     pending_connection: Option<PendingConnection>,
     /// Canvas offset for panning.
     canvas_offset: Vec2,
-    /// Zoom level.
-    zoom: f32,
     /// Module descriptors (cached).
     descriptors: HashMap<ModuleId, ModuleDescriptor>,
     /// Next position for new modules.
@@ -87,7 +85,6 @@ impl PatchEditor {
             selected_module: None,
             pending_connection: None,
             canvas_offset: Vec2::ZERO,
-            zoom: 1.0,
             descriptors: HashMap::new(),
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
@@ -369,14 +366,6 @@ impl PatchEditor {
         // Handle canvas panning with middle mouse
         if response.dragged_by(egui::PointerButton::Middle) {
             self.canvas_offset += response.drag_delta();
-        }
-
-        // Handle zoom with scroll (when not over a module)
-        if response.hovered() {
-            let scroll = ui.input(|i| i.raw_scroll_delta.y);
-            if scroll != 0.0 {
-                self.zoom = (self.zoom + scroll * 0.001).clamp(0.5, 2.0);
-            }
         }
 
         // Draw grid
@@ -745,7 +734,12 @@ impl PatchEditor {
 
         let available_width = ui.available_width();
         let t = theme();
-        let port_label_size = 9.0; // Smaller labels
+        let port_label_size = 11.0;
+
+        // Check if we have a pending connection and extract info for highlighting
+        let pending_info = self.pending_connection.as_ref().map(|p| {
+            (p.from_module, p.from_type, p.from_direction)
+        });
 
         ui.horizontal(|ui| {
             // Input ports - left aligned
@@ -762,12 +756,20 @@ impl PatchEditor {
                         let port_type = convert_port_type(port.port_type);
                         let is_connected = connected_ports.contains(&port.name);
 
+                        // Check if this port is a valid connection target
+                        let is_highlighted = pending_info.map(|(from_module, from_type, from_dir)| {
+                            from_module != module_id
+                                && from_dir != WidgetPortDirection::Input
+                                && from_type == port_type
+                        }).unwrap_or(false);
+
                         ui.horizontal(|ui| {
                             let (response, center) = super::widgets::PortWidget::new(
                                 port_type,
                                 WidgetPortDirection::Input,
                             )
                             .connected(is_connected)
+                            .highlighted(is_highlighted)
                             .show(ui);
 
                             // Store port position (screen coordinates)
@@ -824,12 +826,20 @@ impl PatchEditor {
                         let port_type = convert_port_type(port.port_type);
                         let is_connected = connected_ports.contains(&port.name);
 
+                        // Check if this port is a valid connection target
+                        let is_highlighted = pending_info.map(|(from_module, from_type, from_dir)| {
+                            from_module != module_id
+                                && from_dir != WidgetPortDirection::Output
+                                && from_type == port_type
+                        }).unwrap_or(false);
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             let (response, center) = super::widgets::PortWidget::new(
                                 port_type,
                                 WidgetPortDirection::Output,
                             )
                             .connected(is_connected)
+                            .highlighted(is_highlighted)
                             .show(ui);
 
                             self.port_positions.insert(
@@ -872,7 +882,7 @@ impl PatchEditor {
         painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
 
         // Grid lines
-        let grid_size = 50.0 * self.zoom;
+        let grid_size = 50.0;
         let offset_x = self.canvas_offset.x % grid_size;
         let offset_y = self.canvas_offset.y % grid_size;
 

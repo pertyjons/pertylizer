@@ -10,6 +10,7 @@ pub struct PortWidget {
     #[allow(dead_code)] // Semantic field for future connection logic
     direction: WidgetPortDirection,
     connected: bool,
+    highlighted: bool,
     label: String,
 }
 
@@ -39,12 +40,19 @@ impl PortWidget {
             port_type,
             direction,
             connected: false,
+            highlighted: false,
             label: String::new(),
         }
     }
 
     pub fn connected(mut self, connected: bool) -> Self {
         self.connected = connected;
+        self
+    }
+
+    /// Mark this port as a valid connection target (glowing highlight).
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
 
@@ -64,12 +72,33 @@ impl PortWidget {
     }
 
     pub fn show(self, ui: &mut Ui) -> (Response, Pos2) {
-        let size = 14.0;
+        let size = 20.0;
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click_and_drag());
 
         let painter = ui.painter();
         let center = rect.center();
-        let radius = size / 2.0 - 1.0;
+        let radius = size / 2.0 - 2.0;
+
+        // Glowing highlight for valid connection targets
+        if self.highlighted {
+            // Outer glow
+            let glow_color = Color32::from_rgba_unmultiplied(
+                self.color().r(),
+                self.color().g(),
+                self.color().b(),
+                80,
+            );
+            painter.circle_filled(center, radius + 6.0, glow_color);
+
+            // Inner glow
+            let inner_glow = Color32::from_rgba_unmultiplied(
+                self.color().r(),
+                self.color().g(),
+                self.color().b(),
+                120,
+            );
+            painter.circle_filled(center, radius + 3.0, inner_glow);
+        }
 
         // Outer ring
         painter.circle_stroke(center, radius, Stroke::new(2.0, self.color()));

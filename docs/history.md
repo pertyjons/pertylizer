@@ -1,5 +1,25 @@
 # Version History
 
+## [0.71.0] - 2025
+### Improved - Rack GUI UX
+
+#### Port-highlighting vid kabeldragning
+- **Nytt**: När man drar en kabel lyser kompatibla portar upp med en glödande effekt
+- Porten glöder i sin egen färg (Audio=grön, Control=blå, Gate=gul, MIDI=lila)
+- Visar tydligt vilka portar som går att koppla till (rätt typ + rätt riktning)
+- Implementerat i `PortWidget` med ny `highlighted()` builder-metod
+
+#### Större portar för bättre precision
+- **Port-storlek**: Ökad från 14px till 20px för lättare klickning
+- **Port-etiketter**: Ökad från 9px till 11px för bättre läsbarhet
+- Förbättrar UX på högupplösta skärmar och för pekskärmar
+
+#### Zoom-funktionalitet borttagen
+- Tog bort icke-fungerande zoom i Rack-vyn
+- Renare kod utan trasig funktionalitet
+
+---
+
 ## [0.70.0] - 2025
 ### Improved - Module Stability & Performance
 
