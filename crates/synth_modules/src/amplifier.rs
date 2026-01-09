@@ -17,6 +17,8 @@ pub struct Amplifier {
     level: Gain,
     pan: BipolarValue,
     clip_mode: ClipMode,
+    /// When true, CV input is bipolar (-1 to +1), allowing ring modulation
+    cv_bipolar: bool,
     sample_rate: SampleRate,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
@@ -28,6 +30,7 @@ impl Amplifier {
             level: Gain::UNITY,
             pan: BipolarValue::CENTER,
             clip_mode: ClipMode::Off,
+            cv_bipolar: false,
             sample_rate: SampleRate::DVD_QUALITY,
             output_left: AudioBuffer::new(256),
             output_right: AudioBuffer::new(256),
@@ -81,6 +84,16 @@ impl Describable for Amplifier {
                 .default(0.0)
                 .widget(WidgetHint::PanKnob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Amplifier(AmplifierParam::CvBipolar(false)),
+                    "CV Bipolar",
+                )
+                .description("Allow negative CV for ring modulation")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Toggle),
+            )
             .port(PortDescriptor::audio_input("in", "In"))
             .port(PortDescriptor::audio_input("in_l", "In L"))
             .port(PortDescriptor::audio_input("in_r", "In R"))
@@ -125,7 +138,10 @@ impl PolyModule for Amplifier {
             };
 
             let cv = cv_in.map(|b| b[i]).unwrap_or(1.0);
-            let effective_level = self.level * cv.max(0.0);
+            // In bipolar mode, CV can be negative (ring modulation)
+            // In unipolar mode, CV is clamped to positive (standard VCA)
+            let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
+            let effective_level = self.level.as_f32() * cv_scaled;
 
             let effective_pan = if let Some(pan_mod) = pan_cv {
                 BipolarValue::new(self.pan.as_f32() + pan_mod[i])
@@ -135,8 +151,8 @@ impl PolyModule for Amplifier {
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
 
-            let left = input_l * effective_level.as_f32() * pan_left.as_f32();
-            let right = input_r * effective_level.as_f32() * pan_right.as_f32();
+            let left = input_l * effective_level * pan_left.as_f32();
+            let right = input_r * effective_level * pan_right.as_f32();
 
             self.output_left[i] = Self::apply_clip(left, self.clip_mode);
             self.output_right[i] = Self::apply_clip(right, self.clip_mode);
@@ -160,6 +176,7 @@ impl PolyModule for Amplifier {
             match amp_param {
                 AmplifierParam::Level(l) => self.level = Gain::new(l.as_f32().clamp(0.0, 2.0)),
                 AmplifierParam::Pan(p) => self.pan = p,
+                AmplifierParam::CvBipolar(b) => self.cv_bipolar = b,
             }
         }
     }
@@ -169,6 +186,13 @@ impl PolyModule for Amplifier {
             Some(match amp_param {
                 AmplifierParam::Level(_) => self.level.as_f32(),
                 AmplifierParam::Pan(_) => self.pan.as_f32(),
+                AmplifierParam::CvBipolar(_) => {
+                    if self.cv_bipolar {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
             })
         } else {
             None
@@ -179,6 +203,7 @@ impl PolyModule for Amplifier {
         vec![
             Param::Amplifier(AmplifierParam::Level(self.level)),
             Param::Amplifier(AmplifierParam::Pan(self.pan)),
+            Param::Amplifier(AmplifierParam::CvBipolar(self.cv_bipolar)),
         ]
     }
 

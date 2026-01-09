@@ -158,6 +158,9 @@ impl PolyModule for Lfo {
         let rate_cv = inputs.get(PortName::RATE_CV);
         let mut prev_retrigger = 0.0f32;
 
+        // In tempo sync mode, derive phase directly from beat position for lock
+        let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
+
         for i in 0..context.samples.as_usize() {
             if let Some(retrig) = retrigger_input {
                 let val = retrig[i];
@@ -167,21 +170,32 @@ impl PolyModule for Lfo {
                 prev_retrigger = val;
             }
 
-            let base_rate = if self.sync_mode.is_tempo_sync() {
-                Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
+            if use_beat_sync {
+                // Calculate phase from beat position for perfect sync
+                let sample_offset = i as f32 / self.sample_rate.as_f32();
+                let beat_offset = sample_offset * context.tempo.as_f32() / 60.0;
+                let current_beat = context.position_beats.as_f32() + beat_offset;
+                // Phase cycles through one LFO cycle per sync_division beats
+                let lfo_phase = (current_beat / self.sync_division.as_f32()).rem_euclid(1.0);
+                self.phase = Phase::new(lfo_phase);
+                self.output_buffer[i] = self.generate_sample(Hertz::new(1.0)); // Rate doesn't matter in sync
             } else {
-                self.rate
-            };
+                let base_rate = if self.sync_mode.is_tempo_sync() {
+                    Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
+                } else {
+                    self.rate
+                };
 
-            let effective_rate = if let Some(cv) = rate_cv {
-                let mod_amount = cv[i];
-                let rate_mult = (mod_amount * 2.0).exp2();
-                Hertz::new((base_rate.as_f32() * rate_mult).clamp(0.01, 50.0))
-            } else {
-                base_rate
-            };
+                let effective_rate = if let Some(cv) = rate_cv {
+                    let mod_amount = cv[i];
+                    let rate_mult = (mod_amount * 2.0).exp2();
+                    Hertz::new((base_rate.as_f32() * rate_mult).clamp(0.01, 50.0))
+                } else {
+                    base_rate
+                };
 
-            self.output_buffer[i] = self.generate_sample(effective_rate);
+                self.output_buffer[i] = self.generate_sample(effective_rate);
+            }
         }
 
         if let Some(out) = outputs.get_mut("out") {

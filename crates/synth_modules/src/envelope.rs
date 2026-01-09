@@ -222,7 +222,7 @@ impl Envelope {
                     let target = self.target_level.as_f32();
                     let current = self.level.as_f32();
                     let new_level = target + (current - target) * effective_coef;
-                    self.level = NormalizedValue::new_unchecked(new_level);
+                    self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
                     if self.level.as_f32() >= 0.999 {
                         self.level = NormalizedValue::MAX;
@@ -249,7 +249,7 @@ impl Envelope {
                     };
 
                     let new_level = sustain + (current - sustain) * effective_coef;
-                    self.level = NormalizedValue::new_unchecked(new_level.max(sustain));
+                    self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
                     if self.level.as_f32() <= sustain + 0.001 {
                         self.level = self.sustain;
@@ -277,7 +277,7 @@ impl Envelope {
                     };
 
                     let new_level = current * effective_coef;
-                    self.level = NormalizedValue::new_unchecked(new_level.max(0.0));
+                    self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
                     if self.level.as_f32() <= 0.001 {
                         self.level = NormalizedValue::MIN;

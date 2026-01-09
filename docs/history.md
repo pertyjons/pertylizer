@@ -1,5 +1,43 @@
 # Version History
 
+## [0.70.0] - 2025
+### Improved - Module Stability & Performance
+
+#### Envelope (ADSR) förbättringar
+- Ersatte `NormalizedValue::new_unchecked()` med säker `new()` + `.clamp(0.0, 1.0)`
+- Förhindrar potentiella out-of-bounds värden vid extrema förhållanden
+
+#### Filter stabilitet
+- **SVF Filter**: Resonans clampad till max 0.99 för att förhindra instabilitet vid självoscillation
+- **Ladder Filter**: Samma resonans-begränsning för stabilitet
+- **Denormal prevention**: Lade till `flush_denormals()` för konsekvent prestanda i båda filtertyper
+
+#### Oscillator anti-aliasing
+- Lade till PolyBLAMP-korrektion för triangelvågor vid fasens hörnpunkter (0.25 och 0.75)
+- Ny `poly_blamp()` funktion i synth_dsp för band-limited triangle waves
+
+#### LFO beat-synkronisering
+- LFO-fasen beräknas nu från `context.position_beats` när tempo sync är aktivt
+- Perfekt taktlåsning istället för fri löpande frekvens
+
+#### Amplifier (VCA) ny funktion
+- Ny parameter `CV Bipolar` för att tillåta negativ CV-modulation
+- Möjliggör ring modulation-effekter via VCA
+
+#### DSP primitiver
+- **FilterState**: Ny `flush_denormals()` metod förhindrar prestandaproblem med denormala tal
+- **InterpolatedDelayLine**: Ny `read_cubic()` metod med Hermite-interpolation för högre kvalitet
+
+#### Body Resonance
+- Dynamisk Nyquist-begränsning baserat på sample rate
+- Denormal prevention i filter states
+
+#### Sample Player optimering
+- Skippar dyra `powf()` per-sample beräkningar när ingen pitch modulation används
+- Märkbar CPU-besparing vid normal uppspelning
+
+---
+
 ## [0.69.0] - 2025
 ### Refactoring - Clippy `use_self` Compliance
 

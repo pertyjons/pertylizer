@@ -61,8 +61,9 @@ impl BodyResonance {
         q: f32,
         sample_rate: f32,
     ) -> f32 {
-        // Coefficient calculation
-        let f = (freq / sample_rate).min(0.49);
+        // Coefficient calculation with dynamic Nyquist limit
+        let nyquist_limit = sample_rate * 0.49;
+        let f = (freq.min(nyquist_limit)) / sample_rate;
         let w = 2.0 * std::f32::consts::PI * f;
         let sin_w = w.sin();
         let alpha = sin_w / (2.0 * q.max(0.5));
@@ -78,6 +79,10 @@ impl BodyResonance {
         let output = (b0 / a0) * input + state[0].as_f32();
         state[0] = FilterState::new((b2 / a0) * input - (a1 / a0) * output + state[1].as_f32());
         state[1] = FilterState::new(-(a2 / a0) * output);
+
+        // Prevent denormals for consistent performance
+        state[0].flush_denormals();
+        state[1].flush_denormals();
 
         output
     }

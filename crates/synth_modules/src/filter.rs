@@ -72,7 +72,8 @@ impl Filter {
         let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod))
             .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
-        let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 1.0);
+        // Clamp resonance to 0.99 max to prevent instability at self-oscillation
+        let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 0.99);
 
         let g = cutoff.to_tan_coeff(self.sample_rate);
         let k = 2.0 - 2.0 * resonance;
@@ -90,6 +91,10 @@ impl Filter {
 
         self.ic1eq = FilterState::new(2.0 * v1 - ic1);
         self.ic2eq = FilterState::new(2.0 * v2 - ic2);
+
+        // Prevent denormals for consistent performance
+        self.ic1eq.flush_denormals();
+        self.ic2eq.flush_denormals();
 
         match self.filter_type {
             FilterMode::Lowpass => v2,
@@ -335,7 +340,8 @@ impl LadderFilter {
                 .clamp(20.0, self.sample_rate.as_f32() * 0.49),
         );
         let g = cutoff.to_tan_coeff(self.sample_rate);
-        let k = self.resonance.as_f32() * 4.0;
+        // Clamp resonance to 0.99 max for stability, then scale to feedback gain
+        let k = self.resonance.as_f32().min(0.99) * 4.0;
 
         let driven = if self.drive.as_f32() > 1.0 {
             Self::saturate(input * self.drive.as_f32())
@@ -361,6 +367,14 @@ impl LadderFilter {
                 new_stage
             });
             self.delay[i] = self.stage[i];
+        }
+
+        // Prevent denormals for consistent performance
+        for state in &mut self.stage {
+            state.flush_denormals();
+        }
+        for state in &mut self.delay {
+            state.flush_denormals();
         }
 
         self.stage[3].as_f32()
@@ -405,9 +419,10 @@ impl Describable for LadderFilter {
             )
             .parameter(
                 ParameterDescriptor::float(Param::Filter(FilterParam::Drive(Gain::UNITY)), "Drive")
-                    .description("Saturation amount")
-                    .range(0.0, 4.0)
+                    .description("Saturation amount (soft clipping above 1.0)")
+                    .range(0.5, 4.0)
                     .default(1.0)
+                    .unit(ParameterUnit::None)
                     .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::audio_input("in", "In"))

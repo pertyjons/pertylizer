@@ -20,6 +20,8 @@ pub enum AmplifierParam {
     Level(Gain),
     /// Stereo pan (-1.0 to 1.0)
     Pan(BipolarValue),
+    /// Bipolar CV mode (allows negative gain for ring modulation)
+    CvBipolar(bool),
 }
 
 impl AmplifierParam {
@@ -31,6 +33,7 @@ impl AmplifierParam {
         match self {
             Self::Level(_) => "Level",
             Self::Pan(_) => "Pan",
+            Self::CvBipolar(_) => "CV Bipolar",
         }
     }
 
@@ -38,6 +41,13 @@ impl AmplifierParam {
         match self {
             Self::Level(g) => g.as_f32(),
             Self::Pan(p) => p.as_f32(),
+            Self::CvBipolar(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -45,6 +55,7 @@ impl AmplifierParam {
         match self {
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::Pan(_) => Self::Pan(BipolarValue::new(value)),
+            Self::CvBipolar(_) => Self::CvBipolar(value > 0.5),
         }
     }
 

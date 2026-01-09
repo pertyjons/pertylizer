@@ -156,6 +156,40 @@ impl InterpolatedDelayLine {
         self.buffer[idx0] * (1.0 - frac) + self.buffer[idx1] * frac
     }
 
+    /// Read with cubic (Hermite) interpolation for higher quality.
+    ///
+    /// Provides smoother results than linear interpolation, especially
+    /// for pitch-shifting and high-quality modulated delays.
+    #[inline]
+    #[must_use]
+    pub fn read_cubic(&self, delay_samples: f32) -> f32 {
+        let len = self.buffer.len();
+        if len < 4 {
+            return self.read_interpolated(delay_samples);
+        }
+
+        let delay_clamped = delay_samples.clamp(1.0, (len - 2) as f32);
+        let read_pos = (self.write_pos.as_usize() as f32 - delay_clamped).rem_euclid(len as f32);
+        let idx1 = (read_pos as usize) % len;
+        let idx0 = (idx1 + len - 1) % len;
+        let idx2 = (idx1 + 1) % len;
+        let idx3 = (idx1 + 2) % len;
+        let frac = read_pos - read_pos.floor();
+
+        let y0 = self.buffer[idx0];
+        let y1 = self.buffer[idx1];
+        let y2 = self.buffer[idx2];
+        let y3 = self.buffer[idx3];
+
+        // Hermite interpolation coefficients
+        let c0 = y1;
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+        ((c3 * frac + c2) * frac + c1) * frac + c0
+    }
+
     /// Write a sample and advance.
     #[inline]
     pub fn write(&mut self, sample: f32) {

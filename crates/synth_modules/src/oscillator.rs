@@ -19,7 +19,7 @@ use synth_core::{
     Semitones, Velocity, Waveform,
 };
 use synth_core::{FmMode, ModuleType, OscillatorParam, Param};
-use synth_dsp::oscillators::poly_blep;
+use synth_dsp::oscillators::{poly_blamp, poly_blep};
 
 /// A band-limited oscillator.
 #[derive(Clone)]
@@ -92,7 +92,17 @@ impl Oscillator {
 
         let sample = match self.waveform {
             Waveform::Sine => (phase * TAU).sin(),
-            Waveform::Triangle => Phase::new_unchecked(phase).triangle(),
+            Waveform::Triangle => {
+                // Apply PolyBLAMP at triangle corners (0.25 and 0.75)
+                let mut tri = Phase::new_unchecked(phase).triangle();
+                // Corner at phase 0.25 (peak)
+                let dist_to_peak = phase - 0.25;
+                tri += poly_blamp(dist_to_peak, dt) * 4.0; // Scale by slope change magnitude
+                // Corner at phase 0.75 (trough)
+                let dist_to_trough = phase - 0.75;
+                tri -= poly_blamp(dist_to_trough, dt) * 4.0;
+                tri
+            }
             Waveform::Sawtooth => {
                 let mut saw = Phase::new_unchecked(phase).sawtooth();
                 saw -= poly_blep(phase, dt);

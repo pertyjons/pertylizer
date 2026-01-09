@@ -195,6 +195,20 @@ impl FilterState {
         self.0 = 0.0;
     }
 
+    /// Apply denormal prevention.
+    ///
+    /// Adds a tiny DC offset to prevent denormal numbers which can
+    /// cause severe performance degradation in filter processing.
+    /// Call this after filter state updates to maintain performance.
+    #[inline]
+    pub fn flush_denormals(&mut self) {
+        // Add tiny offset, then check if the value became denormal
+        // If so, reset to zero. This is faster than adding offset every sample.
+        if self.0.abs() < 1e-15 {
+            self.0 = 0.0;
+        }
+    }
+
     /// Apply one-pole lowpass filter.
     #[inline]
     pub fn one_pole(&mut self, input: f32, coeff: f32) -> f32 {

@@ -576,12 +576,19 @@ impl PolyModule for SamplePlayer {
         // Get pitch modulation input (semitones)
         let pitch_mod = inputs.get(PortName::intern("pitch_mod"));
 
+        // Optimization: if no pitch modulation, use constant speed (avoids expensive powf per sample)
+        let has_pitch_mod = pitch_mod.is_some();
+
         for i in 0..context.samples.as_usize() {
             if self.playback_state.is_playing() {
-                // Apply per-sample pitch modulation
+                // Apply per-sample pitch modulation only if present
                 // pitch_mod is in semitones: speed_ratio = 2^(semitones/12)
-                let pitch_offset = pitch_mod.map(|cv| cv[i]).unwrap_or(0.0);
-                let speed = base_speed * 2.0_f64.powf(pitch_offset as f64 / 12.0);
+                let speed = if has_pitch_mod {
+                    let pitch_offset = pitch_mod.map(|cv| cv[i]).unwrap_or(0.0);
+                    base_speed * 2.0_f64.powf(pitch_offset as f64 / 12.0)
+                } else {
+                    base_speed
+                };
 
                 let (left, right) = self.read_with_crossfade(&sample, self.position);
                 self.output_left[i] = left.as_f32() * level;

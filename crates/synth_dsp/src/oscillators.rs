@@ -79,6 +79,39 @@ pub fn poly_blep_integrated(t: f32, dt: f32) -> f32 {
     }
 }
 
+/// PolyBLAMP (Polynomial Band-Limited rAMP) for triangle waves.
+///
+/// Used to smooth the corners of triangle waves where the derivative
+/// has a discontinuity. This is the integrated form of PolyBLEP.
+///
+/// # Arguments
+///
+/// * `t` - Distance from corner point (can be negative)
+/// * `dt` - Phase increment per sample
+///
+/// # Returns
+///
+/// A correction value to add to the triangle wave.
+#[inline]
+#[must_use]
+pub fn poly_blamp(t: f32, dt: f32) -> f32 {
+    if t < dt && t > -dt {
+        // Within the transition region
+        let t_norm = t / dt;
+        if t_norm < 0.0 {
+            // Before the corner
+            let x = t_norm + 1.0;
+            -dt * x * x * x / 6.0
+        } else {
+            // After the corner
+            let x = t_norm - 1.0;
+            dt * x * x * x / 6.0
+        }
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
