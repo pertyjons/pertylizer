@@ -125,12 +125,14 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     }
 
     // Set tempo from module defaults
+    // XM modules have two tempo parameters:
+    // - default_bpm: The BPM value (typically 125)
+    // - default_tempo: The "speed" value (ticks per row, typically 6)
+    // The actual playback speed depends on both values.
     let bpm = module.default_bpm as f32;
-    let speed = module.default_tempo as f32;
-    // Tracker tempo formula: actual BPM = (bpm * 2.5) / speed
-    // Standard: speed=6, bpm=125 -> 125 * 2.5 / 6 = 52 BPM
-    // But for simplicity, we use the BPM value directly
+    let speed = module.default_tempo as u8;
     song.default_tempo = Bpm::new(bpm.clamp(60.0, 300.0));
+    song.default_tracker_speed = speed.max(1); // Prevent division by zero
 
     // Extract samples from instruments
     let samples = extract_samples(&module, module.frequency_type)?;
@@ -160,7 +162,7 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
         let tracker_pattern =
-            convert_pattern_to_tracker(pattern_data, pat_idx, num_channels, speed)?;
+            convert_pattern_to_tracker(pattern_data, pat_idx, num_channels, f32::from(speed))?;
         let pattern_id = song.add_tracker_pattern(tracker_pattern);
         pattern_ids.push(pattern_id);
     }

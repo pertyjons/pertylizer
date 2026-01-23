@@ -1668,6 +1668,7 @@ impl AudioProcessor for SynthEngine {
                     volume,
                     panning,
                     note_cut,
+                    tone_porta_pitch,
                     ..
                 } => {
                     // Tracker modulation: apply to voice at track index
@@ -1689,6 +1690,11 @@ impl AudioProcessor for SynthEngine {
                             voice.tracker_pitch_cents = *pitch_cents;
                             voice.tracker_volume = *volume;
                             voice.tracker_panning = *panning;
+
+                            // Apply tone portamento pitch if active
+                            // This overrides the note's base pitch with the interpolated glide pitch
+                            voice.tracker_tone_porta_pitch =
+                                tone_porta_pitch.map(synth_core::Semitones::new);
 
                             if *note_cut {
                                 voice.note_off();

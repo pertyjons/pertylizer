@@ -282,6 +282,10 @@ pub struct Voice {
     pub tracker_volume: NormalizedValue,
     /// Tracker panning modulation (from panning slide effects).
     pub tracker_panning: BipolarValue,
+    /// Tone portamento target pitch in semitones (when active, overrides note pitch).
+    /// This is set by the 3xx/5xx effects and represents the current interpolated pitch
+    /// during a glide. When Some, this pitch is used instead of the note's base pitch.
+    pub tracker_tone_porta_pitch: Option<Semitones>,
 
     /// Expression settings (pitch bend range, velocity sensitivity, etc.).
     pub expression: ExpressionSettings,
@@ -320,6 +324,7 @@ impl Voice {
             tracker_pitch_cents: Cents::ZERO,
             tracker_volume: NormalizedValue::MAX, // 1.0 = no volume change
             tracker_panning: BipolarValue::CENTER,
+            tracker_tone_porta_pitch: None,
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
             steal_fade_samples: 128,
@@ -348,6 +353,7 @@ impl Voice {
             tracker_pitch_cents: Cents::ZERO,
             tracker_volume: NormalizedValue::MAX,
             tracker_panning: BipolarValue::CENTER,
+            tracker_tone_porta_pitch: None,
             expression: ExpressionSettings::default(),
             graph,
             steal_fade_samples: 128,
@@ -537,14 +543,23 @@ impl Voice {
         let velocity = self.state.velocity().unwrap_or(Velocity::MAX);
 
         // === Calculate frequency with pitch bend and tracker modulation ===
-        let base_freq = Hertz::new(self.glide.get_frequency());
+        // If tone portamento is active, use the interpolated pitch from tracker effects.
+        // Otherwise, use the note's base frequency from glide state.
+        let base_freq = if let Some(tone_porta_semitones) = self.tracker_tone_porta_pitch {
+            // Tone portamento active: convert semitones to frequency
+            // semitones 60 = middle C = 261.63 Hz, using A4 = 440 Hz reference
+            Hertz::new(440.0 * 2.0f32.powf((tone_porta_semitones.as_f32() - 69.0) / 12.0))
+        } else {
+            Hertz::new(self.glide.get_frequency())
+        };
 
         // Apply pitch bend: bend_semitones = pitch_bend * range
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
         let freq_after_bend = bend_semitones.apply(base_freq);
 
-        // Apply tracker pitch modulation (vibrato, portamento effects)
+        // Apply tracker pitch modulation (vibrato, portamento up/down effects)
         // tracker_pitch_cents is in cents, convert to semitones for frequency ratio
+        // Note: This is additive modulation (vibrato, etc.), separate from tone portamento
         let tracker_semitones = Semitones::new(self.tracker_pitch_cents.as_f32() / 100.0);
         let freq = tracker_semitones.apply(freq_after_bend);
 
@@ -630,6 +645,7 @@ impl Voice {
             tracker_pitch_cents: Cents::ZERO,
             tracker_volume: NormalizedValue::MAX,
             tracker_panning: BipolarValue::CENTER,
+            tracker_tone_porta_pitch: None,
             expression: self.expression,
             graph: cloned_graph,
             steal_fade_samples: self.steal_fade_samples,

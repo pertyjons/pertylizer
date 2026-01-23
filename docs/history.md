@@ -1,5 +1,36 @@
 # Version History
 
+## [0.73.0] - 2025
+### Fixed - Tracker Module Playback
+
+Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska problem.
+
+#### Tone Portamento (3xx/5xx) fungerade inte
+- **Problem**: Tone portamento-pitch ignorerades helt i synth_engine
+- **Fix**: `tracker_tone_porta_pitch` fält i Voice som override:ar base pitch
+- **Fix**: Modulation-events extraherar nu `tone_porta_pitch` och applicerar det
+- Glide-effekter fungerar nu korrekt istället för diskreta hopp
+
+#### Initial tracker speed ignorerades vid import
+- **Problem**: XM-modulers `default_tempo` (speed) lästes inte vid import
+- **Fix**: Nytt fält `default_tracker_speed` i Song-strukturen
+- **Fix**: SequencerEngine läser och applicerar speed vid `with_song()` och `set_song()`
+- Moduler spelas nu i korrekt tempo från start
+
+#### Tone Portamento triggade felaktigt nya noter
+- **Problem**: Noter med tone portamento-effekt skapade NoteOn-events
+- **Fix**: `process_row_start()` returnerar nu `(Vec<GlobalCommand>, bool)`
+- **Fix**: NoteOn skapas endast om `should_trigger_note` är true
+- Förhindrar sample-retrigger vid glide, bevarar envelope
+
+#### Tekniska ändringar
+- `Voice.tracker_tone_porta_pitch: Option<Semitones>` - tone portamento pitch override
+- `Song.default_tracker_speed: u8` - initial speed (ticks per row)
+- `ChannelEffectProcessor.process_row_start()` - utökad returtyp
+- Pitch beräknas korrekt: `440.0 * 2^((semitones - 69) / 12)`
+
+---
+
 ## [0.72.0] - 2025
 ### Improved - Global Module Handling
 

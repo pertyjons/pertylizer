@@ -104,6 +104,15 @@ pub struct Song {
     pub default_tempo: Bpm,
     /// Default time signature.
     pub default_time_signature: TimeSignature,
+    /// Default tracker speed (ticks per row, typically 6).
+    /// Used for XM/MOD/S3M/IT modules where tempo is controlled by both BPM and speed.
+    #[serde(default = "default_tracker_speed")]
+    pub default_tracker_speed: u8,
+}
+
+/// Default tracker speed (6 ticks per row, like FastTracker 2).
+fn default_tracker_speed() -> u8 {
+    6
 }
 
 impl Song {
@@ -122,6 +131,7 @@ impl Song {
             time_signature_changes: Vec::new(),
             default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
+            default_tracker_speed: default_tracker_speed(),
         }
     }
 
@@ -140,6 +150,13 @@ impl Song {
     /// Set the default time signature (builder pattern).
     pub fn with_time_signature(mut self, sig: TimeSignature) -> Self {
         self.default_time_signature = sig;
+        self
+    }
+
+    /// Set the default tracker speed (builder pattern).
+    /// Speed is the number of ticks per row (typically 6 in FastTracker 2).
+    pub fn with_tracker_speed(mut self, speed: u8) -> Self {
+        self.default_tracker_speed = speed.max(1); // Prevent division by zero
         self
     }
 

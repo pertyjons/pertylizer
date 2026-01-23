@@ -666,13 +666,15 @@ impl ChannelEffectProcessor {
     /// 2. Then: Call `trigger_note()` if a note is present
     /// 3. Finally: Process all effects (these can override trigger_note values)
     ///
-    /// Returns any global commands that need sequencer-level handling.
+    /// Returns a tuple of:
+    /// - Global commands that need sequencer-level handling
+    /// - Whether the note should actually trigger (false for tone portamento)
     pub fn process_row_start(
         &mut self,
         track: TrackId,
         effects: &[EffectCommand],
         trigger_info: Option<NoteTriggerInfo>,
-    ) -> Vec<GlobalCommand> {
+    ) -> (Vec<GlobalCommand>, bool) {
         self.tick_in_row = TickInRow::ZERO;
         let mut global_commands = Vec::new();
 
@@ -697,6 +699,10 @@ impl ChannelEffectProcessor {
 
         // STEP 2: Trigger note if present (BEFORE effect processing!)
         // This resets the appropriate state based on trigger type
+        // For tone portamento: don't trigger a new note, just set the target pitch
+        let has_note = trigger_info.is_some();
+        let should_trigger_note = has_note && !is_tone_portamento;
+
         if let Some(trigger) = trigger_info {
             state.trigger_note(
                 trigger.pitch,
@@ -875,7 +881,7 @@ impl ChannelEffectProcessor {
             }
         }
 
-        global_commands
+        (global_commands, should_trigger_note)
     }
 
     /// Process a single tick for all channels.

@@ -124,12 +124,12 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let cached_tempo = song
+        let (cached_tempo, tracker_speed) = song
             .read()
-            .map(|s| s.default_tempo)
-            .unwrap_or(Bpm::new(120.0));
+            .map(|s| (s.default_tempo, s.default_tracker_speed))
+            .unwrap_or((Bpm::new(120.0), 6));
 
-        Self {
+        let mut engine = Self {
             song,
             play_state: PlayState::Stopped,
             current_tick: Tick::ZERO,
@@ -138,7 +138,7 @@ impl SequencerEngine {
             active_notes: Vec::new(),
             cached_tempo,
             base_tempo: cached_tempo,
-            tracker_speed: 6, // Default tracker speed
+            tracker_speed: tracker_speed.max(1), // Use song's tracker speed, prevent division by zero
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -146,7 +146,10 @@ impl SequencerEngine {
             track_last_instruments: HashMap::new(),
             song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
             effect_tick_accumulator: 0,
-        }
+        };
+        // Recalculate effective tempo based on tracker speed
+        engine.recalculate_effective_tempo();
+        engine
     }
 
     /// Set the sample rate.
@@ -470,9 +473,11 @@ impl SequencerEngine {
                 };
 
                 // Process effects for this channel using the Note Trigger State Machine
-                let global_commands =
-                    self.effect_processor
-                        .process_row_start(track_id, &effects, Some(trigger_info));
+                // Returns: (global_commands, should_trigger_note)
+                // should_trigger_note is false for tone portamento (3xx/5xx effects)
+                let (global_commands, should_trigger_note) = self
+                    .effect_processor
+                    .process_row_start(track_id, &effects, Some(trigger_info));
 
                 // Handle global commands (tempo changes, etc.)
                 for cmd in global_commands {
@@ -500,26 +505,31 @@ impl SequencerEngine {
                     }
                 }
 
-                // Track active note for NoteOff (for duration-based note-off)
-                self.active_notes.push(ActiveNote {
-                    pitch,
-                    instrument,
-                    end_tick,
-                    track,
-                });
+                // Only create NoteOn if this is a fresh attack (not tone portamento)
+                // Tone portamento (3xx/5xx) only sets the target pitch for glide,
+                // it does NOT trigger a new note or reset the sample playback.
+                if should_trigger_note {
+                    // Track active note for NoteOff (for duration-based note-off)
+                    self.active_notes.push(ActiveNote {
+                        pitch,
+                        instrument,
+                        end_tick,
+                        track,
+                    });
 
-                // Note: We use the note's velocity directly - in tracker formats,
-                // the note's velocity column IS the volume for that note.
-                // Effect-based volume modulation (SetVolume, VolumeSlide) happens
-                // DURING playback via the effect processor, not at note onset.
-                events.push(SequencerEvent::NoteOn {
-                    tick: self.current_tick,
-                    pitch,
-                    velocity,
-                    instrument,
-                    effects,
-                    voice_index,
-                });
+                    // Note: We use the note's velocity directly - in tracker formats,
+                    // the note's velocity column IS the volume for that note.
+                    // Effect-based volume modulation (SetVolume, VolumeSlide) happens
+                    // DURING playback via the effect processor, not at note onset.
+                    events.push(SequencerEvent::NoteOn {
+                        tick: self.current_tick,
+                        pitch,
+                        velocity,
+                        instrument,
+                        effects,
+                        voice_index,
+                    });
+                }
             } else {
                 // No track - no effect processing, emit as-is (polyphonic)
                 self.active_notes.push(ActiveNote {
@@ -573,7 +583,8 @@ impl SequencerEngine {
         for (track_id, effects) in effect_events_to_process {
             // Process effects through the effect processor to handle global commands.
             // No trigger_info - effect-only rows don't trigger a new note.
-            let global_commands = self
+            // We ignore the should_trigger_note return value since there's no note.
+            let (global_commands, _) = self
                 .effect_processor
                 .process_row_start(track_id, &effects, None);
 
@@ -817,6 +828,12 @@ impl SequencerEngine {
     pub fn set_song(&mut self, song: Arc<RwLock<Song>>) {
         // Stop and clear any active notes
         let _ = self.stop();
+
+        // Read tracker speed from new song
+        if let Ok(s) = song.read() {
+            self.tracker_speed = s.default_tracker_speed.max(1);
+        }
+
         self.song = song;
         self.update_cached_tempo();
     }
