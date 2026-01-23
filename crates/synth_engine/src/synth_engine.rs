@@ -777,6 +777,14 @@ impl SynthEngine {
             EngineCommand::Stop => {
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
+
+                // Release all voices on all instruments
+                // This is necessary because sequencer.stop() returns events that
+                // would need to be processed, but we're not in the audio callback.
+                // Direct voice release is more reliable.
+                for instrument in &mut self.instruments {
+                    instrument.all_notes_off();
+                }
             }
             EngineCommand::Pause => {
                 self.sequencer.pause();

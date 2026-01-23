@@ -25,9 +25,9 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 #### Stop-knappen fungerar nu för tracker-moduler
 - **Problem**: Voices fortsatte spela efter stop - krävde panic för att tysta
-- **Fix**: `stop()` skickar nu `VoiceOff` för alla MonoVoice-tracks
-- **Fix**: Effect processor resettas vid stop
-- Voices som triggats via tone portamento tystnar nu korrekt
+- **Orsak**: `sequencer.stop()` returnerade VoiceOff-events men de ignorerades
+- **Fix**: `EngineCommand::Stop` anropar nu `all_notes_off()` på alla instrument direkt
+- Voices tystnar nu korrekt vid stop
 
 #### Tekniska ändringar
 - `Voice.tracker_tone_porta_pitch: Option<Semitones>` - tone portamento pitch override
