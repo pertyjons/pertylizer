@@ -23,10 +23,17 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 - **Fix**: NoteOn skapas endast om `should_trigger_note` är true
 - Förhindrar sample-retrigger vid glide, bevarar envelope
 
+#### Stop-knappen fungerar nu för tracker-moduler
+- **Problem**: Voices fortsatte spela efter stop - krävde panic för att tysta
+- **Fix**: `stop()` skickar nu `VoiceOff` för alla MonoVoice-tracks
+- **Fix**: Effect processor resettas vid stop
+- Voices som triggats via tone portamento tystnar nu korrekt
+
 #### Tekniska ändringar
 - `Voice.tracker_tone_porta_pitch: Option<Semitones>` - tone portamento pitch override
 - `Song.default_tracker_speed: u8` - initial speed (ticks per row)
 - `ChannelEffectProcessor.process_row_start()` - utökad returtyp
+- `SequencerEngine.stop()` - skickar VoiceOff för alla MonoVoice-tracks
 - Pitch beräknas korrekt: `440.0 * 2^((semitones - 69) / 12)`
 
 ---

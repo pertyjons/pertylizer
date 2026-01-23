@@ -194,8 +194,26 @@ impl SequencerEngine {
         self.tick_accumulator = 0.0;
 
         // Generate NoteOff events for all active notes
-        let events = self.release_all_notes();
+        let mut events = self.release_all_notes();
         self.active_notes.clear();
+
+        // For tracker-style playback: release ALL MonoVoice tracks
+        // This is necessary because tone portamento and other effects may have
+        // voices playing that aren't tracked in active_notes
+        if let Ok(song) = self.song.read() {
+            for track in song.tracks() {
+                if let TrackMode::MonoVoice(voice_index) = track.mode {
+                    events.push(SequencerEvent::VoiceOff {
+                        tick: Tick::ZERO,
+                        voice_index,
+                    });
+                }
+            }
+        }
+
+        // Reset effect processor state
+        self.effect_processor.reset();
+
         events
     }
 
