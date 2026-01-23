@@ -779,16 +779,62 @@ impl WaveformOverview {
 // ============================================================================
 
 /// Loop metadata from tracker file import.
+///
+/// Loop points are stored as exact sample positions (u32) to avoid
+/// precision loss that can cause clicks at loop boundaries.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SampleLoopInfo {
-    /// Loop start position as normalized value (0.0-1.0).
-    pub loop_start: f32,
-    /// Loop end position as normalized value (0.0-1.0).
-    pub loop_end: f32,
+    /// Loop start position as exact sample index.
+    pub loop_start: u32,
+    /// Loop end position as exact sample index.
+    pub loop_end: u32,
     /// Whether looping is enabled.
     pub enabled: bool,
     /// Ping-pong (bidirectional) loop.
     pub ping_pong: bool,
+}
+
+impl SampleLoopInfo {
+    /// Create loop info from normalized positions (0.0-1.0) and sample length.
+    ///
+    /// Use this for backward compatibility with code that uses normalized values.
+    #[must_use]
+    pub fn from_normalized(start: f32, end: f32, sample_len: usize, ping_pong: bool) -> Self {
+        let start_frame = (start.clamp(0.0, 1.0) * sample_len as f32) as u32;
+        let end_frame = (end.clamp(0.0, 1.0) * sample_len as f32).min(sample_len as f32) as u32;
+        Self {
+            loop_start: start_frame,
+            loop_end: end_frame.max(start_frame + 1), // Ensure at least 1 sample loop
+            enabled: true,
+            ping_pong,
+        }
+    }
+
+    /// Get loop start as normalized value (0.0-1.0).
+    #[must_use]
+    pub fn normalized_start(&self, sample_len: usize) -> f32 {
+        if sample_len == 0 {
+            0.0
+        } else {
+            self.loop_start as f32 / sample_len as f32
+        }
+    }
+
+    /// Get loop end as normalized value (0.0-1.0).
+    #[must_use]
+    pub fn normalized_end(&self, sample_len: usize) -> f32 {
+        if sample_len == 0 {
+            1.0
+        } else {
+            self.loop_end as f32 / sample_len as f32
+        }
+    }
+
+    /// Get loop length in samples.
+    #[must_use]
+    pub fn length(&self) -> u32 {
+        self.loop_end.saturating_sub(self.loop_start)
+    }
 }
 
 /// An audio sample with metadata.
@@ -900,6 +946,498 @@ impl Sample {
                 (value, value)
             }
             ChannelMode::Stereo => self.read_stereo(position, interp, frame_count),
+        }
+    }
+
+    /// Read a stereo sample with loop-aware interpolation.
+    ///
+    /// When interpolation needs samples beyond loop boundaries, this method
+    /// wraps indices back into the loop region instead of clamping to sample
+    /// boundaries. This eliminates clicks at loop points caused by interpolation
+    /// reading incorrect samples.
+    ///
+    /// For mono samples, the value is duplicated to both channels.
+    /// Returns (left, right) sample values.
+    pub fn read_looped(
+        &self,
+        position: PlaybackPosition,
+        interp: Interpolation,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        if self.is_empty() {
+            return (SampleValue::ZERO, SampleValue::ZERO);
+        }
+
+        let frame_count = self.len().0;
+        if frame_count == 0 {
+            return (SampleValue::ZERO, SampleValue::ZERO);
+        }
+
+        // Clamp loop bounds to valid range
+        let loop_start = loop_start.min(frame_count.saturating_sub(1));
+        let loop_end = loop_end.min(frame_count).max(loop_start + 1);
+
+        match self.channels {
+            ChannelMode::Mono => {
+                let value =
+                    self.read_mono_looped(position, interp, frame_count, loop_start, loop_end);
+                (value, value)
+            }
+            ChannelMode::Stereo => {
+                self.read_stereo_looped(position, interp, frame_count, loop_start, loop_end)
+            }
+        }
+    }
+
+    /// Read a mono sample with loop-aware interpolation.
+    fn read_mono_looped(
+        &self,
+        position: PlaybackPosition,
+        interp: Interpolation,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> SampleValue {
+        let pos = position.0;
+        let idx = pos as usize;
+
+        if idx >= len {
+            return SampleValue::ZERO;
+        }
+
+        // For simple interpolation modes, use standard read
+        match interp {
+            Interpolation::Nearest => self.data[idx],
+            Interpolation::Linear => {
+                let frac = position.fraction();
+                let s0 = self.data[idx];
+                let s1 = self.get_looped_sample_mono(idx + 1, len, loop_start, loop_end);
+                s0.lerp(s1, frac)
+            }
+            Interpolation::Cubic => {
+                self.cubic_interp_mono_looped(idx, position.fraction(), len, loop_start, loop_end)
+            }
+            Interpolation::Hermite => {
+                self.hermite_interp_mono_looped(idx, position.fraction(), len, loop_start, loop_end)
+            }
+            Interpolation::Lagrange => self.lagrange_interp_mono_looped(
+                idx,
+                position.fraction(),
+                len,
+                loop_start,
+                loop_end,
+            ),
+            Interpolation::Sinc8 => {
+                self.sinc_interp_mono_looped(idx, position.fraction(), len, loop_start, loop_end, 4)
+            }
+            Interpolation::Sinc16 => {
+                self.sinc_interp_mono_looped(idx, position.fraction(), len, loop_start, loop_end, 8)
+            }
+        }
+    }
+
+    /// Read a stereo sample with loop-aware interpolation.
+    fn read_stereo_looped(
+        &self,
+        position: PlaybackPosition,
+        interp: Interpolation,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        let pos = position.0;
+        let idx = pos as usize;
+
+        if idx >= frame_count {
+            return (SampleValue::ZERO, SampleValue::ZERO);
+        }
+
+        match interp {
+            Interpolation::Nearest => {
+                let base = idx * 2;
+                let left = self.data.get(base).copied().unwrap_or(SampleValue::ZERO);
+                let right = self
+                    .data
+                    .get(base + 1)
+                    .copied()
+                    .unwrap_or(SampleValue::ZERO);
+                (left, right)
+            }
+            Interpolation::Linear => {
+                let frac = position.fraction();
+                let (l0, r0) =
+                    self.get_looped_sample_stereo(idx, frame_count, loop_start, loop_end);
+                let (l1, r1) =
+                    self.get_looped_sample_stereo(idx + 1, frame_count, loop_start, loop_end);
+                (l0.lerp(l1, frac), r0.lerp(r1, frac))
+            }
+            Interpolation::Cubic => self.cubic_interp_stereo_looped(
+                idx,
+                position.fraction(),
+                frame_count,
+                loop_start,
+                loop_end,
+            ),
+            Interpolation::Hermite => self.hermite_interp_stereo_looped(
+                idx,
+                position.fraction(),
+                frame_count,
+                loop_start,
+                loop_end,
+            ),
+            Interpolation::Lagrange => self.lagrange_interp_stereo_looped(
+                idx,
+                position.fraction(),
+                frame_count,
+                loop_start,
+                loop_end,
+            ),
+            Interpolation::Sinc8 => self.sinc_interp_stereo_looped(
+                idx,
+                position.fraction(),
+                frame_count,
+                loop_start,
+                loop_end,
+                4,
+            ),
+            Interpolation::Sinc16 => self.sinc_interp_stereo_looped(
+                idx,
+                position.fraction(),
+                frame_count,
+                loop_start,
+                loop_end,
+                8,
+            ),
+        }
+    }
+
+    /// Get a mono sample with loop wrapping.
+    #[inline]
+    fn get_looped_sample_mono(
+        &self,
+        idx: usize,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> SampleValue {
+        let wrapped_idx = if idx >= loop_end {
+            // Wrap back into loop region
+            let loop_len = loop_end.saturating_sub(loop_start).max(1);
+            loop_start + (idx - loop_end) % loop_len
+        } else if idx < loop_start && idx >= len {
+            // Before loop start and out of bounds - clamp
+            loop_start
+        } else {
+            idx.min(len.saturating_sub(1))
+        };
+        self.data
+            .get(wrapped_idx)
+            .copied()
+            .unwrap_or(SampleValue::ZERO)
+    }
+
+    /// Get a stereo sample with loop wrapping.
+    #[inline]
+    fn get_looped_sample_stereo(
+        &self,
+        idx: usize,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        let wrapped_idx = if idx >= loop_end {
+            // Wrap back into loop region
+            let loop_len = loop_end.saturating_sub(loop_start).max(1);
+            loop_start + (idx - loop_end) % loop_len
+        } else if idx >= frame_count {
+            // Out of bounds - wrap to loop start
+            loop_start
+        } else {
+            idx
+        };
+        let base = wrapped_idx * 2;
+        let left = self.data.get(base).copied().unwrap_or(SampleValue::ZERO);
+        let right = self
+            .data
+            .get(base + 1)
+            .copied()
+            .unwrap_or(SampleValue::ZERO);
+        (left, right)
+    }
+
+    /// Cubic interpolation with loop wrapping for mono samples.
+    fn cubic_interp_mono_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> SampleValue {
+        let get = |offset: isize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            self.get_looped_sample_mono(i, len, loop_start, loop_end).0
+        };
+
+        let y0 = get(-1);
+        let y1 = get(0);
+        let y2 = get(1);
+        let y3 = get(2);
+
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        // Catmull-Rom spline
+        let a0 = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
+        let a1 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let a2 = -0.5 * y0 + 0.5 * y2;
+        let a3 = y1;
+
+        SampleValue(a0 * t3 + a1 * t2 + a2 * t + a3)
+    }
+
+    /// Cubic interpolation with loop wrapping for stereo samples.
+    fn cubic_interp_stereo_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |offset: isize, ch: usize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            let (l, r) = self.get_looped_sample_stereo(i, frame_count, loop_start, loop_end);
+            if ch == 0 { l.0 } else { r.0 }
+        };
+
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let mut result = [0.0f32; 2];
+
+        for ch in 0..2 {
+            let y0 = get(-1, ch);
+            let y1 = get(0, ch);
+            let y2 = get(1, ch);
+            let y3 = get(2, ch);
+
+            // Catmull-Rom spline
+            let a0 = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
+            let a1 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+            let a2 = -0.5 * y0 + 0.5 * y2;
+            let a3 = y1;
+
+            result[ch] = a0 * t3 + a1 * t2 + a2 * t + a3;
+        }
+
+        (SampleValue(result[0]), SampleValue(result[1]))
+    }
+
+    /// Hermite interpolation with loop wrapping for mono samples.
+    fn hermite_interp_mono_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> SampleValue {
+        let get = |offset: isize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            self.get_looped_sample_mono(i, len, loop_start, loop_end).0
+        };
+
+        let y0 = get(-1);
+        let y1 = get(0);
+        let y2 = get(1);
+        let y3 = get(2);
+
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let c0 = y1;
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+        SampleValue(c0 + c1 * t + c2 * t2 + c3 * t3)
+    }
+
+    /// Hermite interpolation with loop wrapping for stereo samples.
+    fn hermite_interp_stereo_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |offset: isize, ch: usize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            let (l, r) = self.get_looped_sample_stereo(i, frame_count, loop_start, loop_end);
+            if ch == 0 { l.0 } else { r.0 }
+        };
+
+        let t = frac;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let mut result = [0.0f32; 2];
+
+        for ch in 0..2 {
+            let y0 = get(-1, ch);
+            let y1 = get(0, ch);
+            let y2 = get(1, ch);
+            let y3 = get(2, ch);
+
+            let c0 = y1;
+            let c1 = 0.5 * (y2 - y0);
+            let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+            let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+
+            result[ch] = c0 + c1 * t + c2 * t2 + c3 * t3;
+        }
+
+        (SampleValue(result[0]), SampleValue(result[1]))
+    }
+
+    /// Lagrange interpolation with loop wrapping for mono samples.
+    fn lagrange_interp_mono_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> SampleValue {
+        let get = |offset: isize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            self.get_looped_sample_mono(i, len, loop_start, loop_end).0
+        };
+
+        let t = frac;
+        let y0 = get(-1);
+        let y1 = get(0);
+        let y2 = get(1);
+        let y3 = get(2);
+
+        let l0 = (t * (t - 1.0) * (t - 2.0)) / -6.0;
+        let l1 = ((t + 1.0) * (t - 1.0) * (t - 2.0)) / 2.0;
+        let l2 = ((t + 1.0) * t * (t - 2.0)) / -2.0;
+        let l3 = ((t + 1.0) * t * (t - 1.0)) / 6.0;
+
+        SampleValue(y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3)
+    }
+
+    /// Lagrange interpolation with loop wrapping for stereo samples.
+    fn lagrange_interp_stereo_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |offset: isize, ch: usize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            let (l, r) = self.get_looped_sample_stereo(i, frame_count, loop_start, loop_end);
+            if ch == 0 { l.0 } else { r.0 }
+        };
+
+        let t = frac;
+        let l0 = (t * (t - 1.0) * (t - 2.0)) / -6.0;
+        let l1 = ((t + 1.0) * (t - 1.0) * (t - 2.0)) / 2.0;
+        let l2 = ((t + 1.0) * t * (t - 2.0)) / -2.0;
+        let l3 = ((t + 1.0) * t * (t - 1.0)) / 6.0;
+
+        let mut result = [0.0f32; 2];
+
+        for ch in 0..2 {
+            let y0 = get(-1, ch);
+            let y1 = get(0, ch);
+            let y2 = get(1, ch);
+            let y3 = get(2, ch);
+
+            result[ch] = y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3;
+        }
+
+        (SampleValue(result[0]), SampleValue(result[1]))
+    }
+
+    /// Sinc interpolation with loop wrapping for mono samples.
+    fn sinc_interp_mono_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        len: usize,
+        loop_start: usize,
+        loop_end: usize,
+        half_taps: usize,
+    ) -> SampleValue {
+        let get = |offset: isize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            self.get_looped_sample_mono(i, len, loop_start, loop_end).0
+        };
+
+        let mut sum = 0.0f32;
+        let mut weight_sum = 0.0f32;
+
+        let taps = half_taps as isize;
+        for i in -taps + 1..=taps {
+            let x = frac - i as f32;
+            let weight = lanczos_kernel(x, half_taps as f32);
+            sum += get(i) * weight;
+            weight_sum += weight;
+        }
+
+        if weight_sum.abs() > 1e-10 {
+            SampleValue(sum / weight_sum)
+        } else {
+            SampleValue(get(0))
+        }
+    }
+
+    /// Sinc interpolation with loop wrapping for stereo samples.
+    fn sinc_interp_stereo_looped(
+        &self,
+        idx: usize,
+        frac: f32,
+        frame_count: usize,
+        loop_start: usize,
+        loop_end: usize,
+        half_taps: usize,
+    ) -> (SampleValue, SampleValue) {
+        let get = |offset: isize, ch: usize| -> f32 {
+            let i = (idx as isize + offset).max(0) as usize;
+            let (l, r) = self.get_looped_sample_stereo(i, frame_count, loop_start, loop_end);
+            if ch == 0 { l.0 } else { r.0 }
+        };
+
+        let mut sum = [0.0f32; 2];
+        let mut weight_sum = 0.0f32;
+
+        let taps = half_taps as isize;
+        for i in -taps + 1..=taps {
+            let x = frac - i as f32;
+            let weight = lanczos_kernel(x, half_taps as f32);
+            for ch in 0..2 {
+                sum[ch] += get(i, ch) * weight;
+            }
+            weight_sum += weight;
+        }
+
+        if weight_sum.abs() > 1e-10 {
+            (
+                SampleValue(sum[0] / weight_sum),
+                SampleValue(sum[1] / weight_sum),
+            )
+        } else {
+            (SampleValue(get(0, 0)), SampleValue(get(0, 1)))
         }
     }
 

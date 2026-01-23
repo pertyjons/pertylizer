@@ -1720,16 +1720,18 @@ impl SynthApp {
                         // Pre-configure SamplePlayer from sample metadata (if available)
                         // This ensures GUI and engine have matching parameters
                         if let Some(ref smp) = sample {
+                            let sample_len = smp.len().as_usize();
                             // Apply loop settings from sample metadata
                             if let Some(ref loop_info) = smp.loop_info {
+                                // Convert exact sample positions to normalized values for GUI
                                 sample_player.set_param(Param::SamplePlayer(
                                     SamplePlayerParam::LoopStart(NormalizedValue::new(
-                                        loop_info.loop_start,
+                                        loop_info.normalized_start(sample_len),
                                     )),
                                 ));
                                 sample_player.set_param(Param::SamplePlayer(
                                     SamplePlayerParam::LoopEnd(NormalizedValue::new(
-                                        loop_info.loop_end,
+                                        loop_info.normalized_end(sample_len),
                                     )),
                                 ));
                                 if loop_info.enabled {
@@ -1775,16 +1777,18 @@ impl SynthApp {
                         // Sync GUI parameter values with pre-configured SamplePlayer
                         // (add_module uses descriptor defaults, so we need to override)
                         if let Some(ref smp) = sample {
+                            let sample_len = smp.len().as_usize();
                             if let Some(ref loop_info) = smp.loop_info {
+                                // Convert exact sample positions to normalized values for GUI
                                 ui_state.patch_editor.set_parameter_by_name(
                                     sample_player_id,
                                     "Loop Start",
-                                    loop_info.loop_start,
+                                    loop_info.normalized_start(sample_len),
                                 );
                                 ui_state.patch_editor.set_parameter_by_name(
                                     sample_player_id,
                                     "Loop End",
-                                    loop_info.loop_end,
+                                    loop_info.normalized_end(sample_len),
                                 );
                                 if loop_info.enabled {
                                     let loop_mode_idx = if loop_info.ping_pong {

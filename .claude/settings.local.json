@@ -71,7 +71,8 @@
       "WebFetch(domain:wiki.multimedia.cx)",
       "WebFetch(domain:wiki.openmpt.org)",
       "Bash(/usr/bin/env bash -c 'claude usage 2>/dev/null || echo \"\"usage command not available\"\"')",
-      "Bash(cargo tree:*)"
+      "Bash(cargo tree:*)",
+      "WebFetch(domain:ftp.modland.com)"
     ],
     "deny": [],
     "ask": []

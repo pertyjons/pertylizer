@@ -444,19 +444,19 @@ fn convert_sample(
     // Calculate sample length in frames
     let frame_count = data.len() / channels.channel_count();
 
-    // Extract loop information
+    // Extract loop information with exact sample positions (no precision loss)
     let loop_info = if matches!(
         xmrs_sample.loop_flag,
         XmrsLoopType::Forward | XmrsLoopType::PingPong
     ) && xmrs_sample.loop_length > 0
         && frame_count > 0
     {
-        let loop_start = xmrs_sample.loop_start as f32 / frame_count as f32;
-        let loop_end =
-            (xmrs_sample.loop_start + xmrs_sample.loop_length) as f32 / frame_count as f32;
+        // Use exact u32 positions from xmrs to avoid f32 precision loss
+        let loop_start = xmrs_sample.loop_start.min(frame_count as u32);
+        let loop_end = (xmrs_sample.loop_start + xmrs_sample.loop_length).min(frame_count as u32);
         Some(SampleLoopInfo {
-            loop_start: loop_start.clamp(0.0, 1.0),
-            loop_end: loop_end.clamp(0.0, 1.0),
+            loop_start,
+            loop_end,
             enabled: true,
             ping_pong: matches!(xmrs_sample.loop_flag, XmrsLoopType::PingPong),
         })

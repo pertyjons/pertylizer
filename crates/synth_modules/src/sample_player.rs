@@ -153,10 +153,13 @@ impl SamplePlayer {
     /// This is called from the engine when handling `LoadSample` command.
     /// Automatically applies loop and volume settings from sample metadata.
     pub fn load_sample(&mut self, sample: Arc<Sample>) {
+        let sample_len = sample.len().as_usize();
+
         // Apply loop settings from sample metadata (from tracker import)
         if let Some(loop_info) = &sample.loop_info {
-            self.loop_start = NormalizedValue::new(loop_info.loop_start);
-            self.loop_end = NormalizedValue::new(loop_info.loop_end);
+            // Convert exact sample positions to normalized values for UI
+            self.loop_start = NormalizedValue::new(loop_info.normalized_start(sample_len));
+            self.loop_end = NormalizedValue::new(loop_info.normalized_end(sample_len));
             if loop_info.enabled {
                 if loop_info.ping_pong {
                     self.loop_mode = LoopMode::PingPong;
@@ -355,7 +358,10 @@ impl SamplePlayer {
         self.position = PlaybackPosition::new(pos);
     }
 
-    /// Read sample with loop crossfade.
+    /// Read sample with loop-aware interpolation and crossfade.
+    ///
+    /// Uses exact loop points from sample metadata when available to ensure
+    /// click-free playback at loop boundaries.
     fn read_with_crossfade(
         &self,
         sample: &Sample,
@@ -363,27 +369,37 @@ impl SamplePlayer {
     ) -> (SampleValue, SampleValue) {
         let crossfade_samples = self.crossfade_samples();
 
-        // Only apply crossfade in loop modes
-        if self.loop_mode == LoopMode::Off || crossfade_samples == 0 {
+        // Get exact loop bounds (prefer metadata, fall back to normalized values)
+        let (loop_start, loop_end) = if let Some(loop_info) = &sample.loop_info {
+            (loop_info.loop_start as usize, loop_info.loop_end as usize)
+        } else {
+            (self.loop_start_frame(), self.loop_end_frame())
+        };
+
+        // Use standard read for non-looping mode
+        if self.loop_mode == LoopMode::Off {
             return sample.read(position, self.interpolation);
         }
 
+        // Use loop-aware interpolation for looping modes
         let pos = position.as_f64();
-        let loop_start = self.loop_start_frame() as f64;
-        let loop_end = self.loop_end_frame() as f64;
-        let distance_to_end = loop_end - pos;
+        let distance_to_end = loop_end as f64 - pos;
 
         // Check if we're in the crossfade region
-        if distance_to_end < crossfade_samples as f64 && distance_to_end > 0.0 {
+        if crossfade_samples > 0
+            && distance_to_end < crossfade_samples as f64
+            && distance_to_end > 0.0
+        {
             let fade_amount = (distance_to_end / crossfade_samples as f64) as f32;
 
-            // Read current position
-            let (l1, r1) = sample.read(position, self.interpolation);
+            // Read current position with loop-aware interpolation
+            let (l1, r1) = sample.read_looped(position, self.interpolation, loop_start, loop_end);
 
             // Read from loop start (offset by how far we are from loop end)
             let loop_start_offset = crossfade_samples as f64 - distance_to_end;
-            let crossfade_pos = PlaybackPosition::new(loop_start + loop_start_offset);
-            let (l2, r2) = sample.read(crossfade_pos, self.interpolation);
+            let crossfade_pos = PlaybackPosition::new(loop_start as f64 + loop_start_offset);
+            let (l2, r2) =
+                sample.read_looped(crossfade_pos, self.interpolation, loop_start, loop_end);
 
             // Crossfade
             let left = l1.scale(fade_amount) + l2.scale(1.0 - fade_amount);
@@ -391,7 +407,8 @@ impl SamplePlayer {
 
             (left, right)
         } else {
-            sample.read(position, self.interpolation)
+            // Use loop-aware interpolation even outside crossfade region
+            sample.read_looped(position, self.interpolation, loop_start, loop_end)
         }
     }
 }

@@ -1,5 +1,40 @@
 # Version History
 
+## [0.74.0] - 2025
+### Fixed - Sample Loop Click Prevention
+
+Eliminerar klick och hack vid loop-punkter i importerade tracker-moduler.
+
+#### Exakta loop-punkter (ingen precisionsförlust)
+- **Problem**: Loop-punkter konverterades från exakta u32 till normaliserade f32
+- **Orsak**: Precisionsförlust på flera samples för stora samplar (>100k frames)
+- **Fix**: `SampleLoopInfo` lagrar nu `loop_start` och `loop_end` som `u32`
+- Nya metoder `normalized_start()` och `normalized_end()` för GUI-kompatibilitet
+- xmrs loop-punkter (u32) bevaras exakt genom hela kedjan
+
+#### Loop-medveten interpolation
+- **Problem**: Interpolation (Cubic, Hermite, Sinc etc.) läste samples utanför loop-regionen
+- **Orsak**: `clamp(0, len-1)` använde sample-gränser, inte loop-gränser
+- **Fix**: Ny metod `Sample::read_looped()` med loop-aware sample-hämtning
+- Vid loop_end wrapar interpolation tillbaka till loop_start
+- Alla 7 interpolationslägen har nu loop-medvetna varianter
+
+#### Förbättrad crossfade
+- **Fix**: `read_with_crossfade()` använder nu `read_looped()` konsekvent
+- Crossfade-regionen läser också med korrekt loop-wrapping
+- Föredragna loop-gränser från sample-metadata (exakta heltal)
+
+#### Tekniska ändringar
+- `SampleLoopInfo.loop_start: u32` - exakt sample-position (ej f32)
+- `SampleLoopInfo.loop_end: u32` - exakt sample-position (ej f32)
+- `SampleLoopInfo::from_normalized()` - bakåtkompatibilitet
+- `SampleLoopInfo::normalized_start/end()` - för GUI
+- `Sample::read_looped()` - loop-aware interpolation
+- Loop-aware versioner av: cubic, hermite, lagrange, sinc8, sinc16
+- `get_looped_sample_mono/stereo()` - sample-hämtning med loop-wrapping
+
+---
+
 ## [0.73.0] - 2025
 ### Fixed - Tracker Module Playback
 
