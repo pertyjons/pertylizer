@@ -6,6 +6,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig as CpalStreamConfig};
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -200,6 +201,14 @@ struct CpalStream {
     info: StreamInfo,
     running: Arc<AtomicBool>,
     position: Arc<AtomicU64>,
+    /// Counter for audio stream errors (incremented on each error).
+    /// Stored for future use when GUI error display is implemented.
+    #[allow(dead_code)]
+    error_count: Arc<AtomicU64>,
+    /// Last error message (for display in GUI).
+    /// Stored for future use when GUI error display is implemented.
+    #[allow(dead_code)]
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl CpalStream {
@@ -238,10 +247,14 @@ impl CpalStream {
 
         let running = Arc::new(AtomicBool::new(false));
         let position = Arc::new(AtomicU64::new(0));
+        let error_count = Arc::new(AtomicU64::new(0));
+        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
         // Clone for the callback
         let running_clone = Arc::clone(&running);
         let position_clone = Arc::clone(&position);
+        let error_count_clone = Arc::clone(&error_count);
+        let last_error_clone = Arc::clone(&last_error);
         let sample_rate = config.sample_rate;
         let start_time = Instant::now();
 
@@ -276,7 +289,11 @@ impl CpalStream {
                     position_clone.fetch_add(frames as u64, Ordering::Relaxed);
                 },
                 move |err| {
+                    // Log to stderr for debugging
                     eprintln!("Audio stream error: {err}");
+                    // Increment error count and store last error for GUI access
+                    error_count_clone.fetch_add(1, Ordering::Relaxed);
+                    *last_error_clone.lock() = Some(format!("{err}"));
                 },
                 None, // No timeout, blocking mode
             )
@@ -287,6 +304,8 @@ impl CpalStream {
             info,
             running,
             position,
+            error_count,
+            last_error,
         })
     }
 }

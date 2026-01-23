@@ -154,8 +154,12 @@ impl Describable for Flanger {
 
 impl AudioEffect for Flanger {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
-        self.resize_buffers();
+        // Note: sample_rate is set via set_sample_rate() which is called from main thread
+        // We don't resize buffers here to avoid allocation in audio thread
+        debug_assert_eq!(
+            self.sample_rate, context.sample_rate,
+            "Flanger sample rate mismatch - call set_sample_rate() before processing"
+        );
 
         let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
         let delay_ms = self.delay_base.as_f32();
@@ -285,5 +289,11 @@ impl AudioEffect for Flanger {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::Flanger
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        // Resize buffers when sample rate changes (called from main thread, not audio thread)
+        self.resize_buffers();
     }
 }

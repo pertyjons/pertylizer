@@ -42,6 +42,15 @@ const ID_PAN_CV: u32 = 19;
 const ID_LEFT: u32 = 20;
 const ID_RIGHT: u32 = 21;
 const ID_VELOCITY: u32 = 22;
+// Mixer input ports (for zero-allocation mixer processing)
+const ID_IN1: u32 = 23;
+const ID_IN2: u32 = 24;
+const ID_IN3: u32 = 25;
+const ID_IN4: u32 = 26;
+const ID_IN5: u32 = 27;
+const ID_IN6: u32 = 28;
+const ID_IN7: u32 = 29;
+const ID_IN8: u32 = 30;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -82,6 +91,15 @@ impl InternPool {
         pool.intern("left"); // 20
         pool.intern("right"); // 21
         pool.intern("velocity"); // 22
+        // Mixer input ports
+        pool.intern("in1"); // 23
+        pool.intern("in2"); // 24
+        pool.intern("in3"); // 25
+        pool.intern("in4"); // 26
+        pool.intern("in5"); // 27
+        pool.intern("in6"); // 28
+        pool.intern("in7"); // 29
+        pool.intern("in8"); // 30
         pool
     }
 
@@ -164,6 +182,34 @@ impl PortName {
     pub const RIGHT: Self = Self(ID_RIGHT);
     /// Velocity port "velocity".
     pub const VELOCITY: Self = Self(ID_VELOCITY);
+    // Mixer input ports "in1" through "in8"
+    /// Mixer input port 1 "in1".
+    pub const IN1: Self = Self(ID_IN1);
+    /// Mixer input port 2 "in2".
+    pub const IN2: Self = Self(ID_IN2);
+    /// Mixer input port 3 "in3".
+    pub const IN3: Self = Self(ID_IN3);
+    /// Mixer input port 4 "in4".
+    pub const IN4: Self = Self(ID_IN4);
+    /// Mixer input port 5 "in5".
+    pub const IN5: Self = Self(ID_IN5);
+    /// Mixer input port 6 "in6".
+    pub const IN6: Self = Self(ID_IN6);
+    /// Mixer input port 7 "in7".
+    pub const IN7: Self = Self(ID_IN7);
+    /// Mixer input port 8 "in8".
+    pub const IN8: Self = Self(ID_IN8);
+    /// Array of mixer input ports for iteration (IN1 through IN8).
+    pub const MIXER_INPUTS: [Self; 8] = [
+        Self::IN1,
+        Self::IN2,
+        Self::IN3,
+        Self::IN4,
+        Self::IN5,
+        Self::IN6,
+        Self::IN7,
+        Self::IN8,
+    ];
 
     // ========================================================================
     // RUNTIME INTERNING - for custom/dynamic port names only

@@ -286,10 +286,12 @@ impl Describable for Reverb {
 
 impl AudioEffect for Reverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        if (self.sample_rate.as_f32() - context.sample_rate.as_f32()).abs() > 1.0 {
-            self.sample_rate = context.sample_rate;
-            self.resize_for_sample_rate();
-        }
+        // Note: sample_rate is set via set_sample_rate() which is called from main thread
+        // We don't resize buffers here to avoid allocation in audio thread
+        debug_assert!(
+            (self.sample_rate.as_f32() - context.sample_rate.as_f32()).abs() <= 1.0,
+            "Reverb sample rate mismatch - call set_sample_rate() before processing"
+        );
 
         self.update_filters();
 
@@ -433,6 +435,12 @@ impl AudioEffect for Reverb {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::Reverb
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        // Resize buffers when sample rate changes (called from main thread, not audio thread)
+        self.resize_for_sample_rate();
     }
 }
 

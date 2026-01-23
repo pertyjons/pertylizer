@@ -10,6 +10,7 @@ use synth_core::{
 use synth_core::{
     BipolarValue, ClipMode, Gain, LimitMode, MidiNote, MuteState, PortName, SampleRate, Velocity,
 };
+// PortName::MIXER_INPUTS provides static port names for zero-allocation processing
 
 /// Voltage Controlled Amplifier.
 #[derive(Clone)]
@@ -290,11 +291,10 @@ impl PolyModule for Mixer {
         self.output_buffer.clear();
 
         if self.mute_state.is_unmuted() {
-            for i in 1..=8 {
-                let key = format!("in{i}");
-                // Use get_str for dynamic port names (not in hot path)
-                if let Some(input) = inputs.get_str(&key) {
-                    let level = self.levels[i - 1].as_f32();
+            // Use static PortName constants - zero allocation in hot path
+            for (idx, port_name) in PortName::MIXER_INPUTS.iter().enumerate() {
+                if let Some(input) = inputs.get(*port_name) {
+                    let level = self.levels[idx].as_f32();
                     for j in 0..context.samples.as_usize() {
                         self.output_buffer[j] += input[j] * level;
                     }

@@ -327,28 +327,24 @@ impl SynthApp {
 
     /// Get the active instrument's patch editor.
     ///
-    /// # Panics
-    /// Panics if active_instrument_id doesn't match any instrument (programming error).
-    #[allow(clippy::expect_used)]
-    fn active_patch_editor(&mut self) -> &mut PatchEditor {
+    /// Returns `None` if active_instrument_id doesn't match any instrument.
+    /// This can happen briefly during instrument deletion/creation.
+    fn active_patch_editor(&mut self) -> Option<&mut PatchEditor> {
         self.instruments
             .iter_mut()
             .find(|i| i.id == self.active_instrument_id)
             .map(|i| &mut i.patch_editor)
-            .expect("Active instrument not found")
     }
 
     /// Get the active instrument's patch editor (immutable).
     ///
-    /// # Panics
-    /// Panics if active_instrument_id doesn't match any instrument (programming error).
-    #[allow(clippy::expect_used)]
-    fn active_patch_editor_ref(&self) -> &PatchEditor {
+    /// Returns `None` if active_instrument_id doesn't match any instrument.
+    /// This can happen briefly during instrument deletion/creation.
+    fn active_patch_editor_ref(&self) -> Option<&PatchEditor> {
         self.instruments
             .iter()
             .find(|i| i.id == self.active_instrument_id)
             .map(|i| &i.patch_editor)
-            .expect("Active instrument not found")
     }
 }
 
@@ -637,8 +633,10 @@ impl eframe::App for SynthApp {
                     ui.separator();
 
                     // Connection info (from active instrument's patch editor)
-                    let conn_count = self.active_patch_editor_ref().connections().len();
-                    let module_count = self.active_patch_editor_ref().module_ids().len();
+                    let (conn_count, module_count) = self
+                        .active_patch_editor_ref()
+                        .map(|e| (e.connections().len(), e.module_ids().len()))
+                        .unwrap_or((0, 0));
                     ui.label(
                         RichText::new(format!(
                             "Modules: {} | Connections: {}",
@@ -691,13 +689,18 @@ impl eframe::App for SynthApp {
                 let active_id = self.active_instrument_id;
                 egui::CentralPanel::default().show(ctx, |ui| {
             // Get the active instrument's patch editor
-            #[allow(clippy::expect_used)]
-            let patch_editor = self
+            let Some(patch_editor) = self
                 .instruments
                 .iter_mut()
                 .find(|i| i.id == active_id)
                 .map(|i| &mut i.patch_editor)
-                .expect("Active instrument not found");
+            else {
+                // No active instrument - show error message
+                ui.centered_and_justified(|ui| {
+                    ui.label("No active instrument selected");
+                });
+                return;
+            };
 
             let result = patch_editor.show(ui, &self.handle, active_id.as_u64());
 
@@ -932,12 +935,14 @@ impl SynthApp {
         };
 
         let next_id = self.next_module_id(module_type);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         // Set envelope position buffer for visualization
         if let Some(pos_buf) = envelope_pos {
-            self.active_patch_editor()
-                .set_module_envelope_position(next_id, pos_buf);
+            editor.set_module_envelope_position(next_id, pos_buf);
         }
 
         // Send pre-created module to engine (active instrument's voice graph)
@@ -954,7 +959,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MathOscillator);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -969,7 +977,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::SubOscillator);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -984,7 +995,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::Noise);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -999,7 +1013,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::KeyboardPanner);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -1014,7 +1031,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::BodyResonance);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -1029,7 +1049,10 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MechanicalNoise);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
@@ -1089,7 +1112,10 @@ impl SynthApp {
 
         let next_id = self.next_module_id(module_type);
         // Effects are added to the active instrument's patch editor for visual display
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         // Send pre-created effect to active instrument's effect chain
         self.handle.send(EngineCommand::AddEffectInstance {
@@ -1112,7 +1138,10 @@ impl SynthApp {
 
         let next_id = self.next_module_id(module_type);
         // Visualizers are added to the active instrument's patch editor for visual display
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         // Create shared visualization buffer wrapped in Arc
         let buffer = std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
@@ -1142,7 +1171,10 @@ impl SynthApp {
         let output = StereoOutput::new();
         let descriptor = output.descriptor();
         let next_id = self.next_module_id(TypedModuleType::StereoOutput);
-        self.active_patch_editor().add_module(next_id, descriptor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
 
         // Send pre-created module to engine (active instrument's voice graph)
         self.handle.send(EngineCommand::AddModuleInstance {
@@ -1570,13 +1602,15 @@ impl SynthApp {
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
         let active_id = self.active_instrument_id;
-        #[allow(clippy::expect_used)]
-        let patch_editor = self
+        let Some(patch_editor) = self
             .instruments
             .iter_mut()
             .find(|i| i.id == active_id)
             .map(|i| &mut i.patch_editor)
-            .expect("Active instrument not found");
+        else {
+            eprintln!("Warning: Cannot load patch - no active instrument found");
+            return;
+        };
 
         patch_bridge::load_patch(
             patch,
@@ -2106,15 +2140,12 @@ impl SynthApp {
         let active_id = self.active_instrument_id;
 
         // Clear all modules from the active instrument in the engine
+        if let Some(patch_editor) = self
+            .instruments
+            .iter()
+            .find(|i| i.id == active_id)
+            .map(|i| &i.patch_editor)
         {
-            #[allow(clippy::expect_used)]
-            let patch_editor = self
-                .instruments
-                .iter()
-                .find(|i| i.id == active_id)
-                .map(|i| &i.patch_editor)
-                .expect("Active instrument not found");
-
             for module_id in patch_editor.module_ids() {
                 let category = patch_editor
                     .module_descriptor(module_id)
@@ -2144,7 +2175,9 @@ impl SynthApp {
         }
 
         // Clear the patch editor GUI state
-        self.active_patch_editor().clear();
+        if let Some(editor) = self.active_patch_editor() {
+            editor.clear();
+        }
         self.instance_counters.clear();
         self.handle.visualization_buffers.clear();
 
@@ -2161,9 +2194,10 @@ impl SynthApp {
 
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
+        let editor = self.active_patch_editor_ref()?;
         patch_bridge::create_patch_from_rack(
             &self.dialog_state.patch_save_name,
-            self.active_patch_editor_ref(),
+            editor,
             &self.keyboard,
             &self.handle,
             self.glide_time,

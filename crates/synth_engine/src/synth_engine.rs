@@ -80,9 +80,16 @@ impl CommandSender {
 
     /// Send a command to the engine, blocking until there's space.
     /// Use this when loading patches or doing bulk operations.
+    ///
+    /// Uses exponential backoff to avoid busy-waiting while still responding
+    /// quickly when the queue has space. Max wait time is ~500ms before timeout.
     pub fn send_blocking(&self, command: EngineCommand) -> bool {
+        // Exponential backoff: 0, 0, 1, 2, 4, 8, 16, 32, 64, 100ms (capped)
+        // Total worst-case wait: ~500ms instead of 10s
+        const BACKOFF_MILLIS: [u64; 10] = [0, 0, 1, 2, 4, 8, 16, 32, 64, 100];
+        const MAX_ATTEMPTS: u32 = 50; // 50 attempts * avg ~10ms = ~500ms max
+
         let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 10000;
         let mut cmd = command;
 
         loop {
@@ -92,10 +99,17 @@ impl CommandSender {
                     cmd = returned_cmd;
                     attempts += 1;
                     if attempts >= MAX_ATTEMPTS {
-                        eprintln!("Command queue timeout after {} attempts!", MAX_ATTEMPTS);
+                        eprintln!("Command queue timeout after {attempts} attempts!");
                         return self.producer.lock().try_push(cmd).is_ok();
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    // Exponential backoff with cap at last value
+                    let sleep_idx = (attempts as usize).min(BACKOFF_MILLIS.len() - 1);
+                    let sleep_ms = BACKOFF_MILLIS[sleep_idx];
+                    if sleep_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                    } else {
+                        std::thread::yield_now();
+                    }
                 }
             }
         }

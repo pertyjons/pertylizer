@@ -176,8 +176,12 @@ impl Describable for Delay {
 
 impl AudioEffect for Delay {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        self.sample_rate = context.sample_rate;
-        self.resize_buffers();
+        // Note: sample_rate is set via set_sample_rate() which is called from main thread
+        // We don't resize buffers here to avoid allocation in audio thread
+        debug_assert_eq!(
+            self.sample_rate, context.sample_rate,
+            "Delay sample rate mismatch - call set_sample_rate() before processing"
+        );
 
         // Calculate effective delay time (synced or manual)
         let effective_time = if self.tempo_sync.is_tempo_sync() {
@@ -375,6 +379,12 @@ impl AudioEffect for Delay {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::Delay
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        // Resize buffers when sample rate changes (called from main thread, not audio thread)
+        self.resize_buffers();
     }
 }
 

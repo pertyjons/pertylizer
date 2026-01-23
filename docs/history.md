@@ -1,5 +1,54 @@
 # Version History
 
+## [0.75.0] - 2025
+### Fixed - Critical Code Issues
+
+Löser 5 kritiska problem identifierade i kodanalysen.
+
+#### Zero-allocation Mixer Hot Path
+- **Problem**: `format!("in{i}")` allokerade minne 8 gånger per audio frame i Mixer
+- **Orsak**: Dynamiska portnamn krävde String-allokering
+- **Fix**: Nya statiska konstanter `PortName::IN1..IN8` och `PortName::MIXER_INPUTS`
+- Interned strings i synth_core: "in1" genom "in8" (ID 23-30)
+- Mixer använder nu `inputs.get(PortName::MIXER_INPUTS[idx])` - noll allokering
+
+#### Exponential Backoff i send_blocking()
+- **Problem**: 10 sekunder timeout (10000 × 1ms) kunde frysa GUI
+- **Orsak**: Konstant 1ms sleep oavsett köläge
+- **Fix**: Exponential backoff `[0, 0, 1, 2, 4, 8, 16, 32, 64, 100]` ms
+- Max 50 försök × ~10ms = ~500ms worst-case (istället för 10s)
+- Initiala försök använder `yield_now()` för minimal latens
+
+#### Säker .expect() hantering i GUI
+- **Problem**: 5× `.expect()` på instrument-lookup kunde panica vid race conditions
+- **Orsak**: `active_instrument_id` kunde bli osynkad vid deletion/creation
+- **Fix**: `active_patch_editor()` returnerar nu `Option<&mut PatchEditor>`
+- Alla 12 anropsställen uppdaterade med `let Some(editor) = ... else { return; }`
+- GUI visar "No active instrument" istället för panic
+
+#### Audio Error Tracking
+- **Problem**: Audio stream errors syntes bara på stderr, ej i GUI
+- **Fix**: `CpalStream` har nu `error_count: Arc<AtomicU64>` och `last_error`
+- Fel loggas till stderr OCH sparas för framtida GUI-display
+- Infrastruktur redo för statusfält/notifikationer
+
+#### Realtime-Safe Effect Processing
+- **Problem**: Delay/Reverb/Chorus/Flanger anropade `resize_buffers()` i `process()`
+- **Orsak**: Buffer-resize kan allokera minne i audio thread
+- **Fix**: Ny `set_sample_rate()` implementation för varje effekt
+- `process()` anropar inte längre resize - bara `debug_assert!` för verifiering
+- Bufferallokering sker nu enbart från main thread
+
+#### Tekniska ändringar
+- `PortName::IN1..IN8` - kompilerade konstanter för mixer-portar
+- `PortName::MIXER_INPUTS: [PortName; 8]` - iteration utan allokering
+- `CommandSender::send_blocking()` - exponential backoff
+- `SynthApp::active_patch_editor()` - returnerar `Option`
+- `CpalStream.error_count/last_error` - error tracking
+- `Delay/Reverb/Chorus/Flanger::set_sample_rate()` - buffer-resize
+
+---
+
 ## [0.74.0] - 2025
 ### Fixed - Sample Loop Click Prevention
 
