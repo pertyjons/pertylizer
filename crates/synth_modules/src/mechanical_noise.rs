@@ -66,8 +66,9 @@ impl MechanicalNoise {
         let vel_factor = 1.0 - self.velocity_sens.as_f32() * (1.0 - velocity);
         self.current_velocity = vel_factor;
         self.current_sample = 0;
+        // Ensure at least 1 sample to prevent division by zero in generate_noise()
         self.envelope_samples =
-            (self.duration.as_f32() / 1000.0 * self.sample_rate.as_f32()) as usize;
+            ((self.duration.as_f32() / 1000.0 * self.sample_rate.as_f32()) as usize).max(1);
         self.envelope_phase = 1.0;
         self.filter_state = 0.0;
     }

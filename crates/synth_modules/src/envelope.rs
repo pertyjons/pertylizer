@@ -139,6 +139,8 @@ pub struct Envelope {
     time_in_stage: f32,
     /// Position buffer for GUI visualization.
     position_buffer: Arc<EnvelopePositionBuffer>,
+    /// Previous gate value for edge detection (persists across buffers).
+    prev_gate: f32,
 }
 
 impl Envelope {
@@ -160,6 +162,7 @@ impl Envelope {
             output_buffer: AudioBuffer::new(256),
             time_in_stage: 0.0,
             position_buffer: Arc::new(EnvelopePositionBuffer::new()),
+            prev_gate: 0.0,
         }
     }
 
@@ -410,18 +413,17 @@ impl PolyModule for Envelope {
 
         let gate_input = inputs.get(PortName::GATE);
         let velocity_input = inputs.get(PortName::VELOCITY);
-        let mut prev_gate = 0.0f32;
 
         for i in 0..context.samples.as_usize() {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
-                if gate_val > 0.5 && prev_gate <= 0.5 {
+                if gate_val > 0.5 && self.prev_gate <= 0.5 {
                     let vel = velocity_input.map(|v| v[i]).unwrap_or(1.0);
                     self.trigger(vel);
-                } else if gate_val <= 0.5 && prev_gate > 0.5 {
+                } else if gate_val <= 0.5 && self.prev_gate > 0.5 {
                     self.release();
                 }
-                prev_gate = gate_val;
+                self.prev_gate = gate_val;
             }
             self.output_buffer[i] = self.process_sample();
         }
@@ -489,6 +491,7 @@ impl PolyModule for Envelope {
         self.stage = EnvelopeStage::Idle;
         self.level = NormalizedValue::MIN;
         self.time_in_stage = 0.0;
+        self.prev_gate = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {

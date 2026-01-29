@@ -17,6 +17,7 @@ use super::{MidiNote, SampleRate};
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
+#[must_use]
 pub struct SampleValue(pub f32);
 
 impl SampleValue {
@@ -96,6 +97,7 @@ impl std::ops::Add for SampleValue {
 )]
 #[serde(transparent)]
 #[repr(transparent)]
+#[must_use]
 pub struct SampleIndex(pub usize);
 
 impl SampleIndex {

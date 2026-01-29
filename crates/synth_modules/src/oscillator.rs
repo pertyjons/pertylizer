@@ -88,7 +88,8 @@ impl Oscillator {
         };
 
         let dt = freq.phase_increment(self.sample_rate);
-        let phase = self.phase.advance(phase_mod).as_f32();
+        // Apply phase modulation and static phase offset
+        let phase = (self.phase.advance(phase_mod).as_f32() + self.phase_offset.as_f32()) % 1.0;
 
         let sample = match self.waveform {
             Waveform::Sine => (phase * TAU).sin(),

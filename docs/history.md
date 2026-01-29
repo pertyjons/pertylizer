@@ -1,5 +1,36 @@
 # Version History
 
+## [0.78.0] - 2025
+### Fixed - Synth Modules Review Issues
+
+Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modules_review.md).
+
+#### Kritiska buggar
+- **Envelope/MultiPointEnvelope gate edge detection**: `prev_gate` var lokal variabel → retriggrades vid buffer-gräns. Fixat genom att flytta till struct-fält.
+- **SamplePlayer ReleaseMode::PlayToLoop**: Beter sig nu korrekt - stannar vid loop-slut istället för sample-slut.
+- **MechanicalNoise divide-by-zero**: `envelope_samples` kunde bli 0 → division by zero. Fixat med `.max(1)`.
+
+#### Oanvända parametrar fixade
+- **Oscillator phase_offset**: Nu applicerad i `generate_sample()` för statisk fasoffset.
+- **LFO retrigger_mode**: Nu respekterad - `Continue` ignorerar retrigger input, `Retrigger` aktiverar den.
+- **Flanger/Phaser rate_cv**: Port borttagen - AudioEffect trait stöder inte named CV inputs.
+- **Chorus Voices parameter**: Nu exponerad i descriptor.
+
+#### Rust best practices
+- `#[must_use]` tillagt på `SampleValue` och `SampleIndex`.
+
+#### Ändringar
+- `Envelope.prev_gate: f32` - nytt fält för edge detection
+- `MultiPointEnvelope.prev_gate: f32` - nytt fält
+- `SamplePlayer.advance_position()` - stöd för `PlayToLoop`
+- `MechanicalNoise.trigger()` - guard mot envelope_samples=0
+- `Oscillator.generate_sample()` - adderar phase_offset till fas
+- `Lfo.process()` - respekterar retrigger_mode
+- Flanger/Phaser descriptor - rate_cv port borttagen
+- Chorus descriptor - Voices parameter tillagd
+
+---
+
 ## [0.77.0] - 2025
 ### Fixed - Tracker Effect Issues
 

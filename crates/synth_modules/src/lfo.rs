@@ -162,7 +162,10 @@ impl PolyModule for Lfo {
         let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
 
         for i in 0..context.samples.as_usize() {
-            if let Some(retrig) = retrigger_input {
+            // Only process retrigger input if retrigger_mode is set to Retrigger
+            if self.retrigger_mode.should_retrigger()
+                && let Some(retrig) = retrigger_input
+            {
                 let val = retrig[i];
                 if val > 0.5 && prev_retrigger <= 0.5 {
                     self.retrigger();

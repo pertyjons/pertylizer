@@ -418,14 +418,24 @@ impl SamplePlayer {
         let start = self.start_frame() as f64;
         let end = self.end_frame() as f64;
 
-        // When releasing, don't loop - play to end and stop
+        // When releasing, don't loop - play to end (or loop end for PlayToLoop) and stop
         if self.note_release_state.is_released() {
+            // For PlayToLoop mode with active loop, stop at loop_end instead of sample end
+            let stop_position = if self.release_mode == ReleaseMode::PlayToLoop
+                && self.loop_mode != LoopMode::Off
+            {
+                loop_end
+            } else {
+                end
+            };
+
             // Account for position being clamped to sample_len-1
-            let at_end = pos >= end || pos >= (self.sample_len().saturating_sub(1)) as f64;
+            let at_end =
+                pos >= stop_position || pos >= (self.sample_len().saturating_sub(1)) as f64;
             if at_end || pos < start {
                 self.playback_state = PlaybackState::Stopped;
                 self.position = if at_end {
-                    PlaybackPosition::new(end - 1.0)
+                    PlaybackPosition::new(stop_position - 1.0)
                 } else {
                     PlaybackPosition::new(start)
                 };

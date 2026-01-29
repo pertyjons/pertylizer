@@ -105,9 +105,8 @@ impl Describable for Phaser {
             .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
-            .port(
-                PortDescriptor::control_input("rate_cv", "Rate CV").description("Rate modulation"),
-            )
+            // Note: rate_cv port removed - AudioEffect trait doesn't support named CV inputs.
+            // To add CV modulation, this effect would need to use PolyModule instead.
             .parameter(
                 ParameterDescriptor::float(
                     Param::Phaser(PhaserParam::Rate(Hertz::new(0.5))),

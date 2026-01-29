@@ -117,6 +117,16 @@ impl Describable for Chorus {
                 .default(0.5)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Chorus(ChorusParam::Voices(VoiceCount::DUAL)),
+                    "Voices",
+                )
+                .description("Number of chorus voices")
+                .range(1.0, 8.0)
+                .default(2.0)
+                .widget(WidgetHint::Knob),
+            )
     }
 }
 

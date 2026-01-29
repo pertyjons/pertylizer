@@ -88,6 +88,9 @@ pub struct MultiPointEnvelope {
 
     // Output
     output_buffer: AudioBuffer,
+
+    /// Previous gate value for edge detection (persists across buffers).
+    prev_gate: f32,
 }
 
 impl MultiPointEnvelope {
@@ -108,6 +111,7 @@ impl MultiPointEnvelope {
             tick_rate: 50.0, // Default: 125 BPM * 2 / 5 = 50 Hz
             samples_per_frame: 960.0,
             output_buffer: AudioBuffer::new(256),
+            prev_gate: 0.0,
         }
     }
 
@@ -400,18 +404,17 @@ impl PolyModule for MultiPointEnvelope {
 
         let gate_input = inputs.get(PortName::GATE);
         let velocity_input = inputs.get(PortName::VELOCITY);
-        let mut prev_gate = 0.0f32;
 
         for i in 0..context.samples.as_usize() {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
-                if gate_val > 0.5 && prev_gate <= 0.5 {
+                if gate_val > 0.5 && self.prev_gate <= 0.5 {
                     let vel = velocity_input.map(|v| v[i]).unwrap_or(1.0);
                     self.trigger(vel);
-                } else if gate_val <= 0.5 && prev_gate > 0.5 {
+                } else if gate_val <= 0.5 && self.prev_gate > 0.5 {
                     self.release();
                 }
-                prev_gate = gate_val;
+                self.prev_gate = gate_val;
             }
             self.output_buffer[i] = self.process_sample();
         }
@@ -450,6 +453,7 @@ impl PolyModule for MultiPointEnvelope {
         self.stage = MultiPointStage::Idle;
         self.current_frame = 0.0;
         self.fadeout_level = 1.0;
+        self.prev_gate = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
