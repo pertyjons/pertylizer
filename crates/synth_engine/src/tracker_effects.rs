@@ -697,18 +697,27 @@ impl ChannelEffectProcessor {
             .iter()
             .any(|e| matches!(e, EffectCommand::SampleOffset(_)));
 
-        // STEP 2: Trigger note if present (BEFORE effect processing!)
-        // This resets the appropriate state based on trigger type
-        // For tone portamento: don't trigger a new note, just set the target pitch
-        let has_note = trigger_info.is_some();
-        let should_trigger_note = has_note && !is_tone_portamento;
+        let has_note_delay = effects
+            .iter()
+            .any(|e| matches!(e, EffectCommand::NoteDelay(_)));
 
+        // STEP 2: Determine if we should trigger a new note
+        // Tone portamento normally doesn't trigger a new note (it glides from the previous note).
+        // EXCEPTION: If there's no previous note on this channel, we MUST trigger the note,
+        // otherwise the first note with tone portamento would be silent.
+        let has_note = trigger_info.is_some();
+        let has_previous_note = state.last_note.is_some();
+        let should_trigger_note = has_note && (!is_tone_portamento || !has_previous_note);
+
+        // STEP 3: Process note trigger (BEFORE effect processing!)
+        // This resets the appropriate state based on trigger type
         if let Some(trigger) = trigger_info {
             state.trigger_note(
                 trigger.pitch,
                 trigger.instrument_defaults,
                 is_tone_portamento,
                 has_sample_offset,
+                has_note_delay,
             );
         }
 
@@ -1094,6 +1103,7 @@ impl ChannelEffectState {
         instrument_defaults: Option<InstrumentDefaults>,
         is_tone_portamento: bool,
         has_sample_offset: bool,
+        has_note_delay: bool,
     ) {
         // STEP 1: ALWAYS clear per-row timing effects (prevents "ghosting")
         self.note_delay_tick = None;
@@ -1101,9 +1111,17 @@ impl ChannelEffectState {
         self.fade_out_tick = None;
 
         // STEP 2: Tone portamento is a special case - only set target, keep everything else
-        if is_tone_portamento {
+        // EXCEPTION: If there's no previous note (channel has never played), we must trigger
+        // the note as a fresh attack. Otherwise, the first note would be silent.
+        if is_tone_portamento && self.last_note.is_some() {
             self.tone_porta_target = Some(pitch);
             return; // Early return - preserve all other state!
+        }
+
+        // If tone portamento but no previous note, fall through to fresh attack
+        // and set up the tone porta target for future glides
+        if is_tone_portamento {
+            self.tone_porta_target = Some(pitch);
         }
 
         // STEP 3: Fresh Attack - this is a "clean" new note
@@ -1144,7 +1162,12 @@ impl ChannelEffectState {
 
         // 3f. Update note state
         self.last_note = Some(pitch);
-        self.note_state.trigger();
+
+        // Only trigger immediately if there's no note delay
+        // If NoteDelay (EDx) is present, the trigger happens in process_tick()
+        if !has_note_delay {
+            self.note_state.trigger();
+        }
     }
 
     /// Process one tick and return modulation.

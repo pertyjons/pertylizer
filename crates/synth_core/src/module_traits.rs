@@ -840,6 +840,13 @@ pub trait PolyModule: Describable + Send {
     /// Trigger note off.
     fn note_off(&mut self) {}
 
+    /// Retrigger the module with an optional sample offset.
+    ///
+    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
+    /// For sample-based modules, this restarts playback from the given offset.
+    /// Default implementation does nothing.
+    fn retrigger_with_offset(&mut self, _sample_offset: NormalizedValue) {}
+
     /// Set the sample rate for this module.
     /// Called when the module is added to a graph or when the sample rate changes.
     fn set_sample_rate(&mut self, _sample_rate: SampleRate) {
@@ -850,6 +857,17 @@ pub trait PolyModule: Describable + Send {
     /// Load a sample into this module (for sample-based modules).
     /// Returns true if the sample was loaded, false if this module doesn't support samples.
     fn load_sample(&mut self, _sample: std::sync::Arc<crate::types::Sample>) -> bool {
+        false
+    }
+
+    /// Load a sample bank with keymap (for multisample instruments).
+    /// The keymap maps MIDI notes (0-127) to sample indices in the bank.
+    /// Returns true if loaded, false if this module doesn't support sample banks.
+    fn load_sample_bank(
+        &mut self,
+        _samples: Vec<std::sync::Arc<crate::types::Sample>>,
+        _keymap: Vec<usize>,
+    ) -> bool {
         false
     }
 

@@ -275,10 +275,32 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                     // Find first sample index for this instrument
                     // Samples are flattened across all instruments, so we track offset
                     let sample_count = instr.sample.iter().filter(|s| s.is_some()).count();
+                    let first_sample_index = sample_offset;
                     let sample_index = if sample_count > 0 {
-                        let idx = sample_offset;
                         sample_offset += sample_count;
-                        Some(idx)
+                        Some(first_sample_index)
+                    } else {
+                        None
+                    };
+
+                    // Extract keymap (sample_for_pitch) if instrument has multiple samples
+                    // The keymap maps MIDI note 0-119 to sample index within this instrument
+                    let sample_keymap = if sample_count > 1 {
+                        // Check if keymap is used (not all same value)
+                        let unique_samples: std::collections::HashSet<_> =
+                            instr.sample_for_pitch.iter().filter_map(|&s| s).collect();
+                        if unique_samples.len() > 1 {
+                            // Convert to our format: vec of sample indices
+                            Some(
+                                instr
+                                    .sample_for_pitch
+                                    .iter()
+                                    .map(|&s| s.unwrap_or(0))
+                                    .collect(),
+                            )
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     };
@@ -289,6 +311,8 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                     ImportedInstrument {
                         name: inst.name.clone(),
                         sample_index,
+                        sample_keymap,
+                        sample_count,
                         volume_envelope,
                         envelope_points,
                         envelope_sustain,
@@ -301,6 +325,8 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                 _ => ImportedInstrument {
                     name: format!("Instrument {}", idx + 1),
                     sample_index: None,
+                    sample_keymap: None,
+                    sample_count: 0,
                     volume_envelope: ImportedAdsr::default(),
                     envelope_points: Vec::new(),
                     envelope_sustain: None,
@@ -881,8 +907,12 @@ fn convert_track_effect_for_tracker(
 
         // === Sample/playback effects ===
         TrackEffect::InstrumentSampleOffset(offset) => {
-            let off = (*offset as u32 / 256).min(u16::MAX as u32) as u16;
-            Some(EffectCommand::SampleOffset(off))
+            // xmrs gives us offset * 256 (absolute sample position).
+            // We need the raw 0-255 parameter value where 255 = 100% of sample.
+            // TrackerSampleOffset::as_normalized() divides by 256 to get 0.0-1.0.
+            #[allow(clippy::cast_possible_truncation)]
+            let raw_param = ((*offset) / 256).min(255) as u16;
+            Some(EffectCommand::SampleOffset(raw_param))
         }
 
         TrackEffect::NoteRetrig {

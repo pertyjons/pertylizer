@@ -369,6 +369,7 @@ impl EngineHub {
 
             // Sample loading
             EngineCommand::LoadSample { .. } => perms.can_modify_params,
+            EngineCommand::LoadSampleBank { .. } => perms.can_modify_params,
         }
     }
 

@@ -93,6 +93,27 @@ pub struct SequencerEngine {
     song_ticks_per_tracker_tick: u32,
     /// Counter for song ticks since last effect tick.
     effect_tick_accumulator: u32,
+
+    /// Dynamic ticks per row (updated by SetSpeed command).
+    /// This overrides the pattern's static ticks_per_row during playback.
+    /// Formula: ticks_per_row = 40 * speed (where 40 = 960 PPQN / 24 tracker ticks per beat)
+    current_ticks_per_row: u32,
+
+    // === Pattern Navigation State ===
+    /// Pending pattern break: jump to row in next pattern at end of current row.
+    pending_pattern_break: Option<u8>,
+    /// Pending pattern jump: jump to order position at end of current row.
+    pending_pattern_jump: Option<u8>,
+    /// Tick where pattern loop start was set (SetLoopStart command).
+    pattern_loop_start_tick: Option<Tick>,
+    /// Remaining pattern loop iterations.
+    pattern_loop_count: u8,
+    /// Pending pattern loop back (deferred until row boundary).
+    pending_pattern_loop_back: bool,
+    /// Current order index (pattern position in arrangement).
+    current_order_index: usize,
+    /// Last processed row index within current pattern (for row boundary detection).
+    last_row_index: Option<u32>,
 }
 
 impl SequencerEngine {
@@ -112,6 +133,7 @@ impl SequencerEngine {
             cached_tempo: default_tempo,
             base_tempo: default_tempo,
             tracker_speed: 6, // Default tracker speed
+            current_ticks_per_row: Self::SONG_TICKS_PER_TRACKER_TICK * 6, // 240 at speed 6
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -119,6 +141,13 @@ impl SequencerEngine {
             track_last_instruments: HashMap::new(),
             song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
             effect_tick_accumulator: 0,
+            pending_pattern_break: None,
+            pending_pattern_jump: None,
+            pattern_loop_start_tick: None,
+            pattern_loop_count: 0,
+            pending_pattern_loop_back: false,
+            current_order_index: 0,
+            last_row_index: None,
         }
     }
 
@@ -139,6 +168,7 @@ impl SequencerEngine {
             cached_tempo,
             base_tempo: cached_tempo,
             tracker_speed: tracker_speed.max(1), // Use song's tracker speed, prevent division by zero
+            current_ticks_per_row: Self::SONG_TICKS_PER_TRACKER_TICK * tracker_speed.max(1) as u32,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -146,6 +176,13 @@ impl SequencerEngine {
             track_last_instruments: HashMap::new(),
             song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
             effect_tick_accumulator: 0,
+            pending_pattern_break: None,
+            pending_pattern_jump: None,
+            pattern_loop_start_tick: None,
+            pattern_loop_count: 0,
+            pending_pattern_loop_back: false,
+            current_order_index: 0,
+            last_row_index: None,
         };
         // Recalculate effective tempo based on tracker speed
         engine.recalculate_effective_tempo();
@@ -213,6 +250,22 @@ impl SequencerEngine {
 
         // Reset effect processor state
         self.effect_processor.reset();
+
+        // Reset pattern navigation state
+        self.pending_pattern_break = None;
+        self.pending_pattern_jump = None;
+        self.pattern_loop_start_tick = None;
+        self.pattern_loop_count = 0;
+        self.pending_pattern_loop_back = false;
+        self.current_order_index = 0;
+        self.last_row_index = None;
+
+        // Reset speed to song default
+        if let Ok(song) = self.song.read() {
+            self.tracker_speed = song.default_tracker_speed.max(1);
+            self.current_ticks_per_row =
+                Self::SONG_TICKS_PER_TRACKER_TICK * u32::from(self.tracker_speed);
+        }
 
         events
     }
@@ -289,7 +342,9 @@ impl SequencerEngine {
                         pitch_cents: Cents::new(modulation.pitch_cents.as_f32()),
                         volume: NormalizedValue::new(modulation.volume.as_f32()),
                         panning: BipolarValue::new(modulation.panning.as_f32()),
+                        note_triggered: modulation.note_triggered,
                         note_cut: modulation.note_cut,
+                        sample_offset: modulation.sample_offset.as_normalized(),
                         tone_porta_pitch: modulation.tone_porta_pitch,
                     });
                 }
@@ -297,6 +352,9 @@ impl SequencerEngine {
 
             // Advance position
             self.current_tick = Tick(self.current_tick.0 + 1);
+
+            // Apply pending pattern navigation (PatternBreak/PatternJump)
+            self.apply_pending_navigation(events);
 
             // Handle looping
             if self.looping && self.current_tick >= self.loop_end {
@@ -309,6 +367,129 @@ impl SequencerEngine {
             // Update tempo if it changed at this tick
             self.update_cached_tempo();
         }
+    }
+
+    /// Apply pending pattern navigation (PatternBreak, PatternJump, PatternLoop).
+    ///
+    /// Navigation is applied at row boundaries to match tracker behavior.
+    /// Pattern changes clear the loop start marker.
+    fn apply_pending_navigation(&mut self, events: &mut Vec<SequencerEvent>) {
+        // Calculate current row to detect row boundaries
+        let ticks_per_row = self.current_ticks_per_row;
+        if ticks_per_row == 0 {
+            return;
+        }
+
+        // Check if we're at a row boundary
+        let at_row_boundary = self.current_tick.0.is_multiple_of(ticks_per_row as u64);
+
+        // Track pattern changes for clearing loop state
+        let old_order_index = self.current_order_index;
+
+        // Check for pending pattern loop first (at row boundary only)
+        if self.pending_pattern_loop_back && at_row_boundary {
+            self.pending_pattern_loop_back = false;
+            if let Some(loop_start) = self.pattern_loop_start_tick {
+                self.current_tick = loop_start;
+                self.tick_accumulator = 0.0;
+                self.pattern_loop_count = self.pattern_loop_count.saturating_sub(1);
+                if self.pattern_loop_count == 0 {
+                    // Loop completed - clear loop state
+                    self.pattern_loop_start_tick = None;
+                }
+                return;
+            }
+        }
+
+        // Check for pending pattern jump (at row boundary for clean transition)
+        if let Some(order_pos) = self.pending_pattern_jump.take() {
+            if at_row_boundary {
+                if let Some(target_tick) = self.get_pattern_start_tick(order_pos as usize) {
+                    self.release_all_notes_into(events);
+                    self.active_notes.clear();
+                    self.current_tick = target_tick;
+                    self.tick_accumulator = 0.0;
+                    self.current_order_index = order_pos as usize;
+                }
+                // Clear pattern break too since jump takes precedence
+                self.pending_pattern_break = None;
+            } else {
+                // Not at row boundary, keep pending
+                self.pending_pattern_jump = Some(order_pos);
+            }
+            // If pattern changed, clear loop state
+            if self.current_order_index != old_order_index {
+                self.pattern_loop_start_tick = None;
+                self.pattern_loop_count = 0;
+            }
+            return;
+        }
+
+        // Check for pending pattern break (at pattern end)
+        if let Some(target_row) = self.pending_pattern_break.take()
+            && let Some((current_end, next_order_idx)) = self.get_current_pattern_end()
+        {
+            if self.current_tick >= current_end {
+                // At pattern end - apply break
+                if let Some(target_tick) =
+                    self.get_pattern_row_tick(next_order_idx, target_row as usize)
+                {
+                    self.release_all_notes_into(events);
+                    self.active_notes.clear();
+                    self.current_tick = target_tick;
+                    self.tick_accumulator = 0.0;
+                    self.current_order_index = next_order_idx;
+                    // Clear loop state on pattern change
+                    self.pattern_loop_start_tick = None;
+                    self.pattern_loop_count = 0;
+                }
+            } else {
+                // Not at pattern end, keep pending
+                self.pending_pattern_break = Some(target_row);
+            }
+        }
+    }
+
+    /// Get the start tick for the pattern at the given order position.
+    fn get_pattern_start_tick(&self, order_pos: usize) -> Option<Tick> {
+        let song = self.song.read().ok()?;
+        let arrangement = song.arrangement();
+        arrangement.get(order_pos).map(|p| p.start)
+    }
+
+    /// Get the tick for a specific row within a pattern.
+    fn get_pattern_row_tick(&self, order_pos: usize, row: usize) -> Option<Tick> {
+        let song = self.song.read().ok()?;
+        let arrangement = song.arrangement();
+        let placement = arrangement.get(order_pos)?;
+
+        // Use dynamic ticks_per_row for consistent row timing
+        let ticks_per_row = self.current_ticks_per_row as u64;
+
+        // Calculate tick offset for the target row
+        let row_offset = (row as u64) * ticks_per_row;
+        Some(Tick(placement.start.0 + row_offset))
+    }
+
+    /// Get the end tick of the current pattern and the next order index.
+    fn get_current_pattern_end(&self) -> Option<(Tick, usize)> {
+        let song = self.song.read().ok()?;
+        let arrangement = song.arrangement();
+
+        // Find the pattern that contains the current tick
+        for (idx, placement) in arrangement.iter().enumerate() {
+            if let Some(pattern) = song.tracker_pattern(placement.pattern_id) {
+                let pattern_length_ticks = pattern.length_ticks().0 as u64;
+                let pattern_end = Tick(placement.start.0 + pattern_length_ticks);
+
+                if self.current_tick >= placement.start && self.current_tick < pattern_end {
+                    // Found current pattern
+                    let next_idx = (idx + 1) % arrangement.len().max(1);
+                    return Some((pattern_end, next_idx));
+                }
+            }
+        }
+        None
     }
 
     /// Update the cached tempo from the song.
@@ -325,15 +506,14 @@ impl SequencerEngine {
         }
     }
 
-    /// Recalculate effective tempo based on base tempo and tracker speed.
+    /// Recalculate effective tempo.
     ///
-    /// Tracker speed affects playback rate:
-    /// - Speed 6 (default): tempo is used as-is
-    /// - Speed 3: playback is 2x faster (effective_tempo = base_tempo * 6/3)
-    /// - Speed 12: playback is 0.5x slower (effective_tempo = base_tempo * 6/12)
+    /// Note: Tracker speed is already encoded in ticks_per_row during import
+    /// (via TicksPerRow::from_tracker_speed), so we do NOT apply speed ratio here.
+    /// Applying it here would cause double-scaling for speed ≠ 6.
     fn recalculate_effective_tempo(&mut self) {
-        let speed_ratio = 6.0 / self.tracker_speed.max(1) as f32;
-        self.cached_tempo = Bpm::new(self.base_tempo.as_f32() * speed_ratio);
+        // Speed already encoded in ticks_per_row, don't double-scale
+        self.cached_tempo = self.base_tempo;
     }
 
     /// Collect events that should trigger at the current tick.
@@ -506,19 +686,45 @@ impl SequencerEngine {
                             self.recalculate_effective_tempo();
                         }
                         GlobalCommand::SetSpeed(speed) => {
-                            // Tracker speed affects timing: lower speed = faster playback
-                            // At speed 6 (default), tempo is used as-is
-                            // At speed 3, playback is 2x faster (6/3 = 2)
-                            self.tracker_speed = speed.as_u8().max(1); // Prevent division by zero
+                            // Update tracker speed and recalculate ticks per row dynamically.
+                            // Speed directly affects row timing: ticks_per_row = 40 * speed
+                            let new_speed = speed.as_u8().max(1);
+                            self.tracker_speed = new_speed;
+                            self.current_ticks_per_row =
+                                Self::SONG_TICKS_PER_TRACKER_TICK * u32::from(new_speed);
                             self.recalculate_effective_tempo();
                         }
-                        // Pattern navigation effects would require additional state
-                        GlobalCommand::PatternBreak(_)
-                        | GlobalCommand::PatternJump(_)
-                        | GlobalCommand::SetLoopStart
-                        | GlobalCommand::PatternLoop(_)
-                        | GlobalCommand::PatternDelay(_) => {
-                            // TODO: Implement pattern navigation
+                        // Pattern navigation commands
+                        GlobalCommand::PatternBreak(row) => {
+                            // Jump to specified row in next pattern at end of current row
+                            self.pending_pattern_break = Some(row);
+                        }
+                        GlobalCommand::PatternJump(pos) => {
+                            // Jump to pattern at order position
+                            self.pending_pattern_jump = Some(pos);
+                        }
+                        GlobalCommand::SetLoopStart => {
+                            // Set loop start point at current tick
+                            self.pattern_loop_start_tick = Some(self.current_tick);
+                        }
+                        GlobalCommand::PatternLoop(count) => {
+                            // Loop back to start point (deferred until row boundary)
+                            if count > 0 {
+                                if self.pattern_loop_count == 0 {
+                                    // First time seeing this loop - set count
+                                    self.pattern_loop_count = count;
+                                }
+                                if self.pattern_loop_count > 0
+                                    && self.pattern_loop_start_tick.is_some()
+                                {
+                                    // Mark loop back as pending (applied at row boundary)
+                                    self.pending_pattern_loop_back = true;
+                                }
+                            }
+                        }
+                        GlobalCommand::PatternDelay(_rows) => {
+                            // Pattern delay is complex - would need row-level tracking
+                            // For now, this is not implemented
                         }
                     }
                 }
@@ -614,15 +820,34 @@ impl SequencerEngine {
                         self.recalculate_effective_tempo();
                     }
                     GlobalCommand::SetSpeed(speed) => {
-                        self.tracker_speed = speed.as_u8().max(1);
+                        let new_speed = speed.as_u8().max(1);
+                        self.tracker_speed = new_speed;
+                        self.current_ticks_per_row =
+                            Self::SONG_TICKS_PER_TRACKER_TICK * u32::from(new_speed);
                         self.recalculate_effective_tempo();
                     }
-                    GlobalCommand::PatternBreak(_)
-                    | GlobalCommand::PatternJump(_)
-                    | GlobalCommand::SetLoopStart
-                    | GlobalCommand::PatternLoop(_)
-                    | GlobalCommand::PatternDelay(_) => {
-                        // TODO: Implement pattern navigation
+                    GlobalCommand::PatternBreak(row) => {
+                        self.pending_pattern_break = Some(row);
+                    }
+                    GlobalCommand::PatternJump(pos) => {
+                        self.pending_pattern_jump = Some(pos);
+                    }
+                    GlobalCommand::SetLoopStart => {
+                        self.pattern_loop_start_tick = Some(self.current_tick);
+                    }
+                    GlobalCommand::PatternLoop(count) => {
+                        if count > 0 {
+                            if self.pattern_loop_count == 0 {
+                                self.pattern_loop_count = count;
+                            }
+                            if self.pattern_loop_count > 0 && self.pattern_loop_start_tick.is_some()
+                            {
+                                self.pending_pattern_loop_back = true;
+                            }
+                        }
+                    }
+                    GlobalCommand::PatternDelay(_rows) => {
+                        // Pattern delay not implemented
                     }
                 }
             }
@@ -688,8 +913,9 @@ impl SequencerEngine {
         effect_events: &mut Vec<(TrackId, Vec<synth_sequencer::EffectCommand>)>,
         note_offs: &mut Vec<TrackId>,
     ) {
-        // Convert pattern tick to row index
-        let ticks_per_row = pattern.ticks_per_row().as_u32();
+        // Use dynamic ticks_per_row (updated by SetSpeed command)
+        // This allows SetSpeed to affect row timing during playback
+        let ticks_per_row = self.current_ticks_per_row;
         if ticks_per_row == 0 {
             return;
         }

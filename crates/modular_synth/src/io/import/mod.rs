@@ -92,8 +92,14 @@ impl Default for ImportedAdsr {
 pub struct ImportedInstrument {
     /// Instrument name.
     pub name: String,
-    /// Index into the samples vector.
+    /// Index into the samples vector (first sample for this instrument).
     pub sample_index: Option<usize>,
+    /// Keymap: maps MIDI note (0-119) to sample index within this instrument's samples.
+    /// If None, the instrument uses a single sample for all notes.
+    /// If Some, the vec has 120 entries (one per MIDI note 0-119).
+    pub sample_keymap: Option<Vec<usize>>,
+    /// Number of samples in this instrument (for keymap offset calculation).
+    pub sample_count: usize,
     /// Volume envelope (converted to ADSR for legacy compatibility).
     pub volume_envelope: ImportedAdsr,
     /// Raw envelope points for MultiPointEnvelope (frame, value).
@@ -109,6 +115,36 @@ pub struct ImportedInstrument {
     pub global_volume: Gain,
     /// Default pan position.
     pub default_pan: BipolarValue,
+}
+
+impl ImportedInstrument {
+    /// Get the sample index for a given MIDI note.
+    ///
+    /// If the instrument has a keymap, this returns the appropriate sample
+    /// based on the note pitch. Otherwise, returns the default sample_index.
+    ///
+    /// # Arguments
+    /// * `note` - MIDI note number (0-127)
+    /// * `first_sample_offset` - The offset into the global samples array
+    ///   for this instrument's first sample
+    ///
+    /// # Returns
+    /// The global sample index, or None if no sample is available for this note.
+    #[must_use]
+    pub fn sample_index_for_note(&self, note: u8) -> Option<usize> {
+        let first_sample = self.sample_index?;
+
+        if let Some(keymap) = &self.sample_keymap {
+            // Use keymap to find sample index within this instrument
+            let note_idx = (note as usize).min(119);
+            let local_sample_idx = keymap.get(note_idx).copied().unwrap_or(0);
+            // Convert to global index
+            Some(first_sample + local_sample_idx.min(self.sample_count.saturating_sub(1)))
+        } else {
+            // No keymap - use first sample for all notes
+            Some(first_sample)
+        }
+    }
 }
 
 /// Result of a successful import.

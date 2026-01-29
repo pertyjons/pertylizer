@@ -326,6 +326,21 @@ impl ModuleGraph {
         }
     }
 
+    /// Load a sample bank into a module (for multisample instruments).
+    /// Returns true if loaded, false if module doesn't exist or doesn't support it.
+    pub fn load_sample_bank(
+        &mut self,
+        module: ModuleId,
+        samples: Vec<std::sync::Arc<synth_core::Sample>>,
+        keymap: Vec<usize>,
+    ) -> bool {
+        if let Some(node) = self.nodes.get_mut(&module) {
+            node.module.load_sample_bank(samples, keymap)
+        } else {
+            false
+        }
+    }
+
     /// Process the graph.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
         // Ensure buffer sizes
@@ -407,6 +422,14 @@ impl ModuleGraph {
         self.nodes
             .values_mut()
             .for_each(|node| node.module.note_off());
+    }
+
+    /// Retrigger all modules with a sample offset.
+    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
+    pub fn retrigger_with_offset(&mut self, sample_offset: synth_core::NormalizedValue) {
+        self.nodes
+            .values_mut()
+            .for_each(|node| node.module.retrigger_with_offset(sample_offset));
     }
 
     /// Reset all modules.

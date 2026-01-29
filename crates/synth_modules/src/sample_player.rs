@@ -20,7 +20,7 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, NoteReleaseState,
+    BipolarValue, Gain, Interpolation, MidiNote, Milliseconds, NormalizedValue, NoteReleaseState,
     PlaybackDirection, PlaybackPosition, PlaybackState, Sample, SampleRate, SampleValue, Velocity,
     WaveformOverview,
 };
@@ -83,6 +83,7 @@ pub struct SamplePlayer {
     loop_end: NormalizedValue,
     loop_crossfade: Milliseconds,
     level: Gain,
+    pan: BipolarValue,
     velocity_sensitivity: NormalizedValue,
     release_mode: ReleaseMode,
 
@@ -94,6 +95,12 @@ pub struct SamplePlayer {
     current_note: Option<MidiNote>,
     current_velocity: NormalizedValue,
     note_release_state: NoteReleaseState,
+
+    // Multisample bank (for XM/IT instruments with multiple samples)
+    sample_bank: Vec<Arc<Sample>>,
+    /// Keymap: maps MIDI note (0-127) to sample index in sample_bank.
+    /// If None, uses the primary `sample` field for all notes.
+    sample_keymap: Option<Vec<usize>>,
 
     // Config
     interpolation: Interpolation,
@@ -122,6 +129,7 @@ impl SamplePlayer {
             loop_end: NormalizedValue::new(1.0),
             loop_crossfade: Milliseconds::new(5.0),
             level: Gain::UNITY,
+            pan: BipolarValue::CENTER,
             velocity_sensitivity: NormalizedValue::new(0.5),
             release_mode: ReleaseMode::Immediate,
 
@@ -133,6 +141,10 @@ impl SamplePlayer {
             current_note: None,
             current_velocity: NormalizedValue::new(1.0),
             note_release_state: NoteReleaseState::Held,
+
+            // Multisample bank
+            sample_bank: Vec::new(),
+            sample_keymap: None,
 
             // Config
             interpolation: Interpolation::Cubic,
@@ -176,6 +188,13 @@ impl SamplePlayer {
             self.level = Gain::new(volume);
         }
 
+        // Apply default panning from sample metadata
+        // Sample panning is 0.0=left, 0.5=center, 1.0=right
+        // BipolarValue is -1.0=left, 0.0=center, 1.0=right
+        if let Some(panning) = sample.default_panning {
+            self.pan = BipolarValue::new((panning * 2.0) - 1.0);
+        }
+
         // Set release mode based on loop settings:
         // - Looped samples: Immediate (stop at note-off, common for sustained sounds)
         // - Non-looped samples: PlayToEnd (let sample play through, typical for drums/one-shots)
@@ -197,6 +216,85 @@ impl SamplePlayer {
         self.waveform_overview = None;
         self.playback_state = PlaybackState::Stopped;
         self.position = PlaybackPosition::ZERO;
+    }
+
+    /// Add a sample to the sample bank (for multisample instruments).
+    ///
+    /// The sample bank is used with `sample_keymap` to select different
+    /// samples based on MIDI note. Call this for each sample in the instrument,
+    /// then use `set_sample_keymap` to define the note-to-sample mapping.
+    pub fn add_sample_to_bank(&mut self, sample: Arc<Sample>) {
+        self.sample_bank.push(sample);
+    }
+
+    /// Set the sample keymap for multisample instruments.
+    ///
+    /// The keymap should have 128 entries (one per MIDI note 0-127),
+    /// where each entry is an index into the sample_bank.
+    /// If set, note_on will select the appropriate sample from the bank.
+    pub fn set_sample_keymap(&mut self, keymap: Vec<usize>) {
+        self.sample_keymap = Some(keymap);
+    }
+
+    /// Select the active sample from the bank based on MIDI note.
+    ///
+    /// If a keymap is set and samples are in the bank, this selects the
+    /// appropriate sample and applies its settings. Otherwise uses the
+    /// primary `sample` field.
+    fn select_sample_for_note(&mut self, note: MidiNote) {
+        // If no keymap or empty bank, use primary sample
+        let Some(keymap) = &self.sample_keymap else {
+            return;
+        };
+        if self.sample_bank.is_empty() {
+            return;
+        }
+
+        // Get sample index from keymap (clamp note to valid range)
+        let note_idx = (note.as_u8() as usize).min(127);
+        let sample_idx = keymap.get(note_idx).copied().unwrap_or(0);
+        let sample_idx = sample_idx.min(self.sample_bank.len().saturating_sub(1));
+
+        // Get the sample from the bank
+        if let Some(sample) = self.sample_bank.get(sample_idx) {
+            // Apply sample-specific settings without regenerating waveform
+            let sample_len = sample.len().as_usize();
+
+            // Apply loop settings from this sample
+            if let Some(loop_info) = &sample.loop_info {
+                self.loop_start = NormalizedValue::new(loop_info.normalized_start(sample_len));
+                self.loop_end = NormalizedValue::new(loop_info.normalized_end(sample_len));
+                if loop_info.enabled {
+                    self.loop_mode = if loop_info.ping_pong {
+                        LoopMode::PingPong
+                    } else {
+                        LoopMode::Forward
+                    };
+                } else {
+                    self.loop_mode = LoopMode::Off;
+                }
+            }
+
+            // Apply volume from sample
+            if let Some(volume) = sample.default_volume {
+                self.level = Gain::new(volume);
+            }
+
+            // Apply panning from sample
+            if let Some(panning) = sample.default_panning {
+                self.pan = BipolarValue::new((panning * 2.0) - 1.0);
+            }
+
+            // Set release mode based on loop
+            self.release_mode = if self.loop_mode == LoopMode::Off {
+                ReleaseMode::PlayToEnd
+            } else {
+                ReleaseMode::Immediate
+            };
+
+            // Set the active sample
+            self.sample = Some(Arc::clone(sample));
+        }
     }
 
     /// Get the waveform overview for visualization.
@@ -590,6 +688,11 @@ impl PolyModule for SamplePlayer {
         let level = self.effective_level();
         let sample_len = self.sample_len();
 
+        // Calculate pan coefficients (constant for this buffer)
+        let (pan_left, pan_right) = Gain::from_pan(self.pan);
+        let pan_l = pan_left.as_f32();
+        let pan_r = pan_right.as_f32();
+
         // Get pitch modulation input (semitones)
         let pitch_mod = inputs.get(PortName::intern("pitch_mod"));
 
@@ -608,8 +711,9 @@ impl PolyModule for SamplePlayer {
                 };
 
                 let (left, right) = self.read_with_crossfade(&sample, self.position);
-                self.output_left[i] = left.as_f32() * level;
-                self.output_right[i] = right.as_f32() * level;
+                // Apply level and panning
+                self.output_left[i] = left.as_f32() * level * pan_l;
+                self.output_right[i] = right.as_f32() * level * pan_r;
                 self.advance_position(speed);
             } else {
                 self.output_left[i] = 0.0;
@@ -648,6 +752,7 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::LoopEnd(v) => self.loop_end = v,
                 SamplePlayerParam::LoopCrossfade(ms) => self.loop_crossfade = ms,
                 SamplePlayerParam::Level(g) => self.level = g,
+                SamplePlayerParam::Pan(p) => self.pan = p,
                 SamplePlayerParam::VelocitySensitivity(v) => self.velocity_sensitivity = v,
                 SamplePlayerParam::ReleaseMode(m) => self.release_mode = m,
                 SamplePlayerParam::Interpolation(i) => self.interpolation = i,
@@ -666,6 +771,7 @@ impl PolyModule for SamplePlayer {
                 SamplePlayerParam::LoopEnd(_) => self.loop_end.as_f32(),
                 SamplePlayerParam::LoopCrossfade(_) => self.loop_crossfade.as_f32(),
                 SamplePlayerParam::Level(_) => self.level.as_f32(),
+                SamplePlayerParam::Pan(_) => self.pan.as_f32(),
                 SamplePlayerParam::VelocitySensitivity(_) => self.velocity_sensitivity.as_f32(),
                 SamplePlayerParam::ReleaseMode(_) => self.release_mode.index() as f32,
                 SamplePlayerParam::Interpolation(_) => self.interpolation.index() as f32,
@@ -705,6 +811,9 @@ impl PolyModule for SamplePlayer {
     }
 
     fn note_on(&mut self, note: MidiNote, velocity: Velocity) {
+        // Select sample from bank if multisample keymap is set
+        self.select_sample_for_note(note);
+
         self.current_note = Some(note);
         self.current_velocity = NormalizedValue::new(velocity.as_f32());
         self.position = PlaybackPosition::new(self.start_frame() as f64);
@@ -735,9 +844,45 @@ impl PolyModule for SamplePlayer {
         }
     }
 
+    fn retrigger_with_offset(&mut self, sample_offset: NormalizedValue) {
+        // Retrigger playback from the given offset position
+        // Used for tracker retrigger effects (Exy) and note delay (EDx)
+        let sample_len = self.sample_len();
+        if sample_len == 0 {
+            return;
+        }
+
+        // Calculate start position from offset (0.0-1.0 of sample length)
+        let start_pos = (sample_offset.as_f32() * sample_len as f32) as f64;
+        let clamped_pos = start_pos.clamp(0.0, (sample_len - 1) as f64);
+
+        self.position = PlaybackPosition::new(clamped_pos);
+        self.direction = PlaybackDirection::Forward;
+        self.playback_state = PlaybackState::Playing;
+        self.note_release_state = NoteReleaseState::Held;
+    }
+
     fn load_sample(&mut self, sample: std::sync::Arc<Sample>) -> bool {
         // Use the existing load_sample method
         Self::load_sample(self, sample);
+        true
+    }
+
+    fn load_sample_bank(
+        &mut self,
+        samples: Vec<std::sync::Arc<Sample>>,
+        keymap: Vec<usize>,
+    ) -> bool {
+        // Load all samples into the sample bank
+        self.sample_bank = samples;
+        self.sample_keymap = Some(keymap);
+
+        // Also load the first sample as the primary sample for initial playback
+        // (will be overridden by select_sample_for_note on note_on)
+        if let Some(first_sample) = self.sample_bank.first() {
+            Self::load_sample(self, Arc::clone(first_sample));
+        }
+
         true
     }
 

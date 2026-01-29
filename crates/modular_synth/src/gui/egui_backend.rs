@@ -2070,8 +2070,29 @@ impl SynthApp {
                             });
                         }
 
-                        // === Load sample into SamplePlayer (if available) ===
-                        if let Some(smp) = sample {
+                        // === Load sample(s) into SamplePlayer ===
+                        // For multisample instruments (with keymap), load the full sample bank
+                        // For single-sample instruments, use the simpler LoadSample command
+                        if let Some(keymap) = &inst_meta.sample_keymap {
+                            // Multisample instrument: collect all samples for this instrument
+                            if let Some(first_idx) = inst_meta.sample_index {
+                                let bank_samples: Vec<_> = (0..inst_meta.sample_count)
+                                    .filter_map(|offset| {
+                                        imported.samples.get(first_idx + offset).cloned()
+                                    })
+                                    .collect();
+
+                                if !bank_samples.is_empty() {
+                                    self.handle.send_blocking(EngineCommand::LoadSampleBank {
+                                        instrument_id: Some(inst_id),
+                                        module_id: sample_player_id,
+                                        samples: bank_samples,
+                                        keymap: keymap.clone(),
+                                    });
+                                }
+                            }
+                        } else if let Some(smp) = sample {
+                            // Single sample instrument
                             self.handle.send_blocking(EngineCommand::LoadSample {
                                 instrument_id: Some(inst_id),
                                 module_id: sample_player_id,

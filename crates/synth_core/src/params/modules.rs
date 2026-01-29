@@ -172,6 +172,8 @@ pub enum SamplePlayerParam {
     LoopCrossfade(Milliseconds),
     /// Output level
     Level(Gain),
+    /// Pan position (-1.0 = left, 0.0 = center, 1.0 = right)
+    Pan(BipolarValue),
     /// Velocity sensitivity (0.0 = ignore, 1.0 = full)
     VelocitySensitivity(NormalizedValue),
     /// Release mode (what happens on note-off)
@@ -195,6 +197,7 @@ impl SamplePlayerParam {
             Self::LoopEnd(_) => "Loop End",
             Self::LoopCrossfade(_) => "Loop X-Fade",
             Self::Level(_) => "Level",
+            Self::Pan(_) => "Pan",
             Self::VelocitySensitivity(_) => "Vel Sens",
             Self::ReleaseMode(_) => "Release",
             Self::Interpolation(_) => "Interp",
@@ -214,6 +217,7 @@ impl SamplePlayerParam {
             Self::Interpolation(i) => i.index() as f32,
             Self::LoopCrossfade(ms) => ms.as_f32(),
             Self::Level(g) => g.as_f32(),
+            Self::Pan(p) => p.as_f32(),
         }
     }
 
@@ -229,6 +233,7 @@ impl SamplePlayerParam {
             Self::LoopEnd(_) => Self::LoopEnd(NormalizedValue::new(value)),
             Self::LoopCrossfade(_) => Self::LoopCrossfade(Milliseconds::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::Pan(_) => Self::Pan(BipolarValue::new(value)),
             Self::VelocitySensitivity(_) => Self::VelocitySensitivity(NormalizedValue::new(value)),
             Self::ReleaseMode(_) => {
                 Self::ReleaseMode(ReleaseMode::from_index(value as usize).unwrap_or_default())

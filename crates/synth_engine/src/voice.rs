@@ -482,6 +482,15 @@ impl Voice {
         }
     }
 
+    /// Retrigger the voice with a sample offset.
+    ///
+    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
+    /// Restarts the sample playback from the given offset position.
+    pub fn retrigger_with_offset(&mut self, sample_offset: NormalizedValue) {
+        // Retrigger all modules in the graph (this restarts sample players, etc.)
+        self.graph.retrigger_with_offset(sample_offset);
+    }
+
     /// Start voice stealing (quick fade-out).
     pub fn steal(&mut self) {
         self.state = VoiceState::Stealing {

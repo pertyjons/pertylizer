@@ -782,6 +782,14 @@ impl SynthEngine {
             } => {
                 self.handle_load_sample(instrument_id, module_id, sample);
             }
+            EngineCommand::LoadSampleBank {
+                instrument_id,
+                module_id,
+                samples,
+                keymap,
+            } => {
+                self.handle_load_sample_bank(instrument_id, module_id, samples, keymap);
+            }
 
             // Transport control
             EngineCommand::Play => {
@@ -1520,6 +1528,41 @@ impl SynthEngine {
         }
     }
 
+    fn handle_load_sample_bank(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        samples: Vec<std::sync::Arc<synth_core::Sample>>,
+        keymap: Vec<usize>,
+    ) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    // Load sample bank into the voice graph (template)
+                    if instrument.voice_graph_mut().load_sample_bank(
+                        module_id,
+                        samples.clone(),
+                        keymap.clone(),
+                    ) {
+                        // Also load into all existing voices
+                        for voice in instrument.allocator_mut().voices_mut() {
+                            voice.graph.load_sample_bank(
+                                module_id,
+                                samples.clone(),
+                                keymap.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+            None => {
+                // Load into global module graph (not typical for sample banks)
+                self.module_graph
+                    .load_sample_bank(module_id, samples, keymap);
+            }
+        }
+    }
+
     /// Process all active voices across all instruments and mix.
     ///
     /// Delegates to `Instrument::process` for each instrument, which handles:
@@ -1651,6 +1694,22 @@ impl AudioProcessor for SynthEngine {
                     let vel = velocity.as_f32();
                     let instrument_index = instrument.0 as usize;
 
+                    // In tracker mode: cut the voice on ALL other instruments first.
+                    // Each tracker channel can only play one instrument at a time.
+                    // When switching instruments, the previous instrument must be silenced.
+                    if let Some(v_idx) = voice_index {
+                        for (idx, other_inst) in self.instruments.iter_mut().enumerate() {
+                            if idx != instrument_index
+                                && let Some(voice) = other_inst
+                                    .allocator_mut()
+                                    .voices_mut()
+                                    .get_mut(v_idx.as_usize())
+                            {
+                                voice.reset();
+                            }
+                        }
+                    }
+
                     // Trigger note on the matching instrument
                     if let Some(target) = self.instruments.get_mut(instrument_index) {
                         if let Some(v_idx) = voice_index {
@@ -1689,7 +1748,9 @@ impl AudioProcessor for SynthEngine {
                     pitch_cents,
                     volume,
                     panning,
+                    note_triggered,
                     note_cut,
+                    sample_offset,
                     tone_porta_pitch,
                     ..
                 } => {
@@ -1717,6 +1778,12 @@ impl AudioProcessor for SynthEngine {
                             // This overrides the note's base pitch with the interpolated glide pitch
                             voice.tracker_tone_porta_pitch =
                                 tone_porta_pitch.map(synth_core::Semitones::new);
+
+                            // Handle note retrigger (from note delay or retrigger effects)
+                            if *note_triggered {
+                                // Retrigger the voice with sample offset
+                                voice.retrigger_with_offset(*sample_offset);
+                            }
 
                             if *note_cut {
                                 voice.note_off();

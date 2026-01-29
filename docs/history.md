@@ -1,5 +1,67 @@
 # Version History
 
+## [0.76.0] - 2025
+### Fixed - Tracker Effect Accuracy
+
+Omfattande fix av 6 kritiska tracker-effektproblem som orsakade felaktig uppspelning av XM/MOD-filer.
+
+#### SetSpeed (Fxx) påverkar row-timing dynamiskt
+- **Problem**: SetSpeed-effekten ändrade bara tempo, inte ticks per rad
+- **Orsak**: `ticks_per_row` beräknades en gång vid start, uppdaterades aldrig
+- **Fix**: Nytt fält `current_ticks_per_row` som uppdateras vid varje SetSpeed-kommando
+- `collect_tracker_pattern_events()` använder nu den dynamiska ticks_per_row
+
+#### Pattern navigation timing (Bxx/Dxx/E6x)
+- **Problem**: PatternBreak/Jump/Loop triggades på godtyckliga tick-positioner
+- **Orsak**: Navigation skedde direkt istället för vid rad-gränser
+- **Fix**: Nya fält `pending_pattern_loop_back` och `last_row_index`
+- Navigation väntar nu på rad-gränser innan den appliceras
+- Loop-state rensas korrekt vid pattern-byte
+
+#### NoteDelay (EDx) fungerar korrekt
+- **Problem**: Noten triggades direkt vid rad-start, ignorerade delay
+- **Orsak**: `trigger_note()` anropade `note_state.trigger()` ovillkorligt
+- **Fix**: Ny `has_note_delay` parameter i `trigger_note()`
+- Noten triggas inte direkt om EDx finns - sker i `process_tick()` vid rätt tick
+
+#### Sample offset (9xx) beräkning korrigerad
+- **Problem**: Offset-värdet var fel - delades med 256 istället för att användas direkt
+- **Orsak**: xmrs ger oss `parameter * 256`, men importen antog råvärdet
+- **Fix**: `let raw_param = ((*offset) / 256).min(255) as u16;` i tracker.rs
+- Nu ger 980 (param 0x80 = 128) korrekt 50% av samplelängden
+
+#### Instrumentbyte kapar föregående röst
+- **Problem**: Vid instrumentbyte fortsatte gamla instrumentet att spela
+- **Orsak**: Endast nya instrumentet triggades, gamla tystades inte
+- **Fix**: Vid NoteOn i tracker-läge anropas nu `voice.reset()` på alla andra instruments voice på samma kanal
+- Förhindrar överlappande ljud vid instrumentbyte
+
+#### Multisample-instrument med keymap
+- **Problem**: XM-instrument med flera samples ignorerade keymap
+- **Orsak**: Endast första samplet laddades, keymap aldrig användes
+- **Fix**: Ny sample bank-arkitektur i SamplePlayer:
+  - `sample_bank: Vec<Arc<Sample>>` - alla samples för instrumentet
+  - `sample_keymap: Option<Vec<usize>>` - MIDI-not till sample-index
+  - `select_sample_for_note()` - väljer rätt sample vid note_on
+- Nytt `LoadSampleBank` kommando för att ladda flera samples med keymap
+- Import-koden laddar nu alla samples och keymappen
+
+#### Tekniska ändringar
+- `SequencerEngine.current_ticks_per_row: u32` - dynamisk speed
+- `SequencerEngine.pending_pattern_loop_back: bool` - rad-boundary navigation
+- `SequencerEngine.last_row_index: Option<u32>` - spårar senaste rad
+- `ChannelEffectState.trigger_note()` - ny `has_note_delay` parameter
+- `SamplePlayer.sample_bank: Vec<Arc<Sample>>` - multisample stöd
+- `SamplePlayer.sample_keymap: Option<Vec<usize>>` - not-till-sample mappning
+- `SamplePlayer::select_sample_for_note()` - väljer sample från bank
+- `SamplePlayer::add_sample_to_bank()` - lägger till sample i bank
+- `SamplePlayer::set_sample_keymap()` - sätter keymap
+- `PolyModule::load_sample_bank()` - ny trait-metod
+- `EngineCommand::LoadSampleBank` - nytt kommando
+- `Graph::load_sample_bank()` - ny metod
+
+---
+
 ## [0.75.0] - 2025
 ### Fixed - Critical Code Issues
 

@@ -72,8 +72,12 @@ pub enum SequencerEvent {
         volume: NormalizedValue,
         /// Panning position (-1.0 to 1.0).
         panning: BipolarValue,
+        /// True if note should trigger this tick (note delay, retrigger).
+        note_triggered: bool,
         /// True if note should cut this tick.
         note_cut: bool,
+        /// Sample start offset (0.0-1.0, where 1.0 = full sample length).
+        sample_offset: NormalizedValue,
         /// Tone portamento target pitch in semitones (if active).
         tone_porta_pitch: Option<f32>,
     },
