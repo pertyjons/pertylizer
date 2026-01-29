@@ -881,6 +881,7 @@ impl Pattern {
                     instrument,
                     effects: note.effects.clone(),
                     voice_index,
+                    sample_offset: synth_core::NormalizedValue::MIN,
                 });
             }
 

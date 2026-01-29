@@ -31,6 +31,9 @@ pub enum SequencerEvent {
         /// using legato-style retrigger (no envelope reset).
         /// When None, normal voice allocation is used.
         voice_index: Option<VoiceIndex>,
+        /// Sample start offset (0.0-1.0, where 1.0 = full sample length).
+        /// Used by tracker 9xx effect. Default 0.0 means start from beginning.
+        sample_offset: NormalizedValue,
     },
     /// Note off event.
     NoteOff {
@@ -181,6 +184,7 @@ mod tests {
             instrument: SeqInstrumentId(0),
             effects: Vec::new(),
             voice_index: None,
+            sample_offset: NormalizedValue::MIN,
         };
         assert_eq!(event.tick().0, 1000);
     }
@@ -194,6 +198,7 @@ mod tests {
             instrument: SeqInstrumentId(0),
             effects: Vec::new(),
             voice_index: None,
+            sample_offset: NormalizedValue::MIN,
         };
         assert!(note_on.is_note_on());
         assert!(!note_on.is_note_off());
@@ -217,6 +222,7 @@ mod tests {
                 instrument: SeqInstrumentId(0),
                 effects: Vec::new(),
                 voice_index: None,
+                sample_offset: NormalizedValue::MIN,
             },
             SequencerEvent::NoteOn {
                 tick: Tick(100),
@@ -225,6 +231,7 @@ mod tests {
                 instrument: SeqInstrumentId(0),
                 effects: Vec::new(),
                 voice_index: None,
+                sample_offset: NormalizedValue::MIN,
             },
             SequencerEvent::NoteOff {
                 tick: Tick(300),
@@ -248,6 +255,7 @@ mod tests {
             instrument: SeqInstrumentId(5),
             effects: Vec::new(),
             voice_index: None,
+            sample_offset: NormalizedValue::MIN,
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
 

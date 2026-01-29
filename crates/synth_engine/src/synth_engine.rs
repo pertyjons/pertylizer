@@ -1680,6 +1680,7 @@ impl AudioProcessor for SynthEngine {
                     velocity,
                     instrument,
                     voice_index,
+                    sample_offset,
                     ..
                 } => {
                     // Filter by solo track (if set)
@@ -1717,6 +1718,16 @@ impl AudioProcessor for SynthEngine {
                             target
                                 .allocator_mut()
                                 .note_on_fixed_voice(*v_idx, note, vel);
+
+                            // Apply sample offset (9xx effect) if specified
+                            if sample_offset.as_f32() > 0.0
+                                && let Some(voice) = target
+                                    .allocator_mut()
+                                    .voices_mut()
+                                    .get_mut(v_idx.as_usize())
+                            {
+                                voice.retrigger_with_offset(*sample_offset);
+                            }
                         } else {
                             // Polyphonic mode: normal allocation
                             target.note_on(note, vel);
@@ -1725,6 +1736,14 @@ impl AudioProcessor for SynthEngine {
                         // Fallback to first instrument if instrument index is out of range
                         if let Some(v_idx) = voice_index {
                             first.allocator_mut().note_on_fixed_voice(*v_idx, note, vel);
+
+                            // Apply sample offset (9xx effect) if specified
+                            if sample_offset.as_f32() > 0.0
+                                && let Some(voice) =
+                                    first.allocator_mut().voices_mut().get_mut(v_idx.as_usize())
+                            {
+                                voice.retrigger_with_offset(*sample_offset);
+                            }
                         } else {
                             first.note_on(note, vel);
                         }

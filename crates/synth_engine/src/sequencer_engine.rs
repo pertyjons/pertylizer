@@ -425,12 +425,13 @@ impl SequencerEngine {
             return;
         }
 
-        // Check for pending pattern break (at pattern end)
+        // Check for pending pattern break (at row boundary, like pattern jump)
+        // Dxx effect: At end of current ROW, advance to next pattern at row xx
         if let Some(target_row) = self.pending_pattern_break.take()
-            && let Some((current_end, next_order_idx)) = self.get_current_pattern_end()
+            && let Some((_current_end, next_order_idx)) = self.get_current_pattern_end()
         {
-            if self.current_tick >= current_end {
-                // At pattern end - apply break
+            if at_row_boundary {
+                // At row boundary - apply break to next pattern
                 if let Some(target_tick) =
                     self.get_pattern_row_tick(next_order_idx, target_row as usize)
                 {
@@ -444,7 +445,7 @@ impl SequencerEngine {
                     self.pattern_loop_count = 0;
                 }
             } else {
-                // Not at pattern end, keep pending
+                // Not at row boundary, keep pending
                 self.pending_pattern_break = Some(target_row);
             }
         }
@@ -671,9 +672,9 @@ impl SequencerEngine {
                 };
 
                 // Process effects for this channel using the Note Trigger State Machine
-                // Returns: (global_commands, should_trigger_note)
+                // Returns: (global_commands, should_trigger_note, sample_offset)
                 // should_trigger_note is false for tone portamento (3xx/5xx effects)
-                let (global_commands, should_trigger_note) = self
+                let (global_commands, should_trigger_note, sample_offset) = self
                     .effect_processor
                     .process_row_start(track_id, &effects, Some(trigger_info));
 
@@ -752,6 +753,7 @@ impl SequencerEngine {
                         instrument,
                         effects,
                         voice_index,
+                        sample_offset,
                     });
                 }
             } else {
@@ -770,6 +772,7 @@ impl SequencerEngine {
                     instrument,
                     effects,
                     voice_index: None, // No track = polyphonic mode
+                    sample_offset: NormalizedValue::MIN, // Polyphonic mode doesn't support 9xx
                 });
             }
         }
@@ -807,8 +810,8 @@ impl SequencerEngine {
         for (track_id, effects) in effect_events_to_process {
             // Process effects through the effect processor to handle global commands.
             // No trigger_info - effect-only rows don't trigger a new note.
-            // We ignore the should_trigger_note return value since there's no note.
-            let (global_commands, _) = self
+            // We ignore the should_trigger_note and sample_offset since there's no note.
+            let (global_commands, _, _) = self
                 .effect_processor
                 .process_row_start(track_id, &effects, None);
 

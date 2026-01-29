@@ -669,12 +669,13 @@ impl ChannelEffectProcessor {
     /// Returns a tuple of:
     /// - Global commands that need sequencer-level handling
     /// - Whether the note should actually trigger (false for tone portamento)
+    /// - Sample offset (0.0-1.0) for 9xx effect, applies at note start
     pub fn process_row_start(
         &mut self,
         track: TrackId,
         effects: &[EffectCommand],
         trigger_info: Option<NoteTriggerInfo>,
-    ) -> (Vec<GlobalCommand>, bool) {
+    ) -> (Vec<GlobalCommand>, bool, NormalizedValue) {
         self.tick_in_row = TickInRow::ZERO;
         let mut global_commands = Vec::new();
 
@@ -890,7 +891,9 @@ impl ChannelEffectProcessor {
             }
         }
 
-        (global_commands, should_trigger_note)
+        // Return the sample offset for the NoteOn event
+        let sample_offset = state.sample_offset.as_normalized();
+        (global_commands, should_trigger_note, sample_offset)
     }
 
     /// Process a single tick for all channels.

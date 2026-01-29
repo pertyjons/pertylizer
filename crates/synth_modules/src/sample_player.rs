@@ -102,6 +102,12 @@ pub struct SamplePlayer {
     /// If None, uses the primary `sample` field for all notes.
     sample_keymap: Option<Vec<usize>>,
 
+    // Exact loop bounds from sample metadata (avoids f32 precision loss)
+    /// Exact loop start position in frames (from sample.loop_info).
+    exact_loop_start: Option<usize>,
+    /// Exact loop end position in frames (from sample.loop_info).
+    exact_loop_end: Option<usize>,
+
     // Config
     interpolation: Interpolation,
     sample_rate: SampleRate,
@@ -146,6 +152,10 @@ impl SamplePlayer {
             sample_bank: Vec::new(),
             sample_keymap: None,
 
+            // Exact loop bounds
+            exact_loop_start: None,
+            exact_loop_end: None,
+
             // Config
             interpolation: Interpolation::Cubic,
             sample_rate: SampleRate::DVD_QUALITY,
@@ -172,6 +182,11 @@ impl SamplePlayer {
             // Convert exact sample positions to normalized values for UI
             self.loop_start = NormalizedValue::new(loop_info.normalized_start(sample_len));
             self.loop_end = NormalizedValue::new(loop_info.normalized_end(sample_len));
+
+            // Store exact loop bounds to avoid f32 precision loss in advance_position()
+            self.exact_loop_start = Some(loop_info.loop_start as usize);
+            self.exact_loop_end = Some(loop_info.loop_end as usize);
+
             if loop_info.enabled {
                 if loop_info.ping_pong {
                     self.loop_mode = LoopMode::PingPong;
@@ -181,6 +196,10 @@ impl SamplePlayer {
             } else {
                 self.loop_mode = LoopMode::Off;
             }
+        } else {
+            // No loop_info - clear exact bounds, use normalized values
+            self.exact_loop_start = None;
+            self.exact_loop_end = None;
         }
 
         // Apply default volume from sample metadata
@@ -216,6 +235,8 @@ impl SamplePlayer {
         self.waveform_overview = None;
         self.playback_state = PlaybackState::Stopped;
         self.position = PlaybackPosition::ZERO;
+        self.exact_loop_start = None;
+        self.exact_loop_end = None;
     }
 
     /// Add a sample to the sample bank (for multisample instruments).
@@ -264,6 +285,11 @@ impl SamplePlayer {
             if let Some(loop_info) = &sample.loop_info {
                 self.loop_start = NormalizedValue::new(loop_info.normalized_start(sample_len));
                 self.loop_end = NormalizedValue::new(loop_info.normalized_end(sample_len));
+
+                // Store exact loop bounds to avoid f32 precision loss
+                self.exact_loop_start = Some(loop_info.loop_start as usize);
+                self.exact_loop_end = Some(loop_info.loop_end as usize);
+
                 if loop_info.enabled {
                     self.loop_mode = if loop_info.ping_pong {
                         LoopMode::PingPong
@@ -273,6 +299,9 @@ impl SamplePlayer {
                 } else {
                     self.loop_mode = LoopMode::Off;
                 }
+            } else {
+                self.exact_loop_start = None;
+                self.exact_loop_end = None;
             }
 
             // Apply volume from sample
@@ -380,8 +409,12 @@ impl SamplePlayer {
         self.position = self.position.advance(delta);
 
         let pos = self.position.as_f64();
-        let loop_start = self.loop_start_frame() as f64;
-        let loop_end = self.loop_end_frame() as f64;
+        // Use exact loop bounds if available (from sample.loop_info) to avoid f32 precision loss.
+        // This ensures advance_position() and read_with_crossfade() use the same loop points.
+        let loop_start = self
+            .exact_loop_start
+            .unwrap_or_else(|| self.loop_start_frame()) as f64;
+        let loop_end = self.exact_loop_end.unwrap_or_else(|| self.loop_end_frame()) as f64;
         let start = self.start_frame() as f64;
         let end = self.end_frame() as f64;
 

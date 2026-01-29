@@ -1,5 +1,40 @@
 # Version History
 
+## [0.77.0] - 2025
+### Fixed - Tracker Effect Issues
+
+Ytterligare fixar för korrekt tracker-uppspelning baserat på djupgående kodgranskning.
+
+#### Sample offset (9xx) vid initial NoteOn
+- **Problem**: 9xx-effekten applicerades endast vid retrigger, inte vid första note-start
+- **Orsak**: NoteOn-eventet saknade sample_offset fält, offset kom endast via Modulation
+- **Fix**:
+  - Lagt till `sample_offset: NormalizedValue` i `SequencerEvent::NoteOn`
+  - `process_row_start()` returnerar nu även sample_offset
+  - `synth_engine.rs` applicerar offset direkt efter `note_on_fixed_voice()` via `retrigger_with_offset()`
+
+#### PatternBreak (Dxx) timing korrigerad
+- **Problem**: PatternBreak väntade på pattern-slut istället för rad-slut
+- **Orsak**: Villkoret var `current_tick >= current_end` (pattern end) istället för `at_row_boundary`
+- **Fix**: PatternBreak triggas nu vid rad-gräns, precis som PatternJump (Bxx)
+- Resultat: Dxx hoppar nu omedelbart vid rad-slut, inte vid pattern-slut
+
+#### Loop-precision mismatch åtgärdad
+- **Problem**: Olika loop-punkter i `advance_position()` vs `read_with_crossfade()` orsakade klick
+- **Orsak**: `advance_position()` använde f32-normaliserade värden som förlorade precision
+- **Fix**: Nya fält i SamplePlayer:
+  - `exact_loop_start: Option<usize>` - exakt loop-start från sample.loop_info
+  - `exact_loop_end: Option<usize>` - exakt loop-slut från sample.loop_info
+  - `advance_position()` använder nu dessa exakta värden när de finns
+
+#### Tekniska ändringar
+- `SequencerEvent::NoteOn.sample_offset: NormalizedValue` - nytt fält
+- `ChannelEffectProcessor::process_row_start()` returnerar nu `(Vec<GlobalCommand>, bool, NormalizedValue)`
+- `SamplePlayer.exact_loop_start/exact_loop_end` - exakta loop-bounds
+- PatternBreak använder nu `at_row_boundary` istället för `current_tick >= current_end`
+
+---
+
 ## [0.76.0] - 2025
 ### Fixed - Tracker Effect Accuracy
 
