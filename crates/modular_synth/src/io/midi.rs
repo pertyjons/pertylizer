@@ -14,14 +14,14 @@
 //! ## Type Safety
 //!
 //! Raw MIDI bytes (u8) are converted to domain types at the parsing layer:
-//! - Velocity (0-127) -> NormalizedValue (0.0-1.0)
+//! - Velocity (0-127) -> Velocity
 //! - Pitch bend (0-16383) -> BipolarValue (-1.0 to 1.0)
 //! - Channel (0-15) -> MidiChannel
 
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use thiserror::Error;
 
-use synth_core::{BipolarValue, MidiNote, NormalizedValue};
+use synth_core::{BipolarValue, MidiNote, NormalizedValue, Velocity};
 use synth_engine::CommandSender;
 use synth_engine::commands::EngineCommand;
 use synth_engine::instrument::MidiChannel;
@@ -69,7 +69,7 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
                 Some(EngineCommand::NoteOff { note, channel })
             } else {
                 // Convert 0-127 to 0.0-1.0
-                let velocity = NormalizedValue::new(velocity_raw as f32 / 127.0);
+                let velocity = Velocity::from_midi(velocity_raw);
                 Some(EngineCommand::NoteOn {
                     note,
                     velocity,

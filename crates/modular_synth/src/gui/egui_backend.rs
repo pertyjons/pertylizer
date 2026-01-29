@@ -37,7 +37,7 @@ use synth_core::{
     EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
 };
 use synth_core::{Describable, ModuleCategory, PolyModule};
-use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode};
+use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode, Velocity};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
@@ -1497,7 +1497,7 @@ impl SynthApp {
         // Handle note events from mouse interaction - send to active instrument's channel
         if let Some(note) = event.note_on {
             self.handle
-                .note_on_channel(note, NormalizedValue::new(0.8), active_channel);
+                .note_on_channel(note, Velocity::new(0.8), active_channel);
         }
         for note in event.note_off {
             self.handle.note_off_channel(note, active_channel);

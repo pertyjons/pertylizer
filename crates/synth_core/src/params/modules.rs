@@ -88,6 +88,14 @@ pub enum MixerParam {
     Input3(Gain),
     /// Input 4 level
     Input4(Gain),
+    /// Input 5 level
+    Input5(Gain),
+    /// Input 6 level
+    Input6(Gain),
+    /// Input 7 level
+    Input7(Gain),
+    /// Input 8 level
+    Input8(Gain),
     /// Master output level
     Master(Gain),
     /// Mute toggle
@@ -107,6 +115,10 @@ impl MixerParam {
             Self::Input2(_) => "Input 2",
             Self::Input3(_) => "Input 3",
             Self::Input4(_) => "Input 4",
+            Self::Input5(_) => "Input 5",
+            Self::Input6(_) => "Input 6",
+            Self::Input7(_) => "Input 7",
+            Self::Input8(_) => "Input 8",
             Self::Master(_) => "Master",
             Self::Mute(_) => "Mute",
             Self::Limit(_) => "Limit",
@@ -119,6 +131,10 @@ impl MixerParam {
             | Self::Input2(g)
             | Self::Input3(g)
             | Self::Input4(g)
+            | Self::Input5(g)
+            | Self::Input6(g)
+            | Self::Input7(g)
+            | Self::Input8(g)
             | Self::Master(g) => g.as_f32(),
             Self::Mute(b) | Self::Limit(b) => {
                 if *b {
@@ -136,6 +152,10 @@ impl MixerParam {
             Self::Input2(_) => Self::Input2(Gain::new(value)),
             Self::Input3(_) => Self::Input3(Gain::new(value)),
             Self::Input4(_) => Self::Input4(Gain::new(value)),
+            Self::Input5(_) => Self::Input5(Gain::new(value)),
+            Self::Input6(_) => Self::Input6(Gain::new(value)),
+            Self::Input7(_) => Self::Input7(Gain::new(value)),
+            Self::Input8(_) => Self::Input8(Gain::new(value)),
             Self::Master(_) => Self::Master(Gain::new(value)),
             Self::Mute(_) => Self::Mute(value > 0.5),
             Self::Limit(_) => Self::Limit(value > 0.5),

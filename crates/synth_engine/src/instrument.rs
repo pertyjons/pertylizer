@@ -21,7 +21,7 @@ use crate::voice::VoiceState;
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
     AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
-    Semitones, SoloState,
+    Semitones, SoloState, Velocity,
 };
 
 // ============================================================================
@@ -739,7 +739,7 @@ impl Instrument {
     ///
     /// Returns the voice ID if a voice was allocated.
     /// The note is checked against the key range and transposed before playing.
-    pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
         if self.mute_state.is_muted() {
             return None;
         }
@@ -1019,7 +1019,7 @@ mod tests {
         let mut instrument = Instrument::new(InstrumentId::new(1), "Synth");
 
         // Note on should allocate a voice
-        let voice_id = instrument.note_on(MidiNote::C4, 0.8);
+        let voice_id = instrument.note_on(MidiNote::C4, Velocity::new(0.8));
         assert!(voice_id.is_some());
         assert_eq!(instrument.active_voice_count(), 1);
 

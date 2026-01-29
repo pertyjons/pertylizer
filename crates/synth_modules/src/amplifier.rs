@@ -301,6 +301,14 @@ impl PolyModule for Mixer {
                 }
             }
             self.output_buffer.scale(self.master_level.as_f32());
+
+            // Apply limiting if enabled
+            if self.limit_mode.is_enabled() {
+                for j in 0..context.samples.as_usize() {
+                    // Soft limiting using tanh
+                    self.output_buffer[j] = self.output_buffer[j].tanh();
+                }
+            }
         }
 
         if let Some(out) = outputs.get_mut("out") {
@@ -316,6 +324,10 @@ impl PolyModule for Mixer {
                 MixerParam::Input2(l) => self.levels[1] = l,
                 MixerParam::Input3(l) => self.levels[2] = l,
                 MixerParam::Input4(l) => self.levels[3] = l,
+                MixerParam::Input5(l) => self.levels[4] = l,
+                MixerParam::Input6(l) => self.levels[5] = l,
+                MixerParam::Input7(l) => self.levels[6] = l,
+                MixerParam::Input8(l) => self.levels[7] = l,
                 MixerParam::Mute(m) => self.mute_state = MuteState::from(m),
                 MixerParam::Limit(l) => self.limit_mode = LimitMode::from(l),
             }
@@ -330,6 +342,10 @@ impl PolyModule for Mixer {
                 MixerParam::Input2(_) => self.levels[1].as_f32(),
                 MixerParam::Input3(_) => self.levels[2].as_f32(),
                 MixerParam::Input4(_) => self.levels[3].as_f32(),
+                MixerParam::Input5(_) => self.levels[4].as_f32(),
+                MixerParam::Input6(_) => self.levels[5].as_f32(),
+                MixerParam::Input7(_) => self.levels[6].as_f32(),
+                MixerParam::Input8(_) => self.levels[7].as_f32(),
                 MixerParam::Mute(_) => {
                     if self.mute_state.is_muted() {
                         1.0
@@ -357,6 +373,10 @@ impl PolyModule for Mixer {
             Param::Mixer(MixerParam::Input2(self.levels[1])),
             Param::Mixer(MixerParam::Input3(self.levels[2])),
             Param::Mixer(MixerParam::Input4(self.levels[3])),
+            Param::Mixer(MixerParam::Input5(self.levels[4])),
+            Param::Mixer(MixerParam::Input6(self.levels[5])),
+            Param::Mixer(MixerParam::Input7(self.levels[6])),
+            Param::Mixer(MixerParam::Input8(self.levels[7])),
             Param::Mixer(MixerParam::Mute(self.mute_state.is_muted())),
             Param::Mixer(MixerParam::Limit(self.limit_mode.is_enabled())),
         ]

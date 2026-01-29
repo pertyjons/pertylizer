@@ -75,6 +75,13 @@ impl Filter {
         // Clamp resonance to 0.99 max to prevent instability at self-oscillation
         let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 0.99);
 
+        // Apply drive as pre-gain with soft saturation
+        let driven = if self.drive.as_f32() > 1.0 {
+            (input * self.drive.as_f32()).tanh()
+        } else {
+            input * self.drive.as_f32()
+        };
+
         let g = cutoff.to_tan_coeff(self.sample_rate);
         let k = 2.0 - 2.0 * resonance;
 
@@ -85,7 +92,7 @@ impl Filter {
         let ic1 = self.ic1eq.as_f32();
         let ic2 = self.ic2eq.as_f32();
 
-        let v3 = input - ic2;
+        let v3 = driven - ic2;
         let v1 = a1 * ic1 + a2 * v3;
         let v2 = ic2 + a2 * ic1 + a3 * v3;
 
@@ -191,6 +198,13 @@ impl Describable for Filter {
                 .range(-1.0, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(Param::Filter(FilterParam::Drive(Gain::UNITY)), "Drive")
+                    .description("Input gain with soft saturation (above 1.0)")
+                    .range(0.5, 4.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
             .port(

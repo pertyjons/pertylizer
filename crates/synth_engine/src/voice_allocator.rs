@@ -206,24 +206,21 @@ impl VoiceAllocator {
     }
 
     /// Handle note on event.
-    /// Accepts f32 velocity for backward compatibility (converted internally).
     ///
     /// Note: In `Tracker` mode, use `note_on_fixed_voice()` instead for fixed voice allocation.
     /// This method will fall back to polyphonic behavior in Tracker mode.
-    pub fn note_on(&mut self, note: MidiNote, velocity: f32) -> Option<u32> {
-        // Track held notes with type-safe velocity
-        let velocity_typed = Velocity::new(velocity);
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
         self.held_notes.retain(|(n, _)| *n != note);
-        self.held_notes.push((note, velocity_typed));
+        self.held_notes.push((note, velocity));
 
         match self.config.mode {
             AllocationMode::Polyphonic | AllocationMode::Tracker => {
                 // Tracker mode falls back to poly for regular note_on (use note_on_fixed_voice for tracker)
-                self.allocate_poly(note, velocity_typed)
+                self.allocate_poly(note, velocity)
             }
-            AllocationMode::Mono => self.allocate_mono(note, velocity_typed, true),
-            AllocationMode::Legato => self.allocate_mono(note, velocity_typed, false),
-            AllocationMode::Unison => self.allocate_unison(note, velocity_typed),
+            AllocationMode::Mono => self.allocate_mono(note, velocity, true),
+            AllocationMode::Legato => self.allocate_mono(note, velocity, false),
+            AllocationMode::Unison => self.allocate_unison(note, velocity),
         }
     }
 
@@ -322,7 +319,7 @@ impl VoiceAllocator {
     /// # Arguments
     /// * `voice_index` - The voice to use (wrapped with modulo if out of bounds)
     /// * `note` - MIDI note to play
-    /// * `velocity` - Note velocity (0.0-1.0)
+    /// * `velocity` - Note velocity
     ///
     /// # Returns
     /// The voice ID if successful, None if no voices exist.
@@ -330,7 +327,7 @@ impl VoiceAllocator {
         &mut self,
         voice_index: VoiceIndex,
         note: MidiNote,
-        velocity: f32,
+        velocity: Velocity,
     ) -> Option<u32> {
         if self.voices.is_empty() {
             return None;
@@ -338,7 +335,6 @@ impl VoiceAllocator {
 
         // Wrap index if out of bounds
         let idx = voice_index.as_usize() % self.voices.len();
-        let velocity_typed = Velocity::new(velocity);
 
         let voice = &mut self.voices[idx];
 
@@ -352,7 +348,7 @@ impl VoiceAllocator {
         }
 
         // Retrigger the voice - envelope restarts from current phase
-        voice.note_on(note, velocity_typed, self.time);
+        voice.note_on(note, velocity, self.time);
         self.last_note = Some(note);
 
         Some(voice.id)
@@ -631,7 +627,7 @@ mod tests {
 
         // Allocate 4 notes
         for note in 60..64 {
-            let id = allocator.note_on(MidiNote::new(note), 0.8);
+            let id = allocator.note_on(MidiNote::new(note), Velocity::new(0.8));
             assert!(id.is_some());
         }
 
@@ -658,8 +654,8 @@ mod tests {
         };
         let mut allocator = VoiceAllocator::new(config);
 
-        allocator.note_on(MidiNote::C4, 0.8);
-        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.note_on(MidiNote::C4, Velocity::new(0.8));
+        allocator.note_on(MidiNote::new(64), Velocity::new(0.8));
 
         // Only one voice should be active
         assert_eq!(allocator.active_voice_count(), 1);
@@ -680,13 +676,13 @@ mod tests {
         let mut allocator = VoiceAllocator::new(config);
 
         // Fill all voices
-        allocator.note_on(MidiNote::C4, 0.8);
+        allocator.note_on(MidiNote::C4, Velocity::new(0.8));
         allocator.advance_time(SampleCount::new(100));
-        allocator.note_on(MidiNote::new(64), 0.8);
+        allocator.note_on(MidiNote::new(64), Velocity::new(0.8));
         allocator.advance_time(SampleCount::new(100));
 
         // Third note should steal oldest
-        let id = allocator.note_on(MidiNote::new(67), 0.8);
+        let id = allocator.note_on(MidiNote::new(67), Velocity::new(0.8));
         assert!(id.is_some());
 
         // Voice 0 (oldest) should now be playing note 67

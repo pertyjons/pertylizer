@@ -1,6 +1,6 @@
 # Version History
 
-## [0.78.0] - 2025
+## [0.79.0] - 2025
 ### Fixed - Synth Modules Review Issues
 
 Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modules_review.md).
@@ -16,8 +16,15 @@ Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modu
 - **Flanger/Phaser rate_cv**: Port borttagen - AudioEffect trait stöder inte named CV inputs.
 - **Chorus Voices parameter**: Nu exponerad i descriptor.
 
+#### Oanvända parametrar implementerade
+- **Distortion BitDepth**: Nu exponerad i descriptor och använd i bitcrush-läge.
+- **Mixer Input5-8**: Nivåparametrar för alla 8 ingångar nu tillgängliga.
+- **Mixer LimitMode**: Soft limiting (tanh) implementerat i process().
+- **Filter Drive**: Nu exponerad i descriptor och applicerad som pre-gain med soft saturation.
+
 #### Rust best practices
 - `#[must_use]` tillagt på `SampleValue` och `SampleIndex`.
+- `velocity: f32` → `Velocity` i VoiceAllocator, Instrument, EngineCommand och EngineEvent.
 
 #### Ändringar
 - `Envelope.prev_gate: f32` - nytt fält för edge detection
@@ -28,6 +35,11 @@ Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modu
 - `Lfo.process()` - respekterar retrigger_mode
 - Flanger/Phaser descriptor - rate_cv port borttagen
 - Chorus descriptor - Voices parameter tillagd
+- `DistortionParam::BitDepth` - nytt enum-variant
+- `MixerParam::Input5-8` - nya enum-varianter
+- `Mixer.process()` - soft limiting via tanh()
+- `Filter.process_sample()` - drive pre-gain med saturation
+- Velocity typ-säkerhet genom hela note-flödet
 
 ---
 

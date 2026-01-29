@@ -249,6 +249,8 @@ pub enum DistortionParam {
     Drive(NormalizedValue),
     Tone(NormalizedValue),
     Mix(NormalizedValue),
+    /// Bit depth for bitcrush mode (1-16 bits).
+    BitDepth(NormalizedValue),
 }
 
 impl DistortionParam {
@@ -262,13 +264,14 @@ impl DistortionParam {
             Self::Drive(_) => "Drive",
             Self::Tone(_) => "Tone",
             Self::Mix(_) => "Mix",
+            Self::BitDepth(_) => "BitDepth",
         }
     }
 
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::Mode(m) => m.index() as f32,
-            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.as_f32(),
+            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) | Self::BitDepth(v) => v.as_f32(),
         }
     }
 
@@ -280,6 +283,7 @@ impl DistortionParam {
             Self::Drive(_) => Self::Drive(NormalizedValue::new(value)),
             Self::Tone(_) => Self::Tone(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+            Self::BitDepth(_) => Self::BitDepth(NormalizedValue::new(value)),
         }
     }
 }

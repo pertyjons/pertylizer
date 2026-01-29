@@ -11,7 +11,9 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
-use synth_core::{BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones};
+use synth_core::{
+    BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones, Velocity,
+};
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, Tick, TrackId};
 
@@ -295,8 +297,8 @@ pub enum EngineCommand {
     /// Start a note with type-safe velocity.
     NoteOn {
         note: MidiNote,
-        /// Velocity as normalized value [0.0, 1.0].
-        velocity: NormalizedValue,
+        /// Note velocity.
+        velocity: Velocity,
         channel: MidiChannel,
     },
 
@@ -678,8 +680,8 @@ pub enum EngineEvent {
     NoteTriggered {
         /// MIDI note number.
         note: MidiNote,
-        /// Velocity as normalized value (0.0-1.0).
-        velocity: f32,
+        /// Note velocity.
+        velocity: Velocity,
         /// MIDI channel the note was triggered on.
         channel: MidiChannel,
     },

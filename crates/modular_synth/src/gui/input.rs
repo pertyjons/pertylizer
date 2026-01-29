@@ -124,7 +124,7 @@ pub fn handle_keyboard_input(
         if !pressed_keys.get(&note).copied().unwrap_or(false) {
             handle.note_on_channel(
                 MidiNote::new(note),
-                synth_core::NormalizedValue::new(0.8),
+                synth_core::Velocity::new(0.8),
                 active_channel,
             );
             pressed_keys.insert(note, true);

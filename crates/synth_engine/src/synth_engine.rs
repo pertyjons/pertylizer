@@ -166,7 +166,7 @@ impl EngineHandle {
     }
 
     /// Send a note on event to the default channel.
-    pub fn note_on(&mut self, note: MidiNote, velocity: NormalizedValue) -> bool {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
@@ -186,7 +186,7 @@ impl EngineHandle {
     pub fn note_on_channel(
         &mut self,
         note: MidiNote,
-        velocity: NormalizedValue,
+        velocity: Velocity,
         channel: super::instrument::MidiChannel,
     ) -> bool {
         self.send(EngineCommand::NoteOn {
@@ -996,9 +996,8 @@ impl SynthEngine {
     // Note control handlers
     // ========================================================================
 
-    fn handle_note_on(&mut self, note: MidiNote, velocity: NormalizedValue, channel: MidiChannel) {
+    fn handle_note_on(&mut self, note: MidiNote, velocity: Velocity, channel: MidiChannel) {
         let channel_raw = channel.as_zero_indexed();
-        let velocity_f32 = velocity.as_f32();
         let mut note_triggered = false;
 
         // Check if there's a focused instrument for keyboard input
@@ -1033,20 +1032,20 @@ impl SynthEngine {
                 continue;
             }
 
-            if instrument.note_on(note, velocity_f32).is_some() {
+            if instrument.note_on(note, velocity).is_some() {
                 note_triggered = true;
             }
         }
 
         if self.use_modular_routing {
-            self.module_graph.note_on(note, Velocity::new(velocity_f32));
+            self.module_graph.note_on(note, velocity);
             note_triggered = true;
         }
 
         if note_triggered {
             let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
                 note,
-                velocity: velocity_f32,
+                velocity,
                 channel,
             });
         }
@@ -1692,7 +1691,7 @@ impl AudioProcessor for SynthEngine {
                     }
 
                     let note = MidiNote::new(pitch.as_midi());
-                    let vel = velocity.as_f32();
+                    let vel = *velocity;
                     let instrument_index = instrument.0 as usize;
 
                     // In tracker mode: cut the voice on ALL other instruments first.
@@ -1942,9 +1941,9 @@ mod tests {
         let (mut engine, mut handle) = SynthEngine::with_config(config);
 
         // Send multiple notes
-        handle.note_on(MidiNote::C4, NormalizedValue::new(0.8));
-        handle.note_on(MidiNote::new(64), NormalizedValue::new(0.8));
-        handle.note_on(MidiNote::new(67), NormalizedValue::new(0.8));
+        handle.note_on(MidiNote::C4, Velocity::new(0.8));
+        handle.note_on(MidiNote::new(64), Velocity::new(0.8));
+        handle.note_on(MidiNote::new(67), Velocity::new(0.8));
 
         // Process commands
         engine.process_commands();
@@ -1991,7 +1990,7 @@ mod tests {
 
         // Send note on channel 2 - should NOT be received
         let ch2 = crate::instrument::MidiChannel::from_one_indexed(2).unwrap();
-        handle.note_on_channel(MidiNote::new(64), NormalizedValue::new(0.8), ch2);
+        handle.note_on_channel(MidiNote::new(64), Velocity::new(0.8), ch2);
         engine.process_commands();
         assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
     }

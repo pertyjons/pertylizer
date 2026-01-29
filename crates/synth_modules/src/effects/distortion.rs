@@ -163,6 +163,16 @@ impl Describable for Distortion {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Distortion(DistortionParam::BitDepth(NormalizedValue::CENTER)),
+                    "Bit Depth",
+                )
+                .description("Bit depth for bitcrush mode (1-16 bits)")
+                .range(1.0, 16.0)
+                .default(8.0)
+                .widget(WidgetHint::Knob),
+            )
     }
 }
 
@@ -206,6 +216,10 @@ impl AudioEffect for Distortion {
                 DistortionParam::Mix(m) => {
                     self.mix = m;
                 }
+                DistortionParam::BitDepth(b) => {
+                    // Convert normalized 0-1 to bit depth 1-16
+                    self.bit_depth = 1.0 + b.as_f32() * 15.0;
+                }
             }
         }
     }
@@ -217,6 +231,8 @@ impl AudioEffect for Distortion {
                 DistortionParam::Drive(_) => self.drive.as_f32(),
                 DistortionParam::Tone(_) => self.tone.as_f32(),
                 DistortionParam::Mix(_) => self.mix.as_f32(),
+                // Return actual bit depth value (1-16), not normalized
+                DistortionParam::BitDepth(_) => self.bit_depth,
             })
         } else {
             None
@@ -224,11 +240,14 @@ impl AudioEffect for Distortion {
     }
 
     fn get_params(&self) -> Vec<Param> {
+        // Convert bit_depth (1-16) to normalized (0-1)
+        let bit_depth_normalized = NormalizedValue::new((self.bit_depth - 1.0) / 15.0);
         vec![
             Param::Distortion(DistortionParam::Mode(self.dist_type)),
             Param::Distortion(DistortionParam::Drive(self.drive)),
             Param::Distortion(DistortionParam::Tone(self.tone)),
             Param::Distortion(DistortionParam::Mix(self.mix)),
+            Param::Distortion(DistortionParam::BitDepth(bit_depth_normalized)),
         ]
     }
 

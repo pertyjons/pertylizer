@@ -6,7 +6,7 @@
 use crate::gui::theme::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use std::collections::HashMap;
-use synth_core::MidiNote;
+use synth_core::{MidiNote, Velocity};
 
 /// MIDI note number for A0 (lowest note on 88-key piano)
 pub const PIANO_LOW_NOTE: u8 = MidiNote::A0.as_u8();
@@ -60,9 +60,8 @@ impl PianoKeyboard {
     }
 
     /// Mark a note as pressed with velocity (for visual feedback)
-    pub fn set_note_on(&mut self, note: MidiNote, velocity: f32) {
-        self.pressed_keys
-            .insert(note.as_u8(), velocity.clamp(0.0, 1.0));
+    pub fn set_note_on(&mut self, note: MidiNote, velocity: Velocity) {
+        self.pressed_keys.insert(note.as_u8(), velocity.as_f32());
     }
 
     /// Mark a note as released
