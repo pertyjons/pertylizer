@@ -86,10 +86,6 @@ impl Describable for Compressor {
             .port(PortDescriptor::audio_input("in_r", "In R").description("Right input"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
-            .port(
-                PortDescriptor::control_input("sidechain", "Sidechain")
-                    .description("External sidechain input"),
-            )
             .parameter(
                 ParameterDescriptor::float(
                     Param::Compressor(CompressorParam::Threshold(Decibels::new(-20.0))),

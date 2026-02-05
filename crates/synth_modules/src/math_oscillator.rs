@@ -28,6 +28,8 @@ pub struct MathOscillator {
     // Parameters
     algo: MathAlgo,
     frequency: Hertz,
+    /// Base frequency before FM modulation (set by note_on or set_param).
+    base_frequency: Hertz,
     var_a: NormalizedValue,
     var_b: NormalizedValue,
     var_c: NormalizedValue,
@@ -63,6 +65,7 @@ impl MathOscillator {
         Self {
             algo: MathAlgo::SineFM,
             frequency: Hertz::A4,
+            base_frequency: Hertz::A4,
             var_a: NormalizedValue::CENTER,
             var_b: NormalizedValue::CENTER,
             var_c: NormalizedValue::CENTER,
@@ -85,6 +88,7 @@ impl MathOscillator {
     /// Set frequency from MIDI note.
     pub fn set_note(&mut self, note: MidiNote) {
         self.frequency = note.to_frequency();
+        self.base_frequency = self.frequency;
     }
 
     /// Generate white noise sample using fastrand (thread-local, lock-free).
@@ -482,9 +486,9 @@ impl PolyModule for MathOscillator {
             // Apply FM
             if let Some(fm) = fm_input {
                 let fm_val = fm[i];
-                // FM modulates frequency exponentially
+                // FM modulates frequency exponentially relative to base frequency
                 let freq_mult = (fm_val * 2.0).exp2();
-                self.frequency = Hertz::new(440.0 * freq_mult); // TODO: Use base frequency
+                self.frequency = Hertz::new(self.base_frequency.as_f32() * freq_mult);
             }
 
             // Apply param modulation
@@ -519,7 +523,8 @@ impl PolyModule for MathOscillator {
                     self.reset_state();
                 }
                 MathOscillatorParam::Frequency(f) => {
-                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0))
+                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0));
+                    self.base_frequency = self.frequency;
                 }
                 MathOscillatorParam::ParamA(v) => self.var_a = v,
                 MathOscillatorParam::ParamB(v) => self.var_b = v,

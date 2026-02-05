@@ -34,6 +34,8 @@ pub struct Lfo {
     sync_mode: SyncMode,
     sync_division: BeatDivision,
     retrigger_mode: RetriggerMode,
+    /// Previous retrigger signal value for edge detection (persists across buffers).
+    prev_retrigger: f32,
     output_buffer: AudioBuffer,
 }
 
@@ -52,6 +54,7 @@ impl Lfo {
             sync_mode: SyncMode::Free,
             sync_division: BeatDivision::QUARTER,
             retrigger_mode: RetriggerMode::Continue,
+            prev_retrigger: 0.0,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -156,7 +159,6 @@ impl PolyModule for Lfo {
 
         let retrigger_input = inputs.get(PortName::intern("retrigger"));
         let rate_cv = inputs.get(PortName::RATE_CV);
-        let mut prev_retrigger = 0.0f32;
 
         // In tempo sync mode, derive phase directly from beat position for lock
         let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
@@ -167,10 +169,10 @@ impl PolyModule for Lfo {
                 && let Some(retrig) = retrigger_input
             {
                 let val = retrig[i];
-                if val > 0.5 && prev_retrigger <= 0.5 {
+                if val > 0.5 && self.prev_retrigger <= 0.5 {
                     self.retrigger();
                 }
-                prev_retrigger = val;
+                self.prev_retrigger = val;
             }
 
             if use_beat_sync {
@@ -267,6 +269,7 @@ impl PolyModule for Lfo {
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
         self.sh_value = 0.0;
+        self.prev_retrigger = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}

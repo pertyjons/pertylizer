@@ -1982,7 +1982,7 @@ mod tests {
         // Send note on channel 1 - should be received
         handle.note_on_channel(
             MidiNote::C4,
-            NormalizedValue::new(0.8),
+            Velocity::new(0.8),
             crate::instrument::MidiChannel::CH1,
         );
         engine.process_commands();

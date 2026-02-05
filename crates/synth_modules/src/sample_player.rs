@@ -682,6 +682,16 @@ impl Describable for SamplePlayer {
                 .widget(WidgetHint::Dropdown),
             )
             .parameter(
+                ParameterDescriptor::float(
+                    Param::SamplePlayer(SamplePlayerParam::Pan(BipolarValue::CENTER)),
+                    "Pan",
+                )
+                .description("Stereo pan position (-1 left, 0 center, +1 right)")
+                .range(-1.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
                 ParameterDescriptor::choice(
                     Param::SamplePlayer(SamplePlayerParam::Interpolation(Interpolation::Cubic)),
                     "Interp",
@@ -843,6 +853,7 @@ impl PolyModule for SamplePlayer {
             Param::SamplePlayer(SamplePlayerParam::VelocitySensitivity(
                 self.velocity_sensitivity,
             )),
+            Param::SamplePlayer(SamplePlayerParam::Pan(self.pan)),
             Param::SamplePlayer(SamplePlayerParam::ReleaseMode(self.release_mode)),
             Param::SamplePlayer(SamplePlayerParam::Interpolation(self.interpolation)),
         ]

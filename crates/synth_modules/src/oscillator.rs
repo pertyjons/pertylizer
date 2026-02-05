@@ -38,6 +38,8 @@ pub struct Oscillator {
     // State
     phase: Phase,
     sample_rate: SampleRate,
+    /// Previous sync signal value for edge detection (persists across buffers).
+    prev_sync: f32,
 
     // Outputs
     output_buffer: AudioBuffer,
@@ -57,6 +59,7 @@ impl Oscillator {
             fm_amount: BipolarValue::MAX,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
+            prev_sync: 0.0,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -257,8 +260,6 @@ impl PolyModule for Oscillator {
         let pwm_input = inputs.get(PortName::PWM);
         let sync_input = inputs.get(PortName::SYNC);
 
-        let mut prev_sync = 0.0f32;
-
         for i in 0..context.samples.as_usize() {
             let fm = fm_input
                 .map(|f| f[i] * self.fm_amount.as_f32())
@@ -272,10 +273,10 @@ impl PolyModule for Oscillator {
 
             if let Some(sync) = sync_input {
                 let sync_val = sync[i];
-                if sync_val > 0.5 && prev_sync <= 0.5 {
+                if sync_val > 0.5 && self.prev_sync <= 0.5 {
                     self.phase = Phase::ZERO;
                 }
-                prev_sync = sync_val;
+                self.prev_sync = sync_val;
             }
 
             let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
@@ -345,6 +346,7 @@ impl PolyModule for Oscillator {
 
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
+        self.prev_sync = 0.0;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {

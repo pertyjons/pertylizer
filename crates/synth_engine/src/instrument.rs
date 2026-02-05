@@ -20,7 +20,7 @@ use crate::graph::ModuleGraph;
 use crate::voice::VoiceState;
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
+    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext, Seconds,
     Semitones, SoloState, Velocity,
 };
 
@@ -831,7 +831,7 @@ impl Instrument {
             active_count += 1;
 
             // Update glide and increment age
-            let delta_time = sample_count as f32 / context.sample_rate.as_f32();
+            let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
             voice.glide.update(delta_time);
             voice.age = voice.age + samples;
 

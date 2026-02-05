@@ -184,30 +184,38 @@ impl AudioEffect for Phaser {
                 in_l
             };
 
-            // Calculate LFO value (sine wave)
-            let lfo = (self.lfo_phase.as_f32() * std::f32::consts::TAU).sin();
-            self.lfo_phase = Phase::new((self.lfo_phase.as_f32() + phase_inc).rem_euclid(1.0));
+            // Calculate LFO values (sine wave with stereo offset)
+            let lfo_phase_l = self.lfo_phase.as_f32();
+            let lfo_phase_r = (lfo_phase_l + 0.25).rem_euclid(1.0); // 90° offset for stereo width
+            let lfo_l = (lfo_phase_l * std::f32::consts::TAU).sin();
+            let lfo_r = (lfo_phase_r * std::f32::consts::TAU).sin();
+            self.lfo_phase = Phase::new((lfo_phase_l + phase_inc).rem_euclid(1.0));
 
-            // Calculate modulated frequency
+            // Calculate modulated frequencies for left and right
             let depth = self.depth.as_f32();
-            let freq_mod_hz = self.center_freq.as_f32() * (1.0 + lfo * depth * 0.8);
-            let freq_mod = Hertz::new(freq_mod_hz.clamp(100.0, self.sample_rate.as_f32() * 0.45));
+            let freq_mod_l_hz = self.center_freq.as_f32() * (1.0 + lfo_l * depth * 0.8);
+            let freq_mod_r_hz = self.center_freq.as_f32() * (1.0 + lfo_r * depth * 0.8);
+            let freq_mod_l =
+                Hertz::new(freq_mod_l_hz.clamp(100.0, self.sample_rate.as_f32() * 0.45));
+            let freq_mod_r =
+                Hertz::new(freq_mod_r_hz.clamp(100.0, self.sample_rate.as_f32() * 0.45));
 
-            // Calculate coefficient for all-pass filters
-            let coeff = self.freq_to_coeff(freq_mod);
+            // Calculate coefficients for all-pass filters
+            let coeff_l = self.freq_to_coeff(freq_mod_l);
+            let coeff_r = self.freq_to_coeff(freq_mod_r);
 
             // Process left channel through all-pass cascade
             let feedback = self.feedback.as_f32();
             let mut sample_l = in_l + self.feedback_l * feedback;
             for stage in &mut self.stages_l {
-                sample_l = stage.process(sample_l, coeff);
+                sample_l = stage.process(sample_l, coeff_l);
             }
             self.feedback_l = sample_l;
 
-            // Process right channel (slightly offset phase for stereo width)
+            // Process right channel with offset phase for stereo width
             let mut sample_r = in_r + self.feedback_r * feedback;
             for stage in &mut self.stages_r {
-                sample_r = stage.process(sample_r, coeff);
+                sample_r = stage.process(sample_r, coeff_r);
             }
             self.feedback_r = sample_r;
 

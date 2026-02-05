@@ -180,8 +180,8 @@ impl Envelope {
         self.stage != EnvelopeStage::Idle
     }
 
-    pub fn trigger(&mut self, velocity: f32) {
-        self.velocity = NormalizedValue::new(velocity);
+    pub fn trigger(&mut self, velocity: Velocity) {
+        self.velocity = NormalizedValue::new(velocity.as_f32());
         self.stage = EnvelopeStage::Attack;
         self.target_level = NormalizedValue::MAX;
         self.time_in_stage = 0.0;
@@ -418,7 +418,7 @@ impl PolyModule for Envelope {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
                 if gate_val > 0.5 && self.prev_gate <= 0.5 {
-                    let vel = velocity_input.map(|v| v[i]).unwrap_or(1.0);
+                    let vel = Velocity::new(velocity_input.map(|v| v[i]).unwrap_or(1.0));
                     self.trigger(vel);
                 } else if gate_val <= 0.5 && self.prev_gate > 0.5 {
                     self.release();
@@ -495,7 +495,7 @@ impl PolyModule for Envelope {
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
-        self.trigger(velocity.as_f32());
+        self.trigger(velocity);
     }
 
     fn note_off(&mut self) {
@@ -521,7 +521,7 @@ mod tests {
     fn test_envelope_trigger() {
         let mut env = Envelope::new();
         env.sample_rate = SampleRate::DVD_QUALITY;
-        env.trigger(1.0);
+        env.trigger(Velocity::MAX);
         assert_eq!(env.stage, EnvelopeStage::Attack);
     }
 }

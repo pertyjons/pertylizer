@@ -128,29 +128,29 @@ impl VoiceState {
 
 /// Glide (portamento) state for smooth pitch transitions.
 #[derive(Debug, Clone, Copy)]
-pub struct GlideState {
-    /// Source frequency in Hz
-    pub from_freq: f32,
-    /// Target frequency in Hz
-    pub to_freq: f32,
-    /// Current frequency (during glide)
-    pub current_freq: f32,
-    /// Glide time in seconds
-    pub time: f32,
-    /// Current position in glide (0.0 = start, 1.0 = complete)
-    pub position: f32,
-    /// Whether glide is active
-    pub active: bool,
+pub(crate) struct GlideState {
+    /// Source frequency.
+    pub(crate) from_freq: Hertz,
+    /// Target frequency.
+    pub(crate) to_freq: Hertz,
+    /// Current frequency (during glide).
+    pub(crate) current_freq: Hertz,
+    /// Glide time.
+    pub(crate) time: Seconds,
+    /// Current position in glide (0.0 = start, 1.0 = complete).
+    pub(crate) position: NormalizedValue,
+    /// Whether glide is active.
+    pub(crate) active: bool,
 }
 
 impl Default for GlideState {
     fn default() -> Self {
         Self {
-            from_freq: 440.0,
-            to_freq: 440.0,
-            current_freq: 440.0,
-            time: 0.0,
-            position: 1.0,
+            from_freq: Hertz::A4,
+            to_freq: Hertz::A4,
+            current_freq: Hertz::A4,
+            time: Seconds::ZERO,
+            position: NormalizedValue::MAX,
             active: false,
         }
     }
@@ -158,59 +158,60 @@ impl Default for GlideState {
 
 impl GlideState {
     /// Start a new glide from current frequency to target.
-    pub fn start(&mut self, target_freq: f32, glide_time: f32) {
-        if glide_time > 0.0 && (self.current_freq - target_freq).abs() > 0.01 {
+    pub(crate) fn start(&mut self, target_freq: Hertz, glide_time: Seconds) {
+        if glide_time.as_f32() > 0.0
+            && (self.current_freq.as_f32() - target_freq.as_f32()).abs() > 0.01
+        {
             self.from_freq = self.current_freq;
             self.to_freq = target_freq;
             self.time = glide_time;
-            self.position = 0.0;
+            self.position = NormalizedValue::MIN;
             self.active = true;
         } else {
             // No glide - jump directly
             self.current_freq = target_freq;
             self.from_freq = target_freq;
             self.to_freq = target_freq;
-            self.position = 1.0;
+            self.position = NormalizedValue::MAX;
             self.active = false;
         }
     }
 
     /// Update the glide state (call once per sample or per block).
     /// Returns the current frequency.
-    pub fn update(&mut self, delta_time: f32) -> f32 {
+    pub(crate) fn update(&mut self, delta_time: Seconds) -> Hertz {
         if !self.active {
             return self.current_freq;
         }
 
         // Update position
-        if self.time > 0.0 {
-            self.position += delta_time / self.time;
+        if self.time.as_f32() > 0.0 {
+            self.position = NormalizedValue::new(
+                self.position.as_f32() + delta_time.as_f32() / self.time.as_f32(),
+            );
         } else {
-            self.position = 1.0;
+            self.position = NormalizedValue::MAX;
         }
 
-        if self.position >= 1.0 {
-            self.position = 1.0;
+        if self.position.as_f32() >= 1.0 {
+            self.position = NormalizedValue::MAX;
             self.active = false;
             self.current_freq = self.to_freq;
         } else {
             // Exponential interpolation (sounds more natural for pitch)
             // f(t) = from * (to/from)^t
-            let ratio = self.to_freq / self.from_freq;
-            self.current_freq = self.from_freq * ratio.powf(self.position);
+            let ratio = self.to_freq.as_f32() / self.from_freq.as_f32();
+            self.current_freq =
+                Hertz::new(self.from_freq.as_f32() * ratio.powf(self.position.as_f32()));
         }
 
         self.current_freq
     }
 
     /// Get current frequency without updating.
-    pub fn get_frequency(&self) -> f32 {
+    #[must_use]
+    pub(crate) fn get_frequency(&self) -> Hertz {
         self.current_freq
-    }
-
-    /// Check if glide is complete.
-    pub fn is_complete(&self) -> bool {
-        !self.active
     }
 }
 
@@ -297,7 +298,7 @@ pub struct Voice {
     steal_fade_samples: usize,
 
     /// Glide state for portamento.
-    pub glide: GlideState,
+    pub(crate) glide: GlideState,
     /// Configured glide time.
     glide_time: Seconds,
 
@@ -385,7 +386,7 @@ impl Voice {
     }
 
     /// Get the current frequency (accounting for glide).
-    pub fn get_current_frequency(&self) -> f32 {
+    pub fn get_current_frequency(&self) -> Hertz {
         self.glide.get_frequency()
     }
 
@@ -412,12 +413,12 @@ impl Voice {
 
     /// Trigger note on with type-safe velocity.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
-        let target_freq = Self::note_to_freq(note);
+        let target_freq = Hertz::new(Self::note_to_freq(note));
 
         // Start glide from current position if we have a glide time and were already active
         let was_active = matches!(self.state, VoiceState::Active { .. });
         if self.glide_time.as_f32() > 0.0 && was_active {
-            self.glide.start(target_freq, self.glide_time.as_f32());
+            self.glide.start(target_freq, self.glide_time);
         } else {
             // No glide - set frequency immediately
             self.glide.current_freq = target_freq;
@@ -442,11 +443,11 @@ impl Voice {
     ///
     /// Updates the note in the current state if active.
     pub fn glide_to_note(&mut self, new_note: MidiNote) {
-        let target_freq = Self::note_to_freq(new_note);
+        let target_freq = Hertz::new(Self::note_to_freq(new_note));
 
         // Update glide target
         if self.glide_time.as_f32() > 0.0 {
-            self.glide.start(target_freq, self.glide_time.as_f32());
+            self.glide.start(target_freq, self.glide_time);
         } else {
             self.glide.current_freq = target_freq;
             self.glide.to_freq = target_freq;
@@ -559,7 +560,7 @@ impl Voice {
             // semitones 60 = middle C = 261.63 Hz, using A4 = 440 Hz reference
             Hertz::new(440.0 * 2.0f32.powf((tone_porta_semitones.as_f32() - 69.0) / 12.0))
         } else {
-            Hertz::new(self.glide.get_frequency())
+            self.glide.get_frequency()
         };
 
         // Apply pitch bend: bend_semitones = pitch_bend * range
@@ -704,23 +705,23 @@ mod tests {
         let mut glide = GlideState::default();
 
         // Start at 440 Hz
-        glide.current_freq = 440.0;
+        glide.current_freq = Hertz::A4;
 
         // Glide to 880 Hz (one octave up) over 0.1 seconds
-        glide.start(880.0, 0.1);
+        glide.start(Hertz::new(880.0), Seconds::new(0.1));
 
         assert!(glide.active);
-        assert_eq!(glide.from_freq, 440.0);
-        assert_eq!(glide.to_freq, 880.0);
+        assert_eq!(glide.from_freq, Hertz::A4);
+        assert_eq!(glide.to_freq, Hertz::new(880.0));
 
         // Update halfway
-        let freq = glide.update(0.05);
-        assert!(freq > 440.0 && freq < 880.0);
+        let freq = glide.update(Seconds::new(0.05));
+        assert!(freq.as_f32() > 440.0 && freq.as_f32() < 880.0);
 
         // Complete the glide
-        let freq = glide.update(0.1);
+        let freq = glide.update(Seconds::new(0.1));
         assert!(!glide.active);
-        assert!((freq - 880.0).abs() < 1.0);
+        assert!((freq.as_f32() - 880.0).abs() < 1.0);
     }
 
     #[test]

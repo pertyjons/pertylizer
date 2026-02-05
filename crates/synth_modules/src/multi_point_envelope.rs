@@ -80,6 +80,7 @@ pub struct MultiPointEnvelope {
     current_frame: f32, // Fractional frame position for sample-accurate timing
     fadeout_level: f32, // 1.0 -> 0.0 during fadeout
     velocity: NormalizedValue,
+    velocity_sensitivity: NormalizedValue,
 
     // Timing
     sample_rate: SampleRate,
@@ -107,6 +108,7 @@ impl MultiPointEnvelope {
             current_frame: 0.0,
             fadeout_level: 1.0,
             velocity: NormalizedValue::MAX,
+            velocity_sensitivity: NormalizedValue::MAX,
             sample_rate: SampleRate::DVD_QUALITY,
             tick_rate: 50.0, // Default: 125 BPM * 2 / 5 = 50 Hz
             samples_per_frame: 960.0,
@@ -203,7 +205,7 @@ impl MultiPointEnvelope {
     }
 
     /// Trigger the envelope with a velocity.
-    pub fn trigger(&mut self, velocity: f32) {
+    pub fn trigger(&mut self, velocity: Velocity) {
         self.stage = if self.points.is_empty() {
             MultiPointStage::Idle
         } else {
@@ -211,7 +213,7 @@ impl MultiPointEnvelope {
         };
         self.current_frame = 0.0;
         self.fadeout_level = 1.0;
-        self.velocity = NormalizedValue::new(velocity);
+        self.velocity = NormalizedValue::new(velocity.as_f32());
     }
 
     /// Release the envelope (note off).
@@ -231,6 +233,13 @@ impl MultiPointEnvelope {
     /// Update timing calculations based on sample rate and tick rate.
     fn update_timing(&mut self) {
         self.samples_per_frame = self.sample_rate.as_f32() / self.tick_rate.max(1.0);
+    }
+
+    /// Calculate velocity scale factoring in sensitivity.
+    /// At sensitivity=0: always 1.0; at sensitivity=1: use raw velocity.
+    #[inline]
+    fn velocity_scale(&self) -> f32 {
+        1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32())
     }
 
     /// Process a single sample.
@@ -285,13 +294,13 @@ impl MultiPointEnvelope {
                     }
                 }
 
-                value.as_f32() * self.velocity.as_f32()
+                value.as_f32() * self.velocity_scale()
             }
 
             MultiPointStage::Sustaining => {
                 // Hold at sustain point value
                 let value = self.interpolate_at_frame(self.current_frame);
-                value.as_f32() * self.velocity.as_f32()
+                value.as_f32() * self.velocity_scale()
             }
 
             MultiPointStage::Fadeout => {
@@ -314,7 +323,7 @@ impl MultiPointEnvelope {
                     1.0
                 };
 
-                value * self.fadeout_level * self.velocity.as_f32()
+                value * self.fadeout_level * self.velocity_scale()
             }
         }
     }
@@ -409,7 +418,7 @@ impl PolyModule for MultiPointEnvelope {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
                 if gate_val > 0.5 && self.prev_gate <= 0.5 {
-                    let vel = velocity_input.map(|v| v[i]).unwrap_or(1.0);
+                    let vel = Velocity::new(velocity_input.map(|v| v[i]).unwrap_or(1.0));
                     self.trigger(vel);
                 } else if gate_val <= 0.5 && self.prev_gate > 0.5 {
                     self.release();
@@ -428,20 +437,20 @@ impl PolyModule for MultiPointEnvelope {
         // Multi-point envelope uses direct configuration methods
         // rather than Param variants for point data
         if let Param::Envelope(synth_core::EnvelopeParam::VelocitySensitivity(v)) = param {
-            self.velocity = v;
+            self.velocity_sensitivity = v;
         }
     }
 
     fn get_param(&self, param: &Param) -> Option<f32> {
         if let Param::Envelope(synth_core::EnvelopeParam::VelocitySensitivity(_)) = param {
-            return Some(self.velocity.as_f32());
+            return Some(self.velocity_sensitivity.as_f32());
         }
         None
     }
 
     fn get_params(&self) -> Vec<Param> {
         vec![Param::Envelope(
-            synth_core::EnvelopeParam::VelocitySensitivity(self.velocity),
+            synth_core::EnvelopeParam::VelocitySensitivity(self.velocity_sensitivity),
         )]
     }
 
@@ -457,7 +466,7 @@ impl PolyModule for MultiPointEnvelope {
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
-        self.trigger(velocity.as_f32());
+        self.trigger(velocity);
     }
 
     fn note_off(&mut self) {
@@ -489,7 +498,7 @@ mod tests {
     #[test]
     fn test_trigger() {
         let mut env = MultiPointEnvelope::with_points(&[(0, 0.0), (10, 1.0)]);
-        env.trigger(1.0);
+        env.trigger(Velocity::MAX);
         assert_eq!(env.stage(), MultiPointStage::Playing);
     }
 
@@ -516,7 +525,7 @@ mod tests {
         env.sample_rate = SampleRate::new(48000.0);
         env.tick_rate = 50.0;
         env.update_timing();
-        env.trigger(1.0);
+        env.trigger(Velocity::MAX);
 
         // Process enough samples to reach sustain
         for _ in 0..50000 {
@@ -533,7 +542,7 @@ mod tests {
         env.sample_rate = SampleRate::new(48000.0);
         env.tick_rate = 50.0;
         env.update_timing();
-        env.trigger(1.0);
+        env.trigger(Velocity::MAX);
 
         // Process to sustain
         for _ in 0..50000 {

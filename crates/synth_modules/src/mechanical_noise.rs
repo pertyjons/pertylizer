@@ -23,7 +23,6 @@ pub struct MechanicalNoise {
     level: Gain,
 
     // Envelope state
-    envelope_phase: f32,
     envelope_samples: usize,
     current_sample: usize,
 
@@ -49,7 +48,6 @@ impl MechanicalNoise {
             velocity_sens: NormalizedValue::new(0.5),
             level: Gain::new(0.1),
 
-            envelope_phase: 0.0,
             envelope_samples: 0,
             current_sample: 0,
 
@@ -69,7 +67,6 @@ impl MechanicalNoise {
         // Ensure at least 1 sample to prevent division by zero in generate_noise()
         self.envelope_samples =
             ((self.duration.as_f32() / 1000.0 * self.sample_rate.as_f32()) as usize).max(1);
-        self.envelope_phase = 1.0;
         self.filter_state = 0.0;
     }
 
@@ -270,7 +267,6 @@ impl PolyModule for MechanicalNoise {
     }
 
     fn reset(&mut self) {
-        self.envelope_phase = 0.0;
         self.current_sample = self.envelope_samples;
         self.filter_state = 0.0;
     }

@@ -1,5 +1,35 @@
 # Version History
 
+## [0.81.0] - 2025
+### Fixed - Synth Modules Review Verified Bugfixes
+
+Alla kvarvarande buggar från den verifierade granskningen (docs/synth_modules_review_verified.md) är åtgärdade.
+
+#### Prio 1 — Buggar som påverkade ljud
+- **Oscillator prev_sync**: `prev_sync` var lokal variabel i `process()` — retriggrade vid varje buffergräns om sync hölls hög. Flyttad till struct-fält.
+- **LFO prev_retrigger**: Identiskt problem — `prev_retrigger` lokal i `process()`. Flyttad till struct-fält.
+- **MathOscillator FM base frequency**: FM-modulering hardkodade 440 Hz istället för aktuell basfrekvens. Lagt till `base_frequency`-fält som sätts vid `note_on()` och `set_param()`.
+- **MultiPointEnvelope VelocitySensitivity**: Parametern skrev över velocity direkt istället för att kontrollera sensitivity. Nytt `velocity_sensitivity`-fält med korrekt formel: `1.0 - sensitivity * (1.0 - velocity)`.
+
+#### Prio 2 — Vilseledande UI/parametrar
+- **Filter env_amount**: Borttagen från descriptor och get_params() — parametern visades i UI men påverkade inte ljudet (ingen envelope-input port finns).
+- **SamplePlayer Pan**: Exponerad i descriptor och get_params() — panning fungerade internt men kunde inte ses eller justeras i UI.
+- **Compressor sidechain**: Port borttagen från descriptor — var deklarerad men aldrig läst i process().
+
+#### Prio 3 — Kodkvalitet & Newtypes
+- **GlideState newtypes**: Alla fält konverterade till domäntyper (`Hertz`, `Seconds`, `NormalizedValue`). Visibility sänkt till `pub(crate)`.
+- **Envelope/MultiPointEnvelope trigger()**: Tar nu `Velocity` istället för rå `f32`.
+- **MechanicalNoise envelope_phase**: Oanvänt fält borttaget.
+
+#### Prio 4 — Ljud/prestanda-förbättringar
+- **Distortion foldback**: While-loop ersatt med for-loop (max 16 iterationer) + final clamp för realtidssäkerhet.
+- **Phaser stereo offset**: Höger kanal har nu 90° LFO-fasförskjutning — kommentaren sade "offset phase for stereo width" men båda kanalerna använde samma koefficient.
+- **Reverb dirty flag**: `update_filters()` körs nu bara vid parameterändringar (via `params_dirty`-flagga), inte varje buffer.
+- **EQ sample_rate**: Jämförelse ändrad från `abs() > 1.0` till korrekt `!=` equality.
+
+#### Verifiering
+- Alla ändringar passerar `RUSTFLAGS="-D warnings" cargo build`, clippy (strict), 132 tester och fmt.
+
 ## [0.80.0] - 2025
 ### Fixed - XM/MOD Playback Accuracy
 

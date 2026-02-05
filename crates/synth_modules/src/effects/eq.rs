@@ -300,7 +300,7 @@ impl Describable for Eq {
 impl AudioEffect for Eq {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         // Update sample rate and recalculate coefficients if needed
-        if (self.sample_rate.as_f32() - context.sample_rate.as_f32()).abs() > 1.0 {
+        if self.sample_rate != context.sample_rate {
             self.sample_rate = context.sample_rate;
             self.coeffs_dirty = true;
         }

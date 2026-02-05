@@ -1561,10 +1561,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(commands.len(), 2);
-        assert!(matches!(commands[0], GlobalCommand::SetTempo(140)));
+        assert_eq!(commands.0.len(), 2);
+        assert!(matches!(commands.0[0], GlobalCommand::SetTempo(140)));
         assert!(matches!(
-            commands[1],
+            commands.0[1],
             GlobalCommand::SetSpeed(TrackerSpeed(4))
         ));
         assert_eq!(processor.speed().as_u8(), 4);

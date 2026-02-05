@@ -65,17 +65,19 @@ impl Distortion {
             }
 
             DistortionType::Foldback => {
-                // Foldback distortion
+                // Foldback distortion with iteration limit for real-time safety
                 let threshold = 1.0;
                 let mut x = driven;
-                while x.abs() > threshold {
+                for _ in 0..16 {
                     if x > threshold {
                         x = threshold - (x - threshold);
                     } else if x < -threshold {
                         x = -threshold - (x + threshold);
+                    } else {
+                        break;
                     }
                 }
-                x
+                x.clamp(-threshold, threshold)
             }
 
             DistortionType::Bitcrush => {

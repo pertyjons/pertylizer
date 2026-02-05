@@ -181,16 +181,6 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::Filter(FilterParam::EnvAmount(BipolarValue::MAX)),
-                    "Env Amt",
-                )
-                .description("Envelope modulation amount (-1 to +1)")
-                .range(-1.0, 1.0)
-                .default(1.0)
-                .widget(WidgetHint::Knob),
-            )
-            .parameter(
-                ParameterDescriptor::float(
                     Param::Filter(FilterParam::CutoffMod(BipolarValue::MAX)),
                     "CV Amt",
                 )
@@ -285,7 +275,6 @@ impl PolyModule for Filter {
             Param::Filter(FilterParam::Resonance(self.resonance)),
             Param::Filter(FilterParam::KeyTracking(self.key_tracking)),
             Param::Filter(FilterParam::Drive(self.drive)),
-            Param::Filter(FilterParam::EnvAmount(self.env_amount)),
             Param::Filter(FilterParam::CutoffMod(self.cutoff_mod_amount)),
         ]
     }

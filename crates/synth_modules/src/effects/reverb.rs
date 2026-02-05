@@ -131,6 +131,8 @@ pub struct Reverb {
 
     // State
     sample_rate: SampleRate,
+    /// Whether filter parameters need recalculation.
+    params_dirty: bool,
 }
 
 impl Reverb {
@@ -178,11 +180,16 @@ impl Reverb {
             pre_delay_index: 0,
 
             sample_rate: SampleRate::DVD_QUALITY,
+            params_dirty: true,
         }
     }
 
-    /// Update filter parameters based on room size and damping.
+    /// Update filter parameters based on room size and damping (only when dirty).
     fn update_filters(&mut self) {
+        if !self.params_dirty {
+            return;
+        }
+        self.params_dirty = false;
         let feedback = 0.4 + self.room_size.as_f32() * 0.55;
 
         for comb in &mut self.combs_l {
@@ -398,8 +405,14 @@ impl AudioEffect for Reverb {
     fn set_param(&mut self, param: Param) {
         if let Param::Reverb(reverb_param) = param {
             match reverb_param {
-                ReverbParam::RoomSize(s) => self.room_size = s,
-                ReverbParam::Damping(d) => self.damping = d,
+                ReverbParam::RoomSize(s) => {
+                    self.room_size = s;
+                    self.params_dirty = true;
+                }
+                ReverbParam::Damping(d) => {
+                    self.damping = d;
+                    self.params_dirty = true;
+                }
                 ReverbParam::PreDelay(p) => {
                     self.pre_delay = Seconds::new(p.as_f32().clamp(0.0, 0.5))
                 }
