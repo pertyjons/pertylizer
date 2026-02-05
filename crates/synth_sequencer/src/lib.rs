@@ -58,7 +58,9 @@ pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource
 pub use note::Note;
 pub use pattern::{EffectOnlyEvent, Pattern, RowResolution, TrackCell, TrackerGrid};
 pub use pitch::{NoteName, Pitch, Velocity};
-pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
+pub use song::{
+    PatternPlacement, Song, TempoChange, TimeSignatureChange, TrackerInstrumentDefaults,
+};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{SequencerTrack, TrackColor, TrackMode};
 pub use tracker_pattern::{Cell, Row, Track, TrackerPattern};

@@ -482,11 +482,17 @@ impl SamplePlayer {
                 // Account for position being clamped to sample_len-1
                 let at_loop_end = pos >= loop_end || (loop_end >= end && pos >= end - 1.0);
                 if self.direction == PlaybackDirection::Forward && at_loop_end {
+                    // Preserve overshoot: reflect excess distance back from loop_end
+                    let overshoot = (pos - loop_end).max(0.0);
                     self.direction = PlaybackDirection::Backward;
-                    self.position = PlaybackPosition::new((loop_end - 1.0).max(loop_start));
+                    self.position =
+                        PlaybackPosition::new((loop_end - 1.0 - overshoot).max(loop_start));
                 } else if self.direction == PlaybackDirection::Backward && pos <= loop_start {
+                    // Preserve overshoot: reflect excess distance forward from loop_start
+                    let overshoot = (loop_start - pos).max(0.0);
                     self.direction = PlaybackDirection::Forward;
-                    self.position = PlaybackPosition::new(loop_start);
+                    self.position =
+                        PlaybackPosition::new((loop_start + overshoot).min(loop_end - 1.0));
                 }
             }
         }
@@ -859,8 +865,18 @@ impl PolyModule for SamplePlayer {
 
         self.current_note = Some(note);
         self.current_velocity = NormalizedValue::new(velocity.as_f32());
-        self.position = PlaybackPosition::new(self.start_frame() as f64);
-        self.direction = PlaybackDirection::Forward;
+
+        // Set initial direction and position based on loop mode.
+        // Backward mode starts from loop end playing in reverse.
+        if self.loop_mode == LoopMode::Backward {
+            self.direction = PlaybackDirection::Backward;
+            let loop_end = self.exact_loop_end.unwrap_or_else(|| self.loop_end_frame());
+            self.position = PlaybackPosition::new(loop_end.saturating_sub(1) as f64);
+        } else {
+            self.direction = PlaybackDirection::Forward;
+            self.position = PlaybackPosition::new(self.start_frame() as f64);
+        }
+
         self.playback_state = PlaybackState::Playing;
         self.note_release_state = NoteReleaseState::Held;
     }

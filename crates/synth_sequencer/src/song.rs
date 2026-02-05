@@ -9,7 +9,9 @@ use super::pattern::Pattern;
 use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
 use super::tracker_pattern::TrackerPattern;
-use synth_core::{Bpm, Gain, Semitones};
+use synth_core::{BipolarValue, Bpm, Gain, NormalizedValue, Semitones};
+
+use super::ids::SeqInstrumentId;
 
 /// Tempo change event.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -74,6 +76,20 @@ impl PatternPlacement {
     }
 }
 
+/// Default volume and panning for a tracker instrument's sample.
+///
+/// Used by the sequencer engine to reset channel state when a note
+/// with an explicit instrument number is triggered. Per XM spec:
+/// - Volume resets to the sample's default volume
+/// - Panning resets to the sample's default panning
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TrackerInstrumentDefaults {
+    /// Default volume (0.0-1.0) from the sample.
+    pub volume: NormalizedValue,
+    /// Default panning (-1.0 to 1.0) from the sample.
+    pub panning: BipolarValue,
+}
+
 /// A complete song with patterns, tracks, and arrangement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Song {
@@ -108,6 +124,11 @@ pub struct Song {
     /// Used for XM/MOD/S3M/IT modules where tempo is controlled by both BPM and speed.
     #[serde(default = "default_tracker_speed")]
     pub default_tracker_speed: u8,
+
+    /// Per-instrument default volume/panning from tracker samples.
+    /// Used to reset channel state when a note triggers with an explicit instrument.
+    #[serde(default)]
+    tracker_instrument_defaults: HashMap<SeqInstrumentId, TrackerInstrumentDefaults>,
 }
 
 /// Default tracker speed (6 ticks per row, like FastTracker 2).
@@ -132,6 +153,7 @@ impl Song {
             default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
             default_tracker_speed: default_tracker_speed(),
+            tracker_instrument_defaults: HashMap::new(),
         }
     }
 
@@ -158,6 +180,27 @@ impl Song {
     pub fn with_tracker_speed(mut self, speed: u8) -> Self {
         self.default_tracker_speed = speed.max(1); // Prevent division by zero
         self
+    }
+
+    // === Tracker instrument defaults ===
+
+    /// Set default volume/panning for a tracker instrument.
+    pub fn set_instrument_defaults(
+        &mut self,
+        id: SeqInstrumentId,
+        defaults: TrackerInstrumentDefaults,
+    ) {
+        self.tracker_instrument_defaults.insert(id, defaults);
+    }
+
+    /// Get default volume/panning for a tracker instrument.
+    pub fn instrument_defaults(&self, id: &SeqInstrumentId) -> Option<&TrackerInstrumentDefaults> {
+        self.tracker_instrument_defaults.get(id)
+    }
+
+    /// Get all tracker instrument defaults.
+    pub fn all_instrument_defaults(&self) -> &HashMap<SeqInstrumentId, TrackerInstrumentDefaults> {
+        &self.tracker_instrument_defaults
     }
 
     // === Pattern management ===

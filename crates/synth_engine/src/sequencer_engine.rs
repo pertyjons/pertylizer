@@ -16,13 +16,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::tracker_effects::{
-    ChannelEffectProcessor, GlobalCommand, InstrumentDefaults, NoteTriggerInfo,
+    ChannelEffectProcessor, ChannelModulation, GlobalCommand, InstrumentDefaults, NoteTriggerInfo,
 };
 use synth_core::{BipolarValue, Bpm, Cents, NormalizedValue, SampleCount, SampleRate, VoiceIndex};
 use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::{
     Pitch, RowIndex, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
-    TrackMode, Velocity,
+    TrackMode, TrackerInstrumentDefaults, Velocity,
 };
 
 /// Playback state of the sequencer.
@@ -93,6 +93,9 @@ pub struct SequencerEngine {
     song_ticks_per_tracker_tick: u32,
     /// Counter for song ticks since last effect tick.
     effect_tick_accumulator: u32,
+    /// Cached per-instrument default volume/panning from the song.
+    /// Populated from Song::all_instrument_defaults() when song is set.
+    instrument_defaults_cache: HashMap<SeqInstrumentId, TrackerInstrumentDefaults>,
 
     /// Dynamic ticks per row (updated by SetSpeed command).
     /// This overrides the pattern's static ticks_per_row during playback.
@@ -114,6 +117,9 @@ pub struct SequencerEngine {
     current_order_index: usize,
     /// Last processed row index within current pattern (for row boundary detection).
     last_row_index: Option<u32>,
+    /// Pattern delay: remaining extra row-durations to hold the current row.
+    /// EEx command sets this to x; decremented each time a new row boundary is hit.
+    pattern_delay_rows_remaining: u8,
 }
 
 impl SequencerEngine {
@@ -141,6 +147,7 @@ impl SequencerEngine {
             track_last_instruments: HashMap::new(),
             song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
             effect_tick_accumulator: 0,
+            instrument_defaults_cache: HashMap::new(),
             pending_pattern_break: None,
             pending_pattern_jump: None,
             pattern_loop_start_tick: None,
@@ -148,15 +155,19 @@ impl SequencerEngine {
             pending_pattern_loop_back: false,
             current_order_index: 0,
             last_row_index: None,
+            pattern_delay_rows_remaining: 0,
         }
     }
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let (cached_tempo, tracker_speed) = song
+        let (cached_tempo, tracker_speed, instrument_defaults) = song
             .read()
-            .map(|s| (s.default_tempo, s.default_tracker_speed))
-            .unwrap_or((Bpm::new(120.0), 6));
+            .map(|s| {
+                let defaults = s.all_instrument_defaults().clone();
+                (s.default_tempo, s.default_tracker_speed, defaults)
+            })
+            .unwrap_or((Bpm::new(120.0), 6, HashMap::new()));
 
         let mut engine = Self {
             song,
@@ -176,6 +187,7 @@ impl SequencerEngine {
             track_last_instruments: HashMap::new(),
             song_ticks_per_tracker_tick: Self::SONG_TICKS_PER_TRACKER_TICK,
             effect_tick_accumulator: 0,
+            instrument_defaults_cache: instrument_defaults,
             pending_pattern_break: None,
             pending_pattern_jump: None,
             pattern_loop_start_tick: None,
@@ -183,6 +195,7 @@ impl SequencerEngine {
             pending_pattern_loop_back: false,
             current_order_index: 0,
             last_row_index: None,
+            pattern_delay_rows_remaining: 0,
         };
         // Recalculate effective tempo based on tracker speed
         engine.recalculate_effective_tempo();
@@ -259,6 +272,7 @@ impl SequencerEngine {
         self.pending_pattern_loop_back = false;
         self.current_order_index = 0;
         self.last_row_index = None;
+        self.pattern_delay_rows_remaining = 0;
 
         // Reset speed to song default
         if let Ok(song) = self.song.read() {
@@ -392,6 +406,8 @@ impl SequencerEngine {
             if let Some(loop_start) = self.pattern_loop_start_tick {
                 self.current_tick = loop_start;
                 self.tick_accumulator = 0.0;
+                self.last_row_index = None; // Force re-processing of loop start row
+                self.pattern_delay_rows_remaining = 0;
                 self.pattern_loop_count = self.pattern_loop_count.saturating_sub(1);
                 if self.pattern_loop_count == 0 {
                     // Loop completed - clear loop state
@@ -417,10 +433,12 @@ impl SequencerEngine {
                 // Not at row boundary, keep pending
                 self.pending_pattern_jump = Some(order_pos);
             }
-            // If pattern changed, clear loop state
+            // If pattern changed, clear loop and delay state
             if self.current_order_index != old_order_index {
                 self.pattern_loop_start_tick = None;
                 self.pattern_loop_count = 0;
+                self.pattern_delay_rows_remaining = 0;
+                self.last_row_index = None;
             }
             return;
         }
@@ -440,9 +458,11 @@ impl SequencerEngine {
                     self.current_tick = target_tick;
                     self.tick_accumulator = 0.0;
                     self.current_order_index = next_order_idx;
-                    // Clear loop state on pattern change
+                    // Clear loop and delay state on pattern change
                     self.pattern_loop_start_tick = None;
                     self.pattern_loop_count = 0;
+                    self.pattern_delay_rows_remaining = 0;
+                    self.last_row_index = None;
                 }
             } else {
                 // Not at row boundary, keep pending
@@ -660,11 +680,12 @@ impl SequencerEngine {
                 let trigger_info = NoteTriggerInfo {
                     pitch,
                     instrument_defaults: if has_explicit_instrument {
-                        // TODO: Get actual sample defaults from instrument mapping.
-                        // For now, use velocity as volume (which is how tracker formats work).
+                        // Use actual sample defaults from import (volume/panning).
+                        // Falls back to full volume / center panning if not available.
+                        let cached = self.instrument_defaults_cache.get(&instrument);
                         Some(InstrumentDefaults {
-                            volume: NormalizedValue::new(velocity.as_f32()),
-                            panning: BipolarValue::CENTER,
+                            volume: cached.map_or(NormalizedValue::MAX, |c| c.volume),
+                            panning: cached.map_or(BipolarValue::CENTER, |c| c.panning),
                         })
                     } else {
                         None // Inherit instrument - don't reset volume/panning
@@ -723,9 +744,10 @@ impl SequencerEngine {
                                 }
                             }
                         }
-                        GlobalCommand::PatternDelay(_rows) => {
-                            // Pattern delay is complex - would need row-level tracking
-                            // For now, this is not implemented
+                        GlobalCommand::PatternDelay(rows) => {
+                            if rows > 0 {
+                                self.pattern_delay_rows_remaining = rows;
+                            }
                         }
                     }
                 }
@@ -742,20 +764,32 @@ impl SequencerEngine {
                         track,
                     });
 
-                    // Note: We use the note's velocity directly - in tracker formats,
-                    // the note's velocity column IS the volume for that note.
-                    // Effect-based volume modulation (SetVolume, VolumeSlide) happens
-                    // DURING playback via the effect processor, not at note onset.
+                    // In tracker mode (voice_index present), use full velocity (1.0)
+                    // because channel volume is managed entirely by the effect processor
+                    // via tracker_volume modulation. Using the cell's volume column value
+                    // as BOTH velocity AND tracker_volume would square the volume.
+                    // In polyphonic mode, use the note's actual velocity.
+                    let note_velocity = if voice_index.is_some() {
+                        Velocity::FF
+                    } else {
+                        velocity
+                    };
                     events.push(SequencerEvent::NoteOn {
                         tick: self.current_tick,
                         pitch,
-                        velocity,
+                        velocity: note_velocity,
                         instrument,
                         effects,
                         voice_index,
                         sample_offset,
                     });
                 }
+
+                // Emit tick-0 modulation so the voice immediately gets the correct
+                // volume/panning/pitch state after process_row_start().
+                // Always emitted (no is_significant check) to prevent stale values.
+                let tick0_mod = self.effect_processor.get_channel_modulation(track_id);
+                emit_tick0_modulation(self.current_tick, &tick0_mod, events);
             } else {
                 // No track - no effect processing, emit as-is (polyphonic)
                 self.active_notes.push(ActiveNote {
@@ -849,11 +883,18 @@ impl SequencerEngine {
                             }
                         }
                     }
-                    GlobalCommand::PatternDelay(_rows) => {
-                        // Pattern delay not implemented
+                    GlobalCommand::PatternDelay(rows) => {
+                        if rows > 0 {
+                            self.pattern_delay_rows_remaining = rows;
+                        }
                     }
                 }
             }
+
+            // Emit tick-0 modulation for effect-only rows so volume/panning
+            // changes (SetVolume, SetPanning, FineVolumeSlide) take effect immediately.
+            let tick0_mod = self.effect_processor.get_channel_modulation(track_id);
+            emit_tick0_modulation(self.current_tick, &tick0_mod, events);
 
             // Emit effect events for channel-level processing
             for effect in effects {
@@ -932,6 +973,19 @@ impl SequencerEngine {
         if row_idx >= pattern.num_rows().as_u16() as u32 {
             return;
         }
+
+        // Row deduplication: only process each row once.
+        // Also handles PatternDelay (EEx): when delay is active,
+        // hold the current row for extra row-durations before advancing.
+        let is_new_row = self.last_row_index != Some(row_idx);
+        if !is_new_row {
+            return; // Already processed this row's cells
+        }
+        if self.pattern_delay_rows_remaining > 0 {
+            self.pattern_delay_rows_remaining -= 1;
+            return; // Freeze on current row; tick-based effects continue via process_tick()
+        }
+        self.last_row_index = Some(row_idx);
 
         let row_index = RowIndex::new(row_idx as u16);
 
@@ -1076,9 +1130,10 @@ impl SequencerEngine {
         // Stop and clear any active notes
         let _ = self.stop();
 
-        // Read tracker speed from new song
+        // Read tracker speed and instrument defaults from new song
         if let Ok(s) = song.read() {
             self.tracker_speed = s.default_tracker_speed.max(1);
+            self.instrument_defaults_cache = s.all_instrument_defaults().clone();
         }
 
         self.song = song;
@@ -1090,6 +1145,30 @@ impl Default for SequencerEngine {
     fn default() -> Self {
         Self::new(SampleRate::DVD_QUALITY)
     }
+}
+
+/// Emit a tick-0 modulation event from a `ChannelModulation`.
+///
+/// This is called after `process_row_start()` to ensure the voice immediately
+/// receives the channel's current volume/panning/pitch state, without waiting
+/// for the next tracker tick. Always emitted (no `is_significant()` check)
+/// to prevent stale modulation values.
+fn emit_tick0_modulation(
+    tick: Tick,
+    modulation: &ChannelModulation,
+    events: &mut Vec<SequencerEvent>,
+) {
+    events.push(SequencerEvent::Modulation {
+        tick,
+        track: modulation.track,
+        pitch_cents: Cents::new(modulation.pitch_cents.as_f32()),
+        volume: NormalizedValue::new(modulation.volume.as_f32()),
+        panning: BipolarValue::new(modulation.panning.as_f32()),
+        note_triggered: modulation.note_triggered,
+        note_cut: modulation.note_cut,
+        sample_offset: modulation.sample_offset.as_normalized(),
+        tone_porta_pitch: modulation.tone_porta_pitch,
+    });
 }
 
 #[cfg(test)]

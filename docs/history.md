@@ -1,5 +1,32 @@
 # Version History
 
+## [0.80.0] - 2025
+### Fixed - XM/MOD Playback Accuracy
+
+Omfattande buggfixar för tracker-uppspelning, verifierade mot BassoonTracker och FT2-specifikation.
+
+#### Effekt-buggar
+- **Tick-0 modulering saknas**: `process_row_start()` emitterade ingen Modulation-event för tick 0 — stale volym/panning kunde kvarstå efter ny not. Fixat med `emit_tick0_modulation()` helper.
+- **is_significant() filtrerade bort nödvändiga moduleringar**: Volym 1.0 och center panning betraktades som "insignifikanta" — tick-0 moduleringar emitteras nu alltid utan filter.
+- **XM Arpeggio-ordning**: ProTracker-ordning (0,x,y) → FT2-ordning (0,y,x).
+- **PatternDelay (EEx) inte implementerat**: `GlobalCommand::PatternDelay` var no-op. Nu fryser raden N extra ticks med `pattern_delay_rows_remaining`.
+- **EffectWaveform::Random deterministisk**: `sample(phase)` returnerade samma hash för samma fas. Nu använder xorshift32 per tick (FT2-beteende).
+- **Vibrato depth scaling**: `* 4.0` → `* 2.0` för korrekt FT2-skalning (~30 cents max vid depth 15).
+- **Tremolo modell**: Ändrad från multiplikativ (`volume *= 1+tremolo`) till additiv (`volume += tremolo`) per tracker-standard.
+
+#### Sample Player-buggar
+- **LoopMode::Backward fungerade inte**: `note_on()` satte alltid `direction = Forward`. Nu startar backward-loopar från loop_end med backward-riktning.
+- **PingPong-overshoot förloras**: PingPong satte position till `loop_end - 1.0` utan overshoot-beräkning. Nu bevaras overshoot vid riktningsbyte.
+- **Sample offset vid initial NoteOn**: Sample offset-effekt appliceras nu vid första noten.
+
+#### Tracker Engine
+- **PatternBreak timing**: Korrekt hantering av pattern breaks vid radgränser.
+- **Loop precision**: Exakta loop-punkter (u32) istället för normaliserade f32-värden.
+
+#### Verifiering
+- Jämförd med BassoonTracker (JavaScript tracker player) — sample import, loop-hantering och effektprocessing verifierade.
+- Alla ändringar passerar `RUSTFLAGS="-D warnings" cargo build`, clippy, tester och fmt.
+
 ## [0.79.0] - 2025
 ### Fixed - Synth Modules Review Issues
 

@@ -786,7 +786,7 @@ impl ChannelEffectProcessor {
                         state.vibrato_speed = EffectSpeed::from_param(*speed);
                     }
                     if *depth > 0 {
-                        state.vibrato_depth = PitchCents::new(f32::from(*depth) * 4.0);
+                        state.vibrato_depth = PitchCents::new(f32::from(*depth) * 2.0);
                     }
                 }
 
@@ -1037,6 +1037,11 @@ pub struct ChannelEffectState {
     // === Note state ===
     /// Current note state (playing, trigger, cut).
     pub note_state: NoteState,
+
+    // === Random waveform state ===
+    /// Per-tick random state for vibrato/tremolo Random waveform (xorshift32).
+    /// FT2 generates a new random value each tick rather than using a hash of phase.
+    pub random_state: u32,
 }
 
 impl Default for ChannelEffectState {
@@ -1071,6 +1076,7 @@ impl Default for ChannelEffectState {
             retrigger: RetriggerState::DISABLED,
             glissando: Glissando::Smooth,
             note_state: NoteState::SILENT,
+            random_state: 0x1234_5678,
         }
     }
 }
@@ -1180,6 +1186,13 @@ impl ChannelEffectState {
 
         // Clear per-tick actions from previous tick
         self.note_state.clear_actions();
+
+        // Advance random state each tick (xorshift32).
+        // This ensures vibrato/tremolo Random waveform produces different values
+        // each tick, matching FT2 behavior.
+        self.random_state ^= self.random_state << 13;
+        self.random_state ^= self.random_state >> 17;
+        self.random_state ^= self.random_state << 5;
 
         // Note delay check
         if let Some(delay_tick) = self.note_delay_tick
@@ -1292,18 +1305,26 @@ impl ChannelEffectState {
 
         // Add vibrato
         if self.vibrato_depth.as_f32() > 0.0 {
-            let vibrato = self.vibrato_waveform.sample(self.vibrato_phase.as_f32())
-                * self.vibrato_depth.as_f32();
+            // For Random waveform, use per-tick xorshift state (FT2 behavior)
+            // instead of deterministic hash-of-phase
+            let waveform_value = if self.vibrato_waveform == EffectWaveform::Random {
+                #[allow(clippy::cast_precision_loss)]
+                let v = (self.random_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                v
+            } else {
+                self.vibrato_waveform.sample(self.vibrato_phase.as_f32())
+            };
+            let vibrato = waveform_value * self.vibrato_depth.as_f32();
             pitch_mod += PitchCents::new(vibrato);
         }
 
         // Calculate arpeggio offset
         let arpeggio_semitones = self.arpeggio.as_ref().map_or(0, |arp| {
-            // Cycle through base, +x, +y based on tick
+            // FT2 arpeggio order: base, +y, +x (reversed from ProTracker's base, +x, +y)
             match self.current_tick.as_u8() % 3 {
                 0 => 0,
-                1 => arp.semitone1,
-                _ => arp.semitone2,
+                1 => arp.semitone2,
+                _ => arp.semitone1,
             }
         });
         pitch_mod += PitchCents::new(f32::from(arpeggio_semitones) * 100.0);
@@ -1313,10 +1334,16 @@ impl ChannelEffectState {
 
         // Add tremolo
         if self.tremolo_depth.is_active() {
-            let tremolo = self.tremolo_waveform.sample(self.tremolo_phase.as_f32())
-                * self.tremolo_depth.as_f32();
-            volume_mod *= 1.0 + tremolo;
-            volume_mod = volume_mod.clamp(0.0, 1.0);
+            // For Random waveform, use per-tick xorshift state (FT2 behavior)
+            let waveform_value = if self.tremolo_waveform == EffectWaveform::Random {
+                #[allow(clippy::cast_precision_loss)]
+                let v = (self.random_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                v
+            } else {
+                self.tremolo_waveform.sample(self.tremolo_phase.as_f32())
+            };
+            let tremolo = waveform_value * self.tremolo_depth.as_f32();
+            volume_mod = (volume_mod + tremolo).clamp(0.0, 1.0);
         }
 
         ChannelModulation {

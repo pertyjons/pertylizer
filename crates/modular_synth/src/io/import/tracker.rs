@@ -30,7 +30,7 @@ use synth_sequencer::track::TrackMode;
 use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::{
     PatternId, RowCount, RowIndex, SeqInstrumentId, Song, Tick, TicksPerRow, TrackCount, TrackId,
-    TrackIndex,
+    TrackIndex, TrackerInstrumentDefaults,
 };
 
 /// Importer for tracker files (MOD, XM, S3M).
@@ -139,6 +139,26 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
 
     // Extract instrument metadata with envelope info
     let instruments = extract_instruments(&module, bpm);
+
+    // Store per-instrument default volume/panning for tracker playback.
+    // When a note triggers with an explicit instrument, the channel resets
+    // volume/panning to these values (per XM spec).
+    #[allow(clippy::cast_possible_truncation)]
+    for (idx, inst) in instruments.iter().enumerate() {
+        if let Some(sample_idx) = inst.sample_index
+            && let Some(sample) = samples.get(sample_idx)
+        {
+            song.set_instrument_defaults(
+                SeqInstrumentId(idx as u16),
+                TrackerInstrumentDefaults {
+                    volume: NormalizedValue::new(sample.default_volume.unwrap_or(1.0)),
+                    panning: BipolarValue::new(
+                        sample.default_panning.map_or(0.0, |p| p * 2.0 - 1.0),
+                    ),
+                },
+            );
+        }
+    }
 
     // Get number of channels
     let num_channels = module.get_num_channels();

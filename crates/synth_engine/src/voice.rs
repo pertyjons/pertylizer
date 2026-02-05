@@ -628,9 +628,18 @@ impl Voice {
         let tracker_vol = self.tracker_volume.as_f32();
         let amp_scale = velocity_scale * tracker_vol;
 
+        // Apply per-voice tracker panning (linear crossfade)
+        // Linear panning is used here because instrument-level stereo_gain()
+        // also applies constant-power panning. Using constant-power at both
+        // levels would cause a 3dB volume drop at center position.
+        // center (0.0) = no change, left (-1.0) = mute right, right (1.0) = mute left
+        let pan = self.tracker_panning.as_f32();
+        let pan_l = (1.0 - pan).min(1.0);
+        let pan_r = (1.0 + pan).min(1.0);
+
         for i in 0..samples.as_usize() {
-            left_out[i] *= amp_scale;
-            right_out[i] *= amp_scale;
+            left_out[i] *= amp_scale * pan_l;
+            right_out[i] *= amp_scale * pan_r;
         }
     }
 

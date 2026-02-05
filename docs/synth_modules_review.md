@@ -53,12 +53,10 @@ Suggestions:
 File: `crates/synth_modules/src/sample_player.rs`
 
 Findings:
-- **ReleaseMode::PlayToLoop is not implemented**: it currently behaves like `PlayToEnd` (no specific “stop at loop end” behavior).
-- **Sample offset from tracker effects is not supported**: there is no input or state to start playback from a per-note offset.
+- **Pan parameter not exposed**: `SamplePlayerParam::Pan` is handled in `set_param`/`get_param` but is missing from the module descriptor and `get_params()`, so UI/serialization can’t set or persist pan.
 
 Suggestions:
-- Implement `PlayToLoop` as: on note-off, play until loop end then stop.
-- Add a per-note offset input/state (if tracker playback requires it).
+- Add `Pan` to the descriptor and `get_params()` so it can be controlled and serialized.
 
 ---
 
@@ -270,19 +268,14 @@ Suggestions:
 Denna sektion är en projektövergripande check mot newtype‑idiomet och Rust‑best‑practices. Fokuset är på publika API:er och domänvärden som fortfarande använder råa primitiver.
 
 ### Newtype-avvikelser (råa primitives i publika API:er)
-- `crates/synth_engine/src/instrument.rs:742` – `note_on(&mut self, note: MidiNote, velocity: f32)` använder `f32` i publikt API. Bör vara `Velocity` eller `NormalizedValue`.
-- `crates/synth_engine/src/voice_allocator.rs:213` – `note_on(&mut self, note: MidiNote, velocity: f32)` använder `f32`.
-- `crates/synth_engine/src/voice_allocator.rs:329` – `note_on_fixed_voice(..., velocity: f32)` använder `f32`.
 - `crates/synth_engine/src/voice.rs:131` – `GlideState` håller `from_freq`, `to_freq`, `current_freq`, `time`, `position` som `f32`. Dessa är domänvärden (Hertz/Seconds/NormalizedValue).
+- `crates/synth_modules/src/envelope.rs:183` – `Envelope::trigger(velocity: f32)` använder `f32` i publikt API. Bör vara `Velocity` eller `NormalizedValue`.
+- `crates/synth_modules/src/multi_point_envelope.rs:206` – `MultiPointEnvelope::trigger(velocity: f32)` använder `f32`.
 
 ### Rust best practices enligt CLAUDE.md
-- Newtypes ska ha `#[must_use]`, men saknas på:
-  - `crates/synth_core/src/types/sample.rs:20` (`SampleValue`)
-  - `crates/synth_core/src/types/sample.rs:99` (`SampleIndex`)
 - Visibility: interna typer bör vara `pub(crate)` där möjligt:
   - `crates/synth_engine/src/voice.rs:131` (`GlideState`) verkar intern men är `pub`.
 
 ### Förslag på åtgärder
-1) Byt `velocity: f32` till `Velocity`/`NormalizedValue` i publika API:er och följ ändringen genom call‑chain.
-2) Konvertera `GlideState` till newtypes (`Hertz`, `Seconds`, `NormalizedValue`) och sänk visibility till `pub(crate)`.
-3) Lägg till `#[must_use]` på `SampleValue` och `SampleIndex`.
+1) Konvertera `GlideState` till newtypes (`Hertz`, `Seconds`, `NormalizedValue`) och sänk visibility till `pub(crate)`.
+2) Byt `velocity: f32` till `Velocity`/`NormalizedValue` i `Envelope::trigger` och `MultiPointEnvelope::trigger` och följ ändringen genom call‑chain.
