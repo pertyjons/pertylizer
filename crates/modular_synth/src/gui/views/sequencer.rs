@@ -297,6 +297,16 @@ fn draw_toolbar(
             state.navigate_pattern_next = true;
         }
 
+        ui.add_space(10.0);
+        if ui
+            .button("Debug")
+            .on_hover_text("Print pattern debug info to console")
+            .clicked()
+            && let Some(song) = song
+        {
+            print_debug_info(song, state);
+        }
+
         // Cursor position display
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(10.0);
@@ -506,4 +516,67 @@ fn find_pattern_start_tick(song: &Song, pattern_id: PatternId) -> Option<Tick> {
         .iter()
         .find(|p| p.pattern_id == pattern_id)
         .map(|p| p.start)
+}
+
+/// Print debug info about the current song and pattern to the console.
+fn print_debug_info(song: &Song, state: &TrackerViewState) {
+    println!("=== Debug: Pattern Info ===");
+    println!("Song: {}", song.name);
+    println!("Author: {}", song.author);
+    println!("Default BPM: {}", song.default_tempo);
+    println!("Default speed: {}", song.default_tracker_speed);
+    println!("Frequency mode: {:?}", song.tracker_frequency_mode);
+    println!("Tracks: {}", song.track_count());
+    println!(
+        "Patterns: {} tracker + {} piano",
+        song.tracker_pattern_count(),
+        song.pattern_count()
+    );
+    println!("Instruments: {}", song.all_instrument_defaults().len());
+
+    // Active pattern info
+    if let Some(pattern_id) = state.active_pattern {
+        println!("\nActive pattern: {:?}", pattern_id);
+        if let Some(tp) = song.tracker_pattern(pattern_id) {
+            println!("  Name: {:?}", tp.name());
+            println!("  Rows: {}", tp.num_rows().as_usize());
+            println!("  Tracks/channels: {}", tp.num_tracks().as_usize());
+            println!("  Ticks per row: {}", tp.ticks_per_row().as_u32());
+
+            // Count non-empty rows, notes, effects
+            let mut note_count = 0usize;
+            let mut noteoff_count = 0usize;
+            let mut effect_count = 0usize;
+            let mut non_empty_count = 0usize;
+            for (_, _, row) in tp.non_empty_rows() {
+                non_empty_count += 1;
+                if row.has_note() {
+                    note_count += 1;
+                }
+                if row.has_note_off() {
+                    noteoff_count += 1;
+                }
+                if row.has_effects() {
+                    effect_count += row.effects.len();
+                }
+            }
+            println!("  Non-empty rows: {}", non_empty_count);
+            println!("  Notes: {}", note_count);
+            println!("  Note-offs: {}", noteoff_count);
+            println!("  Effect commands: {}", effect_count);
+        }
+    } else {
+        println!("\nNo active pattern");
+    }
+
+    // Arrangement / pattern order
+    let arrangement = song.arrangement();
+    println!("\nArrangement: {} placements", arrangement.len());
+    for (i, placement) in arrangement.iter().enumerate() {
+        println!(
+            "  [{:02}] Pattern {:?} on track {:?} at tick {}",
+            i, placement.pattern_id, placement.track_id, placement.start.0
+        );
+    }
+    println!("=== End Debug ===");
 }

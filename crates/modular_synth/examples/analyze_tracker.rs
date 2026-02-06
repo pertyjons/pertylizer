@@ -369,7 +369,7 @@ fn format_cell(unit: &TrackUnit) -> String {
     };
     let efx = format_effects(unit);
 
-    format!("{} {} {} {}", note, inst, vol, efx)
+    format!("{} {} {} {:<4}", note, inst, vol, efx)
 }
 
 /// Format note/pitch as 3-character string (e.g. "C-5", "C#5", "===", "---").

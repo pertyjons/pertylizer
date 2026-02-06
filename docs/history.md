@@ -1,5 +1,21 @@
 # Version History
 
+## [0.86.0] - 2026-02-06
+### Added - Sequencer Debug Button & Tracker Analysis Column Fix
+
+#### Debug-knapp i sequencer toolbar
+- Ny "Debug"-knapp i sequencerns toolbar (till höger om Pattern-navigering)
+- Skriver ut song-info, aktiv pattern-data och arrangement till konsolen
+- Visar: song-namn, BPM, speed, frequency mode, antal tracks/patterns/instruments
+- Aktiv pattern: namn, rader, kanaler, ticks per row, antal noter/noteoffs/effekter
+- Arrangement: alla pattern-placeringar med pattern-ID, track-ID och tick-position
+- Matchar format från `analyze_tracker.rs` för enkel jämförelse
+
+#### Fixad kolumnformatering i analyze_tracker
+- Effektkolumnen paddas nu till 4 tecken (`{:<4}`) i `format_cell()`
+- Löser inkonsekvent bredd: 3-teckens effektkoder (t.ex. `F70`) vs 4-teckens tom (`....`)
+- Alla celler har nu konsekvent 14 teckens bredd, kolumner ligger rakt
+
 ## [0.85.0] - 2026-02-06
 ### Fixed - XM Playback Bugs (Double Volume, Fine Volume Slide Memory, Amiga Portamento)
 
