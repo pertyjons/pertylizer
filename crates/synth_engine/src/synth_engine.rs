@@ -372,6 +372,8 @@ pub struct SynthEngine {
     sequencer: SequencerEngine,
     /// Pre-allocated buffer for sequencer events (real-time safe).
     sequencer_event_buffer: Vec<SequencerEvent>,
+    /// Pre-allocated buffer for chunk rendering (tracker tick-segmented mode).
+    chunk_buffer: AudioBuffer,
     /// Solo track - only this track plays when Some.
     solo_track: Option<synth_sequencer::TrackId>,
 
@@ -437,6 +439,7 @@ impl SynthEngine {
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
+            chunk_buffer: AudioBuffer::new(512),
             solo_track: None,
             callback_duration_sum: 0.0,
             callback_count: 0,
@@ -1650,6 +1653,155 @@ impl Default for SynthEngine {
     }
 }
 
+/// Route sequencer events to the appropriate instruments.
+///
+/// This handles NoteOn (with voice-cut on other instruments, sample offset),
+/// NoteOff, Modulation (pitch/volume/pan/retrigger/notecut/tone-porta), and VoiceOff.
+#[allow(clippy::too_many_lines)]
+fn route_sequencer_events(
+    events: &[SequencerEvent],
+    instruments: &mut [Box<Instrument>],
+    solo_track: Option<synth_sequencer::TrackId>,
+) {
+    for event in events {
+        match event {
+            SequencerEvent::NoteOn {
+                pitch,
+                velocity,
+                instrument,
+                voice_index,
+                sample_offset,
+                ..
+            } => {
+                // Filter by solo track (if set)
+                if let Some(solo) = solo_track
+                    && let Some(v_idx) = voice_index
+                    && v_idx.as_usize() != solo.0 as usize
+                {
+                    continue;
+                }
+
+                let note = MidiNote::new(pitch.as_midi());
+                let vel = *velocity;
+                let instrument_index = instrument.0 as usize;
+
+                // In tracker mode: cut the voice on ALL other instruments first.
+                if let Some(v_idx) = voice_index {
+                    for (idx, other_inst) in instruments.iter_mut().enumerate() {
+                        if idx != instrument_index
+                            && let Some(voice) = other_inst
+                                .allocator_mut()
+                                .voices_mut()
+                                .get_mut(v_idx.as_usize())
+                        {
+                            voice.reset();
+                        }
+                    }
+                }
+
+                // Trigger note on the matching instrument
+                if let Some(target) = instruments.get_mut(instrument_index) {
+                    if let Some(v_idx) = voice_index {
+                        target
+                            .allocator_mut()
+                            .note_on_fixed_voice(*v_idx, note, vel);
+
+                        if sample_offset.as_f32() > 0.0
+                            && let Some(voice) = target
+                                .allocator_mut()
+                                .voices_mut()
+                                .get_mut(v_idx.as_usize())
+                        {
+                            voice.retrigger_with_offset(*sample_offset);
+                        }
+                    } else {
+                        target.note_on(note, vel);
+                    }
+                } else if let Some(first) = instruments.first_mut() {
+                    if let Some(v_idx) = voice_index {
+                        first.allocator_mut().note_on_fixed_voice(*v_idx, note, vel);
+
+                        if sample_offset.as_f32() > 0.0
+                            && let Some(voice) =
+                                first.allocator_mut().voices_mut().get_mut(v_idx.as_usize())
+                        {
+                            voice.retrigger_with_offset(*sample_offset);
+                        }
+                    } else {
+                        first.note_on(note, vel);
+                    }
+                }
+            }
+            SequencerEvent::NoteOff {
+                pitch, instrument, ..
+            } => {
+                let note = MidiNote::new(pitch.as_midi());
+                let instrument_index = instrument.0 as usize;
+
+                if let Some(target) = instruments.get_mut(instrument_index) {
+                    target.note_off(note);
+                } else if let Some(first) = instruments.first_mut() {
+                    first.note_off(note);
+                }
+            }
+            SequencerEvent::Modulation {
+                track,
+                pitch_cents,
+                volume,
+                panning,
+                note_triggered,
+                note_cut,
+                sample_offset,
+                tone_porta_pitch,
+                ..
+            } => {
+                let voice_idx = track.0 as usize;
+
+                if let Some(solo) = solo_track
+                    && voice_idx != solo.0 as usize
+                {
+                    continue;
+                }
+
+                for instrument in instruments.iter_mut() {
+                    if let Some(voice) = instrument.allocator_mut().voices_mut().get_mut(voice_idx)
+                    {
+                        voice.tracker_pitch_cents = *pitch_cents;
+                        voice.tracker_volume = *volume;
+                        voice.tracker_panning = *panning;
+                        voice.tracker_tone_porta_pitch =
+                            tone_porta_pitch.map(synth_core::Semitones::new);
+
+                        if *note_triggered {
+                            voice.retrigger_with_offset(*sample_offset);
+                        }
+
+                        if *note_cut {
+                            voice.note_off();
+                        }
+                    }
+                }
+            }
+            SequencerEvent::VoiceOff { voice_index, .. } => {
+                let voice_idx = voice_index.as_usize();
+
+                if let Some(solo) = solo_track
+                    && voice_idx != solo.0 as usize
+                {
+                    continue;
+                }
+
+                for instrument in instruments.iter_mut() {
+                    instrument
+                        .allocator_mut()
+                        .note_off_fixed_voice(*voice_index);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl AudioProcessor for SynthEngine {
     fn process(&mut self, output: &mut [f32], context: &AudioCallbackContext) {
         let start_time = Instant::now();
@@ -1657,192 +1809,91 @@ impl AudioProcessor for SynthEngine {
         // Process commands
         self.process_commands();
 
-        // Process sequencer with type-safe sample count (real-time safe: reuses buffer)
         let sample_count = SampleCount::new(context.frames);
-        self.sequencer_event_buffer.clear();
-        self.sequencer
-            .process(sample_count, &mut self.sequencer_event_buffer);
-
-        // Update shared transport state with current sequencer position
-        self.state
-            .transport
-            .set_ticks(self.sequencer.current_tick().0);
-
-        // Route sequencer events to the appropriate instruments
-        // InstrumentId maps to instrument index (0 = first instrument, 1 = second instrument, etc.)
-        // Note: Sequencer always plays all instruments - focused_instrument only affects keyboard input
-
-        for event in &self.sequencer_event_buffer {
-            match event {
-                synth_sequencer::SequencerEvent::NoteOn {
-                    pitch,
-                    velocity,
-                    instrument,
-                    voice_index,
-                    sample_offset,
-                    ..
-                } => {
-                    // Filter by solo track (if set)
-                    if let Some(solo) = self.solo_track
-                        && let Some(v_idx) = voice_index
-                        && v_idx.as_usize() != solo.0 as usize
-                    {
-                        continue;
-                    }
-
-                    let note = MidiNote::new(pitch.as_midi());
-                    let vel = *velocity;
-                    let instrument_index = instrument.0 as usize;
-
-                    // In tracker mode: cut the voice on ALL other instruments first.
-                    // Each tracker channel can only play one instrument at a time.
-                    // When switching instruments, the previous instrument must be silenced.
-                    if let Some(v_idx) = voice_index {
-                        for (idx, other_inst) in self.instruments.iter_mut().enumerate() {
-                            if idx != instrument_index
-                                && let Some(voice) = other_inst
-                                    .allocator_mut()
-                                    .voices_mut()
-                                    .get_mut(v_idx.as_usize())
-                            {
-                                voice.reset();
-                            }
-                        }
-                    }
-
-                    // Trigger note on the matching instrument
-                    if let Some(target) = self.instruments.get_mut(instrument_index) {
-                        if let Some(v_idx) = voice_index {
-                            // Tracker mode: use fixed voice with legato-style retrigger
-                            target
-                                .allocator_mut()
-                                .note_on_fixed_voice(*v_idx, note, vel);
-
-                            // Apply sample offset (9xx effect) if specified
-                            if sample_offset.as_f32() > 0.0
-                                && let Some(voice) = target
-                                    .allocator_mut()
-                                    .voices_mut()
-                                    .get_mut(v_idx.as_usize())
-                            {
-                                voice.retrigger_with_offset(*sample_offset);
-                            }
-                        } else {
-                            // Polyphonic mode: normal allocation
-                            target.note_on(note, vel);
-                        }
-                    } else if let Some(first) = self.instruments.first_mut() {
-                        // Fallback to first instrument if instrument index is out of range
-                        if let Some(v_idx) = voice_index {
-                            first.allocator_mut().note_on_fixed_voice(*v_idx, note, vel);
-
-                            // Apply sample offset (9xx effect) if specified
-                            if sample_offset.as_f32() > 0.0
-                                && let Some(voice) =
-                                    first.allocator_mut().voices_mut().get_mut(v_idx.as_usize())
-                            {
-                                voice.retrigger_with_offset(*sample_offset);
-                            }
-                        } else {
-                            first.note_on(note, vel);
-                        }
-                    }
-                }
-                synth_sequencer::SequencerEvent::NoteOff {
-                    pitch, instrument, ..
-                } => {
-                    let note = MidiNote::new(pitch.as_midi());
-                    let instrument_index = instrument.0 as usize;
-
-                    // Trigger note off on the matching instrument
-                    if let Some(target) = self.instruments.get_mut(instrument_index) {
-                        target.note_off(note);
-                    } else if let Some(first) = self.instruments.first_mut() {
-                        first.note_off(note);
-                    }
-                }
-                synth_sequencer::SequencerEvent::Modulation {
-                    track,
-                    pitch_cents,
-                    volume,
-                    panning,
-                    note_triggered,
-                    note_cut,
-                    sample_offset,
-                    tone_porta_pitch,
-                    ..
-                } => {
-                    // Tracker modulation: apply to voice at track index
-                    // In tracker mode, track index maps directly to voice index
-                    let voice_idx = track.0 as usize;
-
-                    // Filter by solo track (if set)
-                    if let Some(solo) = self.solo_track
-                        && voice_idx != solo.0 as usize
-                    {
-                        continue;
-                    }
-
-                    // Apply to all instruments (voice might be on any of them)
-                    for instrument in &mut self.instruments {
-                        if let Some(voice) =
-                            instrument.allocator_mut().voices_mut().get_mut(voice_idx)
-                        {
-                            voice.tracker_pitch_cents = *pitch_cents;
-                            voice.tracker_volume = *volume;
-                            voice.tracker_panning = *panning;
-
-                            // Apply tone portamento pitch if active
-                            // This overrides the note's base pitch with the interpolated glide pitch
-                            voice.tracker_tone_porta_pitch =
-                                tone_porta_pitch.map(synth_core::Semitones::new);
-
-                            // Handle note retrigger (from note delay or retrigger effects)
-                            if *note_triggered {
-                                // Retrigger the voice with sample offset
-                                voice.retrigger_with_offset(*sample_offset);
-                            }
-
-                            if *note_cut {
-                                voice.note_off();
-                            }
-                        }
-                    }
-                }
-                synth_sequencer::SequencerEvent::VoiceOff { voice_index, .. } => {
-                    // Tracker-style voice release (=== marker)
-                    // Release the specific voice on all instruments
-                    let voice_idx = voice_index.as_usize();
-
-                    // Filter by solo track (if set)
-                    if let Some(solo) = self.solo_track
-                        && voice_idx != solo.0 as usize
-                    {
-                        continue;
-                    }
-
-                    // Release voice on all instruments (voice might be active on any of them)
-                    for instrument in &mut self.instruments {
-                        instrument
-                            .allocator_mut()
-                            .note_off_fixed_voice(*voice_index);
-                    }
-                }
-                _ => {}
-            }
-        }
 
         let process_context = ProcessContext {
             sample_rate: synth_core::SampleRate::new(context.sample_rate.as_f32()),
-            samples: SampleCount::new(context.frames),
+            samples: sample_count,
             tempo: Bpm::new(self.state.transport.get_tempo()),
             is_playing: self.state.transport.is_playing(),
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
         };
 
-        // Process voices (built-in voice template)
-        // Effects are now processed per-instrument inside Instrument::process
-        self.process_voices(&process_context);
+        if self.sequencer.is_tracker_mode() {
+            // --- Tick-segmented rendering for tracker mode ---
+            // Each tick boundary gets its own render chunk so modulations
+            // (vibrato, volume slides, etc.) update at tick rate.
+            let total = context.frames;
+            let num_channels = 2;
+            self.mix_buffer.resize(total * num_channels);
+            self.mix_buffer.clear();
+
+            let mut offset = 0;
+            while offset < total {
+                self.sequencer_event_buffer.clear();
+                let chunk = self
+                    .sequencer
+                    .process_until_next_tick(total - offset, &mut self.sequencer_event_buffer);
+                if chunk == 0 {
+                    break;
+                }
+
+                route_sequencer_events(
+                    &self.sequencer_event_buffer,
+                    &mut self.instruments,
+                    self.solo_track,
+                );
+
+                let chunk_ctx = ProcessContext {
+                    samples: SampleCount::new(chunk),
+                    ..process_context
+                };
+
+                // Render instruments into chunk_buffer
+                self.chunk_buffer.resize(chunk * num_channels);
+                self.chunk_buffer.clear();
+                for instrument in &mut self.instruments {
+                    instrument.process(&mut self.chunk_buffer, &chunk_ctx);
+                }
+
+                // Copy chunk into the correct position in mix_buffer
+                let s = offset * num_channels;
+                let e = s + chunk * num_channels;
+                self.mix_buffer.as_mut_slice()[s..e]
+                    .copy_from_slice(&self.chunk_buffer.as_slice()[..chunk * num_channels]);
+
+                offset += chunk;
+            }
+
+            // Update transport + voice count
+            self.state
+                .transport
+                .set_ticks(self.sequencer.current_tick().0);
+            #[allow(clippy::cast_possible_truncation)]
+            self.state.voice_count.store(
+                self.instruments
+                    .iter()
+                    .map(|i| i.active_voice_count())
+                    .sum::<usize>() as u32,
+            );
+        } else {
+            // --- Standard synth-mode path (unchanged) ---
+            self.sequencer_event_buffer.clear();
+            self.sequencer
+                .process(sample_count, &mut self.sequencer_event_buffer);
+
+            self.state
+                .transport
+                .set_ticks(self.sequencer.current_tick().0);
+
+            route_sequencer_events(
+                &self.sequencer_event_buffer,
+                &mut self.instruments,
+                self.solo_track,
+            );
+
+            self.process_voices(&process_context);
+        }
 
         // Process modular graph (user-added modules)
         self.process_module_graph(&process_context);

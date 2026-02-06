@@ -1,5 +1,17 @@
 # Version History
 
+## [0.82.0] - 2025
+### Improved - Tick-Segmented Chunk Rendering for Tracker Playback
+
+Tracker-mode (XM/MOD) renderar nu ljud i tick-segmenterade chunks istället för att applicera alla events vid buffer-start. Detta ger korrekt per-tick modulationsupplösning för vibrato, volume slides, arpeggio, tremolo och andra tick-baserade effekter.
+
+#### Ändringar
+- **`SequencerEngine::process_until_next_tick()`**: Ny publik metod som processar exakt ett tick-segment och returnerar chunk-storlek i samples. Befintlig `process()` refaktorerad att anropa den internt — identiskt beteende för alla anropare.
+- **`SequencerEngine::is_tracker_mode()`**: Ny metod som detekterar tracker-songs (baserat på `tracker_pattern_count > 0`). Sätts automatiskt vid `set_song()` och `with_song()`.
+- **`route_sequencer_events()`**: Extraherad fristående funktion för event-routing (NoteOn, NoteOff, Modulation, VoiceOff). Används av båda render-patherna — ingen kodduplicering.
+- **Tick-segmenterad render-loop**: I tracker-mode renderas varje tick-chunk separat med korrekt modulation state. Synth-mode-pathen är helt oförändrad.
+- **`chunk_buffer`**: Pre-allokerad AudioBuffer för chunk-rendering, ingen heap-allokering i audio thread.
+
 ## [0.81.0] - 2025
 ### Fixed - Synth Modules Review Verified Bugfixes
 

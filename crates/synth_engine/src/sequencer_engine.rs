@@ -120,6 +120,9 @@ pub struct SequencerEngine {
     /// Pattern delay: remaining extra row-durations to hold the current row.
     /// EEx command sets this to x; decremented each time a new row boundary is hit.
     pattern_delay_rows_remaining: u8,
+    /// Whether this song uses tracker-style patterns (set at song load).
+    /// When true, the engine can be driven tick-by-tick via `process_until_next_tick()`.
+    is_tracker: bool,
 }
 
 impl SequencerEngine {
@@ -156,6 +159,7 @@ impl SequencerEngine {
             current_order_index: 0,
             last_row_index: None,
             pattern_delay_rows_remaining: 0,
+            is_tracker: false,
         }
     }
 
@@ -196,9 +200,14 @@ impl SequencerEngine {
             current_order_index: 0,
             last_row_index: None,
             pattern_delay_rows_remaining: 0,
+            is_tracker: false,
         };
         // Recalculate effective tempo based on tracker speed
         engine.recalculate_effective_tempo();
+        // Detect tracker mode from song content
+        if let Ok(s) = engine.song.read() {
+            engine.is_tracker = s.tracker_pattern_count() > 0;
+        }
         engine
     }
 
@@ -307,43 +316,60 @@ impl SequencerEngine {
         self.looping
     }
 
-    /// Process a buffer of samples and append generated events to the buffer.
+    /// Whether this song uses tracker-style patterns.
     ///
-    /// This is the main entry point called from the audio thread.
-    /// It advances the sequencer position by the given number of samples
-    /// and appends any events that should occur during this time window.
+    /// When true, the caller should use `process_until_next_tick()` for
+    /// tick-segmented rendering to get per-tick modulation accuracy.
+    #[must_use]
+    pub fn is_tracker_mode(&self) -> bool {
+        self.is_tracker
+    }
+
+    /// Process samples up to the next song tick boundary.
     ///
-    /// # Real-time Safety
+    /// Returns the number of samples consumed (the "chunk size").
+    /// The caller should render this many samples, then call again for the next chunk.
     ///
-    /// This method does not allocate memory. The caller should provide a
-    /// pre-allocated buffer (typically cleared before each call) to collect
-    /// events without heap allocations in the audio thread.
-    pub fn process(&mut self, samples: SampleCount, events: &mut Vec<SequencerEvent>) {
-        if self.play_state != PlayState::Playing {
-            return;
+    /// This allows tick-accurate modulation: events are emitted at tick boundaries
+    /// and the caller renders each segment with the correct modulation state.
+    pub fn process_until_next_tick(
+        &mut self,
+        remaining_samples: usize,
+        events: &mut Vec<SequencerEvent>,
+    ) -> usize {
+        if self.play_state != PlayState::Playing || remaining_samples == 0 {
+            return 0;
         }
 
-        // Calculate how many ticks to advance
-        // Formula: delta_ticks = (samples / sample_rate) * (bpm / 60) * TICKS_PER_QUARTER
-        let seconds = samples.as_usize() as f64 / self.sample_rate.as_f32() as f64;
-        let beats = seconds * f64::from(self.cached_tempo.as_f32()) / 60.0;
-        let delta_ticks = beats * TICKS_PER_QUARTER as f64;
+        // Calculate samples per tick from current tempo
+        // Formula: samples_per_tick = sample_rate * 60.0 / (bpm * TICKS_PER_QUARTER)
+        let bpm = f64::from(self.cached_tempo.as_f32());
+        if bpm <= 0.0 {
+            return remaining_samples;
+        }
+        let samples_per_tick =
+            f64::from(self.sample_rate.as_f32()) * 60.0 / (bpm * TICKS_PER_QUARTER as f64);
 
+        // How many samples until the next whole tick?
+        let samples_to_next_tick = (1.0 - self.tick_accumulator) * samples_per_tick;
+        let chunk = (samples_to_next_tick.ceil() as usize)
+            .max(1)
+            .min(remaining_samples);
+
+        // Advance the accumulator by the chunk's worth of ticks
+        let seconds = chunk as f64 / f64::from(self.sample_rate.as_f32());
+        let beats = seconds * bpm / 60.0;
+        let delta_ticks = beats * TICKS_PER_QUARTER as f64;
         self.tick_accumulator += delta_ticks;
 
-        // Process whole ticks
+        // Process whole ticks (usually 0 or 1)
         while self.tick_accumulator >= 1.0 {
             self.tick_accumulator -= 1.0;
 
-            // First, collect events at current tick from the song
             self.collect_events_at_tick(events);
-
-            // Check for note-offs from active notes
             self.check_note_offs(events);
 
-            // Process tick-based effects (vibrato, portamento, volume slide, etc.)
-            // Effects are processed at tracker-tick rate (24 per beat), not song-tick rate (960 per beat).
-            // This ensures vibrato/portamento speeds match original tracker behavior.
+            // Process tick-based effects at tracker-tick rate
             self.effect_tick_accumulator += 1;
             if self.effect_tick_accumulator >= self.song_ticks_per_tracker_tick {
                 self.effect_tick_accumulator = 0;
@@ -364,22 +390,40 @@ impl SequencerEngine {
                 }
             }
 
-            // Advance position
             self.current_tick = Tick(self.current_tick.0 + 1);
-
-            // Apply pending pattern navigation (PatternBreak/PatternJump)
             self.apply_pending_navigation(events);
 
-            // Handle looping
             if self.looping && self.current_tick >= self.loop_end {
-                // Release all notes at loop point
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
                 self.current_tick = self.loop_start;
             }
 
-            // Update tempo if it changed at this tick
             self.update_cached_tempo();
+        }
+
+        chunk
+    }
+
+    /// Process a buffer of samples and append generated events to the buffer.
+    ///
+    /// This is the main entry point called from the audio thread.
+    /// It advances the sequencer position by the given number of samples
+    /// and appends any events that should occur during this time window.
+    ///
+    /// # Real-time Safety
+    ///
+    /// This method does not allocate memory. The caller should provide a
+    /// pre-allocated buffer (typically cleared before each call) to collect
+    /// events without heap allocations in the audio thread.
+    pub fn process(&mut self, samples: SampleCount, events: &mut Vec<SequencerEvent>) {
+        let mut remaining = samples.as_usize();
+        while remaining > 0 {
+            let consumed = self.process_until_next_tick(remaining, events);
+            if consumed == 0 {
+                break;
+            }
+            remaining = remaining.saturating_sub(consumed);
         }
     }
 
@@ -1130,10 +1174,11 @@ impl SequencerEngine {
         // Stop and clear any active notes
         let _ = self.stop();
 
-        // Read tracker speed and instrument defaults from new song
+        // Read tracker speed, instrument defaults, and detect tracker mode from new song
         if let Ok(s) = song.read() {
             self.tracker_speed = s.default_tracker_speed.max(1);
             self.instrument_defaults_cache = s.all_instrument_defaults().clone();
+            self.is_tracker = s.tracker_pattern_count() > 0;
         }
 
         self.song = song;
