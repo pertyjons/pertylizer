@@ -1,5 +1,31 @@
 # Version History
 
+## [0.83.0] - 2025
+### Fixed - Envelope Bugfixes for XM/S3M/MOD Playback
+
+9 buggar identifierade i `docs/instrument-envelope-analysis.md` åtgärdade. Envelope-rendering följer nu FT2-specifikationen betydligt bättre.
+
+#### Prio 1 — Felaktig rendering (påverkade ljud direkt)
+- **Linjär fadeout istället för exponentiell**: `FadeoutRate::to_linear_fade_per_tick()` — FT2 använder linjär subtraktion (`fadeoutVol -= speed`), inte multiplikativ decay. Fadeout med rate 4096 når nu tystnad på 8 ticks (0.16s) istället för 107 ticks (2.14s).
+- **Parallell fadeout + envelope**: `MultiPointEnvelope` kör nu fadeout parallellt med envelope-avancering efter release, precis som FT2. Borttagna `Fadeout` och `Releasing` stages, ersatta med `released`-flagga.
+- **FT2 sustain/loop-interaktion**: Om `sustain_point == loop_end` och noten har släppts, stoppas loopen och envelopet fortsätter förbi loop end.
+
+#### Prio 2 — Saknad funktionalitet
+- **Panning envelope**: Extraherar nu `pan_envelope` från xmrs, skapar en andra `MultiPointEnvelope` med bipolar output (-1.0 till +1.0) kopplad till Amplifier `pan_cv`.
+- **Gate envelope för instrument utan volume envelope**: MOD/S3M-instrument (inga envelopes) får nu en minimal ADSR-gate (A=0.001, D=0.001, S=1.0, R=0.005) så att NoteOff kan tysta loopad sample.
+- **Dynamisk tick_rate från BPM**: `MultiPointEnvelope` läser nu `context.tempo` i `process()` och uppdaterar tick_rate automatiskt. Initial tick_rate sätts från songens BPM vid import.
+
+#### Prio 3 — Förbättringar
+- **ADSR release-beräkning fixad**: `convert_envelope_to_adsr()` använder nu korrekt formel `32768 / fadeout / tick_rate` istället för `1 / fadeout` — release-tider stämmer nu med FT2.
+- **Korrekt fadeout-divisor**: Linjär fadeout normaliserar mot 32768 (FT2-standard), inte 65536.
+
+#### Filer ändrade
+- `synth_core/src/types/tracker.rs`: `to_linear_fade_per_tick()`, uppdaterad `estimated_duration()`
+- `synth_modules/src/multi_point_envelope.rs`: Omdesignad stage-maskin, parallell fadeout, bipolar output, dynamisk tick_rate
+- `modular_synth/src/io/import/mod.rs`: Panning envelope-fält i `ImportedInstrument`
+- `modular_synth/src/io/import/tracker.rs`: Extraherar panning envelope, fixad ADSR release
+- `modular_synth/src/gui/egui_backend.rs`: Panning envelope-modul, gate envelope, tick_rate setup
+
 ## [0.82.0] - 2025
 ### Improved - Tick-Segmented Chunk Rendering for Tracker Playback
 

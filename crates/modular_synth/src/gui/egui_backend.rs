@@ -37,7 +37,7 @@ use synth_core::{
     EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
 };
 use synth_core::{Describable, ModuleCategory, PolyModule};
-use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode, Velocity};
+use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode, Seconds, Velocity};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
@@ -1874,84 +1874,142 @@ impl SynthApp {
                             .patch_editor
                             .set_module_position_buffer(sample_player_id, position_buffer);
 
-                        // === Create Envelope + Amplifier if envelope is enabled ===
-                        // Use MultiPointEnvelope for tracker files with envelope points,
-                        // fall back to ADSR Envelope for simple cases
-                        let envelope_amplifier = if inst_meta.volume_envelope.enabled {
-                            // Create the appropriate envelope module
-                            let (envelope_id, envelope_module): (ModuleId, Box<dyn PolyModule>) =
-                                if !inst_meta.envelope_points.is_empty() {
-                                    // Use MultiPointEnvelope for accurate XM/IT envelope playback
-                                    let mut mp_env =
-                                        MultiPointEnvelope::with_points(&inst_meta.envelope_points);
+                        // === Create Envelope + Amplifier ===
+                        // All instruments get an envelope + amplifier to ensure NoteOff works.
+                        // - With envelope points: use MultiPointEnvelope
+                        // - With ADSR (enabled but no points): use ADSR Envelope
+                        // - Without envelope: use minimal gate envelope (instant on/off)
 
-                                    // Set sustain point (holds until note-off)
-                                    mp_env.set_sustain_point(inst_meta.envelope_sustain);
+                        // Calculate tick rate from song BPM
+                        let song_bpm = imported.song.default_tempo.as_f32();
+                        let tick_rate = song_bpm * 2.0 / 5.0;
 
-                                    // Set loop region (loops while sustained)
-                                    if let Some((loop_start, loop_end)) = inst_meta.envelope_loop {
-                                        mp_env.set_loop(Some(loop_start), Some(loop_end));
-                                    }
+                        // Create the volume envelope module
+                        let (envelope_id, envelope_module): (ModuleId, Box<dyn PolyModule>) =
+                            if inst_meta.volume_envelope.enabled
+                                && !inst_meta.envelope_points.is_empty()
+                            {
+                                // Use MultiPointEnvelope for accurate XM/IT envelope playback
+                                let mut mp_env =
+                                    MultiPointEnvelope::with_points(&inst_meta.envelope_points);
 
-                                    // Set fadeout rate from instrument metadata
-                                    // XM fadeout is stored as f32 (0.0-65535.0 range)
-                                    #[allow(
-                                        clippy::cast_possible_truncation,
-                                        clippy::cast_sign_loss
-                                    )]
-                                    let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
-                                    mp_env.set_fadeout_rate(fadeout_rate);
+                                // Set sustain point (holds until note-off)
+                                mp_env.set_sustain_point(inst_meta.envelope_sustain);
 
-                                    let envelope_desc = mp_env.descriptor();
-                                    let envelope_id =
-                                        self.next_module_id(TypedModuleType::MultiPointEnvelope);
-                                    ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+                                // Set loop region (loops while sustained)
+                                if let Some((loop_start, loop_end)) = inst_meta.envelope_loop {
+                                    mp_env.set_loop(Some(loop_start), Some(loop_end));
+                                }
 
-                                    (envelope_id, Box::new(mp_env))
-                                } else {
-                                    // Fall back to ADSR Envelope for simple cases
-                                    let mut envelope = Envelope::new();
-                                    envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
-                                        inst_meta.volume_envelope.attack,
-                                    )));
-                                    envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
-                                        inst_meta.volume_envelope.decay,
-                                    )));
-                                    envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
-                                        inst_meta.volume_envelope.sustain,
-                                    )));
-                                    envelope.set_param(Param::Envelope(EnvelopeParam::Release(
-                                        inst_meta.volume_envelope.release,
-                                    )));
+                                // Set fadeout rate from instrument metadata
+                                // XM fadeout is stored as f32 (0.0-65535.0 range)
+                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                                let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
+                                mp_env.set_fadeout_rate(fadeout_rate);
 
-                                    let envelope_desc = envelope.descriptor();
-                                    let position_buffer = envelope.position_buffer();
-                                    let envelope_id =
-                                        self.next_module_id(TypedModuleType::Envelope);
-                                    ui_state.patch_editor.add_module(envelope_id, envelope_desc);
-                                    ui_state
-                                        .patch_editor
-                                        .set_module_envelope_position(envelope_id, position_buffer);
+                                // Set tick rate from song BPM
+                                mp_env.set_tick_rate(tick_rate);
 
-                                    (envelope_id, Box::new(envelope))
-                                };
+                                let envelope_desc = mp_env.descriptor();
+                                let envelope_id =
+                                    self.next_module_id(TypedModuleType::MultiPointEnvelope);
+                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
 
-                            // Create Amplifier (VCA) with global volume and pan
-                            let mut amplifier = Amplifier::new();
-                            amplifier.set_param(Param::Amplifier(AmplifierParam::Level(
-                                inst_meta.global_volume,
-                            )));
-                            amplifier.set_param(Param::Amplifier(AmplifierParam::Pan(
-                                inst_meta.default_pan,
-                            )));
+                                (envelope_id, Box::new(mp_env))
+                            } else if inst_meta.volume_envelope.enabled {
+                                // Fall back to ADSR Envelope for simple cases
+                                let mut envelope = Envelope::new();
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
+                                    inst_meta.volume_envelope.attack,
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
+                                    inst_meta.volume_envelope.decay,
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                                    inst_meta.volume_envelope.sustain,
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Release(
+                                    inst_meta.volume_envelope.release,
+                                )));
 
-                            let amplifier_desc = amplifier.descriptor();
-                            let amplifier_id = self.next_module_id(TypedModuleType::Amplifier);
-                            ui_state
-                                .patch_editor
-                                .add_module(amplifier_id, amplifier_desc);
+                                let envelope_desc = envelope.descriptor();
+                                let position_buffer = envelope.position_buffer();
+                                let envelope_id = self.next_module_id(TypedModuleType::Envelope);
+                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+                                ui_state
+                                    .patch_editor
+                                    .set_module_envelope_position(envelope_id, position_buffer);
 
-                            Some((envelope_id, envelope_module, amplifier_id, amplifier))
+                                (envelope_id, Box::new(envelope))
+                            } else {
+                                // Gate envelope: instant on/off for instruments without volume envelope
+                                // This ensures NoteOff can silence looped samples (MOD/S3M)
+                                let mut envelope = Envelope::new();
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
+                                    Seconds::new(0.001),
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
+                                    Seconds::new(0.001),
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
+                                    NormalizedValue::MAX,
+                                )));
+                                envelope.set_param(Param::Envelope(EnvelopeParam::Release(
+                                    Seconds::new(0.005),
+                                )));
+
+                                let envelope_desc = envelope.descriptor();
+                                let envelope_id = self.next_module_id(TypedModuleType::Envelope);
+                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
+
+                                (envelope_id, Box::new(envelope))
+                            };
+
+                        // Create Amplifier (VCA) with global volume and pan
+                        let mut amplifier = Amplifier::new();
+                        amplifier.set_param(Param::Amplifier(AmplifierParam::Level(
+                            inst_meta.global_volume,
+                        )));
+                        amplifier.set_param(Param::Amplifier(AmplifierParam::Pan(
+                            inst_meta.default_pan,
+                        )));
+
+                        let amplifier_desc = amplifier.descriptor();
+                        let amplifier_id = self.next_module_id(TypedModuleType::Amplifier);
+                        ui_state
+                            .patch_editor
+                            .add_module(amplifier_id, amplifier_desc);
+
+                        // Create panning envelope if instrument has panning envelope points
+                        let panning_envelope = if !inst_meta.panning_envelope_points.is_empty() {
+                            let mut pan_env =
+                                MultiPointEnvelope::with_points(&inst_meta.panning_envelope_points);
+
+                            // Set sustain point
+                            pan_env.set_sustain_point(inst_meta.panning_envelope_sustain);
+
+                            // Set loop region
+                            if let Some((loop_start, loop_end)) = inst_meta.panning_envelope_loop {
+                                pan_env.set_loop(Some(loop_start), Some(loop_end));
+                            }
+
+                            // Panning envelope uses same fadeout as volume
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
+                            pan_env.set_fadeout_rate(fadeout_rate);
+
+                            // Set tick rate from song BPM
+                            pan_env.set_tick_rate(tick_rate);
+
+                            // Bipolar output: 0.0-1.0 → -1.0 to +1.0
+                            pan_env.set_output_bipolar(true);
+
+                            let pan_env_desc = pan_env.descriptor();
+                            let pan_env_id =
+                                self.next_module_id(TypedModuleType::MultiPointEnvelope);
+                            ui_state.patch_editor.add_module(pan_env_id, pan_env_desc);
+
+                            Some((pan_env_id, Box::new(pan_env) as Box<dyn PolyModule>))
                         } else {
                             None
                         };
@@ -1965,48 +2023,41 @@ impl SynthApp {
                             .add_module(stereo_output_id, stereo_output_desc);
 
                         // === Create connections in GUI ===
-                        if let Some((envelope_id, _, amplifier_id, _)) = &envelope_amplifier {
-                            // With envelope: SamplePlayer -> Amplifier -> StereoOutput
-                            //                Envelope -> Amplifier CV
+                        // All instruments: SamplePlayer -> Amplifier -> StereoOutput
+                        //                  Envelope -> Amplifier CV
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            sample_player_id,
+                            "out",
+                            amplifier_id,
+                            "in",
+                        ));
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            envelope_id,
+                            "out",
+                            amplifier_id,
+                            "cv",
+                        ));
+                        // Panning envelope -> Amplifier pan_cv
+                        if let Some((pan_env_id, _)) = &panning_envelope {
                             ui_state.patch_editor.add_connection(Connection::new(
-                                sample_player_id,
+                                *pan_env_id,
                                 "out",
-                                *amplifier_id,
-                                "in",
-                            ));
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                *envelope_id,
-                                "out",
-                                *amplifier_id,
-                                "cv",
-                            ));
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                *amplifier_id,
-                                "left",
-                                stereo_output_id,
-                                "in_l",
-                            ));
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                *amplifier_id,
-                                "right",
-                                stereo_output_id,
-                                "in_r",
-                            ));
-                        } else {
-                            // Without envelope: direct SamplePlayer -> StereoOutput
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                sample_player_id,
-                                "out_l",
-                                stereo_output_id,
-                                "in_l",
-                            ));
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                sample_player_id,
-                                "out_r",
-                                stereo_output_id,
-                                "in_r",
+                                amplifier_id,
+                                "pan_cv",
                             ));
                         }
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            amplifier_id,
+                            "left",
+                            stereo_output_id,
+                            "in_l",
+                        ));
+                        ui_state.patch_editor.add_connection(Connection::new(
+                            amplifier_id,
+                            "right",
+                            stereo_output_id,
+                            "in_r",
+                        ));
 
                         // === Send modules to engine (all modules BEFORE connections) ===
                         self.handle.send_blocking(EngineCommand::AddModuleInstance {
@@ -2021,54 +2072,56 @@ impl SynthApp {
                             module: Box::new(stereo_output),
                         });
 
-                        if let Some((envelope_id, envelope_module, amplifier_id, amplifier)) =
-                            envelope_amplifier
-                        {
-                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                                instrument_id: Some(inst_id),
-                                id: envelope_id,
-                                module: envelope_module, // Already boxed
-                            });
-                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                                instrument_id: Some(inst_id),
-                                id: amplifier_id,
-                                module: Box::new(amplifier),
-                            });
+                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                            instrument_id: Some(inst_id),
+                            id: envelope_id,
+                            module: envelope_module, // Already boxed
+                        });
+                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
+                            instrument_id: Some(inst_id),
+                            id: amplifier_id,
+                            module: Box::new(amplifier),
+                        });
 
-                            // Send connections with envelope
-                            self.handle.send_blocking(EngineCommand::Connect {
+                        // Extract panning envelope ID before consuming the module
+                        let pan_env_id_opt = panning_envelope.as_ref().map(|(id, _)| *id);
+
+                        if let Some((pan_env_id, pan_env_module)) = panning_envelope {
+                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
                                 instrument_id: Some(inst_id),
-                                from: PortId::new(sample_player_id, "out"),
-                                to: PortId::new(amplifier_id, "in"),
-                            });
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(envelope_id, "out"),
-                                to: PortId::new(amplifier_id, "cv"),
-                            });
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(amplifier_id, "left"),
-                                to: PortId::new(stereo_output_id, "in_l"),
-                            });
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(amplifier_id, "right"),
-                                to: PortId::new(stereo_output_id, "in_r"),
-                            });
-                        } else {
-                            // Send connections without envelope
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(sample_player_id, "out_l"),
-                                to: PortId::new(stereo_output_id, "in_l"),
-                            });
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(sample_player_id, "out_r"),
-                                to: PortId::new(stereo_output_id, "in_r"),
+                                id: pan_env_id,
+                                module: pan_env_module,
                             });
                         }
+
+                        // Send connections
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(sample_player_id, "out"),
+                            to: PortId::new(amplifier_id, "in"),
+                        });
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(envelope_id, "out"),
+                            to: PortId::new(amplifier_id, "cv"),
+                        });
+                        if let Some(pan_env_id) = pan_env_id_opt {
+                            self.handle.send_blocking(EngineCommand::Connect {
+                                instrument_id: Some(inst_id),
+                                from: PortId::new(pan_env_id, "out"),
+                                to: PortId::new(amplifier_id, "pan_cv"),
+                            });
+                        }
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(amplifier_id, "left"),
+                            to: PortId::new(stereo_output_id, "in_l"),
+                        });
+                        self.handle.send_blocking(EngineCommand::Connect {
+                            instrument_id: Some(inst_id),
+                            from: PortId::new(amplifier_id, "right"),
+                            to: PortId::new(stereo_output_id, "in_r"),
+                        });
 
                         // === Load sample(s) into SamplePlayer ===
                         // For multisample instruments (with keymap), load the full sample bank

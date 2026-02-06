@@ -325,6 +325,39 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                         None
                     };
 
+                    // Extract panning envelope points
+                    #[allow(clippy::cast_possible_truncation)]
+                    let panning_envelope_points: Vec<(u16, f32)> = instr
+                        .pan_envelope
+                        .point
+                        .iter()
+                        .map(|p| (p.frame as u16, p.value))
+                        .collect();
+
+                    // Extract panning envelope sustain point
+                    let panning_envelope_sustain = if instr.pan_envelope.sustain_enabled
+                        && instr.pan_envelope.sustain_start_point < panning_envelope_points.len()
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some(instr.pan_envelope.sustain_start_point as u8)
+                    } else {
+                        None
+                    };
+
+                    // Extract panning envelope loop region
+                    let panning_envelope_loop = if instr.pan_envelope.loop_enabled
+                        && instr.pan_envelope.loop_start_point < panning_envelope_points.len()
+                        && instr.pan_envelope.loop_end_point < panning_envelope_points.len()
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some((
+                            instr.pan_envelope.loop_start_point as u8,
+                            instr.pan_envelope.loop_end_point as u8,
+                        ))
+                    } else {
+                        None
+                    };
+
                     // Convert pan from 0.0-1.0 to -1.0 to 1.0
                     let default_pan = BipolarValue::new(instr.default_pan * 2.0 - 1.0);
 
@@ -337,6 +370,9 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                         envelope_points,
                         envelope_sustain,
                         envelope_loop,
+                        panning_envelope_points,
+                        panning_envelope_sustain,
+                        panning_envelope_loop,
                         fadeout: instr.volume_fadeout,
                         global_volume: Gain::new(instr.global_volume),
                         default_pan,
@@ -351,6 +387,9 @@ fn extract_instruments(module: &Module, bpm: f32) -> Vec<ImportedInstrument> {
                     envelope_points: Vec::new(),
                     envelope_sustain: None,
                     envelope_loop: None,
+                    panning_envelope_points: Vec::new(),
+                    panning_envelope_sustain: None,
+                    panning_envelope_loop: None,
                     fadeout: 0.0,
                     global_volume: Gain::UNITY,
                     default_pan: BipolarValue::CENTER,
@@ -420,11 +459,11 @@ fn convert_envelope_to_adsr(
         };
 
     // Release based on fadeout
-    // XM fadeout: value represents how fast volume decreases
-    // Higher value = faster fade = shorter release
+    // XM fadeout: linear subtraction model.
+    // FT2: fadeoutVol -= fadeoutSpeed each tick, where fadeoutVol range is 0..32768
+    // Time to silence = 32768 / fadeoutSpeed / tick_rate seconds
     let release_secs = if volume_fadeout > 0.001 {
-        // Invert: high fadeout = short release
-        (1.0 / volume_fadeout).clamp(0.01, 10.0)
+        (32768.0 / volume_fadeout / tick_rate).clamp(0.01, 10.0)
     } else {
         0.3 // Default release
     };

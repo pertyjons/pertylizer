@@ -109,6 +109,13 @@ pub struct ImportedInstrument {
     pub envelope_sustain: Option<u8>,
     /// Loop region (start_index, end_index) if envelope loops.
     pub envelope_loop: Option<(u8, u8)>,
+    /// Raw panning envelope points for MultiPointEnvelope (frame, value).
+    /// Points are in tracker ticks (not seconds). Values 0.0-1.0 where 0.5 = center.
+    pub panning_envelope_points: Vec<(u16, f32)>,
+    /// Sustain point index for panning envelope.
+    pub panning_envelope_sustain: Option<u8>,
+    /// Loop region (start_index, end_index) for panning envelope.
+    pub panning_envelope_loop: Option<(u8, u8)>,
     /// Fadeout rate (0.0 = no fadeout, 1.0 = instant).
     pub fadeout: f32,
     /// Global instrument volume.

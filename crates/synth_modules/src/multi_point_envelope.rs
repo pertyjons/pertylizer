@@ -4,7 +4,8 @@
 //! - Up to 25 points with linear interpolation
 //! - Sustain point (holds until release)
 //! - Loop region (loops between two points)
-//! - Fadeout after release
+//! - Fadeout runs in parallel with envelope after release (FT2 spec)
+//! - FT2-correct sustain/loop interaction
 //!
 //! This module is designed for accurate XM/IT playback, replacing the
 //! ADSR approximation used in earlier import versions.
@@ -49,10 +50,6 @@ pub enum MultiPointStage {
     Playing,
     /// Holding at sustain point.
     Sustaining,
-    /// Released - continuing through remaining points or fading out.
-    Releasing,
-    /// Fading out after envelope completes.
-    Fadeout,
 }
 
 /// Multi-point envelope module.
@@ -61,8 +58,8 @@ pub enum MultiPointStage {
 /// - Up to 25 arbitrary points
 /// - Linear interpolation between points
 /// - Optional sustain point (holds until note-off)
-/// - Optional loop region (loops while sustained)
-/// - Fadeout after release
+/// - Optional loop region with FT2 sustain interaction
+/// - Linear fadeout running in parallel with envelope after release
 ///
 /// Unlike ADSR envelopes, this preserves the exact shape designed by
 /// the tracker musician.
@@ -78,9 +75,16 @@ pub struct MultiPointEnvelope {
     // Playback state
     stage: MultiPointStage,
     current_frame: f32, // Fractional frame position for sample-accurate timing
-    fadeout_level: f32, // 1.0 -> 0.0 during fadeout
+    fadeout_level: f32, // 1.0 -> 0.0 during fadeout (linear subtraction)
+    released: bool,     // True after note-off (fadeout runs in parallel)
     velocity: NormalizedValue,
     velocity_sensitivity: NormalizedValue,
+
+    // Cached fadeout amount per sample (computed once per buffer)
+    fadeout_per_sample: f32,
+
+    // Output mode
+    output_bipolar: bool, // If true, remap 0.0-1.0 to -1.0..+1.0 (for panning envelope)
 
     // Timing
     sample_rate: SampleRate,
@@ -107,8 +111,11 @@ impl MultiPointEnvelope {
             stage: MultiPointStage::Idle,
             current_frame: 0.0,
             fadeout_level: 1.0,
+            released: false,
             velocity: NormalizedValue::MAX,
             velocity_sensitivity: NormalizedValue::MAX,
+            fadeout_per_sample: 0.0,
+            output_bipolar: false,
             sample_rate: SampleRate::DVD_QUALITY,
             tick_rate: 50.0, // Default: 125 BPM * 2 / 5 = 50 Hz
             samples_per_frame: 960.0,
@@ -192,6 +199,11 @@ impl MultiPointEnvelope {
         self.update_timing();
     }
 
+    /// Set output to bipolar mode (-1.0 to +1.0) for panning envelope.
+    pub fn set_output_bipolar(&mut self, bipolar: bool) {
+        self.output_bipolar = bipolar;
+    }
+
     /// Get the current stage.
     #[must_use]
     pub fn stage(&self) -> MultiPointStage {
@@ -213,26 +225,37 @@ impl MultiPointEnvelope {
         };
         self.current_frame = 0.0;
         self.fadeout_level = 1.0;
+        self.released = false;
         self.velocity = NormalizedValue::new(velocity.as_f32());
     }
 
     /// Release the envelope (note off).
+    ///
+    /// In FT2, release causes:
+    /// 1. Envelope continues advancing past sustain point
+    /// 2. Fadeout starts running in parallel (subtracted each tick)
+    /// 3. Loop continues UNLESS sustain_point == loop_end (then loop stops)
     pub fn release(&mut self) {
         match self.stage {
             MultiPointStage::Sustaining => {
-                self.stage = MultiPointStage::Releasing;
+                // Resume playing past sustain point
+                self.stage = MultiPointStage::Playing;
+                self.released = true;
             }
             MultiPointStage::Playing => {
-                // If we're playing but not at sustain, go to fadeout
-                self.stage = MultiPointStage::Fadeout;
+                // Already playing - just start fadeout in parallel
+                self.released = true;
             }
-            _ => {}
+            MultiPointStage::Idle => {}
         }
     }
 
     /// Update timing calculations based on sample rate and tick rate.
     fn update_timing(&mut self) {
         self.samples_per_frame = self.sample_rate.as_f32() / self.tick_rate.max(1.0);
+        // Cache fadeout per sample for linear fadeout
+        let fade_per_tick = self.fadeout_rate.to_linear_fade_per_tick();
+        self.fadeout_per_sample = fade_per_tick / self.samples_per_frame.max(1.0);
     }
 
     /// Calculate velocity scale factoring in sensitivity.
@@ -242,37 +265,52 @@ impl MultiPointEnvelope {
         1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32())
     }
 
+    /// Apply output mode transformation (unipolar or bipolar).
+    #[inline]
+    fn apply_output_mode(&self, value: f32) -> f32 {
+        if self.output_bipolar {
+            value * 2.0 - 1.0
+        } else {
+            value
+        }
+    }
+
     /// Process a single sample.
+    #[allow(clippy::too_many_lines)]
     #[inline]
     fn process_sample(&mut self) -> f32 {
         match self.stage {
             MultiPointStage::Idle => 0.0,
 
-            MultiPointStage::Playing | MultiPointStage::Releasing => {
+            MultiPointStage::Playing => {
                 // Advance frame position
                 self.current_frame += 1.0 / self.samples_per_frame;
 
-                // Get interpolated value
-                let value = self.interpolate_at_frame(self.current_frame);
-
-                // Check sustain point (only while playing, not releasing)
-                if self.stage == MultiPointStage::Playing {
-                    if let Some(sustain_idx) = self.sustain_point
-                        && let Some(sustain_pt) = self.points.get(sustain_idx.as_usize())
-                    {
-                        let sustain_frame = sustain_pt.frame.as_u16() as f32;
-                        if self.current_frame >= sustain_frame {
-                            self.current_frame = sustain_frame;
-                            self.stage = MultiPointStage::Sustaining;
-                        }
+                // Check sustain point (only while NOT released)
+                if !self.released
+                    && let Some(sustain_idx) = self.sustain_point
+                    && let Some(sustain_pt) = self.points.get(sustain_idx.as_usize())
+                {
+                    let sustain_frame = sustain_pt.frame.as_u16() as f32;
+                    if self.current_frame >= sustain_frame {
+                        self.current_frame = sustain_frame;
+                        self.stage = MultiPointStage::Sustaining;
+                        let value = self.interpolate_at_frame(self.current_frame);
+                        let out = value.as_f32() * self.velocity_scale();
+                        return self.apply_output_mode(out);
                     }
+                }
 
-                    // Check loop (only while playing)
-                    if let (Some(start_idx), Some(end_idx)) = (self.loop_start, self.loop_end)
-                        && let Some(end_pt) = self.points.get(end_idx.as_usize())
-                    {
-                        let end_frame = end_pt.frame.as_u16() as f32;
-                        if self.current_frame >= end_frame
+                // Check loop region
+                // FT2 interaction: if sustain_point == loop_end AND released, do NOT loop
+                if let (Some(start_idx), Some(end_idx)) = (self.loop_start, self.loop_end)
+                    && let Some(end_pt) = self.points.get(end_idx.as_usize())
+                {
+                    let end_frame = end_pt.frame.as_u16() as f32;
+                    if self.current_frame >= end_frame {
+                        // FT2: if sustain == loop_end and note is released, skip loop
+                        let sustain_is_loop_end = self.sustain_point == Some(end_idx);
+                        if !(sustain_is_loop_end && self.released)
                             && let Some(start_pt) = self.points.get(start_idx.as_usize())
                         {
                             self.current_frame = start_pt.frame.as_u16() as f32;
@@ -280,50 +318,42 @@ impl MultiPointEnvelope {
                     }
                 }
 
-                // Check if envelope has completed
-                if let Some(last) = self.points.last()
+                // Get interpolated value at current position
+                let value = self.interpolate_at_frame(self.current_frame);
+
+                // Check if envelope has completed (past last point)
+                // Key held: clamp to last frame (implicit sustain at end)
+                // Released: let it stay past end, fadeout brings to silence
+                if !self.released
+                    && let Some(last) = self.points.last()
                     && self.current_frame >= last.frame.as_u16() as f32
                 {
-                    if self.stage == MultiPointStage::Releasing {
-                        // Note released - go to fadeout
-                        self.stage = MultiPointStage::Fadeout;
-                    } else {
-                        // Key still held - stay at final value (implicit sustain at end)
-                        // This matches XM behavior: without sustain point, envelope holds at end
-                        self.current_frame = last.frame.as_u16() as f32;
+                    self.current_frame = last.frame.as_u16() as f32;
+                }
+
+                // Apply linear fadeout in parallel if released
+                if self.released {
+                    self.fadeout_level = (self.fadeout_level - self.fadeout_per_sample).max(0.0);
+                    if self.fadeout_level <= 0.0 {
+                        self.stage = MultiPointStage::Idle;
+                        return 0.0;
                     }
                 }
 
-                value.as_f32() * self.velocity_scale()
+                let scale = if self.released {
+                    self.fadeout_level * self.velocity_scale()
+                } else {
+                    self.velocity_scale()
+                };
+
+                self.apply_output_mode(value.as_f32() * scale)
             }
 
             MultiPointStage::Sustaining => {
                 // Hold at sustain point value
                 let value = self.interpolate_at_frame(self.current_frame);
-                value.as_f32() * self.velocity_scale()
-            }
-
-            MultiPointStage::Fadeout => {
-                // Apply fadeout
-                let decay_per_sample = self
-                    .fadeout_rate
-                    .to_decay_per_tick()
-                    .powf(1.0 / self.samples_per_frame);
-                self.fadeout_level *= decay_per_sample;
-
-                if self.fadeout_level < 0.001 {
-                    self.stage = MultiPointStage::Idle;
-                    return 0.0;
-                }
-
-                // Continue from last envelope position during fadeout
-                let value = if let Some(last) = self.points.last() {
-                    last.value.as_f32()
-                } else {
-                    1.0
-                };
-
-                value * self.fadeout_level * self.velocity_scale()
+                let out = value.as_f32() * self.velocity_scale();
+                self.apply_output_mode(out)
             }
         }
     }
@@ -408,6 +438,8 @@ impl PolyModule for MultiPointEnvelope {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
+        // Update tick_rate from current tempo (dynamic BPM support)
+        self.tick_rate = (context.tempo.as_f32() * 2.0 / 5.0).max(1.0);
         self.update_timing();
         self.output_buffer.resize(context.samples.as_usize());
 
@@ -462,6 +494,7 @@ impl PolyModule for MultiPointEnvelope {
         self.stage = MultiPointStage::Idle;
         self.current_frame = 0.0;
         self.fadeout_level = 1.0;
+        self.released = false;
         self.prev_gate = 0.0;
     }
 
@@ -500,6 +533,7 @@ mod tests {
         let mut env = MultiPointEnvelope::with_points(&[(0, 0.0), (10, 1.0)]);
         env.trigger(Velocity::MAX);
         assert_eq!(env.stage(), MultiPointStage::Playing);
+        assert!(!env.released);
     }
 
     #[test]
@@ -550,7 +584,151 @@ mod tests {
         }
 
         env.release();
-        assert_eq!(env.stage(), MultiPointStage::Releasing);
+        // After release from sustain, stage should be Playing (continues past sustain)
+        assert_eq!(env.stage(), MultiPointStage::Playing);
+        assert!(env.released);
+    }
+
+    #[test]
+    fn test_parallel_fadeout() {
+        // Verify fadeout runs in parallel with envelope after release
+        let mut env = MultiPointEnvelope::with_points(&[(0, 1.0), (100, 1.0)]);
+        env.set_fadeout_rate(FadeoutRate::FAST); // 4096 => 0.125 per tick => 8 ticks to silence
+        env.sample_rate = SampleRate::new(48000.0);
+        env.tick_rate = 50.0;
+        env.update_timing();
+        env.trigger(Velocity::MAX);
+
+        // Process a few samples to start
+        for _ in 0..100 {
+            env.process_sample();
+        }
+
+        // Release while still in Playing stage
+        env.release();
+        assert!(env.released);
+        assert_eq!(env.stage(), MultiPointStage::Playing);
+
+        // Fadeout should bring level to 0 within ~8 ticks = 8*960 = 7680 samples
+        let mut last_val = 1.0_f32;
+        for _ in 0..8000 {
+            let val = env.process_sample();
+            // Value should be decreasing
+            assert!(val <= last_val + 0.001); // Allow tiny float error
+            last_val = val;
+        }
+
+        // Should be at or near idle after 8 ticks of fadeout
+        assert!(env.fadeout_level < 0.01);
+    }
+
+    #[test]
+    fn test_linear_fadeout_timing() {
+        // FadeoutRate(4096) at 50Hz tick rate should silence in 8 ticks
+        // 8 ticks = 8 * (48000/50) = 8 * 960 = 7680 samples
+        let mut env = MultiPointEnvelope::with_points(&[(0, 1.0), (1000, 1.0)]);
+        env.set_fadeout_rate(FadeoutRate::FAST);
+        env.sample_rate = SampleRate::new(48000.0);
+        env.tick_rate = 50.0;
+        env.update_timing();
+        env.trigger(Velocity::MAX);
+
+        // Process 1 tick worth of samples
+        for _ in 0..960 {
+            env.process_sample();
+        }
+
+        // Release
+        env.release();
+
+        // After 1 tick of fadeout (960 samples), level should be ~0.875
+        for _ in 0..960 {
+            env.process_sample();
+        }
+        assert!((env.fadeout_level - 0.875).abs() < 0.01);
+
+        // After 7 more ticks (6720 samples), should reach ~0
+        for _ in 0..6720 {
+            env.process_sample();
+        }
+        assert!(env.fadeout_level < 0.01);
+    }
+
+    #[test]
+    fn test_sustain_loop_interaction() {
+        // FT2: when sustain_point == loop_end and note is released, loop stops
+        let mut env = MultiPointEnvelope::with_points(&[(0, 0.0), (10, 1.0), (20, 0.8), (30, 0.0)]);
+        env.set_sustain_point(Some(2)); // Sustain at point 2 (frame 20)
+        env.set_loop(Some(1), Some(2)); // Loop between points 1 and 2 (frames 10-20)
+        // sustain_point (2) == loop_end (2) — so after release, loop should stop
+        env.set_fadeout_rate(FadeoutRate::NONE);
+        env.sample_rate = SampleRate::new(48000.0);
+        env.tick_rate = 50.0;
+        env.update_timing();
+        env.trigger(Velocity::MAX);
+
+        // Process to sustain
+        for _ in 0..50000 {
+            env.process_sample();
+        }
+        assert_eq!(env.stage(), MultiPointStage::Sustaining);
+
+        // Release
+        env.release();
+        assert!(env.released);
+
+        // Process past the old loop end — envelope should continue to point 3 (frame 30, value 0.0)
+        // rather than looping back to point 1
+        for _ in 0..50000 {
+            env.process_sample();
+        }
+
+        // Should have reached end of envelope (frame 30, value 0.0)
+        let value = env.interpolate_at_frame(env.current_frame);
+        assert!(
+            value.as_f32() < 0.1,
+            "Envelope should have passed loop end to reach final value"
+        );
+    }
+
+    #[test]
+    fn test_bipolar_output() {
+        let mut env = MultiPointEnvelope::with_points(&[(0, 0.5), (10, 0.5)]);
+        env.set_output_bipolar(true);
+        env.sample_rate = SampleRate::new(48000.0);
+        env.tick_rate = 50.0;
+        env.update_timing();
+        env.trigger(Velocity::MAX);
+
+        // Value 0.5 in bipolar mode should be 0.0 (center)
+        let val = env.process_sample();
+        assert!(
+            val.abs() < 0.01,
+            "0.5 in bipolar should map to ~0.0, got {val}"
+        );
+    }
+
+    #[test]
+    fn test_release_from_playing() {
+        // Release while playing (before reaching sustain) should start fadeout in parallel
+        let mut env = MultiPointEnvelope::with_points(&[(0, 0.0), (100, 1.0), (200, 0.0)]);
+        env.set_sustain_point(Some(1)); // Sustain at point 1 (frame 100)
+        env.set_fadeout_rate(FadeoutRate::FAST);
+        env.sample_rate = SampleRate::new(48000.0);
+        env.tick_rate = 50.0;
+        env.update_timing();
+        env.trigger(Velocity::MAX);
+
+        // Process a bit but NOT enough to reach sustain
+        for _ in 0..100 {
+            env.process_sample();
+        }
+        assert_eq!(env.stage(), MultiPointStage::Playing);
+
+        // Release while still playing
+        env.release();
+        assert!(env.released);
+        assert_eq!(env.stage(), MultiPointStage::Playing); // Still playing, fadeout in parallel
     }
 
     #[test]

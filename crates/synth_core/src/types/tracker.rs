@@ -241,7 +241,18 @@ impl FadeoutRate {
         self.0
     }
 
-    /// Convert to per-tick decay multiplier.
+    /// Convert to per-tick linear fade amount.
+    ///
+    /// Returns the amount to subtract from fadeout level (0.0-1.0) each tick.
+    /// FT2 formula: `fadeoutVol -= fadeoutSpeed` where `fadeoutVol` range is 0..32768.
+    /// Normalized: `fade_per_tick = rate / 32768.0`.
+    #[inline]
+    #[must_use]
+    pub fn to_linear_fade_per_tick(self) -> f32 {
+        self.0 as f32 / 32768.0
+    }
+
+    /// Convert to per-tick decay multiplier (legacy exponential model).
     ///
     /// Returns a value slightly less than 1.0 to multiply the volume each tick.
     #[inline]
@@ -255,18 +266,19 @@ impl FadeoutRate {
     }
 
     /// Estimate time to silence in seconds at given tick rate.
+    ///
+    /// Uses linear fadeout model: ticks to silence = 32768 / rate.
     #[inline]
     #[must_use]
     pub fn estimated_duration(self, tick_rate: f32) -> Seconds {
         if self.0 == 0 {
             Seconds::new(f32::INFINITY)
         } else {
-            // Approximate: -60dB in N ticks where N = ln(0.001) / ln(decay)
-            let decay = self.to_decay_per_tick();
-            if decay >= 1.0 {
+            let fade_per_tick = self.to_linear_fade_per_tick();
+            if fade_per_tick <= 0.0 {
                 Seconds::new(f32::INFINITY)
             } else {
-                let ticks = (-6.9078) / decay.ln(); // ln(0.001) ≈ -6.9078
+                let ticks = 1.0 / fade_per_tick; // ticks = 32768 / rate
                 Seconds::new(ticks / tick_rate.max(1.0))
             }
         }
@@ -315,6 +327,20 @@ mod tests {
         assert!((EnvelopeValue::from_tracker_64(64).as_f32() - 1.0).abs() < 0.001);
         assert!((EnvelopeValue::from_tracker_64(32).as_f32() - 0.5).abs() < 0.001);
         assert!((EnvelopeValue::from_tracker_64(0).as_f32()).abs() < 0.001);
+    }
+
+    #[test]
+    fn fadeout_rate_linear() {
+        // No fadeout should return 0.0 (no subtraction)
+        assert_eq!(FadeoutRate::NONE.to_linear_fade_per_tick(), 0.0);
+
+        // FadeoutRate(4096) should fade in 8 ticks: 4096/32768 = 0.125 per tick
+        let fade = FadeoutRate::FAST.to_linear_fade_per_tick();
+        assert!((fade - 0.125).abs() < 0.0001);
+
+        // Estimated duration at 50 Hz: 1/0.125 = 8 ticks, 8/50 = 0.16s
+        let dur = FadeoutRate::FAST.estimated_duration(50.0);
+        assert!((dur.as_f32() - 0.16).abs() < 0.01);
     }
 
     #[test]

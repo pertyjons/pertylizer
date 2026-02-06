@@ -75,7 +75,13 @@
       "WebFetch(domain:ftp.modland.com)",
       "WebFetch(domain:www.celersms.com)",
       "WebFetch(domain:jss.sourceforge.net)",
-      "WebFetch(domain:battleofthebits.com)"
+      "WebFetch(domain:battleofthebits.com)",
+      "WebFetch(domain:www.a1k0n.net)",
+      "WebFetch(domain:moddingwiki.shikadi.net)",
+      "WebFetch(domain:modland.com)",
+      "Bash(curl:*)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:www.ocf.berkeley.edu)"
     ],
     "deny": [],
     "ask": []
