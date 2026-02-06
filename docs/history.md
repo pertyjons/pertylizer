@@ -1,6 +1,21 @@
 # Version History
 
-## [0.83.0] - 2025
+## [0.84.0] - 2026-02-06
+### Improved - Enhanced Tracker Analysis Tool & History Date Corrections
+
+#### analyze_tracker.rs — Komplett omskrivning
+- **Full pattern grid dump**: Tracker-stil format med NOT IN VL EFCT-kolumner per kanal, hex radnummer
+- **Panning envelope**: Visar panning envelope-punkter, sustain, loop (pitch envelope finns ej i xmrs)
+- **Full pattern order**: Visar hela pattern-ordningen utan trunkering
+- **Helper-funktioner**: `format_note()`, `format_cell()`, `format_track_effect()`, `format_global_effect()`
+- **Effects summary**: Räknar alla effekttyper över alla patterns, sorterat efter frekvens
+- **Extra debug-info**: Key-off-räkning, keymap-intervall för multi-sample instrument, sample format/finetune/panning, frekvenstyp
+
+#### docs/history.md — Datumkorrigeringar
+- Ersatt 130+ "2025" årsangivelser med faktiska YYYY-MM-DD datum från git-historiken
+- 8 versioner utan git-commits (0.64, 0.65, 0.47, 0.49, 0.33.13, 0.33.17, 0.24, 0.13.2) fick interpolerade datum
+
+## [0.83.0] - 2026-02-06
 ### Fixed - Envelope Bugfixes for XM/S3M/MOD Playback
 
 9 buggar identifierade i `docs/instrument-envelope-analysis.md` åtgärdade. Envelope-rendering följer nu FT2-specifikationen betydligt bättre.
@@ -26,7 +41,7 @@
 - `modular_synth/src/io/import/tracker.rs`: Extraherar panning envelope, fixad ADSR release
 - `modular_synth/src/gui/egui_backend.rs`: Panning envelope-modul, gate envelope, tick_rate setup
 
-## [0.82.0] - 2025
+## [0.82.0] - 2026-02-06
 ### Improved - Tick-Segmented Chunk Rendering for Tracker Playback
 
 Tracker-mode (XM/MOD) renderar nu ljud i tick-segmenterade chunks istället för att applicera alla events vid buffer-start. Detta ger korrekt per-tick modulationsupplösning för vibrato, volume slides, arpeggio, tremolo och andra tick-baserade effekter.
@@ -38,7 +53,7 @@ Tracker-mode (XM/MOD) renderar nu ljud i tick-segmenterade chunks istället för
 - **Tick-segmenterad render-loop**: I tracker-mode renderas varje tick-chunk separat med korrekt modulation state. Synth-mode-pathen är helt oförändrad.
 - **`chunk_buffer`**: Pre-allokerad AudioBuffer för chunk-rendering, ingen heap-allokering i audio thread.
 
-## [0.81.0] - 2025
+## [0.81.0] - 2026-02-05
 ### Fixed - Synth Modules Review Verified Bugfixes
 
 Alla kvarvarande buggar från den verifierade granskningen (docs/synth_modules_review_verified.md) är åtgärdade.
@@ -68,7 +83,7 @@ Alla kvarvarande buggar från den verifierade granskningen (docs/synth_modules_r
 #### Verifiering
 - Alla ändringar passerar `RUSTFLAGS="-D warnings" cargo build`, clippy (strict), 132 tester och fmt.
 
-## [0.80.0] - 2025
+## [0.80.0] - 2026-02-05
 ### Fixed - XM/MOD Playback Accuracy
 
 Omfattande buggfixar för tracker-uppspelning, verifierade mot BassoonTracker och FT2-specifikation.
@@ -95,7 +110,7 @@ Omfattande buggfixar för tracker-uppspelning, verifierade mot BassoonTracker oc
 - Jämförd med BassoonTracker (JavaScript tracker player) — sample import, loop-hantering och effektprocessing verifierade.
 - Alla ändringar passerar `RUSTFLAGS="-D warnings" cargo build`, clippy, tester och fmt.
 
-## [0.79.0] - 2025
+## [0.79.0] - 2026-01-29
 ### Fixed - Synth Modules Review Issues
 
 Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modules_review.md).
@@ -138,7 +153,7 @@ Fixar baserade på omfattande kodgranskning av synth_modules (se docs/synth_modu
 
 ---
 
-## [0.77.0] - 2025
+## [0.77.0] - 2026-01-29
 ### Fixed - Tracker Effect Issues
 
 Ytterligare fixar för korrekt tracker-uppspelning baserat på djupgående kodgranskning.
@@ -173,7 +188,7 @@ Ytterligare fixar för korrekt tracker-uppspelning baserat på djupgående kodgr
 
 ---
 
-## [0.76.0] - 2025
+## [0.76.0] - 2026-01-29
 ### Fixed - Tracker Effect Accuracy
 
 Omfattande fix av 6 kritiska tracker-effektproblem som orsakade felaktig uppspelning av XM/MOD-filer.
@@ -235,7 +250,7 @@ Omfattande fix av 6 kritiska tracker-effektproblem som orsakade felaktig uppspel
 
 ---
 
-## [0.75.0] - 2025
+## [0.75.0] - 2026-01-23
 ### Fixed - Critical Code Issues
 
 Löser 5 kritiska problem identifierade i kodanalysen.
@@ -284,7 +299,7 @@ Löser 5 kritiska problem identifierade i kodanalysen.
 
 ---
 
-## [0.74.0] - 2025
+## [0.74.0] - 2026-01-23
 ### Fixed - Sample Loop Click Prevention
 
 Eliminerar klick och hack vid loop-punkter i importerade tracker-moduler.
@@ -319,7 +334,7 @@ Eliminerar klick och hack vid loop-punkter i importerade tracker-moduler.
 
 ---
 
-## [0.73.0] - 2025
+## [0.73.0] - 2026-01-23
 ### Fixed - Tracker Module Playback
 
 Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska problem.
@@ -357,7 +372,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.72.0] - 2025
+## [0.72.0] - 2026-01-09
 ### Improved - Global Module Handling
 
 #### Globala moduler utan portar
@@ -382,7 +397,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.71.0] - 2025
+## [0.71.0] - 2026-01-09
 ### Improved - Rack GUI UX
 
 #### Port-highlighting vid kabeldragning
@@ -402,7 +417,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.70.0] - 2025
+## [0.70.0] - 2026-01-09
 ### Improved - Module Stability & Performance
 
 #### Envelope (ADSR) förbättringar
@@ -440,7 +455,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.69.0] - 2025
+## [0.69.0] - 2026-01-09
 ### Refactoring - Clippy `use_self` Compliance
 
 #### Systematisk kodstädning
@@ -460,7 +475,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.68.0] - 2025
+## [0.68.0] - 2026-01-09
 ### Fixed - CPAL 0.17 API Compatibility
 
 #### Uppdaterad cpal-backend för cpal 0.17
@@ -477,7 +492,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.67.0] - 2025
+## [0.67.0] - 2025-12-27
 ### Fixed - XM Effect Memory & Arpeggio Tick
 
 #### Effect Memory implementerad
@@ -501,7 +516,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.66.0] - 2025
+## [0.66.0] - 2025-12-23
 ### Fixed - XM Vibrato/Tremolo Speed Import
 
 #### Korrigerad effect-skalning
@@ -521,7 +536,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.65.0] - 2025
+## [0.65.0] - 2025-12-22
 ### Feature - Extended Tracker Navigation
 
 #### Pattern-navigering under uppspelning
@@ -545,7 +560,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.64.0] - 2025
+## [0.64.0] - 2025-12-22
 ### Documentation - ARCHITECTURE.md
 
 #### Ny arkitekturdokumentation
@@ -558,7 +573,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.63.0] - 2025
+## [0.63.0] - 2025-12-22
 ### Refactoring - Newtype Pattern för synth_engine
 
 #### tracker_effects.rs - Beskrivande typer
@@ -593,7 +608,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.62.0] - 2025
+## [0.62.0] - 2025-12-21
 ### Fixed - Volume Reset Bug in Tracker Effects
 
 #### Bugfix: Kanalvolym återställs vid ny not med instrument
@@ -619,7 +634,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.61.0] - 2025
+## [0.61.0] - 2025-12-18
 ### Added - Track Solo & UI Improvements
 
 #### Track Solo Button
@@ -645,7 +660,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.60.0] - 2025
+## [0.60.0] - 2025-12-18
 ### Fixed - SamplePlayer Loop & Keyboard Routing
 
 #### SamplePlayer loop fix
@@ -664,7 +679,7 @@ Grundlig analys och fix av XM/MOD-moduluppspelning som hade flera kritiska probl
 
 ---
 
-## [0.59.0] - 2025
+## [0.59.0] - 2025-12-17
 ### Fixed - Tracker Effects (Vibrato, Portamento, Volume Slide)
 
 Fixade två buggar som förhindrade tracker-effekter från att höras:
@@ -710,7 +725,7 @@ Fixade två buggar som förhindrade tracker-effekter från att höras:
 
 ---
 
-## [0.58.0] - 2025
+## [0.58.0] - 2025-12-17
 ### Added - Tracker-Compatible Modules (MultiPointEnvelope & TrackerFilter)
 
 Implementerade två nya moduler for forbattrad XM/IT tracker-kompatibilitet.
@@ -765,7 +780,7 @@ IT-kompatibelt resonant lowpass-filter med:
 
 ---
 
-## [0.57.0] - 2025
+## [0.57.0] - 2025-12-17
 ### Added - CLI Debug Import Command
 
 Ny kommandoradsparameter `--debug-import` / `-d` för att importera tracker-filer och visa debuginformation utan att starta GUI.
@@ -789,7 +804,7 @@ modular-synth -d /path/to/song.xm
 
 ---
 
-## [0.56.0] - 2025
+## [0.56.0] - 2025-12-17
 ### Fixed - XM Import Key Off and Effect-Only Rows
 
 Fixade tre kritiska buggar i XM tracker import/uppspelning som gjorde att musiken lät fel.
@@ -824,7 +839,7 @@ Fixade tre kritiska buggar i XM tracker import/uppspelning som gjorde att musike
 
 ---
 
-## [0.55.0] - 2025
+## [0.55.0] - 2025-12-12
 ### Fixed - XM/MOD Import Pitch Accuracy
 
 Fixade pitch-beräkning för tracker-moduler genom att hantera FrequencyType (Amiga vs Linear).
@@ -846,7 +861,7 @@ Fixade pitch-beräkning för tracker-moduler genom att hantera FrequencyType (Am
 
 ---
 
-## [0.54.0] - 2025
+## [0.54.0] - 2025-12-12
 ### Fixed - Tracker Voice Allocation (TrackId Mismatch)
 
 Fixade tracker-style voice allocation för korrekt mono-per-kanal uppspelning.
@@ -865,7 +880,7 @@ Skickade `track_ids` vektorn (från `song.create_track()`) till `convert_pattern
 
 ---
 
-## [0.53.0] - 2025
+## [0.53.0] - 2025-12-12
 ### Fixed - Rack View Silent Audio Bug
 
 Kritisk fix för tyst ljud i Rack View efter graf-rebuild.
@@ -886,7 +901,7 @@ Om modul A processades med port "in" och sedan modul B (t.ex. `StereoOutput`) oc
 
 ---
 
-## [0.52.0] - 2025
+## [0.52.0] - 2025-12-12
 ### Changed - Cargo Workspace Refactoring
 
 Delade upp monolitisk crate (~21k LOC) i 6 separata crates för bättre kompileringstider och arkitektur.
@@ -934,7 +949,7 @@ synth_core (types, traits)
 
 ---
 
-## [0.51.0] - 2025
+## [0.51.0] - 2025-12-12
 ### Added - Type Safety & Operator Overloading
 
 Utökade typsystemet med nya domäntyper och operator overloading för renare DSP-kod.
@@ -982,7 +997,7 @@ let phase_inc = self.rate / self.sample_rate;
 
 ---
 
-## [0.50.0] - 2025
+## [0.50.0] - 2025-12-12
 ### Added - Tracker Voice Allocation (Mono-Per-Channel)
 
 Implementerade tracker-style voice allocation för korrekt MOD/XM/S3M-uppspelning.
@@ -1029,7 +1044,7 @@ Ny `Tracker` allocation mode där varje kanal får en dedikerad röst (fixed voi
 
 ---
 
-## [0.49.0] - 2025
+## [0.49.0] - 2025-12-12
 ### Added - Debug System
 
 Implementerade ett komplett debug-system för offline-analys av audio-motorn.
@@ -1082,7 +1097,7 @@ debug-tools = []
 
 ---
 
-## [0.48.0] - 2025
+## [0.48.0] - 2025-12-12
 ### Fixed - Tracker Playback Volume (Silent XM Fix)
 
 Kritisk fix för tyst uppspelning av importerade tracker-filer.
@@ -1108,7 +1123,7 @@ Effektprocessorns volymmodulering ska endast påverka UNDER uppspelning (volume 
 
 ---
 
-## [0.47.0] - 2025
+## [0.47.0] - 2025-12-11
 ### Fixed - Multi-Channel Tracker Display & Sample Index
 
 Fixar för korrekt visning av tracker-filer med många kanaler och sample-indexering.
@@ -1129,7 +1144,7 @@ Fixar för korrekt visning av tracker-filer med många kanaler och sample-indexe
 
 ---
 
-## [0.46.0] - 2025
+## [0.46.0] - 2025-12-11
 ### Added - Tracker Effects Implementation
 
 Fullständig implementation av tracker-effekter för MOD/XM/S3M-import.
@@ -1179,7 +1194,7 @@ cargo run --example analyze_all_trackers -- /path/to/music
 
 ---
 
-## [0.45.0] - 2025
+## [0.45.0] - 2025-12-11
 ### Fixed - Tracker Import & Sequencer Playback
 
 Kritiska fixar för tyst uppspelning av importerade tracker-moduler.
@@ -1209,7 +1224,7 @@ cargo run --example analyze_tracker -- /path/to/file.s3m
 
 ---
 
-## [0.44.0] - 2025
+## [0.44.0] - 2025-12-11
 ### Added - Native File Dialogs
 
 Ersätter manuella fildialog med `egui-file-dialog` crate för native filbläddrare.
@@ -1238,7 +1253,7 @@ Ersätter manuella fildialog med `egui-file-dialog` crate för native filbläddr
 
 ---
 
-## [0.43.0] - 2025
+## [0.43.0] - 2025-12-11
 ### Added - Focused Instrument & Tracker Playback Fixes
 
 Lösningar för MIDI-kanalkonflikter och korrekt tracker-uppspelning.
@@ -1285,7 +1300,7 @@ Lösningar för MIDI-kanalkonflikter och korrekt tracker-uppspelning.
 
 ---
 
-## [0.42.0] - 2025
+## [0.42.0] - 2025-12-11
 ### Added - Song Playback & Sample Waveform Display
 
 Uppspelning av importerade tracker-filer och visualisering av samples.
@@ -1319,7 +1334,7 @@ Uppspelning av importerade tracker-filer och visualisering av samples.
 
 ---
 
-## [0.41.0] - 2025
+## [0.41.0] - 2025-12-11
 ### Added - Tracker Import (MOD/XM/S3M)
 
 Import av klassiska tracker-filer direkt i synthen.
@@ -1368,7 +1383,7 @@ Import av klassiska tracker-filer direkt i synthen.
 
 ---
 
-## [0.40.0] - 2025
+## [0.40.0] - 2025-12-10
 ### Added - The Hybrid Tracker
 
 En modern tracker-arkitektur med View Adapter-mönster för framtida Piano Roll-stöd.
@@ -1424,7 +1439,7 @@ En modern tracker-arkitektur med View Adapter-mönster för framtida Piano Roll-
 
 ---
 
-## [0.39.0] - 2025
+## [0.39.0] - 2025-12-10
 ### Changed - Eliminera Duplicerade Typnamn
 
 Alla strukturer och typer med samma namn i olika moduler har bytt namn till unika, beskrivande namn.
@@ -1459,7 +1474,7 @@ Eliminerar förvirring vid import och gör det tydligt vilken typ som avses i va
 
 ---
 
-## [0.38.0] - 2025
+## [0.38.0] - 2025-12-10
 ### Added - Typsäkra Newtypes i Core Traits
 
 Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med newtype-mönstret.
@@ -1497,7 +1512,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.37.0] - 2025
+## [0.37.0] - 2025-12-10
 ### Added - ValueRange Typ för Parameterhantering
 
 - **Ny `ValueRange`-typ (`src/types/range.rs`):**
@@ -1520,7 +1535,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.36.1] - 2025
+## [0.36.1] - 2025-12-10
 ### Changed - Kompaktare Modulstorlekar
 
 - **Minskade modulstorlekar för att matcha kompakta widgets:**
@@ -1537,7 +1552,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.36.0] - 2025
+## [0.36.0] - 2025-12-10
 ### Added - ADSR Envelope Editor & Kompakta Knobs
 
 - **Interaktiv EnvelopeEditor (`src/gui/widgets/envelope.rs`):**
@@ -1576,7 +1591,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.35.0] - 2025
+## [0.35.0] - 2025-12-10
 ### Added - Tracker View (FastTracker II-inspirerad sequencer)
 - **Ny TrackerViewState (`src/sequencer/view/state.rs`):**
   - Stark typ `RowIndex` för typsäker rad-navigering
@@ -1601,7 +1616,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.11] - 2025
+## [0.34.11] - 2025-12-09
 ### Fixed - Auto Layout: ADSR/Modulation-moduler håller sig inom vyn
 - **Korrigerad beräkning av modulation-radens Y-position:**
   - `mod_row_index` sätts nu korrekt till `main_rows` (efter alla huvudmoduler)
@@ -1610,7 +1625,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.10] - 2025
+## [0.34.10] - 2025-12-09
 ### Fixed - Auto Layout: Moduler håller sig garanterat inom vyn
 - **Modulhöjden anpassas nu automatiskt:**
   - Om alla rader inte får plats med MIN_MODULE_HEIGHT (140px), krymps modulerna
@@ -1623,7 +1638,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.9] - 2025
+## [0.34.9] - 2025-12-09
 ### Improved - Auto Layout med strikta gränser
 - **Okopplade moduler hanteras separat:**
   - Moduler utan kopplingar placeras nu i högra kolumnen
@@ -1642,7 +1657,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.8] - 2025
+## [0.34.8] - 2025-12-09
 ### Improved - Auto Layout fyller hela vyn
 - **Algoritmen omskriven för att dynamiskt beräkna modulstorlek:**
   - Modulbredden beräknas så att alla kolumner fyller tillgänglig bredd
@@ -1657,7 +1672,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.7] - 2025
+## [0.34.7] - 2025-12-09
 ### Improved - Auto Layout toolbar och höjdberäkning
 - **Auto Layout-knappen ritas nu i foreground layer** - syns alltid överst, även när moduler dras över
 - **Förbättrad layoutalgoritm:**
@@ -1670,7 +1685,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.6] - 2025
+## [0.34.6] - 2025-12-09
 ### Improved - Auto Layout respekterar tillgängligt utrymme
 - **Algoritmen tar nu hänsyn till:**
   - Den tillgängliga canvas-ytan (exklusive sidopaneler)
@@ -1687,7 +1702,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.5] - 2025
+## [0.34.5] - 2025-12-09
 ### Fixed - Auto Layout-knappen fungerar nu
 - **Problemet:** Auto Layout-knappen uppdaterade interna positioner men egui:s `Window`-widget ignorerade detta eftersom `default_pos()` bara sätter positionen första gången fönstret ritas.
 - **Lösningen:** Lade till `needs_reposition: HashSet<ModuleId>` i `PatchEditor` som markerar moduler som behöver omplaceras. När en modul är markerad används `current_pos()` istället för `default_pos()`, vilket tvingar fönstret till den nya positionen.
@@ -1695,7 +1710,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.4] - 2025
+## [0.34.4] - 2025-12-09
 ### Added - Workspace GUI Navigation
 - **gui/app/state.rs** - Nya navigations-enums:
   - `AppView` - Rack/Sequencer/Mixer vy-val med `icon()` och `label()` metoder
@@ -1719,7 +1734,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.3] - 2025
+## [0.34.3] - 2025-12-09
 ### Improved - Prestandaoptimering & Slutfört Type Hardening
 
 **Del 1: InternPool optimering (prestandakritisk)**
@@ -1752,7 +1767,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.2] - 2025
+## [0.34.2] - 2025-12-09
 ### Improved - Fas 3 & 4: Type Hardening Complete
 - **Fas 3 - Arkitektur & Prestanda:** Verifierad - redan optimerad
   - `PortName` (internad sträng) redan implementerad i `types/interned.rs`
@@ -1765,7 +1780,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.1] - 2025
+## [0.34.1] - 2025-12-09
 ### Improved - Fas 2: Sampling & Uppspelning
 - **types/sample.rs** - `Interpolation` enum utökad med GUI-stöd:
   - `ALL` konstant med alla 7 interpolationslägen
@@ -1781,7 +1796,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.34.0] - 2025
+## [0.34.0] - 2025-12-09
 ### Added - Type Hardening: Semantic State Enums
 - **types/state.rs** - Ny modul för semantiska tillstånds-enums som eliminerar "Boolean Blindness"
   - `EnableState` - Enabled/Disabled
@@ -1812,7 +1827,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.27] - 2025
+## [0.33.27] - 2025-12-09
 ### Improved - GUI Views Module
 - **gui/views/** - Ny modul för återanvändbara GUI-komponenter
   - `views/master_effects.rs` - `MasterEffectParams` och `MasterEffectUiState` typer
@@ -1821,7 +1836,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.26] - 2025
+## [0.33.26] - 2025-12-09
 ### Improved - Code Organization Refactoring
 - **gui/input.rs** - Ny modul för keyboard input hantering
   - Extraherade `KEY_MAP` konstant och `handle_keyboard_input()` från egui_backend.rs
@@ -1841,7 +1856,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.25] - 2025
+## [0.33.25] - 2025-12-09
 ### Added - StereoSample Type & DSP Module
 - **StereoSample** - Ny typ i `types/audio.rs` för stereo-samples
   - Ersätter `(f32, f32)` och `[f32; 2]` för stereosignaler
@@ -1861,7 +1876,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.24] - 2025
+## [0.33.24] - 2025-12-09
 ### Improved - Type Methods & Sequencer Types
 - **MidiNote::transpose** - Flyttade transponeringslogik till typen, returnerar `Option<MidiNote>`
 - **Pitch::transpose** - Sequencer-typ uppdaterad till `Semitones`, returnerar `Option<Pitch>`
@@ -1872,7 +1887,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.23] - 2025
+## [0.33.23] - 2025-12-09
 ### Improved - Strict Type Hardening
 - **StereoBalance** - Ny typ för stereopanorering med constant-power gains
 - **KeyboardPanner** - Använder nu `MidiNote`, `BipolarValue`, `StereoBalance` istället för primitiver
@@ -1885,7 +1900,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.22] - 2025
+## [0.33.22] - 2025-12-09
 ### Optimized - GUI Rendering with egui Shape Primitives
 - **Kablar** - Ersatte manuell Bézier-loop (32 segment × 3 lager) med `CubicBezierShape`
 - **Oscilloskop** - Ersatte ~200 `line_segment()` med en `Shape::line()`
@@ -1896,7 +1911,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.21] - 2025
+## [0.33.21] - 2025-12-09
 ### Improved - Enhanced Sample Player
 - **PlaybackState** - Ersatte `bool` med typat enum för tydligare state
 - **SampleName** - Newtype för sample-namn istället för rå `String`
@@ -1914,7 +1929,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.20] - 2025
+## [0.33.20] - 2025-12-09
 ### Added - Sample Player & Sample Manager
 - **SamplePlayer** - Ny modul för uppspelning av WAV-samples
   - Pitch tracking (transponerar automatiskt baserat på spelade noter)
@@ -1933,7 +1948,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.19] - 2025
+## [0.33.19] - 2025-12-08
 ### Added - Improved Cables & Auto-Layout
 - **Kablar med gravitation** - Kablar hänger nedåt med naturlig "sag" (15% av avståndet)
 - **Skuggor** - Svart skugga under kablar för djupkänsla
@@ -1947,7 +1962,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.18] - 2025
+## [0.33.18] - 2025-12-08
 ### Fixed - Parameter Routing for Arbitrary Modules
 - **SetModuleParameter** används nu för alla voice-moduler istället för SetVoiceParameter
 - Fixar parameter-routing för moduler utanför PolyModule enum (env-3, amp-2, sub-1, nse-1, kbp-1, etc)
@@ -1957,7 +1972,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.17] - 2025
+## [0.33.17] - 2025-12-08
 ### Changed - Physical Modeling Cleanup
 - **Removed** StringResonator, ResonatorBank, VelocityMapper (fungerade inte korrekt)
 - **KeyboardPanner** - Not-baserad stereopanorering nu registrerad i GUI-menyn
@@ -1968,7 +1983,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.16] - 2025
+## [0.33.16] - 2025-12-08
 ### Added - Physical Modeling Modules
 - **StringResonator** - Karplus-Strong string synthesis med inharmonicitet och dämpning
 - **ResonatorBank** - Sympatisk resonans med 1-12 avstämbara strängar
@@ -1980,7 +1995,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.15] - 2025
+## [0.33.15] - 2025-12-08
 ### Added - Keyboard Splitting & MIDI Learn
 - **KeyRange** - Ny typ för att definiera vilka noter ett instrument svarar på (keyboard splitting)
 - **LearnState** - State machine för MIDI learn (Idle, WaitingForLowNote, WaitingForHighNote)
@@ -1991,7 +2006,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.14] - 2025
+## [0.33.14] - 2025-12-08
 ### Improved - GUI Styling & Theme Consistency
 - **Master FX Sliders** - Bättre synlighet med mörkare bakgrund och tydlig kontrast
 - **WidgetStyle** - Nya fält: knob_arc_segments, slider_rail_height, slider_handle_radius
@@ -2000,7 +2015,7 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.13] - 2025
+## [0.33.13] - 2025-12-08
 ### Added - Attenuverters for CV Inputs
 - **Filter CutoffMod** - Ny "CV Amt" parameter (-1.0 till +1.0) för cutoff CV
 - **Oscillator FmAmount** - Ny "FM Amt" parameter (-1.0 till +1.0) för FM input
@@ -2008,263 +2023,263 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.33.12] - 2025
+## [0.33.12] - 2025-12-08
 ### Added - Theme System
 - 8 färgteman: Dark, Light, Vintage, Neon, Studio, Dracula, Monokai, Solarized Dark
 - Tema-väljare i Settings, WidgetStyle för konsistent styling
 
 ---
 
-## [0.33.11] - 2025
+## [0.33.11] - 2025-12-08
 ### Changed - InputPorts Refactor
 - `PolyModule::process()` använder `InputPorts` wrapper istället för HashMap
 - Eliminerar HashMap-allokering per audio frame
 
 ---
 
-## [0.33.10] - 2025
+## [0.33.10] - 2025-12-08
 ### Fixed - Realtime Audio Allocations
 - Eliminerade `AudioBuffer::new()` i audio thread (~187 allok/sek)
 - `Connection` använder `PortName` (Copy) istället för String
 
 ---
 
-## [0.33.9] - 2025
+## [0.33.9] - 2025-12-08
 ### Added - Bypass-knappar
 - Power-knapp (⏻) i varje moduls header, bypassade moduler dimmas till 40%
 
 ---
 
-## [0.33.8] - 2025
+## [0.33.8] - 2025-12-05
 ### Added - Master FX Parameters
 - Resizable sidopanel, fullständiga parameterkontroller för alla 8 effekttyper
 
 ---
 
-## [0.33.7] - 2025
+## [0.33.7] - 2025-12-05
 ### Added - Master FX Sidebar
 - Kollapsbar effektlista i sidopanelen med bypass/remove per effekt
 
 ---
 
-## [0.33.6] - 2025
+## [0.33.6] - 2025-12-05
 ### Added - Mixer & Master Bus
 - Solo-knapp, global master effects chain, soft clipper per instrument
 
 ---
 
-## [0.33.5] - 2025
+## [0.33.5] - 2025-12-05
 ### Fixed - Eliminated unwrap/expect
 - Fixade 112 Clippy-varningar för unwrap/expect i produktionskod
 
 ---
 
-## [0.33.4] - 2025
+## [0.33.4] - 2025-12-05
 ### Maintenance
 - Rensade 29 onödiga clippy allows, uppdaterade 15 beroenden
 
 ---
 
-## [0.33.3] - 2025
+## [0.33.3] - 2025-12-05
 ### Refactored - Clippy Pedantic
 - Konfigurerade ~70 pedantic/nursery lints för synth-lämpliga undantag
 
 ---
 
-## [0.33.2] - 2025
+## [0.33.2] - 2025-12-05
 ### Refactored - Best Practices
 - `#[must_use]` på transformationsmetoder, tog bort global `#![allow(dead_code)]`
 - Konverterade error-typer till thiserror, reducerade unsafe från 5 till 1 block
 
 ---
 
-## [0.33.1] - 2025
+## [0.33.1] - 2025-12-04
 ### Refactored - Idiomatic Iterators
 - Konverterade for-loopar till iteratorer utanför hot path, behöll for-loopar i DSP
 
 ---
 
-## [0.33.0] - 2025
+## [0.33.0] - 2025-12-04
 ### Added - Type System Extensions
 - `PortName` interning för zero-allocation, `FilterState` DSP-metoder
 - `Hertz`, `NormalizedValue`, `MidiChannel`, `BeatDivision` extensions
 
 ---
 
-## [0.32.25] - 2025
+## [0.32.25] - 2025-12-04
 ### Fixed - Instrument Channel Isolation
 - Standardinstrument använder CH1 istället för OMNI
 - Real-time safe sequencer (pre-allokerad event buffer)
 
 ---
 
-## [0.32.24] - 2025
+## [0.32.24] - 2025-12-04
 ### Refactored - DSP Type Hardening
 - `FilterState` i Reverb/Phaser, `Hertz::to_tan_coeff()`, `Milliseconds::to_samples()`
 
 ---
 
-## [0.32.23] - 2025
+## [0.32.23] - 2025-12-04
 ### Fixed - PatchEditor GUI ID Collision
 - Window ID inkluderar instrument_id för unika GUI-identifierare
 - LadderFilter och NoiseGenerator använder `FilterState`
 
 ---
 
-## [0.32.22] - 2025
+## [0.32.22] - 2025-12-04
 ### Refactored - Total Type Hardening
 - `MidiNote` för PolyModule/EngineCommand, `SamplePosition`/`SampleCount` i Voice
 - `BufferIndex` i Flanger/Chorus, `NormalizedValue` i SequencerTrack
 
 ---
 
-## [0.32.21] - 2025
+## [0.32.21] - 2025-12-04
 ### Refactored - Type Safety and Enums
 - `ModuleType::is_voice_module()`, unified `EffectChain` med `ChainSlot`
 - Data-bärande `VoiceState` enum (Idle/Active/Releasing/Stealing)
 
 ---
 
-## [0.32.20] - 2025
+## [0.32.20] - 2025-12-04
 ### Refactored - Per-Instrument Effects
 - Flyttade effekter från global MasterBus till per-instrument EffectChain
 
 ---
 
-## [0.32.19] - 2025
+## [0.32.19] - 2025-12-04
 ### Refactored - Per-Instrument PatchEditor
 - Varje instrument äger sin egen PatchEditor, patch-laddning per instrument
 
 ---
 
-## [0.32.18] - 2025
+## [0.32.18] - 2025-12-04
 ### Refactored - Per-Instrument Voice Architecture
 - `voice_graph` ägs av Instrument istället för SynthEngine
 
 ---
 
-## [0.32.17] - 2025
+## [0.32.17] - 2025-12-03
 ### Refactored - Architectural Terminology
 - Renamed: RackView→PatchEditor, VoiceModule→PolyModule, EffectModule→AudioEffect
 - SynthPart→Instrument, EffectChain→MasterBus
 
 ---
 
-## [0.32.16] - 2025
+## [0.32.16] - 2025-12-03
 ### Added - Part Manager UI
 - Multi-instrument support med Part Manager panel, MIDI-kanal per part
 
 ---
 
-## [0.32.15] - 2025
+## [0.32.15] - 2025-12-03
 ### Improved - Knob Widget
 - Värde visas i knob-cirkeln, centraliserad formatering i ParameterUnit
 - Custom "Share Tech Mono" font
 
 ---
 
-## [0.32.14] - 2025
+## [0.32.14] - 2025-12-03
 ### Added - MIDI Input Support
 - Hardware MIDI via midir med GUI port-väljare, velocity visualization
 - Type-safe MIDI parsing, pitch bend, mod wheel, aftertouch
 
 ---
 
-## [0.32.13] - 2025
+## [0.32.13] - 2025-12-02
 ### Fixed - Stereo Output Parameters
 - ModuleCategory::Output tillagd i parameter change handling
 
 ---
 
-## [0.32.12] - 2025
+## [0.32.12] - 2025-12-02
 ### Removed - Performance Panel
 - Tog bort GUI-komponenten, behöll engine-kommandona för framtida MIDI
 
 ---
 
-## [0.32.11] - 2025
+## [0.32.11] - 2025-12-02
 ### Fixed - Real-time Parameter Updates
 - `SetModuleParameter` uppdaterar nu voice_template + alla aktiva voices
 - Tog bort 29 ogiltiga oscilloskop-kopplingar från patches
 
 ---
 
-## [0.32.10] - 2025
+## [0.32.10] - 2025-12-02
 ### Fixed - Critical Audio Routing
 - StereoOutput klassificeras som voice module, partiella inputs fungerar
 - `ClearAllModules` rensar voice_template
 
 ---
 
-## [0.32.9] - 2025
+## [0.32.9] - 2025-12-02
 ### Added - Dynamic Module Routing
 - Moduler routas automatiskt till rätt graf baserat på typ
 
 ---
 
-## [0.32.8] - 2025
+## [0.32.8] - 2025-12-01
 ### Refactored - Unified Voice/Graph
 - Voice äger ModuleGraph istället för hårdkodad modullista (~400 rader borttaget)
 
 ---
 
-## [0.32.7] - 2025
+## [0.32.7] - 2025-12-01
 ### Refactored - Unified Param Architecture
 - `Param` enum med inbakade typade värden, tog bort `TypedValue`
 
 ---
 
-## [0.32.6] - 2025
+## [0.32.6] - 2025-11-30
 ### Fixed - Dropdown Parameter Sync
 - Dropdown-handlers skickar rätt TypedValue-variant
 
 ---
 
-## [0.32.5] - 2025
+## [0.32.5] - 2025-11-30
 ### Added - Domain Types for Effects
 - `Ratio` (kompression), `BeatDivision` (tempo-sync), `VoiceCount`
 
 ---
 
-## [0.32.4] - 2025
+## [0.32.4] - 2025-11-30
 ### Fixed - Waveform Selection
 - GUI skickar TypedValue::Waveform, tog bort noise från Oscillator (använd NoiseGenerator)
 
 ---
 
-## [0.32.3] - 2025
+## [0.32.3] - 2025-11-30
 ### Fixed - CV Modulation Drift
 - LadderFilter, LFO, Oscillator använder effective values utan att modifiera parametrar
 
 ---
 
-## [0.32.2] - 2025
+## [0.32.2] - 2025-11-30
 ### Fixed - GUI/Engine Sync
 - Startup använder patch_bridge::load_patch() för synkronisering
 
 ---
 
-## [0.32.1] - 2025
+## [0.32.1] - 2025-11-30
 ### Fixed - Ghost Sound Bug
 - ClearAllModules inaktiverar parts
 
 ---
 
-## [0.32.0] - 2025
+## [0.32.0] - 2025-11-30
 ### Added - Type Safety & GUI
 - Type-safe public APIs med Hertz, Cents, Gain, NormalizedValue
 - "New Patch" i File-menyn
 
 ---
 
-## [0.31.0] - 2025
+## [0.31.0] - 2025-11-30
 ### Added - GUI Module Support
 - SubOscillator och NoiseGenerator i module palette
 - 3 nya example patches
 
 ---
 
-## [0.30.0] - 2025
+## [0.30.0] - 2025-11-30
 ### Added - DSP Improvements
 - Envelope curves (attack_curve, decay_curve, release_curve)
 - SubOscillator modul (sine, square, -1/-2 oktav)
@@ -2272,119 +2287,119 @@ Fullständig typning av `ProcessContext`, `PolyModule` och `AudioEffect` med new
 
 ---
 
-## [0.29.0] - 2025
+## [0.29.0] - 2025-11-30
 ### Refactored - Modular Patch Structure
 - 16 patches extraherade till individuella filer i src/patches/
 
 ---
 
-## [0.28.1] - 2025
+## [0.28.1] - 2025-11-30
 ### Added - Performance Fixes
 - Velocity mapping till engine, tempo sync för Delay och LFO
 - Module connectivity visualization (Connected/Orphaned/Disconnected)
 
 ---
 
-## [0.28.0] - 2025
+## [0.28.0] - 2025-11-30
 ### Added - Performance Panel
 - Pitch bend (spring-back), mod wheel, velocity mapping knobs
 
 ---
 
-## [0.27.0] - 2025
+## [0.27.0] - 2025-11-30
 ### Added - Enhanced Oscilloscope & LFO Tempo Sync
 - Oscilloskop med waveform history, time division, trigger modes
 - LFO tempo sync med beat divisions
 
 ---
 
-## [0.26.0] - 2025
+## [0.26.0] - 2025-11-30
 ### Added - Engine Events & CPU Tracking
 - EngineEvent system med prioriterad kanal
 - CPU usage tracking per modul
 
 ---
 
-## [0.25.0] - 2025
+## [0.25.0] - 2025-11-30
 ### Added - Effect Bypass & Master Volume
 - Effect bypass per slot, master volume control
 
 ---
 
-## [0.24.0] - 2025
+## [0.24.0] - 2025-11-29
 ### Refactored - Hub Architecture
 - EventHub för GUI-engine kommunikation, ersatte direkt polling
 
 ---
 
-## [0.23.0] - 2025
+## [0.23.0] - 2025-11-29
 ### Added - Visual States & Animations
 - ModuleVisualState för visuell feedback, cable animations
 
 ---
 
-## [0.22.0] - 2025
+## [0.22.0] - 2025-11-29
 ### Added - Sequencer Engine
 - SequencerEngine med transport, looping, note events
 
 ---
 
-## [0.21.0] - 2025
+## [0.21.0] - 2025-11-29
 ### Added - Sequencer Data Model
 - Song, Pattern, Note, Track, Automation strukturer
 
 ---
 
-## [0.20.0] - 2025
+## [0.20.0] - 2025-11-29
 ### Added - Effect Chain & Visualizers
 - MasterBus med insert effects och visualizers
 
 ---
 
-## [0.19.0] - 2025
+## [0.19.0] - 2025-11-29
 ### Added - Oscilloscope Widget
 - Real-time waveform display i GUI
 
 ---
 
-## [0.18.0] - 2025
+## [0.18.0] - 2025-11-29
 ### Added - Level Meter Widget
 - VU-meter med peak hold och gradient
 
 ---
 
-## [0.17.0] - 2025
+## [0.17.0] - 2025-11-29
 ### Added - Patch Save/Load
 - JSON-baserat patch-format med ModuleBuilder API
 
 ---
 
-## [0.16.0] - 2025
+## [0.16.0] - 2025-11-29
 ### Added - Voice Allocator
 - Polyfoni med voice stealing, mono/poly modes
 
 ---
 
-## [0.13.2] - 2025
+## [0.13.2] - 2025-11-29
 ### Fixed - Command Queue Overflow
 - Ökade COMMAND_BUFFER_SIZE, DroppedModule wrapper
 
 ---
 
-## [0.13.1] - 2025
+## [0.13.1] - 2025-11-29
 ### Added - Pink Noise & Linear FM
 - Pink noise (Voss-McCartney), Linear FM mode, velocity sensitivity
 
 ---
 
-## [0.13.0] - 2025
+## [0.13.0] - 2025-11-29
 ### Added - Math Oscillator
 - 18 algoritmer: SineFM, TanChaos, SuperSaw, WaveFolder, Lorenz, KarplusStrong, etc.
 - 6 nya example patches
 
 ---
 
-## [0.12.0] - 2025
+## [0.12.0] - 2025-11-28
 ### Initial Release
 - Moduler: Oscillator, Filter, Envelope, LFO, Amplifier, Mixer
 - Effekter: Delay, Reverb, Distortion, Chorus, Phaser, Flanger, Compressor, EQ
