@@ -1,5 +1,29 @@
 # Version History
 
+## [0.85.0] - 2026-02-06
+### Fixed - XM Playback Bugs (Double Volume, Fine Volume Slide Memory, Amiga Portamento)
+
+Tre buggar som påverkade XM-uppspelningskvaliteten (identifierade via joli_suspiria.xm och joli_untouched.xm):
+
+#### Bugg 1: Dubbel volymapplicering (KRITISK)
+- **Problem**: Sample `default_volume` multiplicerades in BÅDE via `SamplePlayer.level` OCH via tracker_volume kanal-modulation → `output × vol²` istället för `output × vol`
+- **Fix**: Borttagen `.with_default_volume()` från tracker sample-import (`tracker.rs`). Volym hanteras enbart via `TrackerInstrumentDefaults` → channel modulation
+- **Effekt**: Korrekt volymbalans, inga onaturligt tysta instrument
+
+#### Bugg 2: FineVolumeSlide saknade effektminne (MEDEL)
+- **Problem**: `EA0`/`EB0` (fine volume slide med param=0) gjorde ingenting, borde återanvända senaste slide-värde
+- **Fix**: Nytt fält `fine_volume_slide: SlideRate` i `ChannelEffectState` med effektminne — param 0 fortsätter med föregående värde
+- **Effekt**: Gradvisa fade-in/out i untouched.xm fungerar korrekt (1586 fine volume slides)
+
+#### Bugg 3: Amiga portamento i linjärt rum (MEDEL)
+- **Problem**: XM-filer med `AmigaFrequencies` körde portamento i cents-rum (linjärt), men Amiga-mode ska använda period-rum (hyperboliskt)
+- **Fix**:
+  - Ny enum `TrackerFrequencyMode { Linear, Amiga }` i `synth_sequencer::song`
+  - Lagras i `Song.tracker_frequency_mode`, sätts vid import
+  - `ChannelEffectProcessor.amiga_mode` vidarebefordras från `SequencerEngine`
+  - Period-baserad portamento: `period = 7680 - (semitones - 12) * 64`, ger karaktäristisk icke-linjär pitch-kurva
+  - Påverkar PortamentoUp/Down och TonePortamento
+
 ## [0.84.0] - 2026-02-06
 ### Improved - Enhanced Tracker Analysis Tool & History Date Corrections
 

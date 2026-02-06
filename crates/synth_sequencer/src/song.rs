@@ -11,6 +11,22 @@ use super::track::SequencerTrack;
 use super::tracker_pattern::TrackerPattern;
 use synth_core::{BipolarValue, Bpm, Gain, NormalizedValue, Semitones};
 
+/// Frequency mode for tracker pitch calculations.
+///
+/// Determines how portamento and pitch effects operate:
+/// - Linear: Standard exponential (cents/semitone) space
+/// - Amiga: Period-based (hyperbolic) space from the Amiga Paula chipset
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TrackerFrequencyMode {
+    /// Linear frequency mode (default for most XM files).
+    /// Portamento operates in cents/semitone space.
+    #[default]
+    Linear,
+    /// Amiga frequency mode (period-based).
+    /// Portamento operates in period space: period = 7680 - semitones * 64.
+    Amiga,
+}
+
 use super::ids::SeqInstrumentId;
 
 /// Tempo change event.
@@ -129,6 +145,11 @@ pub struct Song {
     /// Used to reset channel state when a note triggers with an explicit instrument.
     #[serde(default)]
     tracker_instrument_defaults: HashMap<SeqInstrumentId, TrackerInstrumentDefaults>,
+
+    /// Frequency mode from tracker import (Linear or Amiga).
+    /// Affects how portamento and pitch effects operate.
+    #[serde(default)]
+    pub tracker_frequency_mode: TrackerFrequencyMode,
 }
 
 /// Default tracker speed (6 ticks per row, like FastTracker 2).
@@ -154,6 +175,7 @@ impl Song {
             default_time_signature: TimeSignature::COMMON,
             default_tracker_speed: default_tracker_speed(),
             tracker_instrument_defaults: HashMap::new(),
+            tracker_frequency_mode: TrackerFrequencyMode::default(),
         }
     }
 

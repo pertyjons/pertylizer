@@ -22,7 +22,7 @@ use synth_core::{BipolarValue, Bpm, Cents, NormalizedValue, SampleCount, SampleR
 use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::{
     Pitch, RowIndex, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
-    TrackMode, TrackerInstrumentDefaults, Velocity,
+    TrackMode, TrackerFrequencyMode, TrackerInstrumentDefaults, Velocity,
 };
 
 /// Playback state of the sequencer.
@@ -165,13 +165,23 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let (cached_tempo, tracker_speed, instrument_defaults) = song
+        let (cached_tempo, tracker_speed, instrument_defaults, frequency_mode) = song
             .read()
             .map(|s| {
                 let defaults = s.all_instrument_defaults().clone();
-                (s.default_tempo, s.default_tracker_speed, defaults)
+                (
+                    s.default_tempo,
+                    s.default_tracker_speed,
+                    defaults,
+                    s.tracker_frequency_mode,
+                )
             })
-            .unwrap_or((Bpm::new(120.0), 6, HashMap::new()));
+            .unwrap_or((
+                Bpm::new(120.0),
+                6,
+                HashMap::new(),
+                TrackerFrequencyMode::Linear,
+            ));
 
         let mut engine = Self {
             song,
@@ -202,6 +212,10 @@ impl SequencerEngine {
             pattern_delay_rows_remaining: 0,
             is_tracker: false,
         };
+        // Set Amiga mode on effect processor
+        engine
+            .effect_processor
+            .set_amiga_mode(frequency_mode == TrackerFrequencyMode::Amiga);
         // Recalculate effective tempo based on tracker speed
         engine.recalculate_effective_tempo();
         // Detect tracker mode from song content
@@ -1174,11 +1188,13 @@ impl SequencerEngine {
         // Stop and clear any active notes
         let _ = self.stop();
 
-        // Read tracker speed, instrument defaults, and detect tracker mode from new song
+        // Read tracker speed, instrument defaults, frequency mode, and detect tracker mode from new song
         if let Ok(s) = song.read() {
             self.tracker_speed = s.default_tracker_speed.max(1);
             self.instrument_defaults_cache = s.all_instrument_defaults().clone();
             self.is_tracker = s.tracker_pattern_count() > 0;
+            self.effect_processor
+                .set_amiga_mode(s.tracker_frequency_mode == TrackerFrequencyMode::Amiga);
         }
 
         self.song = song;

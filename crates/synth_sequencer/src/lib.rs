@@ -59,7 +59,8 @@ pub use note::Note;
 pub use pattern::{EffectOnlyEvent, Pattern, RowResolution, TrackCell, TrackerGrid};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{
-    PatternPlacement, Song, TempoChange, TimeSignatureChange, TrackerInstrumentDefaults,
+    PatternPlacement, Song, TempoChange, TimeSignatureChange, TrackerFrequencyMode,
+    TrackerInstrumentDefaults,
 };
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{SequencerTrack, TrackColor, TrackMode};

@@ -596,6 +596,8 @@ pub struct ChannelEffectProcessor {
     /// Pattern loop state.
     loop_start_row: Option<u32>,
     loop_count: u8,
+    /// Amiga frequency mode: portamento operates in period space.
+    amiga_mode: bool,
 }
 
 impl Default for ChannelEffectProcessor {
@@ -617,7 +619,13 @@ impl ChannelEffectProcessor {
             global_volume: NormalizedValue::MAX,
             loop_start_row: None,
             loop_count: 0,
+            amiga_mode: false,
         }
+    }
+
+    /// Set Amiga frequency mode for period-based portamento.
+    pub fn set_amiga_mode(&mut self, amiga: bool) {
+        self.amiga_mode = amiga;
     }
 
     /// Reset all channel states.
@@ -803,10 +811,16 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::FineVolumeSlide { up, down } => {
-                    // Fine slide: apply once at tick 0
-                    let delta = SlideRate::from_volume_slide(*up, *down);
-                    let new_vol = (state.volume.as_f32() + delta.as_f32()).clamp(0.0, 1.0);
-                    state.volume = NormalizedValue::new(new_vol);
+                    // Effect memory: EA0/EB0 means "continue with previous fine slide"
+                    if *up > 0 || *down > 0 {
+                        state.fine_volume_slide = SlideRate::from_volume_slide(*up, *down);
+                    }
+                    // Apply fine slide once at tick 0 (using memory if param was 0)
+                    let delta = state.fine_volume_slide.as_f32();
+                    if delta.abs() > f32::EPSILON {
+                        let new_vol = (state.volume.as_f32() + delta).clamp(0.0, 1.0);
+                        state.volume = NormalizedValue::new(new_vol);
+                    }
                 }
 
                 EffectCommand::Tremolo { speed, depth } => {
@@ -902,13 +916,14 @@ impl ChannelEffectProcessor {
     /// handled by process_row_start). Returns modulation values for each channel.
     pub fn process_tick(&mut self) -> Vec<ChannelModulation> {
         self.tick_in_row = self.tick_in_row.next();
+        let amiga_mode = self.amiga_mode;
 
         self.channels
             .iter_mut()
             .enumerate()
             .filter_map(|(idx, state)| {
                 let track = TrackId::new(idx as u16);
-                let modulation = state.process_tick(self.tick_in_row, track);
+                let modulation = state.process_tick(self.tick_in_row, track, amiga_mode);
                 if modulation.is_significant() {
                     Some(modulation)
                 } else {
@@ -1003,6 +1018,8 @@ pub struct ChannelEffectState {
     // === Volume slide ===
     /// Per-tick volume change rate.
     pub volume_slide: SlideRate,
+    /// Fine volume slide memory (applied once at tick 0, with effect memory).
+    pub fine_volume_slide: SlideRate,
 
     // === Tremolo ===
     /// Tremolo oscillation speed.
@@ -1065,6 +1082,7 @@ impl Default for ChannelEffectState {
             vibrato_phase: Phase::ZERO,
             vibrato_waveform: EffectWaveform::Sine,
             volume_slide: SlideRate::ZERO,
+            fine_volume_slide: SlideRate::ZERO,
             tremolo_speed: EffectSpeed::ZERO,
             tremolo_depth: TremoloDepth::ZERO,
             tremolo_phase: Phase::ZERO,
@@ -1180,7 +1198,12 @@ impl ChannelEffectState {
     }
 
     /// Process one tick and return modulation.
-    pub fn process_tick(&mut self, tick: TickInRow, track: TrackId) -> ChannelModulation {
+    pub fn process_tick(
+        &mut self,
+        tick: TickInRow,
+        track: TrackId,
+        amiga_mode: bool,
+    ) -> ChannelModulation {
         // Store current tick for arpeggio calculation
         self.current_tick = tick;
 
@@ -1237,13 +1260,23 @@ impl ChannelEffectState {
         // Portamento up/down
         if tick.as_u8() > 0 {
             match self.portamento_direction {
-                PortamentoDirection::Up => {
-                    self.pitch_offset += self.portamento_speed;
-                }
-                PortamentoDirection::Down => {
-                    self.pitch_offset = PitchCents::new(
-                        self.pitch_offset.as_f32() - self.portamento_speed.as_f32(),
-                    );
+                PortamentoDirection::Up | PortamentoDirection::Down => {
+                    if amiga_mode {
+                        self.apply_amiga_portamento();
+                    } else {
+                        // Linear mode: slide in cents space
+                        match self.portamento_direction {
+                            PortamentoDirection::Up => {
+                                self.pitch_offset += self.portamento_speed;
+                            }
+                            PortamentoDirection::Down => {
+                                self.pitch_offset = PitchCents::new(
+                                    self.pitch_offset.as_f32() - self.portamento_speed.as_f32(),
+                                );
+                            }
+                            PortamentoDirection::Off => {}
+                        }
+                    }
                 }
                 PortamentoDirection::Off => {}
             }
@@ -1254,15 +1287,20 @@ impl ChannelEffectState {
             && self.tone_porta_speed.as_f32() > 0.0
             && let Some(target) = self.tone_porta_target
         {
-            let target_pitch = f32::from(target.as_midi());
-            let current = self.current_pitch.as_f32();
-            let diff = target_pitch - current;
-            if diff.abs() > 0.01 {
-                let step = self.tone_porta_speed.as_f32() / 100.0; // Convert cents to semitones
-                if diff > 0.0 {
-                    self.current_pitch = Semitones::new((current + step).min(target_pitch));
-                } else {
-                    self.current_pitch = Semitones::new((current - step).max(target_pitch));
+            if amiga_mode {
+                self.apply_amiga_tone_portamento(target);
+            } else {
+                // Linear mode: glide in semitone space
+                let target_pitch = f32::from(target.as_midi());
+                let current = self.current_pitch.as_f32();
+                let diff = target_pitch - current;
+                if diff.abs() > 0.01 {
+                    let step = self.tone_porta_speed.as_f32() / 100.0; // Convert cents to semitones
+                    if diff > 0.0 {
+                        self.current_pitch = Semitones::new((current + step).min(target_pitch));
+                    } else {
+                        self.current_pitch = Semitones::new((current - step).max(target_pitch));
+                    }
                 }
             }
         }
@@ -1296,6 +1334,69 @@ impl ChannelEffectState {
         }
 
         self.current_modulation(track)
+    }
+
+    /// Convert semitones (MIDI space) to Amiga period.
+    ///
+    /// Period = 7680 - (semitones - 12) * 64
+    /// The -12 offset accounts for our MIDI convention where C-0 = MIDI 12.
+    fn semitones_to_period(semitones: f32) -> f32 {
+        7680.0 - (semitones - 12.0) * 64.0
+    }
+
+    /// Convert Amiga period back to semitones (MIDI space).
+    fn period_to_semitones(period: f32) -> f32 {
+        (7680.0 - period) / 64.0 + 12.0
+    }
+
+    /// Apply portamento up/down in Amiga period space.
+    ///
+    /// In Amiga mode, portamento speed is in periods per tick (not cents).
+    /// Portamento up = decrease period (higher pitch), down = increase period (lower pitch).
+    fn apply_amiga_portamento(&mut self) {
+        let current_semitones = self.current_pitch.as_f32() + self.pitch_offset.as_f32() / 100.0;
+        let period = Self::semitones_to_period(current_semitones);
+        // Convert speed from cents to period units: speed_cents / 100 * 64 = speed * 64/100
+        let speed_periods = self.portamento_speed.as_f32() / 100.0 * 64.0;
+
+        let new_period = match self.portamento_direction {
+            PortamentoDirection::Up => (period - speed_periods).max(1.0),
+            PortamentoDirection::Down => period + speed_periods,
+            PortamentoDirection::Off => period,
+        };
+
+        // Convert back to pitch offset
+        let new_semitones = Self::period_to_semitones(new_period);
+        self.pitch_offset = PitchCents::new((new_semitones - self.current_pitch.as_f32()) * 100.0);
+    }
+
+    /// Apply tone portamento in Amiga period space.
+    ///
+    /// Glides toward the target note in period space, producing the
+    /// characteristic non-linear pitch curve of Amiga trackers.
+    fn apply_amiga_tone_portamento(&mut self, target: Pitch) {
+        let target_pitch = f32::from(target.as_midi());
+        let current = self.current_pitch.as_f32();
+
+        let current_period = Self::semitones_to_period(current);
+        let target_period = Self::semitones_to_period(target_pitch);
+        let diff = target_period - current_period;
+
+        if diff.abs() < 0.5 {
+            return; // Close enough
+        }
+
+        let speed_periods = self.tone_porta_speed.as_f32() / 100.0 * 64.0;
+
+        let new_period = if diff > 0.0 {
+            // Target period is higher (lower pitch) - slide period up
+            (current_period + speed_periods).min(target_period)
+        } else {
+            // Target period is lower (higher pitch) - slide period down
+            (current_period - speed_periods).max(target_period)
+        };
+
+        self.current_pitch = Semitones::new(Self::period_to_semitones(new_period));
     }
 
     /// Get the current modulation values.

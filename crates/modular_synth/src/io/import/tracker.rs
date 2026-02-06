@@ -134,6 +134,12 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     song.default_tempo = Bpm::new(bpm.clamp(60.0, 300.0));
     song.default_tracker_speed = speed.max(1); // Prevent division by zero
 
+    // Store frequency type for portamento mode
+    song.tracker_frequency_mode = match module.frequency_type {
+        FrequencyType::LinearFrequencies => synth_sequencer::TrackerFrequencyMode::Linear,
+        FrequencyType::AmigaFrequencies => synth_sequencer::TrackerFrequencyMode::Amiga,
+    };
+
     // Extract samples from instruments
     let samples = extract_samples(&module, module.frequency_type)?;
 
@@ -549,8 +555,9 @@ fn convert_sample(
         None
     };
 
-    // Extract default volume and panning (xmrs uses 0.0-1.0)
-    let default_volume = xmrs_sample.volume;
+    // Extract default panning (xmrs uses 0.0-1.0)
+    // NOTE: default_volume is not used here — it is handled by TrackerInstrumentDefaults
+    // to avoid double volume application (SamplePlayer.level × tracker_volume).
     let default_panning = xmrs_sample.panning; // 0.0 = left, 1.0 = right
 
     let mut sample = Sample::new(name, data, channels, sample_rate).with_root_note(root_note);
@@ -559,9 +566,10 @@ fn convert_sample(
         sample = sample.with_loop_info(loop_info);
     }
 
-    sample = sample
-        .with_default_volume(default_volume)
-        .with_default_panning(default_panning);
+    // NOTE: default_volume is NOT set on the sample. It is handled by
+    // TrackerInstrumentDefaults → tracker_volume channel modulation.
+    // Setting it here too would cause double volume (SamplePlayer.level × tracker_volume).
+    sample = sample.with_default_panning(default_panning);
 
     Ok(sample)
 }
