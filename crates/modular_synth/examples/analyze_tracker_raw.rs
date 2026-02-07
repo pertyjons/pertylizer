@@ -468,17 +468,20 @@ fn format_track_effect(effect: &TrackEffect) -> String {
             format!("0{:X}{:X}", (*half1).min(15), (*half2).min(15))
         }
         TrackEffect::Portamento(speed) => {
-            let s = (speed.abs() * 16.0).min(255.0) as u8;
-            if *speed > 0.0 {
+            let s = (speed.abs() / 4.0).round().min(255.0) as u8;
+            if *speed < 0.0 {
+                // negative = porta UP (decreases period)
                 format!("1{:02X}", s)
-            } else if *speed < 0.0 {
+            } else if *speed > 0.0 {
+                // positive = porta DOWN (increases period)
                 format!("2{:02X}", s)
             } else {
                 "100".to_string()
             }
         }
         TrackEffect::TonePortamento(speed) => {
-            let s = (speed * 16.0).min(255.0) as u8;
+            // Display cannot know freq_type, so show raw xmrs value
+            let s = speed.round().min(255.0) as u8;
             format!("3{:02X}", s)
         }
         TrackEffect::Vibrato { speed, depth } => {

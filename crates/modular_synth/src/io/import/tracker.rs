@@ -201,8 +201,13 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Convert patterns to TrackerPattern format
     let mut pattern_ids = Vec::new();
     for (pat_idx, pattern_data) in module.pattern.iter().enumerate() {
-        let tracker_pattern =
-            convert_pattern_to_tracker(pattern_data, pat_idx, num_channels, f32::from(speed))?;
+        let tracker_pattern = convert_pattern_to_tracker(
+            pattern_data,
+            pat_idx,
+            num_channels,
+            f32::from(speed),
+            module.frequency_type,
+        )?;
         let pattern_id = song.add_tracker_pattern(tracker_pattern);
         pattern_ids.push(pattern_id);
     }
@@ -642,6 +647,7 @@ fn convert_pattern_to_tracker(
     pat_idx: usize,
     num_channels: usize,
     speed: f32,
+    freq_type: FrequencyType,
 ) -> ImportResult<TrackerPattern> {
     let num_rows = pattern_data.len();
     if num_rows == 0 {
@@ -684,7 +690,7 @@ fn convert_pattern_to_tracker(
             let state = &mut channel_state[channel_idx];
 
             // Process the track unit and get the cell
-            let (cell, effects) = process_track_unit_to_cell(track_unit, state);
+            let (cell, effects) = process_track_unit_to_cell(track_unit, state, freq_type);
 
             // Set cell if not empty
             if !cell.is_empty() {
@@ -728,6 +734,7 @@ struct TrackerChannelState {
 fn process_track_unit_to_cell(
     unit: &TrackUnit,
     state: &mut TrackerChannelState,
+    freq_type: FrequencyType,
 ) -> (Cell, Vec<EffectCommand>) {
     // Check for instrument change
     // Note: xmrs uses 0-indexed instruments
@@ -746,7 +753,7 @@ fn process_track_unit_to_cell(
 
     // Process track effects
     for effect in &unit.effects {
-        if let Some(cmd) = convert_track_effect_for_tracker(effect, state) {
+        if let Some(cmd) = convert_track_effect_for_tracker(effect, state, freq_type) {
             effects.push(cmd);
         }
     }
@@ -811,6 +818,7 @@ fn process_track_unit_to_cell(
 fn convert_track_effect_for_tracker(
     effect: &TrackEffect,
     state: &mut TrackerChannelState,
+    freq_type: FrequencyType,
 ) -> Option<EffectCommand> {
     match effect {
         // === Pitch effects ===
@@ -820,20 +828,27 @@ fn convert_track_effect_for_tracker(
         }),
 
         TrackEffect::Portamento(speed) => {
-            let scaled = (speed.abs() * 16.0).min(255.0) as u8;
-            if *speed > 0.0 {
-                Some(EffectCommand::PortamentoUp(scaled))
-            } else if *speed < 0.0 {
-                Some(EffectCommand::PortamentoDown(scaled))
+            // xmrs gives ±4.0 * raw_param. Recover raw param.
+            let raw_param = (speed.abs() / 4.0).round().min(255.0) as u8;
+            // xmrs: negative = porta UP (decreases period), positive = porta DOWN (increases period)
+            if *speed < 0.0 {
+                Some(EffectCommand::PortamentoUp(raw_param))
+            } else if *speed > 0.0 {
+                Some(EffectCommand::PortamentoDown(raw_param))
             } else {
                 None
             }
         }
 
         TrackEffect::TonePortamento(speed) => {
-            let scaled = (speed * 16.0).min(255.0) as u8;
+            // Amiga: xmrs gives raw_param directly
+            // Linear: xmrs gives 4.0 * raw_param
+            let raw_param = match freq_type {
+                FrequencyType::AmigaFrequencies => (*speed).round().min(255.0) as u8,
+                FrequencyType::LinearFrequencies => (*speed / 4.0).round().min(255.0) as u8,
+            };
             Some(EffectCommand::TonePortamento {
-                speed: scaled,
+                speed: raw_param,
                 target: state.last_porta_target,
             })
         }

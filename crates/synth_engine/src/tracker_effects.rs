@@ -1272,15 +1272,17 @@ impl ChannelEffectState {
                     if amiga_mode {
                         self.apply_amiga_portamento();
                     } else {
-                        // Linear mode: slide in cents space
+                        // Linear mode: portamento_speed = raw_param * 4.0 (period units)
+                        // Convert period units to cents: period_units * 1200.0 / 768.0
                         match self.portamento_direction {
                             PortamentoDirection::Up => {
-                                self.pitch_offset += self.portamento_speed;
+                                let cents = self.portamento_speed.as_f32() * 1200.0 / 768.0;
+                                self.pitch_offset += PitchCents::new(cents);
                             }
                             PortamentoDirection::Down => {
-                                self.pitch_offset = PitchCents::new(
-                                    self.pitch_offset.as_f32() - self.portamento_speed.as_f32(),
-                                );
+                                let cents = self.portamento_speed.as_f32() * 1200.0 / 768.0;
+                                self.pitch_offset =
+                                    PitchCents::new(self.pitch_offset.as_f32() - cents);
                             }
                             PortamentoDirection::Off => {}
                         }
@@ -1303,7 +1305,9 @@ impl ChannelEffectState {
                 let current = self.current_pitch.as_f32();
                 let diff = target_pitch - current;
                 if diff.abs() > 0.01 {
-                    let step = self.tone_porta_speed.as_f32() / 100.0; // Convert cents to semitones
+                    // tone_porta_speed = raw_param * 4.0 (period units)
+                    // Convert to semitones: period_units * 1200.0 / 768.0 / 100.0
+                    let step = self.tone_porta_speed.as_f32() * 1200.0 / 768.0 / 100.0;
                     if diff > 0.0 {
                         self.current_pitch = Semitones::new((current + step).min(target_pitch));
                     } else {
@@ -1364,8 +1368,8 @@ impl ChannelEffectState {
     fn apply_amiga_portamento(&mut self) {
         let current_semitones = self.current_pitch.as_f32() + self.pitch_offset.as_f32() / 100.0;
         let period = Self::semitones_to_period(current_semitones);
-        // Convert speed from cents to period units: speed_cents / 100 * 64 = speed * 64/100
-        let speed_periods = self.portamento_speed.as_f32() / 100.0 * 64.0;
+        // portamento_speed = raw_param * 4.0 = period units per tick
+        let speed_periods = self.portamento_speed.as_f32();
 
         let new_period = match self.portamento_direction {
             PortamentoDirection::Up => (period - speed_periods).max(1.0),
@@ -1394,7 +1398,8 @@ impl ChannelEffectState {
             return; // Close enough
         }
 
-        let speed_periods = self.tone_porta_speed.as_f32() / 100.0 * 64.0;
+        // tone_porta_speed = raw_param * 4.0, but FT2 Amiga tone portamento uses raw_param
+        let speed_periods = self.tone_porta_speed.as_f32() / 4.0;
 
         let new_period = if diff > 0.0 {
             // Target period is higher (lower pitch) - slide period up

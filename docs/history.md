@@ -1,5 +1,26 @@
 # Version History
 
+## [0.90.0] - 2026-02-07
+### Fixed - Portamento-konvertering i Amiga-läge (och linjärt läge)
+
+#### Portamento ~41x för snabb och inverterad riktning (KRITISK)
+- **Problem**: Portamento-effekter (1xx/2xx) glider ~41x för snabbt och i fel riktning. Tre buggar samverkar:
+  1. Import multiplicerar med `* 16.0` istället för att dividera med `/ 4.0` för att återställa raw param
+  2. Import inverterar riktning (xmrs negativ = porta UP, inte DOWN)
+  3. Effektprocessorn konverterar speed felaktigt med `/ 100.0 * 64.0` istället för att använda direkt
+- **Fix**: Import återställer nu raw param korrekt (`speed.abs() / 4.0`), riktning fixad, effektprocessorn använder period-enheter direkt i Amiga-läge
+
+#### Tone portamento felaktig skalning
+- **Problem**: Tone portamento (3xx) skalas felaktigt i både import och effektprocessor
+- **Fix**: Import hanterar nu Amiga/Linear separat. Effektprocessorn konverterar korrekt: Amiga `/4.0`, Linear `*1200.0/768.0/100.0`
+
+#### Linjär portamento felaktig konvertering
+- **Problem**: Linjär portamento adderar period-enheter direkt som cents, utan konvertering
+- **Fix**: Konverterar nu period-enheter till cents med `* 1200.0 / 768.0`
+
+#### Debug-verktyg (analyze_tracker_raw)
+- Fixad riktning och skalning i `format_track_effect` för Portamento och TonePortamento
+
 ## [0.89.0] - 2026-02-07
 ### Fixed - XM Speed Effect Silence & GUI Row Sync
 
