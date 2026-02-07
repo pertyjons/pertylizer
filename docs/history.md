@@ -1,5 +1,16 @@
 # Version History
 
+## [0.89.0] - 2026-02-07
+### Fixed - XM Speed Effect Silence & GUI Row Sync
+
+#### Tystnad vid dynamisk speed-ändring (KRITISK)
+- **Problem**: XM-moduler som byter speed med Fxx-effekt (t.ex. F03 = speed 3) orsakade tystnad efter halva patternet. Pattern-placeringarna beräknades vid import med default speed (6, 240 ticks/rad), men dynamisk speed 3 (120 ticks/rad) processade alla rader dubbelt så snabbt — halvvägs genom tick-fönstret var alla rader klara och resten blev tyst.
+- **Fix**: Ny metod `auto_advance_if_past_pattern()` i sequencer-motorn som detekterar när alla rader processats och hoppar direkt till nästa pattern. Noter bevaras över pattern-gränser (ingen release).
+
+#### GUI tracker-rad ur synk vid speed-ändring
+- **Problem**: Sequencer-vyn använde statisk `ticks_per_row` (240) för att beräkna vilken rad som visas. Med dynamisk speed 3 gick GUI:t i halv hastighet och bröt vid halva patternet.
+- **Fix**: Dynamisk `ticks_per_row` delas nu från audio-tråden till GUI:t via `TransportState` (atomisk). GUI:t beräknar raden med `offset / dynamic_ticks_per_row` istället för patternets statiska värde.
+
 ## [0.88.0] - 2026-02-07
 ### Changed - Solo/Mute per kanal & Modulnamn i toolbar
 

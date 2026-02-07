@@ -823,6 +823,7 @@ impl eframe::App for SynthApp {
                 } else {
                     None
                 };
+                let playback_ticks_per_row = self.handle.playback_ticks_per_row();
 
                 // Show sequencer view with tracker state and loaded song
                 let result = crate::gui::views::sequencer::show(
@@ -830,6 +831,7 @@ impl eframe::App for SynthApp {
                     &mut self.tracker_state,
                     self.song.as_ref(),
                     playback_tick,
+                    playback_ticks_per_row,
                 );
 
                 // Handle transport actions

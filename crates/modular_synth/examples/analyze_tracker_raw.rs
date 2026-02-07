@@ -487,7 +487,7 @@ fn format_track_effect(effect: &TrackEffect) -> String {
             format!("4{:X}{:X}", s, d)
         }
         TrackEffect::VolumeSlide { speed, fine } => {
-            let s = (speed.abs() * 16.0).min(15.0) as u8;
+            let s = (speed.abs() * 64.0).min(15.0) as u8;
             let prefix = if *fine { "E" } else { "A" };
             if *speed > 0.0 {
                 format!("{}{:X}0", prefix, s)
@@ -573,7 +573,7 @@ fn format_global_effect(effect: &GlobalEffect) -> String {
             format!("G{:02X}", v)
         }
         GlobalEffect::VolumeSlide { speed, fine } => {
-            let s = (speed.abs() * 16.0).min(15.0) as u8;
+            let s = (speed.abs() * 64.0).min(15.0) as u8;
             let prefix = if *fine { "gF" } else { "gS" };
             let dir = if *speed > 0.0 { "+" } else { "-" };
             format!("{}{}{:X}", prefix, dir, s)

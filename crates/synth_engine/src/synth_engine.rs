@@ -285,6 +285,11 @@ impl EngineHandle {
         self.state.transport.is_playing()
     }
 
+    /// Get the current dynamic ticks per row (affected by speed effects).
+    pub fn playback_ticks_per_row(&self) -> u32 {
+        self.state.transport.get_ticks_per_row()
+    }
+
     /// Add a visualization buffer for a module (Arc is shared with engine).
     pub fn add_visualization_buffer(
         &mut self,
@@ -1863,6 +1868,9 @@ impl AudioProcessor for SynthEngine {
             self.state
                 .transport
                 .set_ticks(self.sequencer.current_tick().0);
+            self.state
+                .transport
+                .set_ticks_per_row(self.sequencer.current_ticks_per_row());
             #[allow(clippy::cast_possible_truncation)]
             self.state.voice_count.store(
                 self.instruments
@@ -1879,6 +1887,9 @@ impl AudioProcessor for SynthEngine {
             self.state
                 .transport
                 .set_ticks(self.sequencer.current_tick().0);
+            self.state
+                .transport
+                .set_ticks_per_row(self.sequencer.current_ticks_per_row());
 
             route_sequencer_events(
                 &self.sequencer_event_buffer,

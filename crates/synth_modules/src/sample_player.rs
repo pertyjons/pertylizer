@@ -133,7 +133,7 @@ impl SamplePlayer {
             loop_mode: LoopMode::Off,
             loop_start: NormalizedValue::new(0.0),
             loop_end: NormalizedValue::new(1.0),
-            loop_crossfade: Milliseconds::new(5.0),
+            loop_crossfade: Milliseconds::new(0.0),
             level: Gain::UNITY,
             pan: BipolarValue::CENTER,
             velocity_sensitivity: NormalizedValue::new(0.5),
@@ -639,12 +639,12 @@ impl Describable for SamplePlayer {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::SamplePlayer(SamplePlayerParam::LoopCrossfade(Milliseconds::new(5.0))),
+                    Param::SamplePlayer(SamplePlayerParam::LoopCrossfade(Milliseconds::new(0.0))),
                     "X-Fade",
                 )
                 .description("Loop crossfade time")
                 .range(0.0, 50.0)
-                .default(5.0)
+                .default(0.0)
                 .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )

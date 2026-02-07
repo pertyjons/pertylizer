@@ -893,7 +893,8 @@ fn convert_track_effect_for_tracker(
         }
 
         TrackEffect::VolumeSlide { speed, fine } => {
-            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            // xmrs normalizes volume slide by dividing by 64.0, so multiply back
+            let scaled = (speed.abs() * 64.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
                     Some(EffectCommand::FineVolumeSlide {
@@ -920,7 +921,8 @@ fn convert_track_effect_for_tracker(
         }
 
         TrackEffect::ChannelVolumeSlide { speed, fine } => {
-            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            // xmrs normalizes volume slide by dividing by 64.0, so multiply back
+            let scaled = (speed.abs() * 64.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
                     Some(EffectCommand::FineVolumeSlide {
@@ -1063,7 +1065,8 @@ fn convert_global_effect(effect: &GlobalEffect) -> Option<EffectCommand> {
         }
 
         GlobalEffect::VolumeSlide { speed, fine } => {
-            let scaled = (speed.abs() * 16.0).min(15.0) as u8;
+            // xmrs normalizes volume slide by dividing by 64.0, so multiply back
+            let scaled = (speed.abs() * 64.0).min(15.0) as u8;
             if *fine {
                 if *speed > 0.0 {
                     Some(EffectCommand::FineVolumeSlide {

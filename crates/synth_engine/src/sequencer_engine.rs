@@ -339,6 +339,12 @@ impl SequencerEngine {
         self.is_tracker
     }
 
+    /// Current dynamic ticks per row (affected by SetSpeed effect).
+    #[must_use]
+    pub fn current_ticks_per_row(&self) -> u32 {
+        self.current_ticks_per_row
+    }
+
     /// Process samples up to the next song tick boundary.
     ///
     /// Returns the number of samples consumed (the "chunk size").
@@ -380,6 +386,9 @@ impl SequencerEngine {
         while self.tick_accumulator >= 1.0 {
             self.tick_accumulator -= 1.0;
 
+            // Auto-advance past patterns that ended early due to dynamic speed change.
+            // Must happen BEFORE collect_events_at_tick so the new pattern's row 0 is processed.
+            self.auto_advance_if_past_pattern();
             self.collect_events_at_tick(events);
             self.check_note_offs(events);
 
@@ -569,6 +578,70 @@ impl SequencerEngine {
             }
         }
         None
+    }
+
+    /// Auto-advance to the next pattern when a dynamic speed change caused all
+    /// rows to be processed before the static pattern window ends.
+    ///
+    /// In XM playback, patterns advance immediately after the last row. When a
+    /// speed effect (Fxx, x < 0x20) increases the playback speed mid-song, rows
+    /// are consumed faster than the import-time tick allocation. This leaves a
+    /// silent gap between the effective end and the next pattern's start tick.
+    /// This method detects that gap and jumps to the next pattern.
+    fn auto_advance_if_past_pattern(&mut self) {
+        if !self.is_tracker {
+            return;
+        }
+        // Don't interfere with explicit navigation commands
+        if self.pending_pattern_break.is_some()
+            || self.pending_pattern_jump.is_some()
+            || self.pending_pattern_loop_back
+        {
+            return;
+        }
+
+        let advance_to = {
+            let Ok(song) = self.song.read() else {
+                return;
+            };
+            let arrangement = song.arrangement();
+            let mut result = None;
+            for (idx, placement) in arrangement.iter().enumerate() {
+                if let Some(pattern) = song.tracker_pattern(placement.pattern_id) {
+                    let static_length = pattern.length_ticks().0 as u64;
+                    let static_end = placement.start.0 + static_length;
+
+                    // Is current_tick within this pattern's static bounds?
+                    if self.current_tick.0 >= placement.start.0 && self.current_tick.0 < static_end
+                    {
+                        // Compute effective end based on dynamic speed
+                        let effective_length = u64::from(pattern.num_rows().as_u16())
+                            * u64::from(self.current_ticks_per_row);
+
+                        if effective_length < static_length
+                            && self.current_tick.0 >= placement.start.0 + effective_length
+                        {
+                            // Past effective end - advance to next pattern
+                            let next_idx = idx + 1;
+                            if next_idx < arrangement.len() {
+                                result = Some((next_idx, arrangement[next_idx].start));
+                            }
+                        }
+                        break; // Found the active pattern
+                    }
+                }
+            }
+            result
+        };
+
+        if let Some((next_idx, next_start)) = advance_to {
+            // Notes persist across pattern boundaries (no release needed).
+            self.current_tick = next_start;
+            self.tick_accumulator = 0.0;
+            self.current_order_index = next_idx;
+            self.last_row_index = None;
+            self.pattern_delay_rows_remaining = 0;
+        }
     }
 
     /// Update the cached tempo from the song.

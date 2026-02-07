@@ -48,11 +48,15 @@ pub fn show(
     tracker_state: &mut TrackerViewState,
     song: Option<&Song>,
     playback_tick: Option<Tick>,
+    playback_ticks_per_row: u32,
 ) -> SequencerResult {
     let mut result = SequencerResult::default();
 
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical(|ui| {
+            // Snapshot muted state before any UI interaction (toolbar + grid)
+            let muted_before = tracker_state.muted_tracks.clone();
+
             // Toolbar
             result.transport = draw_toolbar(ui, tracker_state, song);
 
@@ -100,9 +104,15 @@ pub fn show(
                             // Calculate row within the pattern
                             if tracker_state.active_pattern == Some(pattern_id) {
                                 // Try TrackerPattern first (native tracker format)
-                                if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
-                                    let pattern_tick = PatternTick(offset.0 as u32);
-                                    Some(tracker_pattern.tick_to_row(pattern_tick).as_usize())
+                                if song.tracker_pattern(pattern_id).is_some() {
+                                    // Use dynamic ticks_per_row from the engine (respects
+                                    // SetSpeed effects) instead of the static pattern value.
+                                    let pattern_tick = offset.0 as u32;
+                                    if playback_ticks_per_row > 0 {
+                                        Some((pattern_tick / playback_ticks_per_row) as usize)
+                                    } else {
+                                        Some(0)
+                                    }
                                 } else if let Some(pattern) = song.pattern(pattern_id) {
                                     // Fall back to regular Pattern
                                     let pattern_tick = PatternTick(offset.0 as u32);
@@ -119,17 +129,18 @@ pub fn show(
                         }
                     });
 
-                    // Draw the tracker grid (track mute changes)
-                    let muted_before = tracker_state.muted_tracks.clone();
+                    // Draw the tracker grid
                     let config = TrackerViewConfig::fasttracker();
                     draw_tracker_grid(ui, tracker_state, song, &config, playback_row);
-                    if tracker_state.muted_tracks != muted_before {
-                        result.muted_tracks_changed = Some(tracker_state.muted_tracks.clone());
-                    }
                 }
                 None => {
                     draw_no_song_placeholder(ui);
                 }
+            }
+
+            // Detect mute changes from toolbar or grid
+            if tracker_state.muted_tracks != muted_before {
+                result.muted_tracks_changed = Some(tracker_state.muted_tracks.clone());
             }
         });
     });
