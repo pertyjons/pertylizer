@@ -1,5 +1,24 @@
 # Version History
 
+## [0.92.0] - 2026-02-07
+### Fixed - Tremolo, vibrato och volume slide noggrannhet
+
+#### Tremolo-djup ~4x för svagt
+- **Problem**: `TremoloDepth::from_param` använde `depth / 64.0` men FT2-formeln är `(waveform_peak * depth) >> 6` där peak=255. Resultatet: tremolo var ~4x för svag och nästan ohörbar.
+- **Fix**: Ny formel `depth * 255.0 / 64.0 / 64.0` matchar FT2:s djupskala.
+
+#### Vibrato-offset appliceras på tick 0
+- **Problem**: Vibrato-offset beräknades och applicerades på alla ticks inklusive tick 0. FT2 nollställer vibrato-offset på tick 0 (`outPeriod = realPeriod`) och kör inte `doVibrato` förrän tick 1+.
+- **Fix**: Vibrato-offset appliceras nu bara på ticks 1+. Vibrato/tremolo-fas avanceras också bara på ticks 1+.
+
+#### Volume slide prioritetsregel felaktig
+- **Problem**: `SlideRate::from_volume_slide` subtraherade `up - down`, men FT2 ger övre nibble (UP) prioritet när båda är icke-noll. Samma bugg i `from_panning_slide`.
+- **Fix**: Ny prioritetslogik — om `up > 0` ignoreras `down` (och vice versa för panning slide).
+
+### Added - Effekt-noggrannhetsanalys
+- Ny fil `docs/effect-accuracy-analysis.md` — genomgående analys av alla tracker-effekter mot FT2-referens
+- Ny fil `docs/references/ft2-effect-reference.md` — komplett FT2-effektreferens med exakta formler och C-kod från ft2-clone
+
 ## [0.91.0] - 2026-02-07
 ### Fixed - Continuous effects läcker mellan rader
 

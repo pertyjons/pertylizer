@@ -35,6 +35,20 @@ Denna katalog innehåller tekniska referensdokument som är relevanta för imple
 
 ---
 
+### `ft2-effect-reference.md`
+**Varför:** Komplett referens för ALLA FT2-effekter med exakta formler, C-kod från ft2-clone, tick 0 vs tick 1+ beteende, effect memory-system, edge cases och kända FT2-buggar. Inkluderar vibrato-sinetabell (32 entries), arpeggio-tabell (med overflow-bytes), period-till-frekvens-konvertering (både linear och Amiga), och hur pitch/volym-modulationer kombineras.
+
+**Stödjer implementation:** Direkt användbar för att implementera och verifiera alla XM-effekter i spelarens effektprocessor. Varje effekt har exakt kod från ft2-clone med förklaringar.
+
+**Källor:**
+- ft2-clone av 8bitbubsy: https://github.com/8bitbubsy/ft2-clone
+- OpenMPT XM test cases: https://wiki.openmpt.org/Development:_Test_Cases/XM
+- OpenMPT Effect Reference: https://wiki.openmpt.org/Manual:_Effect_Reference
+- JavaScript FT2 player: https://www.a1k0n.net/2015/11/09/javascript-ft2-player.html
+- MilkyTracker: https://milkytracker.org/documentation/
+
+---
+
 ## Extern dokumentation (ej sparad, länkad)
 
 - **ft2-clone fullständig källkod:** https://github.com/8bitbubsy/ft2-clone

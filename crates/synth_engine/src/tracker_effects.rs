@@ -276,16 +276,28 @@ impl SlideRate {
 
     /// Create from tracker volume slide parameters.
     ///
+    /// FT2 priority rule: if both nibbles are non-zero, UP (upper nibble) takes priority.
+    ///
     /// # Arguments
     /// * `up` - Slide up value (0-15)
     /// * `down` - Slide down value (0-15)
     pub fn from_volume_slide(up: u8, down: u8) -> Self {
-        Self((f32::from(up) - f32::from(down)) / 64.0)
+        if up > 0 {
+            Self(f32::from(up) / 64.0)
+        } else {
+            Self(-f32::from(down) / 64.0)
+        }
     }
 
     /// Create from tracker panning slide parameters.
+    ///
+    /// FT2 priority rule: if both nibbles are non-zero, RIGHT (upper nibble) takes priority.
     pub fn from_panning_slide(left: u8, right: u8) -> Self {
-        Self((f32::from(right) - f32::from(left)) / 128.0)
+        if right > 0 {
+            Self(f32::from(right) / 128.0)
+        } else {
+            Self(-f32::from(left) / 128.0)
+        }
     }
 
     /// Get the raw value.
@@ -316,8 +328,11 @@ impl TremoloDepth {
     }
 
     /// Create from tracker effect parameter (0-15).
+    ///
+    /// FT2 formula: `(waveform_peak * depth) >> 6` where peak=255, volume range=64.
+    /// Our waveform returns ±1.0 (peak=1.0), so: `depth * 255 / 64 / 64`.
     pub fn from_param(param: u8) -> Self {
-        Self(f32::from(param) / 64.0)
+        Self((f32::from(param) * 255.0 / 64.0 / 64.0).clamp(0.0, 1.0))
     }
 
     /// Get the raw value.
@@ -1362,8 +1377,8 @@ impl ChannelEffectState {
             }
         }
 
-        // Vibrato
-        if self.vibrato_depth.as_f32() > 0.0 {
+        // Vibrato phase advance — FT2 only runs doVibrato on ticks 1+
+        if tick.as_u8() > 0 && self.vibrato_depth.as_f32() > 0.0 {
             let new_phase = self.vibrato_phase.as_f32() + self.vibrato_speed.as_f32() / 64.0;
             self.vibrato_phase = Phase::new(if new_phase >= 1.0 {
                 new_phase - 1.0
@@ -1372,8 +1387,8 @@ impl ChannelEffectState {
             });
         }
 
-        // Tremolo
-        if self.tremolo_depth.is_active() {
+        // Tremolo phase advance — FT2 only runs doTremolo on ticks 1+
+        if tick.as_u8() > 0 && self.tremolo_depth.is_active() {
             let new_phase = self.tremolo_phase.as_f32() + self.tremolo_speed.as_f32() / 64.0;
             self.tremolo_phase = Phase::new(if new_phase >= 1.0 {
                 new_phase - 1.0
@@ -1462,8 +1477,9 @@ impl ChannelEffectState {
         // Calculate pitch modulation
         let mut pitch_mod = self.pitch_offset + self.fine_tune;
 
-        // Add vibrato
-        if self.vibrato_depth.as_f32() > 0.0 {
+        // Add vibrato — FT2 clears vibrato offset on tick 0 (outPeriod = realPeriod).
+        // Vibrato only contributes pitch offset on ticks 1+.
+        if self.vibrato_depth.as_f32() > 0.0 && self.current_tick.as_u8() > 0 {
             // For Random waveform, use per-tick xorshift state (FT2 behavior)
             // instead of deterministic hash-of-phase
             let waveform_value = if self.vibrato_waveform == EffectWaveform::Random {
