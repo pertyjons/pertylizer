@@ -730,7 +730,32 @@ impl ChannelEffectProcessor {
             );
         }
 
-        // STEP 3: Process each effect (can override trigger_note values)
+        // STEP 3.5: Reset continuous effects — they only run on rows where they're specified.
+        // Save effect memory first (for param=0 "continue" behavior).
+        let porta_speed_mem = state.portamento_speed;
+        let vol_slide_mem = state.volume_slide;
+        let vibrato_speed_mem = state.vibrato_speed;
+        let vibrato_depth_mem = state.vibrato_depth;
+        let tremolo_speed_mem = state.tremolo_speed;
+        let tremolo_depth_mem = state.tremolo_depth;
+        let panning_slide_mem = state.panning_slide;
+        let tone_porta_speed_mem = state.tone_porta_speed;
+        let fine_vol_slide_mem = state.fine_volume_slide;
+
+        // Reset active state (memory values preserved in local vars above)
+        state.volume_slide = SlideRate::ZERO;
+        state.portamento_direction = PortamentoDirection::Off;
+        state.vibrato_depth = PitchCents::ZERO;
+        state.panning_slide = SlideRate::ZERO;
+        state.arpeggio = None;
+        state.tremolo_depth = TremoloDepth::ZERO;
+        state.retrigger = RetriggerState::DISABLED;
+        state.tone_porta_active = false;
+        state.note_cut_tick = None;
+        state.note_delay_tick = None;
+        state.fade_out_tick = None;
+
+        // STEP 4: Process each effect (can override trigger_note values)
         for effect in effects {
             match effect {
                 // === Immediate effects (tick 0 only) ===
@@ -765,17 +790,19 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::PortamentoUp(speed) => {
-                    // Effect memory: 100 means "continue with previous speed"
                     if *speed > 0 {
                         state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    } else {
+                        state.portamento_speed = porta_speed_mem; // 100: restore from memory
                     }
                     state.portamento_direction = PortamentoDirection::Up;
                 }
 
                 EffectCommand::PortamentoDown(speed) => {
-                    // Effect memory: 200 means "continue with previous speed"
                     if *speed > 0 {
                         state.portamento_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    } else {
+                        state.portamento_speed = porta_speed_mem; // 200: restore from memory
                     }
                     state.portamento_direction = PortamentoDirection::Down;
                 }
@@ -783,15 +810,20 @@ impl ChannelEffectProcessor {
                 EffectCommand::TonePortamento { speed, target } => {
                     if *speed > 0 {
                         state.tone_porta_speed = PitchCents::new(f32::from(*speed) * 4.0);
+                    } else {
+                        state.tone_porta_speed = tone_porta_speed_mem; // 300: restore from memory
                     }
                     if let Some(pitch) = target {
                         state.tone_porta_target = Some(*pitch);
                     }
+                    state.tone_porta_active = true;
                 }
 
                 EffectCommand::Vibrato { speed, depth } => {
                     if *speed > 0 {
                         state.vibrato_speed = EffectSpeed::from_param(*speed);
+                    } else {
+                        state.vibrato_speed = vibrato_speed_mem; // 4x0: restore speed from memory
                     }
                     if *depth > 0 {
                         // FT2 vibrato depth: (sine_peak * depth) >> 5 fine periods
@@ -800,6 +832,8 @@ impl ChannelEffectProcessor {
                         // Combined: depth * 255/32 * 1200/768 ≈ depth * 12.45 cents
                         state.vibrato_depth =
                             PitchCents::new(f32::from(*depth) * (255.0 / 32.0 * 1200.0 / 768.0));
+                    } else {
+                        state.vibrato_depth = vibrato_depth_mem; // 40x: restore depth from memory
                     }
                 }
 
@@ -808,19 +842,20 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::VolumeSlide { up, down } => {
-                    // Effect memory: A00 means "continue with previous value"
                     if *up > 0 || *down > 0 {
                         state.volume_slide = SlideRate::from_volume_slide(*up, *down);
+                    } else {
+                        state.volume_slide = vol_slide_mem; // A00: restore from memory
                     }
-                    // If both are 0, keep the previous volume_slide value
                 }
 
                 EffectCommand::FineVolumeSlide { up, down } => {
-                    // Effect memory: EA0/EB0 means "continue with previous fine slide"
                     if *up > 0 || *down > 0 {
                         state.fine_volume_slide = SlideRate::from_volume_slide(*up, *down);
+                    } else {
+                        state.fine_volume_slide = fine_vol_slide_mem; // EA0/EB0: restore from memory
                     }
-                    // Apply fine slide once at tick 0 (using memory if param was 0)
+                    // Apply fine slide once at tick 0
                     let delta = state.fine_volume_slide.as_f32();
                     if delta.abs() > f32::EPSILON {
                         let new_vol = (state.volume.as_f32() + delta).clamp(0.0, 1.0);
@@ -831,9 +866,13 @@ impl ChannelEffectProcessor {
                 EffectCommand::Tremolo { speed, depth } => {
                     if *speed > 0 {
                         state.tremolo_speed = EffectSpeed::from_param(*speed);
+                    } else {
+                        state.tremolo_speed = tremolo_speed_mem; // 7x0: restore speed from memory
                     }
                     if *depth > 0 {
                         state.tremolo_depth = TremoloDepth::from_param(*depth);
+                    } else {
+                        state.tremolo_depth = tremolo_depth_mem; // 70x: restore depth from memory
                     }
                 }
 
@@ -842,9 +881,10 @@ impl ChannelEffectProcessor {
                 }
 
                 EffectCommand::PanningSlide { left, right } => {
-                    // Effect memory: P00 means "continue with previous value"
                     if *left > 0 || *right > 0 {
                         state.panning_slide = SlideRate::from_panning_slide(*left, *right);
+                    } else {
+                        state.panning_slide = panning_slide_mem; // P00: restore from memory
                     }
                 }
 
@@ -1007,6 +1047,9 @@ pub struct ChannelEffectState {
     pub tone_porta_speed: PitchCents,
     /// Target pitch for tone portamento.
     pub tone_porta_target: Option<Pitch>,
+    /// Whether tone portamento is active this row (only true on rows with 3xx/5xx).
+    /// Separates "active this row" from "has memory value" in `tone_porta_speed`.
+    pub tone_porta_active: bool,
     /// Current pitch in semitones for glide interpolation.
     pub current_pitch: Semitones,
 
@@ -1081,6 +1124,7 @@ impl Default for ChannelEffectState {
             portamento_direction: PortamentoDirection::Off,
             tone_porta_speed: PitchCents::ZERO,
             tone_porta_target: None,
+            tone_porta_active: false,
             current_pitch: Semitones::ZERO,
             vibrato_speed: EffectSpeed::ZERO,
             vibrato_depth: PitchCents::ZERO,
@@ -1292,8 +1336,9 @@ impl ChannelEffectState {
             }
         }
 
-        // Tone portamento (glide to target)
+        // Tone portamento (glide to target) — only on rows with 3xx/5xx
         if tick.as_u8() > 0
+            && self.tone_porta_active
             && self.tone_porta_speed.as_f32() > 0.0
             && let Some(target) = self.tone_porta_target
         {

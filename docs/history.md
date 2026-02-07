@@ -1,5 +1,28 @@
 # Version History
 
+## [0.91.0] - 2026-02-07
+### Fixed - Continuous effects läcker mellan rader
+
+#### Continuous effects (volume slide, portamento, vibrato, etc.) stoppas inte mellan rader
+- **Problem**: Effekter som volume slide, portamento, vibrato, tremolo och panning slide fortsatte köra på rader där de inte angavs. State resättades aldrig — bara uppdaterades NÄR effekten fanns. Resultatet: effekter "läckte" och körde oändligt tills en ny note med fresh attack triggades.
+- **Rotorsak**: `process_row_start()` processade effekter i en match-loop men resetade aldrig continuous state innan loopen. XM effect memory (param=0 = "continue") blandades ihop med "effekten är aktiv".
+- **Fix**: Continuous effect state resättas nu INNAN effect-loopen varje rad. Effect memory sparas i lokala variabler och återställs bara NÄR effekten faktiskt finns på raden (med param=0). Nytt `tone_porta_active`-fält skiljer "aktiv denna rad" från "har minnesvärde".
+
+#### Berörda effekter
+- **Volume slide (Axy)**: Stoppas på rader utan Axy
+- **Portamento up/down (1xx/2xx)**: Stoppas på rader utan 1xx/2xx
+- **Tone portamento (3xx)**: Stoppas på rader utan 3xx/5xx (nytt `tone_porta_active`-fält)
+- **Vibrato (4xy)**: Depth nollställs på rader utan 4xy (fas bevaras)
+- **Tremolo (7xy)**: Depth nollställs på rader utan 7xy
+- **Panning slide (Pxy)**: Stoppas på rader utan Pxy
+- **Fine volume slide (EAx/EBx)**: Stoppas på rader utan EAx/EBx
+- **Arpeggio (0xy)**: Stoppas på rader utan 0xy
+- **Retrigger (E9x)**: Stoppas på rader utan E9x
+- **Note cut/delay/fadeout**: Rensas varje rad
+
+#### Känd begränsning
+- XM effekt 5xy (TonePortamento+VolumeSlide) och 6xy (Vibrato+VolumeSlide) med param 0 hanteras inte fullt korrekt av xmrs-biblioteket — det droppar VolumeSlide(0,0). Med denna fix stoppas volume slide korrekt, men 500/600 "continue both" fortsätter bara den första sub-effekten.
+
 ## [0.90.0] - 2026-02-07
 ### Fixed - Portamento-konvertering i Amiga-läge (och linjärt läge)
 
