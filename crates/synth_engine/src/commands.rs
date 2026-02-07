@@ -15,7 +15,7 @@ use synth_core::{
     BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
-use synth_sequencer::{PatternId, Tick, TrackId};
+use synth_sequencer::{PatternId, Tick};
 
 /// Unique identifier for a module instance.
 ///
@@ -418,9 +418,9 @@ pub enum EngineCommand {
     /// Reset to beginning.
     Rewind,
 
-    /// Set solo track for sequencer playback.
-    /// When Some(track), only that track plays. When None, all tracks play.
-    SetSoloTrack(Option<TrackId>),
+    /// Set muted tracks for sequencer playback.
+    /// Each element is true if the track at that index should be muted.
+    SetMutedTracks(Vec<bool>),
 
     /// Seek to a specific tick position during playback.
     Seek { tick: Tick },
@@ -874,7 +874,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::Stop => write!(f, "Stop"),
             Self::Pause => write!(f, "Pause"),
             Self::Rewind => write!(f, "Rewind"),
-            Self::SetSoloTrack(track) => write!(f, "SetSoloTrack({track:?})"),
+            Self::SetMutedTracks(tracks) => write!(f, "SetMutedTracks({tracks:?})"),
             Self::Seek { tick } => write!(f, "Seek({tick:?})"),
             Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),

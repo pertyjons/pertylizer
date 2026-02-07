@@ -81,7 +81,9 @@
       "WebFetch(domain:modland.com)",
       "Bash(curl:*)",
       "Bash(gh api:*)",
-      "WebFetch(domain:www.ocf.berkeley.edu)"
+      "WebFetch(domain:www.ocf.berkeley.edu)",
+      "WebFetch(domain:crates.io)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline -20)"
     ],
     "deny": [],
     "ask": []

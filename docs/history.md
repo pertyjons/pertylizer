@@ -1,5 +1,23 @@
 # Version History
 
+## [0.88.0] - 2026-02-07
+### Changed - Solo/Mute per kanal & Modulnamn i toolbar
+
+#### Solo/Mute-knappar i Sequencer
+- **Solo (S):** Inte längre togglebar — klick mutar alla andra kanaler och unmutar den valda
+- **Mute (M):** Ny knapp per kanal — togglebar individuell mute med röd/grå indikering
+- **"Unmute All"-knapp** i toolbarn för att snabbt ta bort alla mutar
+- Ersatt `solo_track: Option<TrackId>` med `muted_tracks: Vec<bool>` genom hela stacken (state, engine, commands)
+- Flera kanaler kan nu vara unmutade samtidigt (inte begränsat till en solo-kanal)
+
+#### Modulnamn i toolbar
+- Modulnamn (song.name) visas nu i sequencer-toolbarn efter Debug-knappen
+
+#### Solo/Mute i Rack-vyn
+- Solo-knappen i instrument-racket fungerar nu som i sequencern: klick mutar alla andra instrument
+- Ny **"Unmute All"-knapp** i instrument-rackens header
+- Borttagen toggle-baserad solo-state (`InstrumentUiState::solo` används ej längre för solo-toggle)
+
 ## [0.87.0] - 2026-02-06
 ### Fixed - XM Playback & Tracker Display Improvements
 

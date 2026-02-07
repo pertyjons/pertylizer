@@ -12,7 +12,7 @@ use synth_sequencer::song::Song;
 use synth_sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
-use synth_sequencer::{PatternId, PatternTick, Tick, TrackId};
+use synth_sequencer::{PatternId, PatternTick, Tick};
 
 /// Transport action requested from the sequencer view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +36,8 @@ pub struct SequencerResult {
     pub stop_note: Option<u8>,
     /// Transport action requested.
     pub transport: Option<TransportAction>,
-    /// Solo track changed (Some(Some(track)) = solo track, Some(None) = no solo).
-    pub solo_track_changed: Option<Option<TrackId>>,
+    /// Muted tracks changed — contains the new muted_tracks vec.
+    pub muted_tracks_changed: Option<Vec<bool>>,
     /// Seek to this tick position (for pattern navigation during playback).
     pub seek_to: Option<Tick>,
 }
@@ -119,12 +119,12 @@ pub fn show(
                         }
                     });
 
-                    // Draw the tracker grid (track solo changes)
-                    let solo_before = tracker_state.solo_track;
+                    // Draw the tracker grid (track mute changes)
+                    let muted_before = tracker_state.muted_tracks.clone();
                     let config = TrackerViewConfig::fasttracker();
                     draw_tracker_grid(ui, tracker_state, song, &config, playback_row);
-                    if tracker_state.solo_track != solo_before {
-                        result.solo_track_changed = Some(tracker_state.solo_track);
+                    if tracker_state.muted_tracks != muted_before {
+                        result.muted_tracks_changed = Some(tracker_state.muted_tracks.clone());
                     }
                 }
                 None => {
@@ -305,6 +305,25 @@ fn draw_toolbar(
             && let Some(song) = song
         {
             print_debug_info(song, state);
+        }
+
+        ui.add_space(10.0);
+        if ui
+            .button("Unmute All")
+            .on_hover_text("Unmute all tracks")
+            .clicked()
+        {
+            state.unmute_all();
+        }
+
+        // Song name
+        if let Some(song) = song
+            && !song.name.is_empty()
+        {
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+            ui.label(RichText::new(&song.name).color(colors.text_dim));
         }
 
         // Cursor position display

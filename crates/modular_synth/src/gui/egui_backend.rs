@@ -865,9 +865,9 @@ impl eframe::App for SynthApp {
                     self.handle.send(EngineCommand::Seek { tick });
                 }
 
-                // Handle solo track changes
-                if let Some(solo) = result.solo_track_changed {
-                    self.handle.set_solo_track(solo);
+                // Handle muted tracks changes
+                if let Some(muted) = result.muted_tracks_changed {
+                    self.handle.set_muted_tracks(muted);
                 }
             }
             AppView::Mixer => {

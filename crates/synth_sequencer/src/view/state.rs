@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{PatternId, TrackId};
+use crate::ids::PatternId;
 
 /// Stark typ for row index in the tracker.
 /// Prevents confusion between row indices and other integer values.
@@ -124,9 +124,9 @@ pub struct TrackerViewState {
     /// Flag set when user wants to navigate to next pattern (cleared after handling).
     #[serde(skip)]
     pub navigate_pattern_next: bool,
-    /// Solo track - if Some, only this track plays.
+    /// Muted tracks — index = track number, true = muted.
     #[serde(skip)]
-    pub solo_track: Option<TrackId>,
+    pub muted_tracks: Vec<bool>,
 }
 
 impl Default for TrackerViewState {
@@ -144,7 +144,7 @@ impl Default for TrackerViewState {
             first_visible_track: 0,
             navigate_pattern_prev: false,
             navigate_pattern_next: false,
-            solo_track: None,
+            muted_tracks: Vec::new(),
         }
     }
 }
@@ -231,6 +231,40 @@ impl TrackerViewState {
         // Scroll up if cursor is above visible area
         if self.cursor_row.0 < self.scroll_offset.0 {
             self.scroll_offset = self.cursor_row;
+        }
+    }
+
+    /// Solo a track: mute all other tracks, unmute this one.
+    pub fn solo_track(&mut self, track_idx: usize, num_tracks: usize) {
+        self.ensure_muted_tracks(num_tracks);
+        for (i, muted) in self.muted_tracks.iter_mut().enumerate() {
+            *muted = i != track_idx;
+        }
+    }
+
+    /// Toggle mute state for a track.
+    pub fn toggle_mute(&mut self, track_idx: usize, num_tracks: usize) {
+        self.ensure_muted_tracks(num_tracks);
+        if track_idx < self.muted_tracks.len() {
+            self.muted_tracks[track_idx] = !self.muted_tracks[track_idx];
+        }
+    }
+
+    /// Unmute all tracks.
+    pub fn unmute_all(&mut self) {
+        self.muted_tracks.iter_mut().for_each(|m| *m = false);
+    }
+
+    /// Check if a track is muted.
+    #[must_use]
+    pub fn is_muted(&self, track_idx: usize) -> bool {
+        self.muted_tracks.get(track_idx).copied().unwrap_or(false)
+    }
+
+    /// Ensure muted_tracks vec is large enough.
+    fn ensure_muted_tracks(&mut self, num_tracks: usize) {
+        if self.muted_tracks.len() < num_tracks {
+            self.muted_tracks.resize(num_tracks, false);
         }
     }
 

@@ -19,7 +19,6 @@ use egui_extras::{Column, TableBuilder};
 
 use super::state::{TrackerColumn, TrackerViewState};
 use super::tracker::{TrackerRow, TrackerViewConfig};
-use crate::ids::TrackId;
 use crate::pattern::TrackCell;
 use crate::song::Song;
 
@@ -291,31 +290,51 @@ pub fn draw_tracker_grid(
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        let track_id = TrackId::new(track_idx as u16);
-                                        let is_solo = state.solo_track == Some(track_id);
-                                        let (btn_fill, btn_text_color) = if is_solo {
-                                            (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                                        // Mute button
+                                        let is_muted = state.is_muted(track_idx);
+                                        let mute_fill = if is_muted {
+                                            Color32::from_rgb(200, 50, 50)
                                         } else {
-                                            (Color32::from_rgb(60, 60, 60), colors.row_number)
+                                            Color32::from_rgb(60, 60, 60)
+                                        };
+                                        let mute_text_color = if is_muted {
+                                            Color32::WHITE
+                                        } else {
+                                            colors.row_number
                                         };
                                         if ui
                                             .add(
                                                 egui::Button::new(
-                                                    RichText::new("S")
-                                                        .color(btn_text_color)
+                                                    RichText::new("M")
+                                                        .color(mute_text_color)
                                                         .small(),
                                                 )
-                                                .fill(btn_fill)
+                                                .fill(mute_fill)
                                                 .corner_radius(3.0)
                                                 .min_size(egui::vec2(16.0, 14.0)),
                                             )
+                                            .on_hover_text("Mute/Unmute track")
                                             .clicked()
                                         {
-                                            if is_solo {
-                                                state.solo_track = None;
-                                            } else {
-                                                state.solo_track = Some(track_id);
-                                            }
+                                            state.toggle_mute(track_idx, num_tracks);
+                                        }
+
+                                        // Solo button (non-toggleable: mutes all others)
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new("S")
+                                                        .color(Color32::from_rgb(255, 200, 60))
+                                                        .small(),
+                                                )
+                                                .fill(Color32::from_rgb(60, 60, 60))
+                                                .corner_radius(3.0)
+                                                .min_size(egui::vec2(16.0, 14.0)),
+                                            )
+                                            .on_hover_text("Solo: mute all other tracks")
+                                            .clicked()
+                                        {
+                                            state.solo_track(track_idx, num_tracks);
                                         }
                                     },
                                 );
@@ -713,31 +732,51 @@ pub fn draw_tracker_grid_from_pattern(
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        let track_id = TrackId::new(track_num as u16);
-                                        let is_solo = state.solo_track == Some(track_id);
-                                        let (btn_fill, btn_text_color) = if is_solo {
-                                            (Color32::from_rgb(255, 180, 60), Color32::BLACK)
+                                        // Mute button
+                                        let is_muted = state.is_muted(track_num);
+                                        let mute_fill = if is_muted {
+                                            Color32::from_rgb(200, 50, 50)
                                         } else {
-                                            (Color32::from_rgb(60, 60, 60), colors.row_number)
+                                            Color32::from_rgb(60, 60, 60)
+                                        };
+                                        let mute_text_color = if is_muted {
+                                            Color32::WHITE
+                                        } else {
+                                            colors.row_number
                                         };
                                         if ui
                                             .add(
                                                 egui::Button::new(
-                                                    RichText::new("S")
-                                                        .color(btn_text_color)
+                                                    RichText::new("M")
+                                                        .color(mute_text_color)
                                                         .small(),
                                                 )
-                                                .fill(btn_fill)
+                                                .fill(mute_fill)
                                                 .corner_radius(3.0)
                                                 .min_size(egui::vec2(16.0, 14.0)),
                                             )
+                                            .on_hover_text("Mute/Unmute track")
                                             .clicked()
                                         {
-                                            if is_solo {
-                                                state.solo_track = None;
-                                            } else {
-                                                state.solo_track = Some(track_id);
-                                            }
+                                            state.toggle_mute(track_num, num_tracks);
+                                        }
+
+                                        // Solo button (non-toggleable: mutes all others)
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new("S")
+                                                        .color(Color32::from_rgb(255, 200, 60))
+                                                        .small(),
+                                                )
+                                                .fill(Color32::from_rgb(60, 60, 60))
+                                                .corner_radius(3.0)
+                                                .min_size(egui::vec2(16.0, 14.0)),
+                                            )
+                                            .on_hover_text("Solo: mute all other tracks")
+                                            .clicked()
+                                        {
+                                            state.solo_track(track_num, num_tracks);
                                         }
                                     },
                                 );

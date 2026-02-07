@@ -319,10 +319,9 @@ impl EngineHandle {
         self.state.get_focused_instrument()
     }
 
-    /// Set the solo track for sequencer playback.
-    /// When set, only that track plays. When None, all tracks play.
-    pub fn set_solo_track(&mut self, track: Option<synth_sequencer::TrackId>) -> bool {
-        self.send(EngineCommand::SetSoloTrack(track))
+    /// Set the muted tracks for sequencer playback.
+    pub fn set_muted_tracks(&mut self, tracks: Vec<bool>) -> bool {
+        self.send(EngineCommand::SetMutedTracks(tracks))
     }
 }
 
@@ -374,8 +373,8 @@ pub struct SynthEngine {
     sequencer_event_buffer: Vec<SequencerEvent>,
     /// Pre-allocated buffer for chunk rendering (tracker tick-segmented mode).
     chunk_buffer: AudioBuffer,
-    /// Solo track - only this track plays when Some.
-    solo_track: Option<synth_sequencer::TrackId>,
+    /// Muted tracks — index = track number, true = muted.
+    muted_tracks: Vec<bool>,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -440,7 +439,7 @@ impl SynthEngine {
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
             chunk_buffer: AudioBuffer::new(512),
-            solo_track: None,
+            muted_tracks: Vec::new(),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -819,8 +818,8 @@ impl SynthEngine {
                 let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
             }
-            EngineCommand::SetSoloTrack(track) => {
-                self.solo_track = track;
+            EngineCommand::SetMutedTracks(tracks) => {
+                self.muted_tracks = tracks;
             }
             EngineCommand::Seek { tick } => {
                 let _ = self.sequencer.seek(tick);
@@ -1661,7 +1660,7 @@ impl Default for SynthEngine {
 fn route_sequencer_events(
     events: &[SequencerEvent],
     instruments: &mut [Box<Instrument>],
-    solo_track: Option<synth_sequencer::TrackId>,
+    muted_tracks: &[bool],
 ) {
     for event in events {
         match event {
@@ -1673,10 +1672,9 @@ fn route_sequencer_events(
                 sample_offset,
                 ..
             } => {
-                // Filter by solo track (if set)
-                if let Some(solo) = solo_track
-                    && let Some(v_idx) = voice_index
-                    && v_idx.as_usize() != solo.0 as usize
+                // Filter by muted tracks
+                if let Some(v_idx) = voice_index
+                    && muted_tracks.get(v_idx.as_usize()).copied().unwrap_or(false)
                 {
                     continue;
                 }
@@ -1757,9 +1755,7 @@ fn route_sequencer_events(
             } => {
                 let voice_idx = track.0 as usize;
 
-                if let Some(solo) = solo_track
-                    && voice_idx != solo.0 as usize
-                {
+                if muted_tracks.get(voice_idx).copied().unwrap_or(false) {
                     continue;
                 }
 
@@ -1785,9 +1781,7 @@ fn route_sequencer_events(
             SequencerEvent::VoiceOff { voice_index, .. } => {
                 let voice_idx = voice_index.as_usize();
 
-                if let Some(solo) = solo_track
-                    && voice_idx != solo.0 as usize
-                {
+                if muted_tracks.get(voice_idx).copied().unwrap_or(false) {
                     continue;
                 }
 
@@ -1841,7 +1835,7 @@ impl AudioProcessor for SynthEngine {
                 route_sequencer_events(
                     &self.sequencer_event_buffer,
                     &mut self.instruments,
-                    self.solo_track,
+                    &self.muted_tracks,
                 );
 
                 let chunk_ctx = ProcessContext {
@@ -1889,7 +1883,7 @@ impl AudioProcessor for SynthEngine {
             route_sequencer_events(
                 &self.sequencer_event_buffer,
                 &mut self.instruments,
-                self.solo_track,
+                &self.muted_tracks,
             );
 
             self.process_voices(&process_context);

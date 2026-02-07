@@ -155,6 +155,21 @@ pub fn show_instrument_rack(
                     .color(theme().colors.text_secondary)
                     .size(t.fonts.size_normal),
             );
+            if ui
+                .button("Unmute All")
+                .on_hover_text("Unmute all instruments")
+                .clicked()
+            {
+                for inst in instruments.iter_mut() {
+                    if inst.muted {
+                        let vol = inst.toggle_mute();
+                        handle.send(EngineCommand::SetInstrumentParameter {
+                            instrument_id: inst.id,
+                            param: InstrumentParam::Volume(vol),
+                        });
+                    }
+                }
+            }
         });
         ui.add_space(4.0);
         ui.separator();
@@ -309,30 +324,45 @@ pub fn show_instrument_rack(
                                     });
                                 }
 
-                                // Solo button
-                                let solo = instruments[idx].solo;
-                                let solo_color = if solo {
-                                    theme().colors.accent_yellow
-                                } else {
-                                    theme().colors.text_dim
-                                };
+                                // Solo button (non-toggleable: mutes all others)
                                 if ui
                                     .add(
                                         egui::Button::new(
                                             RichText::new("S")
-                                                .color(solo_color)
+                                                .color(theme().colors.accent_yellow)
                                                 .size(t.fonts.size_small),
                                         )
                                         .min_size(egui::vec2(24.0, 24.0)),
                                     )
-                                    .on_hover_text("Solo this instrument")
+                                    .on_hover_text("Solo: mute all other instruments")
                                     .clicked()
                                 {
-                                    instruments[idx].solo = !instruments[idx].solo;
-                                    handle.send(EngineCommand::SetInstrumentParameter {
-                                        instrument_id,
-                                        param: InstrumentParam::Solo(instruments[idx].solo),
-                                    });
+                                    // Mute all others, unmute this one
+                                    for (i, inst) in instruments.iter_mut().enumerate() {
+                                        if i == idx {
+                                            // Unmute this instrument
+                                            if inst.muted {
+                                                let vol = inst.toggle_mute();
+                                                handle.send(
+                                                    EngineCommand::SetInstrumentParameter {
+                                                        instrument_id: inst.id,
+                                                        param: InstrumentParam::Volume(vol),
+                                                    },
+                                                );
+                                            }
+                                        } else {
+                                            // Mute the others
+                                            if !inst.muted {
+                                                let vol = inst.toggle_mute();
+                                                handle.send(
+                                                    EngineCommand::SetInstrumentParameter {
+                                                        instrument_id: inst.id,
+                                                        param: InstrumentParam::Volume(vol),
+                                                    },
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Mute button
