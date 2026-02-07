@@ -828,7 +828,7 @@ impl SequencerEngine {
                     // as BOTH velocity AND tracker_volume would square the volume.
                     // In polyphonic mode, use the note's actual velocity.
                     let note_velocity = if voice_index.is_some() {
-                        Velocity::FF
+                        Velocity::MAX
                     } else {
                         velocity
                     };

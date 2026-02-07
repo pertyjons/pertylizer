@@ -1,5 +1,32 @@
 # Version History
 
+## [0.87.0] - 2026-02-06
+### Fixed - XM Playback & Tracker Display Improvements
+
+#### Tracker velocity fix (KRITISK)
+- **Problem**: `Velocity::FF` (112/127 = 0.882) användes för tracker NoteOn istället för `Velocity::MAX` (1.0), vilket gav 12% volymreduktion
+- **Fix**: Ändrat till `Velocity::MAX` i `sequencer_engine.rs` för tracker-läge
+
+#### Vibrato fasbevarande (FT2-kompatibilitet)
+- **Problem**: Vibrato-fas återställdes till noll vid varje ny not, men FT2 bevarar fasen mellan noter
+- **Fix**: Borttagen `vibrato_phase = Phase::ZERO` från `trigger_note()` i `tracker_effects.rs`
+
+#### GUI tracker display
+- **Fix**: `SetVolume`-effekten separeras nu till volymkolumnen istället för att visas som "C08" i effektkolumnen
+- Borttagen redundant effektkolumn — XM har bara 1 effektkolumn, `fasttracker()` config ändrad från 2→1
+- Volymkolumnen visar nu bara hex-värde (t.ex. `08`) utan "C"-prefix
+
+#### Analysverktyg
+- Ny `analyze_tracker_raw.rs` — visar rå xmrs-representation (PatternSlot, TrackUnit)
+- Omskriven `analyze_tracker.rs` — visar intern representation (Cell, EffectCommand)
+- Ny `debug_playback.rs` — tick-för-tick uppspelningslogg
+- Raw-analyzern separerar nu Volume-effekter till volymkolumnen (matchar intern representation)
+- Regenererade alla debug-filer i `docs/debug/`
+
+#### CLAUDE.md
+- Dokumenterat debug- och analysverktyg, debug-output, GUI debug-knapp
+- Instruktion att nya tekniska referenser ska sparas i `docs/references/` med uppdaterad README.md
+
 ## [0.86.0] - 2026-02-06
 ### Added - Sequencer Debug Button & Tracker Analysis Column Fix
 

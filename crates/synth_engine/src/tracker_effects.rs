@@ -794,7 +794,12 @@ impl ChannelEffectProcessor {
                         state.vibrato_speed = EffectSpeed::from_param(*speed);
                     }
                     if *depth > 0 {
-                        state.vibrato_depth = PitchCents::new(f32::from(*depth) * 2.0);
+                        // FT2 vibrato depth: (sine_peak * depth) >> 5 fine periods
+                        // sine_peak=255, so offset = 255*depth/32 periods
+                        // In linear mode: 1 period = 1200/768 cents ≈ 1.5625 cents
+                        // Combined: depth * 255/32 * 1200/768 ≈ depth * 12.45 cents
+                        state.vibrato_depth =
+                            PitchCents::new(f32::from(*depth) * (255.0 / 32.0 * 1200.0 / 768.0));
                     }
                 }
 
@@ -1158,7 +1163,10 @@ impl ChannelEffectState {
         self.portamento_speed = PitchCents::ZERO;
         self.portamento_direction = PortamentoDirection::Off;
         self.vibrato_depth = PitchCents::ZERO;
-        self.vibrato_phase = Phase::ZERO; // Start vibrato from beginning of cycle
+        // NOTE: vibrato_phase is NOT reset on new note (FT2 behavior).
+        // In FT2, vibrato phase continues across notes unless the vibrato
+        // waveform type has the retrigger bit set (E4x with x >= 4).
+        // Default waveform (sine, type 0) does not retrigger.
         self.arpeggio = None;
         self.current_pitch = Semitones::new(f32::from(pitch.as_midi())); // Set current pitch for future glides
 
@@ -1881,7 +1889,9 @@ mod tests {
 
     #[test]
     fn test_vibrato_reset_on_fresh_attack() {
-        // Test 5: Vibrato should be stopped on fresh attack
+        // Test 5: Vibrato depth should be reset on fresh attack (deactivated),
+        // but vibrato phase should be PRESERVED (FT2 default behavior:
+        // vibrato phase continues across notes unless retrig waveform is set).
         let mut processor = ChannelEffectProcessor::new(1);
         let track = TrackId::new(0);
 
@@ -1902,12 +1912,11 @@ mod tests {
             state.vibrato_depth.as_f32() > 0.0,
             "Vibrato should be active"
         );
-        assert!(
-            state.vibrato_phase.as_f32() > 0.0,
-            "Vibrato phase should have advanced"
-        );
+        let phase_before = state.vibrato_phase.as_f32();
+        assert!(phase_before > 0.0, "Vibrato phase should have advanced");
 
-        // Fresh attack on E-4 - vibrato should be STOPPED
+        // Fresh attack on E-4 - vibrato depth should be STOPPED,
+        // but phase should be PRESERVED (FT2 default: no retrigger)
         processor.process_row_start(
             track,
             &[], // No effects
@@ -1920,8 +1929,8 @@ mod tests {
             "Vibrato depth should be reset on fresh attack"
         );
         assert!(
-            state.vibrato_phase.as_f32().abs() < 0.001,
-            "Vibrato phase should be reset on fresh attack"
+            (state.vibrato_phase.as_f32() - phase_before).abs() < 0.001,
+            "Vibrato phase should be PRESERVED on fresh attack (FT2 default)"
         );
     }
 

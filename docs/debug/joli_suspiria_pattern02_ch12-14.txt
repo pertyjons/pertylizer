@@ -1,0 +1,1839 @@
+Loading: /home/per/Musik/joli_suspiria.xm
+Song: Suspiria (BPM=134, speed=6)
+Frequency mode: Linear
+
+Pattern 02: 64 rows, 240 ticks/row = 15360 total ticks
+Arrangement position 2: tick 30720 to 46080
+
+=== Instrument Defaults ===
+  Inst 00: vol=0.312 pan=+0.004
+  Inst 01: vol=0.281 pan=+0.004
+  Inst 02: vol=0.422 pan=+0.004
+  Inst 03: vol=0.375 pan=+0.004
+  Inst 05: vol=1.000 pan=+0.004
+  Inst 06: vol=0.281 pan=+0.004
+  Inst 07: vol=0.234 pan=+0.004
+  Inst 0A: vol=0.484 pan=+0.004
+  Inst 0B: vol=0.344 pan=+0.004
+  Inst 0C: vol=0.516 pan=+0.004
+  Inst 0E: vol=0.766 pan=+0.004
+  Inst 10: vol=1.000 pan=+0.004
+  Inst 11: vol=1.000 pan=+0.004
+  Inst 12: vol=0.734 pan=+0.004
+  Inst 13: vol=1.000 pan=+0.004
+  Inst 14: vol=0.844 pan=+0.004
+  Inst 15: vol=0.625 pan=+0.004
+  Inst 16: vol=0.297 pan=+0.004
+
+Filtering tracks: [12, 13, 14]
+
+=== Stepping through pattern ===
+
+--- Tick 30720 (row 00, tracker tick 0) ---
+  NoteOn  voice=12 pitch=C-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }, SetVolume(8)]
+  Mod     T12 vol=0.1250 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=13 pitch=D#5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }, SetVolume(8)]
+  Mod     T13 vol=0.1250 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=14 pitch=G-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }, SetVolume(8)]
+  Mod     T14 vol=0.1250 pitch=+0.00ct pan=+0.004 [TRIG]
+--- Tick 30759 (row 00, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+13.84ct pan=+0.004
+--- Tick 30799 (row 00, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 30839 (row 00, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.42ct pan=+0.004
+--- Tick 30879 (row 00, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+17.61ct pan=+0.004
+--- Tick 30919 (row 00, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+4.86ct pan=+0.004
+--- Tick 30959 (row 00, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-9.53ct pan=+0.004
+--- Tick 30960 (row 01, tracker tick 0) ---
+  Mod     T12 vol=0.1562 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=-9.53ct pan=+0.004
+--- Tick 30999 (row 01, tracker tick 0) ---
+  Mod     T12 vol=0.1562 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=-20.71ct pan=+0.004
+--- Tick 31039 (row 01, tracker tick 1) ---
+  Mod     T12 vol=0.1562 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=-24.90ct pan=+0.004
+--- Tick 31079 (row 01, tracker tick 2) ---
+  Mod     T12 vol=0.1562 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=-20.71ct pan=+0.004
+--- Tick 31119 (row 01, tracker tick 3) ---
+  Mod     T12 vol=0.1562 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=-9.53ct pan=+0.004
+--- Tick 31159 (row 01, tracker tick 4) ---
+  Mod     T12 vol=0.1562 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=+4.86ct pan=+0.004
+--- Tick 31199 (row 01, tracker tick 5) ---
+  Mod     T12 vol=0.1562 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1562 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1562 pitch=+17.61ct pan=+0.004
+--- Tick 31200 (row 02, tracker tick 0) ---
+  Mod     T12 vol=0.1875 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=+17.61ct pan=+0.004
+--- Tick 31239 (row 02, tracker tick 0) ---
+  Mod     T12 vol=0.1875 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=+24.42ct pan=+0.004
+--- Tick 31279 (row 02, tracker tick 1) ---
+  Mod     T12 vol=0.1875 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=+23.01ct pan=+0.004
+--- Tick 31319 (row 02, tracker tick 2) ---
+  Mod     T12 vol=0.1875 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=+13.84ct pan=+0.004
+--- Tick 31359 (row 02, tracker tick 3) ---
+  Mod     T12 vol=0.1875 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=-0.00ct pan=+0.004
+--- Tick 31399 (row 02, tracker tick 4) ---
+  Mod     T12 vol=0.1875 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=-13.84ct pan=+0.004
+--- Tick 31439 (row 02, tracker tick 5) ---
+  Mod     T12 vol=0.1875 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1875 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1875 pitch=-23.01ct pan=+0.004
+--- Tick 31440 (row 03, tracker tick 0) ---
+  Mod     T12 vol=0.2188 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=-23.01ct pan=+0.004
+--- Tick 31479 (row 03, tracker tick 0) ---
+  Mod     T12 vol=0.2188 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=-24.42ct pan=+0.004
+--- Tick 31519 (row 03, tracker tick 1) ---
+  Mod     T12 vol=0.2188 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=-17.61ct pan=+0.004
+--- Tick 31559 (row 03, tracker tick 2) ---
+  Mod     T12 vol=0.2188 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=-4.86ct pan=+0.004
+--- Tick 31599 (row 03, tracker tick 3) ---
+  Mod     T12 vol=0.2188 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=+9.53ct pan=+0.004
+--- Tick 31639 (row 03, tracker tick 4) ---
+  Mod     T12 vol=0.2188 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=+20.71ct pan=+0.004
+--- Tick 31679 (row 03, tracker tick 5) ---
+  Mod     T12 vol=0.2188 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2188 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2188 pitch=+24.90ct pan=+0.004
+--- Tick 31680 (row 04, tracker tick 0) ---
+  Mod     T12 vol=0.2500 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=+24.90ct pan=+0.004
+--- Tick 31719 (row 04, tracker tick 0) ---
+  Mod     T12 vol=0.2500 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=+20.71ct pan=+0.004
+--- Tick 31759 (row 04, tracker tick 1) ---
+  Mod     T12 vol=0.2500 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=+9.53ct pan=+0.004
+--- Tick 31799 (row 04, tracker tick 2) ---
+  Mod     T12 vol=0.2500 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=-4.86ct pan=+0.004
+--- Tick 31839 (row 04, tracker tick 3) ---
+  Mod     T12 vol=0.2500 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=-17.61ct pan=+0.004
+--- Tick 31879 (row 04, tracker tick 4) ---
+  Mod     T12 vol=0.2500 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=-24.42ct pan=+0.004
+--- Tick 31919 (row 04, tracker tick 5) ---
+  Mod     T12 vol=0.2500 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2500 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2500 pitch=-23.01ct pan=+0.004
+--- Tick 31920 (row 05, tracker tick 0) ---
+  Mod     T12 vol=0.2656 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=-23.01ct pan=+0.004
+--- Tick 31959 (row 05, tracker tick 0) ---
+  Mod     T12 vol=0.2656 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=-13.84ct pan=+0.004
+--- Tick 31999 (row 05, tracker tick 1) ---
+  Mod     T12 vol=0.2656 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=+0.00ct pan=+0.004
+--- Tick 32039 (row 05, tracker tick 2) ---
+  Mod     T12 vol=0.2656 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=+13.84ct pan=+0.004
+--- Tick 32079 (row 05, tracker tick 3) ---
+  Mod     T12 vol=0.2656 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=+23.01ct pan=+0.004
+--- Tick 32119 (row 05, tracker tick 4) ---
+  Mod     T12 vol=0.2656 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=+24.42ct pan=+0.004
+--- Tick 32159 (row 05, tracker tick 5) ---
+  Mod     T12 vol=0.2656 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2656 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2656 pitch=+17.61ct pan=+0.004
+--- Tick 32160 (row 06, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 32199 (row 06, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 32239 (row 06, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 32279 (row 06, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 32319 (row 06, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 32359 (row 06, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 32399 (row 06, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 32400 (row 07, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 32439 (row 07, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 32479 (row 07, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 32519 (row 07, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 32559 (row 07, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 32599 (row 07, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 32639 (row 07, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 32640 (row 08, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 32679 (row 08, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 32719 (row 08, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 32759 (row 08, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 32799 (row 08, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 32839 (row 08, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 32879 (row 08, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 32880 (row 09, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 32919 (row 09, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 32959 (row 09, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 32999 (row 09, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 33039 (row 09, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 33079 (row 09, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 33119 (row 09, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 33120 (row 0A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 33159 (row 0A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 33199 (row 0A, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 33239 (row 0A, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 33279 (row 0A, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 33319 (row 0A, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 33359 (row 0A, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 33360 (row 0B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 33399 (row 0B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 33439 (row 0B, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 33479 (row 0B, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 33519 (row 0B, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 33559 (row 0B, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 33599 (row 0B, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 33600 (row 0C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.90ct pan=+0.004
+--- Tick 33639 (row 0C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-20.71ct pan=+0.004
+--- Tick 33679 (row 0C, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-9.53ct pan=+0.004
+--- Tick 33719 (row 0C, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+4.86ct pan=+0.004
+--- Tick 33759 (row 0C, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+17.61ct pan=+0.004
+--- Tick 33799 (row 0C, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.42ct pan=+0.004
+--- Tick 33839 (row 0C, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 33840 (row 0D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 33879 (row 0D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+13.84ct pan=+0.004
+--- Tick 33919 (row 0D, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-0.00ct pan=+0.004
+--- Tick 33959 (row 0D, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 33999 (row 0D, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 34039 (row 0D, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 34079 (row 0D, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 34080 (row 0E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 34119 (row 0E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 34159 (row 0E, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 34199 (row 0E, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 34239 (row 0E, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.90ct pan=+0.004
+--- Tick 34279 (row 0E, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 34319 (row 0E, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 34320 (row 0F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 34359 (row 0F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 34399 (row 0F, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 34439 (row 0F, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 34479 (row 0F, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 34519 (row 0F, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 34559 (row 0F, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+0.00ct pan=+0.004
+--- Tick 34560 (row 10, tracker tick 0) ---
+  NoteOn  voice=12 pitch=C-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=13 pitch=F-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=14 pitch=G#5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+--- Tick 34599 (row 10, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 34639 (row 10, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 34679 (row 10, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 34719 (row 10, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 34759 (row 10, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 34799 (row 10, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 34800 (row 11, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 34839 (row 11, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 34879 (row 11, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 34919 (row 11, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 34959 (row 11, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 34999 (row 11, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 35039 (row 11, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 35040 (row 12, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 35079 (row 12, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 35119 (row 12, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 35159 (row 12, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 35199 (row 12, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 35239 (row 12, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 35279 (row 12, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 35280 (row 13, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 35319 (row 13, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 35359 (row 13, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 35399 (row 13, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 35439 (row 13, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 35479 (row 13, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 35519 (row 13, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 35520 (row 14, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 35559 (row 14, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 35599 (row 14, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 35639 (row 14, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 35679 (row 14, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 35719 (row 14, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 35759 (row 14, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 35760 (row 15, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 35799 (row 15, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 35839 (row 15, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 35879 (row 15, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 35919 (row 15, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 35959 (row 15, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 35999 (row 15, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 36000 (row 16, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 36039 (row 16, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 36079 (row 16, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 36119 (row 16, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 36159 (row 16, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 36199 (row 16, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 36239 (row 16, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 36240 (row 17, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 36279 (row 17, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 36319 (row 17, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 36359 (row 17, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 36399 (row 17, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 36439 (row 17, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 36479 (row 17, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 36480 (row 18, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 36519 (row 18, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 36559 (row 18, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 36599 (row 18, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 36639 (row 18, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 36679 (row 18, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 36719 (row 18, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 36720 (row 19, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 36759 (row 19, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 36799 (row 19, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 36839 (row 19, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 36879 (row 19, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 36919 (row 19, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 36959 (row 19, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 36960 (row 1A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 36999 (row 1A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 37039 (row 1A, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 37079 (row 1A, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 37119 (row 1A, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 37159 (row 1A, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 37199 (row 1A, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 37200 (row 1B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 37239 (row 1B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 37279 (row 1B, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 37319 (row 1B, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 37359 (row 1B, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 37399 (row 1B, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 37439 (row 1B, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 37440 (row 1C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.90ct pan=+0.004
+--- Tick 37479 (row 1C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-20.71ct pan=+0.004
+--- Tick 37519 (row 1C, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-9.53ct pan=+0.004
+--- Tick 37559 (row 1C, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+4.86ct pan=+0.004
+--- Tick 37599 (row 1C, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+17.61ct pan=+0.004
+--- Tick 37639 (row 1C, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.42ct pan=+0.004
+--- Tick 37679 (row 1C, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 37680 (row 1D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 37719 (row 1D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+13.84ct pan=+0.004
+--- Tick 37759 (row 1D, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-0.00ct pan=+0.004
+--- Tick 37799 (row 1D, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 37839 (row 1D, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 37879 (row 1D, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 37919 (row 1D, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 37920 (row 1E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 37959 (row 1E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 37999 (row 1E, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 38039 (row 1E, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 38079 (row 1E, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.90ct pan=+0.004
+--- Tick 38119 (row 1E, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 38159 (row 1E, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 38160 (row 1F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 38199 (row 1F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 38239 (row 1F, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 38279 (row 1F, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 38319 (row 1F, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 38359 (row 1F, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 38399 (row 1F, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+0.00ct pan=+0.004
+--- Tick 38400 (row 20, tracker tick 0) ---
+  NoteOn  voice=12 pitch=D-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=13 pitch=G-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=14 pitch=B-5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+--- Tick 38439 (row 20, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 38479 (row 20, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 38519 (row 20, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 38559 (row 20, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 38599 (row 20, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 38639 (row 20, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 38640 (row 21, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 38679 (row 21, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 38719 (row 21, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 38759 (row 21, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 38799 (row 21, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 38839 (row 21, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 38879 (row 21, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 38880 (row 22, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 38919 (row 22, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 38959 (row 22, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 38999 (row 22, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 39039 (row 22, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 39079 (row 22, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 39119 (row 22, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 39120 (row 23, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 39159 (row 23, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 39199 (row 23, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 39239 (row 23, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 39279 (row 23, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 39319 (row 23, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 39359 (row 23, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 39360 (row 24, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 39399 (row 24, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 39439 (row 24, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 39479 (row 24, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 39519 (row 24, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 39559 (row 24, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 39599 (row 24, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 39600 (row 25, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 39639 (row 25, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 39679 (row 25, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 39719 (row 25, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 39759 (row 25, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 39799 (row 25, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 39839 (row 25, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 39840 (row 26, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 39879 (row 26, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 39919 (row 26, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 39959 (row 26, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 39999 (row 26, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 40039 (row 26, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 40079 (row 26, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 40080 (row 27, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 40119 (row 27, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 40159 (row 27, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 40199 (row 27, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 40239 (row 27, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 40279 (row 27, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 40319 (row 27, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 40320 (row 28, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 40359 (row 28, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 40399 (row 28, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 40439 (row 28, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 40479 (row 28, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 40519 (row 28, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 40559 (row 28, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 40560 (row 29, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 40599 (row 29, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 40639 (row 29, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 40679 (row 29, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 40719 (row 29, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 40759 (row 29, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 40799 (row 29, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 40800 (row 2A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 40839 (row 2A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 40879 (row 2A, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 40919 (row 2A, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 40959 (row 2A, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 40999 (row 2A, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 41039 (row 2A, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 41040 (row 2B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 41079 (row 2B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 41119 (row 2B, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 41159 (row 2B, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 41199 (row 2B, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 41239 (row 2B, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 41279 (row 2B, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 41280 (row 2C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.90ct pan=+0.004
+--- Tick 41319 (row 2C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-20.71ct pan=+0.004
+--- Tick 41359 (row 2C, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-9.53ct pan=+0.004
+--- Tick 41399 (row 2C, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+4.86ct pan=+0.004
+--- Tick 41439 (row 2C, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+17.61ct pan=+0.004
+--- Tick 41479 (row 2C, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.42ct pan=+0.004
+--- Tick 41519 (row 2C, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 41520 (row 2D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 41559 (row 2D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+13.84ct pan=+0.004
+--- Tick 41599 (row 2D, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-0.00ct pan=+0.004
+--- Tick 41639 (row 2D, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 41679 (row 2D, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 41719 (row 2D, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 41759 (row 2D, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 41760 (row 2E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 41799 (row 2E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 41839 (row 2E, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 41879 (row 2E, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 41919 (row 2E, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.90ct pan=+0.004
+--- Tick 41959 (row 2E, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 41999 (row 2E, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 42000 (row 2F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 42039 (row 2F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 42079 (row 2F, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 42119 (row 2F, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 42159 (row 2F, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 42199 (row 2F, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 42239 (row 2F, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+0.00ct pan=+0.004
+--- Tick 42240 (row 30, tracker tick 0) ---
+  NoteOn  voice=12 pitch=D#5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=13 pitch=G#5 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+  NoteOn  voice=14 pitch=C-6 vel=1.000 inst=06 effects=[Vibrato { speed: 6, depth: 2 }]
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004 [TRIG]
+--- Tick 42279 (row 30, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 42319 (row 30, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 42359 (row 30, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 42399 (row 30, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 42439 (row 30, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 42479 (row 30, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 42480 (row 31, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 42519 (row 31, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 42559 (row 31, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 42599 (row 31, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 42639 (row 31, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 42679 (row 31, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 42719 (row 31, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 42720 (row 32, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 42759 (row 32, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 42799 (row 32, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 42839 (row 32, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 42879 (row 32, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 42919 (row 32, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 42959 (row 32, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 42960 (row 33, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 42999 (row 33, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 43039 (row 33, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 43079 (row 33, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 43119 (row 33, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 43159 (row 33, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 43199 (row 33, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 43200 (row 34, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 43239 (row 34, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 43279 (row 34, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 43319 (row 34, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 43359 (row 34, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 43399 (row 34, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 43439 (row 34, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 43440 (row 35, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 43479 (row 35, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 43519 (row 35, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 43559 (row 35, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 43599 (row 35, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 43639 (row 35, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 43679 (row 35, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 43680 (row 36, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 43719 (row 36, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 43759 (row 36, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 43799 (row 36, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 43839 (row 36, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 43879 (row 36, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 43919 (row 36, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 43920 (row 37, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 43959 (row 37, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 43999 (row 37, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 44039 (row 37, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 44079 (row 37, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 44119 (row 37, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 44159 (row 37, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 44160 (row 38, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-0.00ct pan=+0.004
+--- Tick 44199 (row 38, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 44239 (row 38, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 44279 (row 38, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 44319 (row 38, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 44359 (row 38, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 44399 (row 38, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 44400 (row 39, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 44439 (row 39, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 44479 (row 39, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.90ct pan=+0.004
+--- Tick 44519 (row 39, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+20.71ct pan=+0.004
+--- Tick 44559 (row 39, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+9.53ct pan=+0.004
+--- Tick 44599 (row 39, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-4.86ct pan=+0.004
+--- Tick 44639 (row 39, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 44640 (row 3A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-17.61ct pan=+0.004
+--- Tick 44679 (row 3A, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.42ct pan=+0.004
+--- Tick 44719 (row 3A, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-23.01ct pan=+0.004
+--- Tick 44759 (row 3A, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-13.84ct pan=+0.004
+--- Tick 44799 (row 3A, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+0.00ct pan=+0.004
+--- Tick 44839 (row 3A, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+13.84ct pan=+0.004
+--- Tick 44879 (row 3A, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 44880 (row 3B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+23.01ct pan=+0.004
+--- Tick 44919 (row 3B, tracker tick 0) ---
+  Mod     T12 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+24.42ct pan=+0.004
+--- Tick 44959 (row 3B, tracker tick 1) ---
+  Mod     T12 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+17.61ct pan=+0.004
+--- Tick 44999 (row 3B, tracker tick 2) ---
+  Mod     T12 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=+4.86ct pan=+0.004
+--- Tick 45039 (row 3B, tracker tick 3) ---
+  Mod     T12 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-9.53ct pan=+0.004
+--- Tick 45079 (row 3B, tracker tick 4) ---
+  Mod     T12 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-20.71ct pan=+0.004
+--- Tick 45119 (row 3B, tracker tick 5) ---
+  Mod     T12 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.2812 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.2812 pitch=-24.90ct pan=+0.004
+--- Tick 45120 (row 3C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.90ct pan=+0.004
+--- Tick 45159 (row 3C, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-20.71ct pan=+0.004
+--- Tick 45199 (row 3C, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-9.53ct pan=+0.004
+--- Tick 45239 (row 3C, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+4.86ct pan=+0.004
+--- Tick 45279 (row 3C, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+17.61ct pan=+0.004
+--- Tick 45319 (row 3C, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.42ct pan=+0.004
+--- Tick 45359 (row 3C, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 45360 (row 3D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+23.01ct pan=+0.004
+--- Tick 45399 (row 3D, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+13.84ct pan=+0.004
+--- Tick 45439 (row 3D, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-0.00ct pan=+0.004
+--- Tick 45479 (row 3D, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 45519 (row 3D, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 45559 (row 3D, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 45599 (row 3D, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 45600 (row 3E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 45639 (row 3E, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 45679 (row 3E, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 45719 (row 3E, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 45759 (row 3E, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+24.90ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+24.90ct pan=+0.004
+--- Tick 45799 (row 3E, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+20.71ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+20.71ct pan=+0.004
+--- Tick 45839 (row 3E, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 45840 (row 3F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+9.53ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+9.53ct pan=+0.004
+--- Tick 45879 (row 3F, tracker tick 0) ---
+  Mod     T12 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-4.86ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-4.86ct pan=+0.004
+--- Tick 45919 (row 3F, tracker tick 1) ---
+  Mod     T12 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-17.61ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-17.61ct pan=+0.004
+--- Tick 45959 (row 3F, tracker tick 2) ---
+  Mod     T12 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-24.42ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-24.42ct pan=+0.004
+--- Tick 45999 (row 3F, tracker tick 3) ---
+  Mod     T12 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-23.01ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-23.01ct pan=+0.004
+--- Tick 46039 (row 3F, tracker tick 4) ---
+  Mod     T12 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=-13.84ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=-13.84ct pan=+0.004
+--- Tick 46079 (row 3F, tracker tick 5) ---
+  Mod     T12 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T13 vol=0.1250 pitch=+0.00ct pan=+0.004
+  Mod     T14 vol=0.1250 pitch=+0.00ct pan=+0.004
+
+=== Summary ===
+Events printed: 1356
+  Modulation events: 1344

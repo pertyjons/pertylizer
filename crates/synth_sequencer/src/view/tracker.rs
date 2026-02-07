@@ -236,7 +236,7 @@ impl TrackerViewConfig {
     /// Create a config for FastTracker-style display.
     pub fn fasttracker() -> Self {
         Self {
-            effect_columns: 2,
+            effect_columns: 1,
             show_volume: true,
             show_instrument: true,
             hex_row_numbers: true,
@@ -407,12 +407,20 @@ pub fn tracker_pattern_to_tracker_rows(
                 }
             }
 
-            // Copy effects (up to configured limit)
-            cell.effects = row_data
-                .effects
-                .iter()
+            // Extract SetVolume into volume column, keep other effects
+            let mut other_effects = Vec::new();
+            for effect in &row_data.effects {
+                if let EffectCommand::SetVolume(vol) = effect
+                    && cell.volume.is_none()
+                {
+                    cell.volume = Some(*vol);
+                    continue;
+                }
+                other_effects.push(*effect);
+            }
+            cell.effects = other_effects
+                .into_iter()
                 .take(config.effect_columns as usize)
-                .cloned()
                 .collect();
         }
     }

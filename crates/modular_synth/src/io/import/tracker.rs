@@ -149,15 +149,29 @@ fn convert_module_to_song(module: Module, path: &Path) -> ImportResult<ImportedS
     // Store per-instrument default volume/panning for tracker playback.
     // When a note triggers with an explicit instrument, the channel resets
     // volume/panning to these values (per XM spec).
+    //
+    // Volume is read directly from the xmrs sample (not our Sample struct,
+    // which deliberately doesn't set default_volume to avoid double-volume
+    // with SamplePlayer.level).
     #[allow(clippy::cast_possible_truncation)]
     for (idx, inst) in instruments.iter().enumerate() {
         if let Some(sample_idx) = inst.sample_index
             && let Some(sample) = samples.get(sample_idx)
         {
+            let xmrs_volume = module
+                .instrument
+                .get(idx)
+                .and_then(|i| match &i.instr_type {
+                    xmrs::prelude::InstrumentType::Default(d) => {
+                        d.sample.first().and_then(|s| s.as_ref())
+                    }
+                    _ => None,
+                })
+                .map_or(1.0, |s| s.volume);
             song.set_instrument_defaults(
                 SeqInstrumentId(idx as u16),
                 TrackerInstrumentDefaults {
-                    volume: NormalizedValue::new(sample.default_volume.unwrap_or(1.0)),
+                    volume: NormalizedValue::new(xmrs_volume),
                     panning: BipolarValue::new(
                         sample.default_panning.map_or(0.0, |p| p * 2.0 - 1.0),
                     ),

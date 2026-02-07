@@ -20,6 +20,40 @@ git commit -m "<kort beskrivning av ändringarna>"
 
 ---
 
+## Debug- och analysverktyg
+
+### Exempelprogram (`crates/modular_synth/examples/`)
+
+Dessa verktyg körs med `cargo run --example <namn> -- <args>`:
+
+| Verktyg | Beskrivning |
+|---------|-------------|
+| `analyze_tracker` | Visar intern representation av importerade tracker-filer (Cell, EffectCommand) |
+| `analyze_tracker_raw` | Visar rå xmrs-representation (PatternSlot, TrackUnit) före import |
+| `analyze_all_trackers` | Kör analys på alla tracker-filer i en katalog |
+| `analyze_xm_detailed` | Detaljerad XM-analys (instrument, samples, envelopes) |
+| `debug_playback` | Tick-för-tick uppspelningslogg (NoteOn, volym, pitch, panning per tick) |
+| `debug_effects` | Debug av effektprocessering |
+| `debug_pattern` | Debug av pattern-data |
+| `debug_graph` | Debug av modulgraf |
+| `debug_xm_import` | Debug av XM-importprocessen |
+
+### Debug-output (`docs/debug/`)
+
+Sparad output från analysverktygen för verifiering. Jämför intern representation (`*.txt`) med rå xmrs-data (`*_raw.txt`) för att verifiera att importen fungerar korrekt.
+
+### GUI Debug-knapp
+
+Sequencer-vyn har en **Debug**-knapp i toolbarn som skriver ut pattern-info till konsolen (pattern-ID, rader, kanaler, instrument, arrangement). Matchar formatet i analysverktygen.
+
+### Referenser (`docs/references/`)
+
+Tekniska referensdokument för tracker-format och uppspelning. Se `docs/references/README.md` för innehållsförteckning.
+
+**Viktigt:** När nya tekniska referenser hittas (från webben, specifikationer, källkod etc.) ska de sparas i `docs/references/` och `docs/references/README.md` ska uppdateras med en beskrivning av dokumentet, varför det är relevant, och källan.
+
+---
+
 ## Kodstil och mönster
 
 ### Newtype-mönstret (obligatoriskt)
