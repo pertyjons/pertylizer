@@ -1813,7 +1813,7 @@ impl AudioProcessor for SynthEngine {
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
         };
 
-        if self.sequencer.is_tracker_mode() {
+        if self.sequencer.is_tracker_mode() && self.state.transport.is_playing() {
             // --- Tick-segmented rendering for tracker mode ---
             // Each tick boundary gets its own render chunk so modulations
             // (vibrato, volume slides, etc.) update at tick rate.
