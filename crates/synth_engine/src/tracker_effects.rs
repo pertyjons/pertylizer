@@ -770,6 +770,18 @@ impl ChannelEffectProcessor {
         state.note_delay_tick = None;
         state.fade_out_tick = None;
 
+        // STEP 3.6: When tone portamento starts, absorb any accumulated pitch_offset
+        // into current_pitch so the slide begins from the correct position.
+        // In FT2, portamento up/down and tone portamento both modify a single period
+        // variable. Our code uses separate current_pitch + pitch_offset, so we must
+        // merge them when switching from regular portamento to tone portamento.
+        if is_tone_portamento && state.pitch_offset.as_f32().abs() > f32::EPSILON {
+            let offset_semitones = state.pitch_offset.as_f32() / 100.0;
+            let new_pitch = state.current_pitch.as_f32() + offset_semitones;
+            state.current_pitch = Semitones::new(new_pitch);
+            state.pitch_offset = PitchCents::ZERO;
+        }
+
         // STEP 4: Process each effect (can override trigger_note values)
         for effect in effects {
             match effect {

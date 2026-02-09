@@ -1,5 +1,12 @@
 # Version History
 
+## [0.95.0] - 2026-02-09
+### Fixed - pitch_offset läcker från PortamentoUp till TonePortamento
+- **Problem**: `apply_amiga_portamento()` (1xx/2xx) ackumulerade pitch-ändring i `pitch_offset`, medan `apply_amiga_tone_portamento()` (3xx) arbetade på `current_pitch`. I FT2 finns bara en periodvariabel, men vår kod har två separata (`current_pitch` + `pitch_offset`). När TonePortamento följde efter PortamentoUp absorberades inte den ackumulerade `pitch_offset`, vilket orsakade att den lades ovanpå TonePortamentos resultat.
+- **Konsekvens**: Med PortamentoUp(2) på 5 ticks ackumulerades +62.5ct i `pitch_offset`. När TonePortamento sedan slidde `current_pitch` mot målnoten (t.ex. E-6 = 88.0), hamnade slutpitchen på 88.0 + 0.625 = 88.625 halvtoner — **62.5 cent för högt**. Vibrato oscillerade sedan runt denna felaktiga pitch.
+- **Fix**: I `process_row_start`, när TonePortamento detekteras, absorberas befintlig `pitch_offset` in i `current_pitch` och `pitch_offset` nollställs. TonePortamento slider sedan från korrekt startposition.
+- **Påverkan**: Alla mönster där PortamentoUp/Down (1xx/2xx) följs av TonePortamento (3xx).
+
 ## [0.94.0] - 2026-02-09
 ### Fixed - Tone Portamento target en rad försenad
 - **Problem**: I XM-importen (`process_track_unit_to_cell`) uppdaterades `last_porta_target` EFTER att effekterna processades. TonePortamento (3xx) fick därmed föregående rads not som target istället för den aktuella radens not.
