@@ -223,6 +223,7 @@ Total pitch-ändring = pitch_per_tick * (N - 1)
 
 | Version | Problem | Orsak |
 |---------|---------|-------|
+| 0.98.0 | Vibrato/arpeggio vid tick 0 | current_tick ej nollställd vid radstart — vibrato applicerades felaktigt vid tick 0 |
 | 0.97.0 | TonePortamento 4x för långsam i Amiga-läge | apply_amiga_tone_portamento() delade speed med 4 — FT2 använder param*4 direkt |
 | 0.96.0 | 25% för mycket effekt per rad | process_tick() anropades speed gånger istället för speed-1 |
 | 0.95.0 | pitch_offset läcker till TonePortamento | Separata pitch-variabler inte synkade vid effektbyte |

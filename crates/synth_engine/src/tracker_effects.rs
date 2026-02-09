@@ -711,6 +711,12 @@ impl ChannelEffectProcessor {
         }
         let state = &mut self.channels[channel_idx];
 
+        // Reset current_tick so that current_modulation() at tick 0 correctly
+        // skips vibrato/tremolo offset. In FT2, tick 0 uses realPeriod (no vibrato).
+        // Without this reset, current_tick retains the value from the previous row's
+        // last process_tick (e.g., 4), causing vibrato to be applied at tick 0.
+        state.current_tick = TickInRow::ZERO;
+
         // STEP 1: Scan effects to determine trigger type
         // This must happen BEFORE trigger_note() to correctly identify tone portamento
         let is_tone_portamento = effects

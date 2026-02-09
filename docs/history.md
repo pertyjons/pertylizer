@@ -1,5 +1,13 @@
 # Version History
 
+## [0.98.0] - 2026-02-09
+### Fixed - Vibrato/arpeggio appliceras felaktigt vid tick 0
+- **Problem**: `ChannelEffectState.current_tick` nollställdes aldrig vid radstart. Fältet behöll värdet från förra radens sista `process_tick()` (t.ex. tick 4 vid speed=5). När `current_modulation()` anropades vid tick 0, var `current_tick.as_u8() > 0` sant, vilket fick vibrato att appliceras — trots att FT2 använder `realPeriod` (noll vibrato-offset) vid tick 0.
+- **Konsekvens**: Varje rad med vibrato hade en felaktig pitch-offset vid tick 0. Med vibrato depth=1 kunde offset vara upp till ±12.45ct (ca 1/8 halvton) istället för 0ct. I FT2 fungerar tick 0 som en "ankarpunkt" där pitchen återgår till basnoten, men vår kod hade en slumpmässig vibrato-offset (beroende på fas från förra radens sista tick). Med 113 vibrato-effekter i en enda pattern lät detta genomgående "falskt".
+- **Fix**: Sätter `state.current_tick = TickInRow::ZERO` i `process_row_start()` direkt efter att kanalens state hämtas. Vibrato-checken `current_tick > 0` i `current_modulation()` evalueras nu korrekt till false vid tick 0.
+- **Verifiering**: Debug-output visar nu `pitch=+0.00ct` vid tick 0 för alla vibrato-rader (bekräftat med `debug_playback`).
+- **Påverkan**: Alla XM/MOD/S3M-filer med vibrato (4xx), vibrato+volslide (6xx), eller arpeggio-effekter. Arpeggio tick-cykel (tick % 3) var också felaktig vid tick 0.
+
 ## [0.97.0] - 2026-02-09
 ### Fixed - TonePortamento 4x för långsam i Amiga-läge
 - **Problem**: `apply_amiga_tone_portamento()` delade `tone_porta_speed` med 4.0 innan den användes som period-steg. Kommentaren hävdade "FT2 Amiga tone portamento uses raw_param", men FT2-källkoden visar att `portaSpeed = param << 2` (multiplicerar med 4 vid setup) och sedan använder `portaSpeed` direkt i `tonePorta()` — exakt samma som vanlig portamento.
