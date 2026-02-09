@@ -5,10 +5,16 @@
 //! - Song arrangement
 //! - Transport controls
 
+use std::collections::HashMap;
+
 use eframe::egui::{self, Key, RichText, Ui};
 
 use crate::gui::theme::theme;
+use synth_sequencer::effects::EffectCommand;
+use synth_sequencer::ids::{RowIndex, TrackIndex};
+use synth_sequencer::pitch::Pitch;
 use synth_sequencer::song::Song;
+use synth_sequencer::tracker_pattern::{Cell, TrackerPattern};
 use synth_sequencer::view::{
     TrackerColumn, TrackerViewConfig, TrackerViewState, draw_tracker_grid,
 };
@@ -549,6 +555,7 @@ fn find_pattern_start_tick(song: &Song, pattern_id: PatternId) -> Option<Tick> {
 }
 
 /// Print debug info about the current song and pattern to the console.
+#[allow(clippy::too_many_lines)]
 fn print_debug_info(song: &Song, state: &TrackerViewState) {
     println!("=== Debug: Pattern Info ===");
     println!("Song: {}", song.name);
@@ -556,13 +563,44 @@ fn print_debug_info(song: &Song, state: &TrackerViewState) {
     println!("Default BPM: {}", song.default_tempo);
     println!("Default speed: {}", song.default_tracker_speed);
     println!("Frequency mode: {:?}", song.tracker_frequency_mode);
-    println!("Tracks: {}", song.track_count());
+    let track_count = song.track_count();
+    println!("Tracks: {track_count}");
+
+    // Track mute status
+    print!("  Track status:\n    ");
+    for i in 0..track_count {
+        if i > 0 {
+            print!(" | ");
+        }
+        let status = if state.is_muted(i) { "MUTED" } else { "active" };
+        print!("T{}: {status:>6}", i + 1);
+    }
+    println!();
+
     println!(
         "Patterns: {} tracker + {} piano",
         song.tracker_pattern_count(),
         song.pattern_count()
     );
     println!("Instruments: {}", song.all_instrument_defaults().len());
+
+    // Instrument defaults
+    let defaults = song.all_instrument_defaults();
+    if !defaults.is_empty() {
+        println!("\nInstrument Defaults:");
+        let mut ids: Vec<_> = defaults.keys().collect();
+        ids.sort_by_key(|id| id.0);
+        for id in ids {
+            if let Some(d) = defaults.get(id) {
+                println!(
+                    "  Inst {:02X}: vol={:.3} pan={:+.3}",
+                    id.0,
+                    d.volume.as_f32(),
+                    d.panning.as_f32(),
+                );
+            }
+        }
+    }
 
     // Active pattern info
     if let Some(pattern_id) = state.active_pattern {
@@ -590,10 +628,17 @@ fn print_debug_info(song: &Song, state: &TrackerViewState) {
                     effect_count += row.effects.len();
                 }
             }
-            println!("  Non-empty rows: {}", non_empty_count);
-            println!("  Notes: {}", note_count);
-            println!("  Note-offs: {}", noteoff_count);
-            println!("  Effect commands: {}", effect_count);
+            println!("\n  Non-empty rows: {non_empty_count}");
+            println!("  Notes: {note_count}");
+            println!("  Note-offs: {noteoff_count}");
+            println!("  Effect commands: {effect_count}");
+
+            // Effect usage summary
+            print_effect_summary(tp);
+
+            // Full pattern grid
+            println!();
+            print_pattern_grid(tp);
         }
     } else {
         println!("\nNo active pattern");
@@ -609,4 +654,242 @@ fn print_debug_info(song: &Song, state: &TrackerViewState) {
         );
     }
     println!("=== End Debug ===");
+}
+
+// =============================================================================
+// Debug formatting helpers (matching analyze_tracker example output)
+// =============================================================================
+
+/// Print a tracker pattern as a full grid.
+fn print_pattern_grid(pattern: &TrackerPattern) {
+    let num_tracks = pattern.num_tracks().as_u8() as usize;
+    let num_rows = pattern.num_rows().as_u16() as usize;
+
+    println!(
+        "=== Pattern {:02X}: \"{}\" ({} rows, {} tracks, {} ticks/row) ===",
+        pattern.id().0,
+        pattern.name(),
+        num_rows,
+        num_tracks,
+        pattern.ticks_per_row().as_u32(),
+    );
+
+    // Header
+    print!("    |");
+    for ch in 0..num_tracks {
+        print!(" T{:<2}            |", ch + 1);
+    }
+    println!();
+
+    // Separator
+    print!("----|");
+    for _ in 0..num_tracks {
+        print!("-----------------|");
+    }
+    println!();
+
+    // Rows
+    for row_idx in 0..num_rows {
+        #[allow(clippy::cast_possible_truncation)]
+        let ri = RowIndex::new(row_idx as u16);
+        print!("{row_idx:02X}  |");
+        for ch in 0..num_tracks {
+            #[allow(clippy::cast_possible_truncation)]
+            let ti = TrackIndex::new(ch as u8);
+            let row = pattern.get(ti, ri);
+            print!(" {} |", format_cell(&row.cell, &row.effects));
+        }
+        println!();
+    }
+}
+
+/// Print a summary of effect usage in a pattern.
+fn print_effect_summary(pattern: &TrackerPattern) {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (_, _, row) in pattern.non_empty_rows() {
+        for effect in &row.effects {
+            let name = effect_variant_name(effect);
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+
+    if counts.is_empty() {
+        return;
+    }
+
+    // Sort by count descending
+    let mut sorted: Vec<_> = counts.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    println!("\nEffect usage in pattern:");
+    for (name, count) in &sorted {
+        println!("  {name:<20} x{count}");
+    }
+}
+
+/// Get the variant name of an `EffectCommand` as a human-readable string.
+fn effect_variant_name(effect: &EffectCommand) -> String {
+    match effect {
+        EffectCommand::Arpeggio { .. } => "Arpeggio",
+        EffectCommand::PortamentoUp(_) => "PortamentoUp",
+        EffectCommand::PortamentoDown(_) => "PortamentoDown",
+        EffectCommand::TonePortamento { .. } => "TonePortamento",
+        EffectCommand::Vibrato { .. } => "Vibrato",
+        EffectCommand::VibratoWaveform(_) => "VibratoWaveform",
+        EffectCommand::Glissando(_) => "Glissando",
+        EffectCommand::FineTune(_) => "FineTune",
+        EffectCommand::SetVolume(_) => "SetVolume",
+        EffectCommand::VolumeSlide { .. } => "VolumeSlide",
+        EffectCommand::FineVolumeSlide { .. } => "FineVolumeSlide",
+        EffectCommand::Tremolo { .. } => "Tremolo",
+        EffectCommand::TremoloWaveform(_) => "TremoloWaveform",
+        EffectCommand::SetPanning(_) => "SetPanning",
+        EffectCommand::PanningSlide { .. } => "PanningSlide",
+        EffectCommand::SampleOffset(_) => "SampleOffset",
+        EffectCommand::Retrigger { .. } => "Retrigger",
+        EffectCommand::NoteCut(_) => "NoteCut",
+        EffectCommand::NoteDelay(_) => "NoteDelay",
+        EffectCommand::NoteFadeOut(_) => "NoteFadeOut",
+        EffectCommand::Reverse => "Reverse",
+        EffectCommand::SetTempo(_) => "SetTempo",
+        EffectCommand::SetSpeed(_) => "SetSpeed",
+        EffectCommand::PatternDelay(_) => "PatternDelay",
+        EffectCommand::PatternLoop { .. } => "PatternLoop",
+        EffectCommand::PatternJump(_) => "PatternJump",
+        EffectCommand::PatternBreak(_) => "PatternBreak",
+    }
+    .to_string()
+}
+
+/// Format a cell + effects as a fixed-width string.
+///
+/// Format: "NOT IN VV EFX1" (up to 16 chars)
+/// - NOT: note (3 chars: "C-4", "===", "---")
+/// - IN: instrument (2 chars: hex or "..")
+/// - VV: volume (2 chars: hex or "..")
+/// - EFX: effects (variable)
+fn format_cell(cell: &Cell, effects: &[EffectCommand]) -> String {
+    let (note, inst, vel) = match cell {
+        Cell::Empty => ("---".to_string(), "..".to_string(), None),
+        Cell::NoteOff => ("===".to_string(), "..".to_string(), None),
+        Cell::Note {
+            pitch,
+            instrument,
+            velocity,
+        } => (
+            format_pitch(*pitch),
+            instrument.map_or("..".to_string(), |i| format!("{:02X}", i.0)),
+            *velocity,
+        ),
+    };
+
+    // Separate volume (SetVolume) from other effects
+    let mut vol_str = String::new();
+    let mut other_effects = Vec::new();
+
+    for effect in effects {
+        if let EffectCommand::SetVolume(v) = effect {
+            if vol_str.is_empty() {
+                vol_str = format!("{v:02X}");
+            } else {
+                other_effects.push(format_effect(effect));
+            }
+        } else {
+            other_effects.push(format_effect(effect));
+        }
+    }
+
+    // If no SetVolume effect, check cell velocity
+    if vol_str.is_empty() {
+        if let Some(v) = vel {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let vol_byte = (v.as_f32() * 64.0).min(64.0) as u8;
+            vol_str = format!("{vol_byte:02X}");
+        } else {
+            vol_str = "..".to_string();
+        }
+    }
+
+    let efx_str = if other_effects.is_empty() {
+        "....".to_string()
+    } else {
+        other_effects.join(" ")
+    };
+
+    format!("{note} {inst} {vol_str} {efx_str:<4}")
+}
+
+/// Format a Pitch as "C-4", "C#4", etc.
+fn format_pitch(pitch: Pitch) -> String {
+    let midi = pitch.as_midi();
+    let octave = midi / 12;
+    let semitone = midi % 12;
+    let name = match semitone {
+        0 => "C-",
+        1 => "C#",
+        2 => "D-",
+        3 => "D#",
+        4 => "E-",
+        5 => "F-",
+        6 => "F#",
+        7 => "G-",
+        8 => "G#",
+        9 => "A-",
+        10 => "A#",
+        11 => "B-",
+        _ => "??",
+    };
+    format!("{name}{octave}")
+}
+
+/// Format an `EffectCommand` as a short tracker-style code.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn format_effect(effect: &EffectCommand) -> String {
+    match effect {
+        EffectCommand::Arpeggio { x, y } => format!("0{x:X}{y:X}"),
+        EffectCommand::PortamentoUp(s) => format!("1{s:02X}"),
+        EffectCommand::PortamentoDown(s) => format!("2{s:02X}"),
+        EffectCommand::TonePortamento { speed, .. } => format!("3{speed:02X}"),
+        EffectCommand::Vibrato { speed, depth } => format!("4{speed:X}{depth:X}"),
+        EffectCommand::VibratoWaveform(_) => "E4x".to_string(),
+        EffectCommand::Glissando(on) => format!("E3{}", u8::from(*on)),
+        EffectCommand::FineTune(c) => format!("E5{:02X}", *c as u8),
+        EffectCommand::SetVolume(v) => format!("C{v:02X}"),
+        EffectCommand::VolumeSlide { up, down } => {
+            if *up > 0 {
+                format!("A{up:X}0")
+            } else {
+                format!("A0{down:X}")
+            }
+        }
+        EffectCommand::FineVolumeSlide { up, down } => {
+            if *up > 0 {
+                format!("EA{up:X}")
+            } else {
+                format!("EB{down:X}")
+            }
+        }
+        EffectCommand::Tremolo { speed, depth } => format!("7{speed:X}{depth:X}"),
+        EffectCommand::TremoloWaveform(_) => "E7x".to_string(),
+        EffectCommand::SetPanning(p) => format!("8{p:02X}"),
+        EffectCommand::PanningSlide { left, right } => {
+            if *left > 0 {
+                format!("P{left:X}0")
+            } else {
+                format!("P0{right:X}")
+            }
+        }
+        EffectCommand::SampleOffset(o) => format!("9{:02X}", (*o >> 8) as u8),
+        EffectCommand::Retrigger { interval, .. } => format!("R{interval:02X}"),
+        EffectCommand::NoteCut(t) => format!("SC{t:X}"),
+        EffectCommand::NoteDelay(t) => format!("SD{t:X}"),
+        EffectCommand::NoteFadeOut(t) => format!("KF{t:X}"),
+        EffectCommand::Reverse => "REV".to_string(),
+        EffectCommand::SetTempo(t) => format!("F{t:02X}"),
+        EffectCommand::SetSpeed(s) => format!("F{s:02X}"),
+        EffectCommand::PatternDelay(r) => format!("EE{r:X}"),
+        EffectCommand::PatternLoop { count } => format!("E6{count:X}"),
+        EffectCommand::PatternJump(p) => format!("B{p:02X}"),
+        EffectCommand::PatternBreak(r) => format!("D{r:02X}"),
+    }
 }

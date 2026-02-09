@@ -1,5 +1,13 @@
 # Version History
 
+## [0.93.0] - 2026-02-09
+### Enhanced - Utökad Debug-knapp i Sequencer-vyn
+- **Kanal mute-status**: Visar aktiv/MUTED-status för varje track
+- **Instrument defaults**: Visar volym och panning per instrument (matchar `analyze_tracker`-format)
+- **Fullständig pattern-grid**: Skriver ut hela pattern-innehållet i samma format som `analyze_tracker`-exemplet (noter, instrument, volym, effekter)
+- **Effektsammanfattning**: Räknar och listar alla använda effekter i aktiv pattern sorterade efter frekvens
+- Debug-output är nu direkt jämförbar med `cargo run --example analyze_tracker`
+
 ## [0.92.0] - 2026-02-07
 ### Fixed - Tremolo, vibrato och volume slide noggrannhet
 
