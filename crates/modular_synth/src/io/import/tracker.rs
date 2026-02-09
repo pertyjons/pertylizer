@@ -748,7 +748,25 @@ fn process_track_unit_to_cell(
         state.last_volume = unit.velocity;
     }
 
-    // Convert effects
+    // Pre-compute pitch and update portamento target BEFORE processing effects.
+    // This is critical: TonePortamento reads state.last_porta_target to determine
+    // the slide target. If we process effects first, TonePortamento would get the
+    // PREVIOUS row's note as target instead of the CURRENT row's note, causing
+    // the portamento to be delayed by one row.
+    let pitch = if !unit.note.is_keyoff() && !unit.note.is_none() {
+        let note_value = unit.note as u8;
+        let midi_note = note_value.saturating_add(12).min(127);
+        if let Some(p) = Pitch::new(midi_note) {
+            state.last_porta_target = Some(p);
+            Some(p)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Convert effects (TonePortamento now reads the correct target)
     let mut effects = Vec::new();
 
     // Process track effects
@@ -776,20 +794,10 @@ fn process_track_unit_to_cell(
         return (Cell::Empty, effects);
     }
 
-    // Get the note value as u8 (C0=0, C1=12, etc.)
-    let note_value = unit.note as u8;
-
-    // xmrs Pitch values match MIDI directly (C0=0, C1=12, etc.)
-    // Shift up by 12 for tracker convention (C0 = MIDI 12)
-    let midi_note = note_value.saturating_add(12).min(127);
-
-    let Some(pitch) = Pitch::new(midi_note) else {
+    let Some(pitch) = pitch else {
         // Invalid pitch - treat as empty
         return (Cell::Empty, effects);
     };
-
-    // Update portamento target for tone portamento
-    state.last_porta_target = Some(pitch);
 
     // Determine instrument
     // - If unit has explicit instrument, use it

@@ -1,5 +1,12 @@
 # Version History
 
+## [0.94.0] - 2026-02-09
+### Fixed - Tone Portamento target en rad försenad
+- **Problem**: I XM-importen (`process_track_unit_to_cell`) uppdaterades `last_porta_target` EFTER att effekterna processades. TonePortamento (3xx) fick därmed föregående rads not som target istället för den aktuella radens not.
+- **Konsekvens**: I uppspelningskoden satte `trigger_note` korrekt `tone_porta_target` till aktuell not, men sedan överskrev effektprocesseringen med det felaktiga (gamla) targetvärdet. Portamento-slidet startade alltid en rad för sent, och första raden med portamento gav ingen tonändring alls.
+- **Fix**: Pitch beräknas och `last_porta_target` uppdateras nu INNAN effektloopen körs, så att TonePortamento alltid får rätt target-not.
+- **Påverkan**: Alla kanaler med TonePortamento-effekter (3xx) i importerade XM/MOD/S3M-filer.
+
 ## [0.93.0] - 2026-02-09
 ### Enhanced - Utökad Debug-knapp i Sequencer-vyn
 - **Kanal mute-status**: Visar aktiv/MUTED-status för varje track
