@@ -1498,8 +1498,9 @@ impl ChannelEffectState {
             return; // Close enough
         }
 
-        // tone_porta_speed = raw_param * 4.0, but FT2 Amiga tone portamento uses raw_param
-        let speed_periods = self.tone_porta_speed.as_f32() / 4.0;
+        // tone_porta_speed = raw_param * 4.0 = period units per tick (same as regular portamento).
+        // FT2: portaSpeed = param << 2, then tonePorta() uses portaSpeed directly.
+        let speed_periods = self.tone_porta_speed.as_f32();
 
         let new_period = if diff > 0.0 {
             // Target period is higher (lower pitch) - slide period up

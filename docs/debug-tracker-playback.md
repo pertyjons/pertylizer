@@ -153,7 +153,7 @@ Period = 7680 - (semitones - 12) * 64
 Semitones = (7680 - period) / 64 + 12
 PortamentoUp: period -= speed * 4     (speed=raw param)
 PortamentoDown: period += speed * 4
-TonePortamento: period ±= speed       (UTAN *4 multiplikator!)
+TonePortamento: period ±= speed * 4   (FT2: portaSpeed = param << 2, sedan direkt)
 ```
 
 ---
@@ -223,6 +223,7 @@ Total pitch-ändring = pitch_per_tick * (N - 1)
 
 | Version | Problem | Orsak |
 |---------|---------|-------|
+| 0.97.0 | TonePortamento 4x för långsam i Amiga-läge | apply_amiga_tone_portamento() delade speed med 4 — FT2 använder param*4 direkt |
 | 0.96.0 | 25% för mycket effekt per rad | process_tick() anropades speed gånger istället för speed-1 |
 | 0.95.0 | pitch_offset läcker till TonePortamento | Separata pitch-variabler inte synkade vid effektbyte |
 | 0.94.0 | TonePortamento target en rad försenad | last_porta_target uppdaterades efter effektloop |
@@ -238,7 +239,7 @@ Total pitch-ändring = pitch_per_tick * (N - 1)
 |-----|------|--------|----------|------------|
 | 1xx | PortamentoUp | Nej | period -= x*4 | pitch_offset |
 | 2xx | PortamentoDown | Nej | period += x*4 | pitch_offset |
-| 3xx | TonePortamento | Sätt target | period -> target ±x | current_pitch |
+| 3xx | TonePortamento | Sätt target | period -> target ±x*4 | current_pitch |
 | 4xy | Vibrato | Nej | pitch oscillation | beräknas i current_modulation |
 | 5xx | TonePorta+VolSlide | Sätt target | porta + vol slide | current_pitch + volume |
 | 6xx | Vibrato+VolSlide | Nej | vibrato + vol slide | pitch + volume |

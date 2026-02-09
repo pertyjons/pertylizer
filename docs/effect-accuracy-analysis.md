@@ -269,7 +269,7 @@ self.vibrato_phase = Phase::new(if new_phase >= 1.0 {
 ### 5.3 Tone Portamento (3xx) ✓
 
 - Linjärt: glide i semiton-rymd med korrekt hastighet ✓
-- Amiga: glide i period-rymd med `/4.0` korrektion ✓
+- Amiga: glide i period-rymd med param*4 period-enheter per tick ✓ (fixad v0.97.0 — var 4x för långsam pga felaktig /4.0)
 - Target sätts från not, trigger undertrycks (early return i trigger_note) ✓
 - `tone_porta_active` skiljer aktiv rad från minnesvärde (v0.91.0) ✓
 

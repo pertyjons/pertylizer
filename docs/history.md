@@ -1,5 +1,13 @@
 # Version History
 
+## [0.97.0] - 2026-02-09
+### Fixed - TonePortamento 4x för långsam i Amiga-läge
+- **Problem**: `apply_amiga_tone_portamento()` delade `tone_porta_speed` med 4.0 innan den användes som period-steg. Kommentaren hävdade "FT2 Amiga tone portamento uses raw_param", men FT2-källkoden visar att `portaSpeed = param << 2` (multiplicerar med 4 vid setup) och sedan använder `portaSpeed` direkt i `tonePorta()` — exakt samma som vanlig portamento.
+- **Konsekvens**: Tone portamento (3xx/5xx) gick 4x långsammare än i FT2. Med param=16 (effekt 310) och speed=5 ger FT2 64 period-enheter/tick × 4 ticks = 256 perioder/rad = 4 halvtoner. Vår kod gav 16 period-enheter/tick × 4 ticks = 64 perioder/rad = 1 halvton. Tone slides nådde aldrig sina targets i tid, vilket resulterade i hörbart falska toner.
+- **Fix**: Tog bort `/4.0` divisionen i `apply_amiga_tone_portamento()`. `tone_porta_speed` (= raw_param × 4.0) används nu direkt som period-steg, identiskt med `apply_amiga_portamento()`.
+- **Verifiering**: Jämförelse med FT2-clone källkod (`ft2_replayer.c`: `tonePorta()` + `getNewNote()`) bekräftar att `portaSpeed` används utan division.
+- **Påverkan**: Alla XM/MOD/S3M-filer med Amiga-frekvensläge och TonePortamento-effekter (3xx, 5xx). 567 TonePortamento-effekter i testfilen `joli_untouched.xm`.
+
 ## [0.96.0] - 2026-02-09
 ### Fixed - Extra effekt-tick per rad (25% för mycket portamento/vibrato/volume slide)
 - **Problem**: `process_tick()` anropades 5 gånger per rad istället för 4 vid speed=5. I FT2 med speed=5 finns det 5 ticks (0-4): tick 0 hanteras av `process_row_start()`, ticks 1-4 hanteras av `process_tick()`. Men vår engine anropade `process_tick()` var 40:e song-tick, och med 200 song-ticks per rad (5×40) blev det 200/40 = 5 anrop istället för 4.
