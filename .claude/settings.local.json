@@ -83,7 +83,8 @@
       "Bash(gh api:*)",
       "WebFetch(domain:www.ocf.berkeley.edu)",
       "WebFetch(domain:crates.io)",
-      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline -20)"
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline -20)",
+      "Bash(do echo \"=== POSITION $pos ===\")"
     ],
     "deny": [],
     "ask": []

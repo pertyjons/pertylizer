@@ -986,8 +986,36 @@ impl ChannelEffectProcessor {
     ///
     /// This should be called for each tick within a row (except tick 0 which is
     /// handled by process_row_start). Returns modulation values for each channel.
+    ///
+    /// When `tick_in_row >= speed`, effects are NOT applied. This prevents an
+    /// extra effect tick per row: the engine calls process_tick() N times per row
+    /// (where N = speed), but tick 0 is already handled by process_row_start(),
+    /// so only ticks 1..speed-1 should apply effects. The Nth call (tick = speed)
+    /// returns current modulation without advancing any effects.
     pub fn process_tick(&mut self) -> Vec<ChannelModulation> {
         self.tick_in_row = self.tick_in_row.next();
+
+        // If we've exceeded the row's tick count, return current state without
+        // applying effects. In FT2 with speed=5, ticks are 0-4. Tick 0 is
+        // process_row_start, ticks 1-4 are process_tick. A 5th process_tick
+        // call would be tick 5 which is beyond the row — skip effect processing.
+        if self.tick_in_row.as_u8() >= self.speed.as_u8() {
+            return self
+                .channels
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, state)| {
+                    let track = TrackId::new(idx as u16);
+                    let modulation = state.current_modulation(track);
+                    if modulation.is_significant() {
+                        Some(modulation)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
         let amiga_mode = self.amiga_mode;
 
         self.channels

@@ -1,5 +1,17 @@
 # Version History
 
+## [0.96.0] - 2026-02-09
+### Fixed - Extra effekt-tick per rad (25% för mycket portamento/vibrato/volume slide)
+- **Problem**: `process_tick()` anropades 5 gånger per rad istället för 4 vid speed=5. I FT2 med speed=5 finns det 5 ticks (0-4): tick 0 hanteras av `process_row_start()`, ticks 1-4 hanteras av `process_tick()`. Men vår engine anropade `process_tick()` var 40:e song-tick, och med 200 song-ticks per rad (5×40) blev det 200/40 = 5 anrop istället för 4.
+- **Konsekvens**: Alla kontinuerliga effekter fick **25% mer effekt per rad** (5/4 = 1.25x):
+  - PortamentoDown(5): -156.25ct/rad istället för -125.00ct/rad
+  - Vibrato: fasen avancerades 25% snabbare → snabbare och bredare vibrato
+  - Volume slide: volymförändring 25% snabbare
+  - Tone portamento: glide nådde mål 25% snabbare
+  - **Över 2 rader blev portamento-driften -312.50ct istället för -250.00ct — en skillnad på 62.5ct (~0.6 halvtoner), tydligt hörbara "falska toner".**
+- **Fix**: I `process_tick()`, om `tick_in_row >= speed`, returneras nuvarande modulation utan att applicera effekter. Den 5:e process_tick-iterationen (tick_in_row=5 vid speed=5) skippas nu korrekt.
+- **Påverkan**: Alla XM-filer med kontinuerliga effekter (portamento, vibrato, tremolo, volume slide, panning slide).
+
 ## [0.95.0] - 2026-02-09
 ### Fixed - pitch_offset läcker från PortamentoUp till TonePortamento
 - **Problem**: `apply_amiga_portamento()` (1xx/2xx) ackumulerade pitch-ändring i `pitch_offset`, medan `apply_amiga_tone_portamento()` (3xx) arbetade på `current_pitch`. I FT2 finns bara en periodvariabel, men vår kod har två separata (`current_pitch` + `pitch_offset`). När TonePortamento följde efter PortamentoUp absorberades inte den ackumulerade `pitch_offset`, vilket orsakade att den lades ovanpå TonePortamentos resultat.
