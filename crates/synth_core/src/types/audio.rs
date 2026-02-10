@@ -400,7 +400,7 @@ impl VoiceCount {
     /// Sixteen voices.
     pub const SIXTEEN: Self = Self(16);
 
-    /// Thirty-two voices (tracker max channels).
+    /// Thirty-two voices.
     pub const THIRTYTWO: Self = Self(32);
 
     /// Maximum allocator voices.
@@ -468,67 +468,6 @@ impl From<VoiceCount> for usize {
 }
 
 impl std::fmt::Display for VoiceCount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-// ============================================================================
-// VOICE INDEX
-// ============================================================================
-
-/// Index of a specific voice within a voice allocator.
-///
-/// Used for tracker-style playback where each channel maps to a fixed voice.
-/// Range is 0-255 to match `VoiceCount` capacity.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
-)]
-#[repr(transparent)]
-pub struct VoiceIndex(pub u8);
-
-impl VoiceIndex {
-    /// Create a new voice index.
-    #[inline]
-    pub const fn new(index: u8) -> Self {
-        Self(index)
-    }
-
-    /// First voice (index 0).
-    pub const ZERO: Self = Self(0);
-
-    /// Get the raw voice index.
-    #[inline]
-    pub const fn as_u8(self) -> u8 {
-        self.0
-    }
-
-    /// Get as usize for array indexing.
-    #[inline]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl From<u8> for VoiceIndex {
-    fn from(index: u8) -> Self {
-        Self(index)
-    }
-}
-
-impl From<usize> for VoiceIndex {
-    fn from(index: usize) -> Self {
-        Self(index.min(255) as u8)
-    }
-}
-
-impl From<VoiceIndex> for usize {
-    fn from(index: VoiceIndex) -> Self {
-        index.0 as Self
-    }
-}
-
-impl std::fmt::Display for VoiceIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -970,76 +909,6 @@ impl From<StereoLevels> for (f32, f32) {
 }
 
 // ============================================================================
-// TRACK COUNT
-// ============================================================================
-
-/// Number of tracks in a sequencer/pattern.
-///
-/// Used for tracker channel count, mixer channels, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[repr(transparent)]
-pub struct TrackCount(pub usize);
-
-impl TrackCount {
-    /// Create a new track count.
-    #[inline]
-    pub const fn new(count: usize) -> Self {
-        Self(count)
-    }
-
-    /// Zero tracks.
-    pub const ZERO: Self = Self(0);
-
-    /// Single track (mono).
-    pub const MONO: Self = Self(1);
-
-    /// Stereo (2 tracks).
-    pub const STEREO: Self = Self(2);
-
-    /// Standard 4-channel MOD.
-    pub const MOD_STANDARD: Self = Self(4);
-
-    /// 8 channels.
-    pub const EIGHT: Self = Self(8);
-
-    /// 16 channels.
-    pub const SIXTEEN: Self = Self(16);
-
-    /// 32 channels (XM max).
-    pub const THIRTYTWO: Self = Self(32);
-
-    /// Get the raw count.
-    #[inline]
-    pub const fn as_usize(self) -> usize {
-        self.0
-    }
-
-    /// Check if empty.
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-}
-
-impl From<usize> for TrackCount {
-    fn from(count: usize) -> Self {
-        Self(count)
-    }
-}
-
-impl From<TrackCount> for usize {
-    fn from(count: TrackCount) -> Self {
-        count.0
-    }
-}
-
-impl std::fmt::Display for TrackCount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} tracks", self.0)
-    }
-}
-
-// ============================================================================
 // PATTERN INDEX
 // ============================================================================
 
@@ -1094,94 +963,6 @@ impl From<PatternIndex> for usize {
 impl std::fmt::Display for PatternIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Pattern {}", self.0)
-    }
-}
-
-// ============================================================================
-// ROW INDEX
-// ============================================================================
-
-/// Row number within a pattern.
-///
-/// Zero-indexed row position in a tracker pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[repr(transparent)]
-pub struct RowIndex(pub u32);
-
-impl RowIndex {
-    /// Create a new row index.
-    #[inline]
-    pub const fn new(row: u32) -> Self {
-        Self(row)
-    }
-
-    /// First row.
-    pub const ZERO: Self = Self(0);
-
-    /// Get the raw index.
-    #[inline]
-    pub const fn as_u32(self) -> u32 {
-        self.0
-    }
-
-    /// Get as usize for array indexing.
-    #[inline]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    /// Advance to next row.
-    #[inline]
-    pub fn next(self) -> Self {
-        Self(self.0 + 1)
-    }
-
-    /// Go to previous row (saturating).
-    #[inline]
-    pub fn prev(self) -> Self {
-        Self(self.0.saturating_sub(1))
-    }
-
-    /// Check if this is a beat boundary (divisible by 4).
-    #[inline]
-    pub fn is_beat(self) -> bool {
-        self.0.is_multiple_of(4)
-    }
-
-    /// Check if this is a bar boundary (divisible by 16).
-    #[inline]
-    pub fn is_bar(self) -> bool {
-        self.0.is_multiple_of(16)
-    }
-}
-
-impl From<u32> for RowIndex {
-    fn from(row: u32) -> Self {
-        Self(row)
-    }
-}
-
-impl From<usize> for RowIndex {
-    fn from(row: usize) -> Self {
-        Self(row as u32)
-    }
-}
-
-impl From<RowIndex> for u32 {
-    fn from(row: RowIndex) -> Self {
-        row.0
-    }
-}
-
-impl From<RowIndex> for usize {
-    fn from(row: RowIndex) -> Self {
-        row.0 as Self
-    }
-}
-
-impl std::fmt::Display for RowIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02X}", self.0)
     }
 }
 
@@ -1425,15 +1206,6 @@ mod tests {
     }
 
     #[test]
-    fn test_track_count() {
-        let tracks = TrackCount::MOD_STANDARD;
-        assert_eq!(tracks.as_usize(), 4);
-
-        let thirty_two = TrackCount::THIRTYTWO;
-        assert_eq!(thirty_two.as_usize(), 32);
-    }
-
-    #[test]
     fn test_pattern_index() {
         let idx = PatternIndex::ZERO;
         assert_eq!(idx.as_usize(), 0);
@@ -1443,20 +1215,6 @@ mod tests {
 
         let prev = idx.prev();
         assert_eq!(prev.as_usize(), 0); // Saturating
-    }
-
-    #[test]
-    fn test_row_index() {
-        let row = RowIndex::new(16);
-        assert!(row.is_beat());
-        assert!(row.is_bar());
-
-        let row4 = RowIndex::new(4);
-        assert!(row4.is_beat());
-        assert!(!row4.is_bar());
-
-        let row5 = RowIndex::new(5);
-        assert!(!row5.is_beat());
     }
 
     #[test]
@@ -1470,14 +1228,5 @@ mod tests {
 
         let valid = VoiceCount::new(64);
         assert_eq!(valid.as_u8(), 64);
-    }
-
-    #[test]
-    fn test_voice_index() {
-        let idx = VoiceIndex::ZERO;
-        assert_eq!(idx.as_usize(), 0);
-
-        let idx5 = VoiceIndex::new(5);
-        assert_eq!(idx5.as_u8(), 5);
     }
 }

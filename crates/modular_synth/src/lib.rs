@@ -5,7 +5,7 @@
 //! - Audio backends (cpal)
 //! - MIDI I/O
 //! - Patch loading/saving
-//! - File import (WAV samples, tracker modules)
+//! - File import (WAV samples)
 
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::cast_precision_loss)]

@@ -840,13 +840,6 @@ pub trait PolyModule: Describable + Send {
     /// Trigger note off.
     fn note_off(&mut self) {}
 
-    /// Retrigger the module with an optional sample offset.
-    ///
-    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
-    /// For sample-based modules, this restarts playback from the given offset.
-    /// Default implementation does nothing.
-    fn retrigger_with_offset(&mut self, _sample_offset: NormalizedValue) {}
-
     /// Set the sample rate for this module.
     /// Called when the module is added to a graph or when the sample rate changes.
     fn set_sample_rate(&mut self, _sample_rate: SampleRate) {

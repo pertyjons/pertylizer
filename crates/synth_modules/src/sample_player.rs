@@ -177,7 +177,7 @@ impl SamplePlayer {
     pub fn load_sample(&mut self, sample: Arc<Sample>) {
         let sample_len = sample.len().as_usize();
 
-        // Apply loop settings from sample metadata (from tracker import)
+        // Apply loop settings from sample metadata
         if let Some(loop_info) = &sample.loop_info {
             // Convert exact sample positions to normalized values for UI
             self.loop_start = NormalizedValue::new(loop_info.normalized_start(sample_len));
@@ -912,24 +912,6 @@ impl PolyModule for SamplePlayer {
                 self.note_release_state = NoteReleaseState::Released;
             }
         }
-    }
-
-    fn retrigger_with_offset(&mut self, sample_offset: NormalizedValue) {
-        // Retrigger playback from the given offset position
-        // Used for tracker retrigger effects (Exy) and note delay (EDx)
-        let sample_len = self.sample_len();
-        if sample_len == 0 {
-            return;
-        }
-
-        // Calculate start position from offset (0.0-1.0 of sample length)
-        let start_pos = (sample_offset.as_f32() * sample_len as f32) as f64;
-        let clamped_pos = start_pos.clamp(0.0, (sample_len - 1) as f64);
-
-        self.position = PlaybackPosition::new(clamped_pos);
-        self.direction = PlaybackDirection::Forward;
-        self.playback_state = PlaybackState::Playing;
-        self.note_release_state = NoteReleaseState::Held;
     }
 
     fn load_sample(&mut self, sample: std::sync::Arc<Sample>) -> bool {

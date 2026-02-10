@@ -15,13 +15,10 @@ impl PatternId {
 }
 
 // ============================================================================
-// TRACKER INDEX TYPES
+// INDEX TYPES
 // ============================================================================
 
 /// Index for track within a pattern (0-255).
-///
-/// Track index maps directly to voice index during playback:
-/// `TrackIndex(0)` → `VoiceIndex(0)`, `TrackIndex(1)` → `VoiceIndex(1)`, etc.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -47,12 +44,6 @@ impl TrackIndex {
     #[inline]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
-    }
-
-    /// Convert to VoiceIndex (1:1 mapping).
-    #[inline]
-    pub const fn to_voice_index(self) -> synth_core::VoiceIndex {
-        synth_core::VoiceIndex::new(self.0)
     }
 }
 
@@ -163,7 +154,7 @@ impl TrackCount {
     /// Single track.
     pub const ONE: Self = Self(1);
 
-    /// Four tracks (classic MOD).
+    /// Four tracks.
     pub const FOUR: Self = Self(4);
 
     /// Eight tracks.
@@ -225,7 +216,7 @@ impl std::fmt::Display for TrackCount {
 pub struct RowCount(u16);
 
 impl RowCount {
-    /// Standard 64 rows (classic tracker).
+    /// Standard 64 rows.
     pub const DEFAULT_64: Self = Self(64);
 
     /// 128 rows.
@@ -285,43 +276,25 @@ impl std::fmt::Display for RowCount {
 /// Ticks per row in song tick units (960 PPQN).
 ///
 /// Controls how many song ticks pass before advancing to the next row.
-/// This value is scaled from tracker speed to song ticks.
-///
-/// Tracker speed 6 at 24 ticks/beat maps to 240 song ticks/row:
-/// `960 * 6 / 24 = 240`
+/// Default: 240 song ticks/row = 4 rows per quarter note (16th note resolution).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TicksPerRow(u16);
 
 impl TicksPerRow {
-    /// Number of tracker ticks per beat (standard tracker timing).
-    pub const TRACKER_TICKS_PER_BEAT: u32 = 24;
-
-    /// Default: 240 song ticks per row (equivalent to tracker speed 6).
+    /// Default: 240 song ticks per row.
     /// This gives 4 rows per quarter note (16th note resolution).
     pub const DEFAULT: Self = Self(240);
 
-    /// Minimum (fastest): 40 song ticks per row (tracker speed 1).
+    /// Minimum (fastest): 40 song ticks per row.
     pub const MIN: Self = Self(40);
 
-    /// Maximum (slowest): 1240 song ticks per row (tracker speed 31).
+    /// Maximum (slowest): 1240 song ticks per row.
     pub const MAX: Self = Self(1240);
 
     /// Create a new ticks per row value from song ticks.
     #[inline]
     pub const fn new(song_ticks: u16) -> Self {
         Self(song_ticks)
-    }
-
-    /// Create from tracker speed (1-31).
-    ///
-    /// Converts tracker speed to song ticks using:
-    /// `song_ticks = 960 * speed / 24 = 40 * speed`
-    #[must_use]
-    pub fn from_tracker_speed(speed: u8) -> Self {
-        let speed = speed.clamp(1, 31) as u32;
-        let song_ticks =
-            (crate::time::TICKS_PER_QUARTER * speed / Self::TRACKER_TICKS_PER_BEAT) as u16;
-        Self(song_ticks.max(1))
     }
 
     /// Get the raw u16 value (song ticks).
@@ -334,14 +307,6 @@ impl TicksPerRow {
     #[inline]
     pub const fn as_u32(self) -> u32 {
         self.0 as u32
-    }
-
-    /// Convert back to approximate tracker speed (1-31).
-    #[must_use]
-    pub fn to_tracker_speed(self) -> u8 {
-        // Reverse: speed = song_ticks * 24 / 960 = song_ticks / 40
-        ((self.0 as u32 * Self::TRACKER_TICKS_PER_BEAT / crate::time::TICKS_PER_QUARTER) as u8)
-            .clamp(1, 31)
     }
 }
 

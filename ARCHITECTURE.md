@@ -2,9 +2,8 @@
 
 ## Projektöversikt
 
-ModularSynth är en modulär ljudsyntes med tracker-sekvensering skriven i Rust.
-Importerar XM/MOD-filer, spelar upp med effekter i realtid.
-Stack: Rust 1.92+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikation).
+ModularSynth är en modulär ljudsyntes skriven i Rust.
+Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikation).
 
 ---
 
@@ -21,7 +20,7 @@ Stack: Rust 1.92+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 ┌─────────────────────┐ ┌─────────────────┐ ┌─────────────────────────────┐
 │    synth_engine     │ │ synth_sequencer │ │       synth_modules         │
 │ (Voice allocation,  │ │ (Pattern, Song, │ │ (Oscillator, Filter, etc.)  │
-│  Graph, Commands)   │ │  Tracker view)  │ │                             │
+│  Graph, Commands)   │ │  Events)        │ │                             │
 └──────────┬──────────┘ └────────┬────────┘ └──────────────┬──────────────┘
            │                     │                         │
            └─────────────────────┼─────────────────────────┘
@@ -46,7 +45,7 @@ Stack: Rust 1.92+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 3. `synth_sequencer` - Beror på synth_core
 4. `synth_modules` - Beror på synth_core, synth_dsp
 5. `synth_engine` - Beror på alla ovan
-6. `modular_synth` - Beror på allt, lägger till cpal, egui, xmrs
+6. `modular_synth` - Beror på allt, lägger till cpal, egui, midir
 
 ---
 
@@ -65,9 +64,8 @@ Stack: Rust 1.92+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 **Beroenden:** synth_core
 
 ### synth_sequencer
-**Ansvar:** Tracker-stil sekvensering med pattern och song.
-**Nyckeltyper:** `Pattern`, `Song`, `Note`, `EffectCommand`, `TrackerPattern`
-**Views:** `TrackerRow`, `TrackerCell`, `PatternTrackerView`
+**Ansvar:** Sekvensering med pattern och song.
+**Nyckeltyper:** `Pattern`, `Song`, `Note`, `SequencerEvent`
 **Beroenden:** synth_core
 
 ### synth_modules
@@ -85,10 +83,9 @@ Stack: Rust 1.92+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 
 ### modular_synth
 **Ansvar:** Huvudapplikation med GUI och I/O.
-**GUI:** egui-baserat (PatchEditor, TrackerView, InstrumentRack)
+**GUI:** egui-baserat (PatchEditor, InstrumentRack)
 **Audio:** cpal-backend
-**Import:** xmrs för XM/MOD-filer
-**Beroenden:** Alla crates + cpal, egui, xmrs, midir
+**Beroenden:** Alla crates + cpal, egui, midir
 
 ---
 
@@ -156,7 +153,7 @@ MIDI/Sequencer Events
 Innehåller en `ModuleGraph` för flexibel signalkedja.
 
 **Instrument:** Samling av voices för ett timbre. Har egen `VoiceAllocator` för polyfoni,
-`EffectChain`, och `MidiChannel`. Motsvarar ett instrument i XM-fil.
+`EffectChain`, och `MidiChannel`.
 
 **ModuleGraph:** Riktad acyklisk graf (DAG) av ljudmoduler. Hanterar:
 - Registrering och uppslag av moduler via `ModuleId`
@@ -165,7 +162,7 @@ Innehåller en `ModuleGraph` för flexibel signalkedja.
 
 **ModuleId:** Typsäker identifierare för modulinstans, format `{prefix}-{instance}` (t.ex. "osc-1", "flt-2").
 
-**Pattern:** En sekvens av noter och effekter i tracker-format. Organiserad i rader och spår.
+**Pattern:** En sekvens av noter organiserad i rader och spår.
 
 **Tick:** Minsta tidsenheten i sequencern. 960 ticks = 1 quarter note (PPQN).
 
@@ -215,14 +212,6 @@ för att undvika deallokering på audio thread (`DroppedModule`, `DroppedItem`).
 
 **Berörda filer:** effects/*.rs, commands.rs, effect_chain.rs
 
-### Lägga till ny tracker-effekt
-
-1. Lägg till variant i `EffectCommand` i `synth_sequencer/src/effects.rs`
-2. Implementera parsing i `process_effect_command()` i tracker_effects.rs
-3. Lägg till rendering i tracker-vyn
-
-**Berörda filer:** effects.rs, tracker_effects.rs, tracker view
-
 ---
 
 ## Filstruktur
@@ -245,8 +234,7 @@ modular-synth/
 │   │   └── src/
 │   │       ├── pattern.rs      # Pattern container
 │   │       ├── song.rs         # Song arrangement
-│   │       ├── effects.rs      # EffectCommand enum
-│   │       └── view/           # Tracker/piano roll views
+│   │       └── events.rs       # SequencerEvent
 │   ├── synth_modules/     # Ljudmoduler
 │   │   └── src/
 │   │       ├── oscillator.rs
@@ -260,15 +248,13 @@ modular-synth/
 │   │       ├── voice_allocator.rs
 │   │       ├── graph.rs        # ModuleGraph
 │   │       ├── instrument.rs   # Multitimbral
-│   │       ├── commands.rs     # EngineCommand/Event
-│   │       └── tracker_effects.rs
+│   │       └── commands.rs     # EngineCommand/Event
 │   └── modular_synth/     # Huvudapplikation
 │       └── src/
 │           ├── main.rs
 │           ├── gui/
 │           │   ├── egui_backend.rs  # Huvudfönster
-│           │   ├── patch_editor.rs  # Modulär redigering
-│           │   └── views/           # Tracker, etc.
+│           │   └── patch_editor.rs  # Modulär redigering
 │           ├── audio/       # cpal-backend
 │           └── io/          # MIDI, fil-I/O
 ├── docs/
@@ -281,11 +267,11 @@ modular-synth/
 
 ## Kända Begränsningar
 
-- **Ingen Piano Roll-vy ännu** - Endast tracker-vy implementerad
-- **Ingen WAV-export** - Endast realtidsuppspelning
-- **Ingen Undo/Redo** - Patch-ändringar kan inte ångras
-- **Graf använder HashMap** - Planerad optimering till "baked graph" för cache-lokalitet
-- **Endast stereo output** - Ingen surround-support
+- **Ingen Sequencer-vy ännu** — Grundläggande SequencerEngine finns men GUI byggs from scratch
+- **Ingen WAV-export** — Endast realtidsuppspelning
+- **Ingen Undo/Redo** — Patch-ändringar kan inte ångras
+- **Graf använder HashMap** — Planerad optimering till "baked graph" för cache-lokalitet
+- **Endast stereo output** — Ingen surround-support
 
 ---
 
@@ -297,7 +283,6 @@ modular-synth/
 | egui/eframe | Immediate-mode GUI |
 | ringbuf | Lock-free ring buffers |
 | parking_lot | Snabbare mutex för icke-kritiska paths |
-| xmrs | XM/MOD/S3M fil-import |
 | midir | MIDI I/O |
 | hound | WAV-filläsning för samples |
 | serde/serde_json | Serialisering för patch-filer |

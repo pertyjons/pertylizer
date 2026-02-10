@@ -1,14 +1,11 @@
-//! Multi-point envelope for tracker compatibility.
+//! Multi-point envelope module.
 //!
-//! Supports XM/IT envelope features:
+//! Supports advanced envelope features:
 //! - Up to 25 points with linear interpolation
 //! - Sustain point (holds until release)
 //! - Loop region (loops between two points)
-//! - Fadeout runs in parallel with envelope after release (FT2 spec)
-//! - FT2-correct sustain/loop interaction
-//!
-//! This module is designed for accurate XM/IT playback, replacing the
-//! ADSR approximation used in earlier import versions.
+//! - Fadeout runs in parallel with envelope after release
+//! - Sustain/loop interaction
 
 use std::collections::HashMap;
 
@@ -20,13 +17,13 @@ use synth_core::{
     SampleRate, Velocity, WidgetHint,
 };
 
-/// Maximum envelope points (IT format limit).
+/// Maximum envelope points.
 pub const MAX_ENVELOPE_POINTS: usize = 25;
 
 /// A single envelope point.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnvelopePoint {
-    /// Frame position (x-axis, in tracker ticks).
+    /// Frame position (x-axis, in envelope ticks).
     pub frame: EnvelopeFrame,
     /// Value at this point (y-axis, 0.0-1.0).
     pub value: EnvelopeValue,
@@ -54,15 +51,12 @@ pub enum MultiPointStage {
 
 /// Multi-point envelope module.
 ///
-/// This envelope generator supports the full XM/IT envelope specification:
+/// This envelope generator supports:
 /// - Up to 25 arbitrary points
 /// - Linear interpolation between points
 /// - Optional sustain point (holds until note-off)
-/// - Optional loop region with FT2 sustain interaction
+/// - Optional loop region
 /// - Linear fadeout running in parallel with envelope after release
-///
-/// Unlike ADSR envelopes, this preserves the exact shape designed by
-/// the tracker musician.
 #[derive(Clone)]
 pub struct MultiPointEnvelope {
     // Configuration (stored as ArrayVec for no heap in audio thread)
@@ -407,11 +401,9 @@ impl Default for MultiPointEnvelope {
 impl Describable for MultiPointEnvelope {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("multi_point_envelope", "Multi-Point Env")
-            .description("Multi-point envelope for tracker compatibility (XM/IT)")
+            .description("Multi-point envelope with sustain and loop")
             .category(ModuleCategory::Envelope)
             .tag("envelope")
-            .tag("tracker")
-            .tag("xm")
             .parameter(
                 ParameterDescriptor::float(
                     Param::Envelope(synth_core::EnvelopeParam::VelocitySensitivity(

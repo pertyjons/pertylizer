@@ -34,7 +34,7 @@ pub struct SequencerTrack {
     pub solo: bool,
     /// Track color for UI.
     pub color: TrackColor,
-    /// Playback mode (polyphonic or mono-voice for tracker channels).
+    /// Playback mode (polyphonic or mono-voice).
     pub mode: TrackMode,
 }
 

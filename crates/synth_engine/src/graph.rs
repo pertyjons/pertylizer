@@ -88,7 +88,7 @@ pub struct ModuleGraph {
     /// Pre-allocated vec for gathering incoming connections.
     /// Uses PortName for zero-allocation copying of connection info.
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
-    /// External pitch modulation value (semitones) for tracker effects.
+    /// External pitch modulation value (semitones).
     external_pitch_mod: f32,
     /// Pre-allocated buffer for pitch modulation CV.
     pitch_mod_buffer: AudioBuffer,
@@ -346,7 +346,7 @@ impl ModuleGraph {
         // Ensure buffer sizes
         self.resize_buffers(context.samples.as_usize());
 
-        // Inject external inputs (pitch modulation for tracker effects)
+        // Inject external inputs (pitch modulation)
         self.inject_external_inputs(context.samples.as_usize());
 
         // Update processing order if needed
@@ -424,14 +424,6 @@ impl ModuleGraph {
             .for_each(|node| node.module.note_off());
     }
 
-    /// Retrigger all modules with a sample offset.
-    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
-    pub fn retrigger_with_offset(&mut self, sample_offset: synth_core::NormalizedValue) {
-        self.nodes
-            .values_mut()
-            .for_each(|node| node.module.retrigger_with_offset(sample_offset));
-    }
-
     /// Reset all modules.
     pub fn reset(&mut self) {
         self.nodes.values_mut().for_each(|node| node.module.reset());
@@ -466,7 +458,7 @@ impl ModuleGraph {
     }
 
     /// Set pitch modulation for all SamplePlayer modules in the graph.
-    /// Used by Voice to inject tracker pitch modulation (vibrato, portamento).
+    /// Used by Voice to inject pitch modulation (vibrato, portamento).
     /// The value is in semitones and will be applied to the pitch_mod input.
     pub fn set_sample_player_pitch_mod(&mut self, semitones: f32) {
         // Store the pitch mod value for injection during process
@@ -708,8 +700,8 @@ impl ModuleGraph {
             }
         }
 
-        // Inject external pitch modulation for SamplePlayer modules (tracker effects).
-        // This allows tracker vibrato/portamento to modulate sample playback pitch.
+        // Inject external pitch modulation for SamplePlayer modules.
+        // This allows vibrato/portamento to modulate sample playback pitch.
         let pitch_mod_port = PortName::intern("pitch_mod");
         let is_sample_player = self
             .nodes

@@ -780,7 +780,7 @@ impl WaveformOverview {
 // SAMPLE
 // ============================================================================
 
-/// Loop metadata from tracker file import.
+/// Loop metadata for sample playback.
 ///
 /// Loop points are stored as exact sample positions (u32) to avoid
 /// precision loss that can cause clicks at loop boundaries.
@@ -854,11 +854,11 @@ pub struct Sample {
     pub sample_rate: SampleRate,
     /// Root note (pitch at normal speed).
     pub root_note: MidiNote,
-    /// Loop information from tracker import.
+    /// Loop information.
     pub loop_info: Option<SampleLoopInfo>,
-    /// Default volume (0.0-1.0) from tracker import.
+    /// Default volume (0.0-1.0).
     pub default_volume: Option<f32>,
-    /// Default panning (0.0=left, 0.5=center, 1.0=right) from tracker import.
+    /// Default panning (0.0=left, 0.5=center, 1.0=right).
     pub default_panning: Option<f32>,
 }
 
@@ -888,19 +888,19 @@ impl Sample {
         self
     }
 
-    /// Set loop information from tracker import.
+    /// Set loop information.
     pub fn with_loop_info(mut self, loop_info: SampleLoopInfo) -> Self {
         self.loop_info = Some(loop_info);
         self
     }
 
-    /// Set default volume from tracker import (0.0-1.0).
+    /// Set default volume (0.0-1.0).
     pub fn with_default_volume(mut self, volume: f32) -> Self {
         self.default_volume = Some(volume.clamp(0.0, 1.0));
         self
     }
 
-    /// Set default panning from tracker import (0.0=left, 0.5=center, 1.0=right).
+    /// Set default panning (0.0=left, 0.5=center, 1.0=right).
     pub fn with_default_panning(mut self, panning: f32) -> Self {
         self.default_panning = Some(panning.clamp(0.0, 1.0));
         self

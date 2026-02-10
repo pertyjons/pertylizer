@@ -13,7 +13,7 @@ use super::{Clampable, Seconds};
 
 /// Envelope frame position (0-65535 ticks).
 ///
-/// XM/IT envelopes use frame-based timing where frames advance
+/// Multi-point envelopes use frame-based timing where frames advance
 /// at a rate of `BPM * 2 / 5` Hz (50 Hz at 125 BPM).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
@@ -100,20 +100,6 @@ impl EnvelopeValue {
     #[must_use]
     pub const fn as_f32(self) -> f32 {
         self.0
-    }
-
-    /// Create from tracker 0-64 value (XM volume envelope).
-    #[inline]
-    #[must_use]
-    pub fn from_tracker_64(value: u8) -> Self {
-        Self::new(value as f32 / 64.0)
-    }
-
-    /// Create from tracker 0-32 value (IT pan envelope).
-    #[inline]
-    #[must_use]
-    pub fn from_tracker_32(value: u8) -> Self {
-        Self::new(value as f32 / 32.0)
     }
 
     /// Linear interpolation to another value.
@@ -320,13 +306,6 @@ mod tests {
         assert_eq!(EnvelopeValue::new(1.5).as_f32(), 1.0);
         assert_eq!(EnvelopeValue::new(-0.5).as_f32(), 0.0);
         assert_eq!(EnvelopeValue::new(0.5).as_f32(), 0.5);
-    }
-
-    #[test]
-    fn envelope_value_from_tracker() {
-        assert!((EnvelopeValue::from_tracker_64(64).as_f32() - 1.0).abs() < 0.001);
-        assert!((EnvelopeValue::from_tracker_64(32).as_f32() - 0.5).abs() < 0.001);
-        assert!((EnvelopeValue::from_tracker_64(0).as_f32()).abs() < 0.001);
     }
 
     #[test]

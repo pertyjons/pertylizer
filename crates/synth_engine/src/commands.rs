@@ -525,7 +525,7 @@ pub enum EngineCommand {
     /// Load a sample bank into a SamplePlayer module for multisample instruments.
     ///
     /// This loads multiple samples and a keymap that maps MIDI notes to sample indices.
-    /// Used for tracker instruments that have different samples for different note ranges.
+    /// Used for multisample instruments that have different samples for different note ranges.
     LoadSampleBank {
         /// Target instrument (None for global modules).
         instrument_id: Option<InstrumentId>,
