@@ -80,8 +80,6 @@ pub enum ModuleType {
     KeyboardPanner,
     BodyResonance,
     MechanicalNoise,
-    // Advanced envelope modules
-    MultiPointEnvelope,
 }
 
 impl ModuleType {
@@ -111,8 +109,6 @@ impl ModuleType {
                 | Self::KeyboardPanner
                 | Self::BodyResonance
                 | Self::MechanicalNoise
-                // Advanced envelope modules (per-voice)
-                | Self::MultiPointEnvelope
         )
     }
 
@@ -198,8 +194,6 @@ impl ModuleType {
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
             Self::MechanicalNoise => "Mechanical Noise",
-            // Advanced envelope
-            Self::MultiPointEnvelope => "Multi-Point Envelope",
         }
     }
 
@@ -234,8 +228,6 @@ impl ModuleType {
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
             Self::MechanicalNoise => "mec",
-            // Advanced envelope
-            Self::MultiPointEnvelope => "mpe",
         }
     }
 
@@ -270,8 +262,6 @@ impl ModuleType {
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
             "mec" => Some(Self::MechanicalNoise),
-            // Advanced envelope
-            "mpe" => Some(Self::MultiPointEnvelope),
             _ => None,
         }
     }

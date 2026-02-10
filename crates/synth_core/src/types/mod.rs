@@ -30,7 +30,6 @@ mod macros;
 // Load modules in dependency order (time first, then frequency which depends on it)
 mod amplitude;
 mod audio;
-mod envelope;
 mod frequency;
 mod interned;
 mod normalized;
@@ -43,7 +42,6 @@ mod time;
 
 pub use amplitude::*;
 pub use audio::*;
-pub use envelope::*;
 pub use frequency::*;
 pub use interned::PortName;
 pub use normalized::*;

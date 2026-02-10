@@ -15,4 +15,3 @@ synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
 serde = { workspace = true }
 fastrand = { workspace = true }
-arrayvec = { workspace = true }
