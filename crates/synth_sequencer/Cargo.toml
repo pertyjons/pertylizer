@@ -10,12 +10,6 @@ license = "MIT"
 [lints]
 workspace = true
 
-[features]
-default = []
-gui-egui = ["dep:eframe", "dep:egui_extras"]
-
 [dependencies]
 synth_core = { path = "../synth_core" }
 serde = { workspace = true }
-eframe = { workspace = true, optional = true }
-egui_extras = { workspace = true, optional = true }

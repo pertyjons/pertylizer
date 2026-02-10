@@ -1,5 +1,13 @@
 # Version History
 
+## [0.99.0] - 2026-02-10
+### Removed - All tracker import functionality
+- **Beslut**: Efter v0.87–v0.98 (2 dagar, 9 buggfixar) insåg vi att tracker-uppspelning (XM/MOD/S3M via xmrs) inte passar arkitekturen. Syntmotorn är polyfonisk/semitone-baserad medan tracker kräver period-baserad pitch med tight-kopplad effektprocessering. Varje fix avslöjade nya buggar.
+- **Borttaget**: Tracker-import (`TrackerImporter`), tracker-effektprocessering (`tracker_effects.rs`, ~2200 rader), tracker-patterns (`tracker_pattern.rs`, ~670 rader), tracker-effekttyper (`effects.rs`), tracker-vyer, tracker-specifika fält i Voice/SynthEngine/Song, Sequencer GUI-vy, alla tracker-analysexempel (9 st), alla tracker-referensdokument
+- **Behållet**: Grundläggande `SequencerEngine` (enkel NoteOn/NoteOff-uppspelning för piano-patterns), `synth_sequencer` crate med Pattern/Song/Note-typer
+- **Taggat**: `v0.98.0-tracker-experiment` — sista versionen med tracker-kod
+- **Se**: `docs/tracker-experiment-summary.md` för fullständig analys och framtida alternativ
+
 ## [0.98.0] - 2026-02-09
 ### Fixed - Vibrato/arpeggio appliceras felaktigt vid tick 0
 - **Problem**: `ChannelEffectState.current_tick` nollställdes aldrig vid radstart. Fältet behöll värdet från förra radens sista `process_tick()` (t.ex. tick 4 vid speed=5). När `current_modulation()` anropades vid tick 0, var `current_tick.as_u8() > 0` sant, vilket fick vibrato att appliceras — trots att FT2 använder `realPeriod` (noll vibrato-offset) vid tick 0.

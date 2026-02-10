@@ -4,9 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// Re-export TrackerViewState for convenience
-pub use synth_sequencer::view::TrackerViewState;
-
 // ============================================================================
 // NAVIGATION STATE
 // ============================================================================
@@ -17,8 +14,6 @@ pub enum AppView {
     /// Instrument rack and patch editor view (default).
     #[default]
     Rack,
-    /// Pattern/song sequencer view.
-    Sequencer,
     /// Mixer view with channel strips.
     Mixer,
 }
@@ -29,7 +24,6 @@ impl AppView {
     pub const fn icon(self) -> &'static str {
         match self {
             Self::Rack => "🔌",
-            Self::Sequencer => "🎹",
             Self::Mixer => "🎚",
         }
     }
@@ -39,7 +33,6 @@ impl AppView {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Rack => "Rack",
-            Self::Sequencer => "Sequencer",
             Self::Mixer => "Mixer",
         }
     }

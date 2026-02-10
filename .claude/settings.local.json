@@ -89,7 +89,8 @@
       "WebFetch(domain:lib.openmpt.org)",
       "WebFetch(domain:xmp.sourceforge.net)",
       "WebFetch(domain:nukep.github.io)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(git tag:*)"
     ],
     "deny": [],
     "ask": []

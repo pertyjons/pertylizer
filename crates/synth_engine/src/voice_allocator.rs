@@ -1,15 +1,12 @@
 //! Voice allocator - manages polyphonic voice allocation.
 //!
 //! Features:
-//! - Multiple allocation modes (poly, mono, legato, tracker)
+//! - Multiple allocation modes (poly, mono, legato)
 //! - Voice stealing strategies
 //! - Glide/portamento support
-//! - Fixed voice allocation for tracker-style playback
 
 use crate::voice::{Voice, VoiceState};
-use synth_core::{
-    Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount, VoiceIndex,
-};
+use synth_core::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount};
 
 /// Voice allocation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,10 +19,6 @@ pub enum AllocationMode {
     Legato,
     /// Unison - all voices play same note.
     Unison,
-    /// Tracker mode - voices are assigned by channel/track index.
-    /// Each channel gets a fixed voice, new notes on the same channel
-    /// retrigger without envelope reset (uses `note_on_fixed_voice()`).
-    Tracker,
 }
 
 /// Strategy for stealing voices when all are busy.
@@ -206,18 +199,12 @@ impl VoiceAllocator {
     }
 
     /// Handle note on event.
-    ///
-    /// Note: In `Tracker` mode, use `note_on_fixed_voice()` instead for fixed voice allocation.
-    /// This method will fall back to polyphonic behavior in Tracker mode.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
         self.held_notes.retain(|(n, _)| *n != note);
         self.held_notes.push((note, velocity));
 
         match self.config.mode {
-            AllocationMode::Polyphonic | AllocationMode::Tracker => {
-                // Tracker mode falls back to poly for regular note_on (use note_on_fixed_voice for tracker)
-                self.allocate_poly(note, velocity)
-            }
+            AllocationMode::Polyphonic => self.allocate_poly(note, velocity),
             AllocationMode::Mono => self.allocate_mono(note, velocity, true),
             AllocationMode::Legato => self.allocate_mono(note, velocity, false),
             AllocationMode::Unison => self.allocate_unison(note, velocity),
@@ -225,14 +212,12 @@ impl VoiceAllocator {
     }
 
     /// Handle note off event.
-    ///
-    /// Note: In `Tracker` mode, use `note_off_fixed_voice()` for specific voice release.
     pub fn note_off(&mut self, note: MidiNote) {
         // Remove from held notes
         self.held_notes.retain(|(n, _)| *n != note);
 
         match self.config.mode {
-            AllocationMode::Polyphonic | AllocationMode::Tracker => {
+            AllocationMode::Polyphonic => {
                 // Release all voices playing this note
                 for voice in &mut self.voices {
                     // Use pattern matching on VoiceState::Active to check note
@@ -301,69 +286,6 @@ impl VoiceAllocator {
     /// Advance time (call once per audio block).
     pub fn advance_time(&mut self, samples: SampleCount) {
         self.time = self.time + samples;
-    }
-
-    // =========================================================================
-    // Tracker-style fixed voice allocation
-    // =========================================================================
-
-    /// Trigger a note on a specific voice (fixed voice index).
-    ///
-    /// This is used for tracker-style playback where each channel has a
-    /// dedicated voice. The key difference from regular `note_on`:
-    ///
-    /// 1. Does NOT send note_off first - avoids envelope reset
-    /// 2. Retriggers envelope from current position (legato-style stealing)
-    /// 3. Voice is specified by index, not allocated dynamically
-    ///
-    /// # Arguments
-    /// * `voice_index` - The voice to use (wrapped with modulo if out of bounds)
-    /// * `note` - MIDI note to play
-    /// * `velocity` - Note velocity
-    ///
-    /// # Returns
-    /// The voice ID if successful, None if no voices exist.
-    pub fn note_on_fixed_voice(
-        &mut self,
-        voice_index: VoiceIndex,
-        note: MidiNote,
-        velocity: Velocity,
-    ) -> Option<u32> {
-        if self.voices.is_empty() {
-            return None;
-        }
-
-        // Wrap index if out of bounds
-        let idx = voice_index.as_usize() % self.voices.len();
-
-        let voice = &mut self.voices[idx];
-
-        // KEY: Don't send note_off - retrigger directly.
-        // This preserves envelope state (legato-style stealing).
-        // The envelope will restart from its current level, not from zero.
-
-        // Set glide time for portamento if configured and voice was active
-        if self.config.glide_time.as_f32() > 0.0 && voice.is_active() {
-            voice.set_glide_time(self.config.glide_time);
-        }
-
-        // Retrigger the voice - envelope restarts from current phase
-        voice.note_on(note, velocity, self.time);
-        self.last_note = Some(note);
-
-        Some(voice.id)
-    }
-
-    /// Release a note on a specific voice (fixed voice index).
-    ///
-    /// Used for tracker-style playback when a note-off is explicitly needed.
-    pub fn note_off_fixed_voice(&mut self, voice_index: VoiceIndex) {
-        if self.voices.is_empty() {
-            return;
-        }
-
-        let idx = voice_index.as_usize() % self.voices.len();
-        self.voices[idx].note_off();
     }
 
     /// Resize the voice pool to the specified count.

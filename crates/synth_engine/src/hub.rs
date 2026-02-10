@@ -346,7 +346,6 @@ impl EngineHub {
             | EngineCommand::Stop
             | EngineCommand::Pause
             | EngineCommand::Rewind
-            | EngineCommand::SetMutedTracks(_)
             | EngineCommand::SetTempo(_)
             | EngineCommand::SetSong { .. }
             | EngineCommand::Seek { .. }

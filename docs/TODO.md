@@ -40,9 +40,8 @@
 12. **Undo / Redo** (Nytt - UX)
     * [ ] Implementera Command-historik för `PatchEditor`. Kritiskt när man bygger komplexa patchar.
 13. **Sequencer GUI & Transport** (Från nuvarande P5)
-    * [x] ~~Tracker View med View Adapter-arkitektur~~ *(0.40.0: TrackCell, TrackerGrid, virtual scrolling)*
-    * [x] ~~Play/Stop/Rewind-knappar i transport~~ *(0.42.0: TransportAction, SetSong)*
-    * [ ] Piano Roll-vy (använder samma View Adapter)
+    * [ ] Ny sequencer-arkitektur (skrivs från scratch efter v0.99.0 tracker-rensning)
+    * [ ] Piano Roll-vy
     * [ ] Record-knapp i transport
 14. **Generativa Moduler** (Nytt - Kreativitet)
     * [ ] Euclidean Sequencer, Turing Machine, Random Gates.

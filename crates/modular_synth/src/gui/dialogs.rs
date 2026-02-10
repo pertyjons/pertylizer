@@ -20,8 +20,6 @@ pub enum FileDialogMode {
     OpenPatch,
     /// Saving a patch file.
     SavePatch,
-    /// Importing a song (tracker file).
-    ImportSong,
     /// Opening a WAV sample.
     OpenSample,
 }
@@ -79,29 +77,6 @@ impl DialogState {
         {
             self.status_message = None;
         }
-    }
-
-    /// Open the file dialog for importing a song.
-    pub fn open_import_song_dialog(&mut self) {
-        self.file_dialog_mode = Some(FileDialogMode::ImportSong);
-        self.file_dialog = FileDialog::new()
-            .add_file_filter(
-                "Tracker files",
-                Arc::new(|p| {
-                    // Check extension (.mod, .xm, .s3m)
-                    let ext_match = p.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
-                        matches!(ext.to_lowercase().as_str(), "mod" | "xm" | "s3m")
-                    });
-                    // Also check for "mod." prefix (e.g., "mod.echoing")
-                    let mod_prefix = p
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|name| name.to_lowercase().starts_with("mod."));
-                    ext_match || mod_prefix
-                }),
-            )
-            .add_file_filter("All files", Arc::new(|_| true));
-        self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for opening a patch.

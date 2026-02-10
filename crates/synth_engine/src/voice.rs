@@ -276,18 +276,6 @@ pub struct Voice {
     /// Aftertouch amount (0.0 to 1.0, type-safe).
     pub aftertouch: NormalizedValue,
 
-    // === Tracker modulation (from vibrato, portamento, volume slide, etc.) ===
-    /// Tracker pitch modulation in cents (from vibrato, portamento effects).
-    pub tracker_pitch_cents: Cents,
-    /// Tracker volume modulation (from volume slide effects).
-    pub tracker_volume: NormalizedValue,
-    /// Tracker panning modulation (from panning slide effects).
-    pub tracker_panning: BipolarValue,
-    /// Tone portamento target pitch in semitones (when active, overrides note pitch).
-    /// This is set by the 3xx/5xx effects and represents the current interpolated pitch
-    /// during a glide. When Some, this pitch is used instead of the note's base pitch.
-    pub tracker_tone_porta_pitch: Option<Semitones>,
-
     /// Expression settings (pitch bend range, velocity sensitivity, etc.).
     pub expression: ExpressionSettings,
 
@@ -321,11 +309,6 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
-            // Tracker modulation default to neutral
-            tracker_pitch_cents: Cents::ZERO,
-            tracker_volume: NormalizedValue::MAX, // 1.0 = no volume change
-            tracker_panning: BipolarValue::CENTER,
-            tracker_tone_porta_pitch: None,
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
             steal_fade_samples: 128,
@@ -351,10 +334,6 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
-            tracker_pitch_cents: Cents::ZERO,
-            tracker_volume: NormalizedValue::MAX,
-            tracker_panning: BipolarValue::CENTER,
-            tracker_tone_porta_pitch: None,
             expression: ExpressionSettings::default(),
             graph,
             steal_fade_samples: 128,
@@ -483,15 +462,6 @@ impl Voice {
         }
     }
 
-    /// Retrigger the voice with a sample offset.
-    ///
-    /// Used for tracker retrigger effects (Exy) and note delay (EDx).
-    /// Restarts the sample playback from the given offset position.
-    pub fn retrigger_with_offset(&mut self, sample_offset: NormalizedValue) {
-        // Retrigger all modules in the graph (this restarts sample players, etc.)
-        self.graph.retrigger_with_offset(sample_offset);
-    }
-
     /// Start voice stealing (quick fade-out).
     pub fn steal(&mut self) {
         self.state = VoiceState::Stealing {
@@ -552,34 +522,15 @@ impl Voice {
         // Get velocity from state (defaults to 1.0 if not playing - shouldn't happen)
         let velocity = self.state.velocity().unwrap_or(Velocity::MAX);
 
-        // === Calculate frequency with pitch bend and tracker modulation ===
-        // If tone portamento is active, use the interpolated pitch from tracker effects.
-        // Otherwise, use the note's base frequency from glide state.
-        let base_freq = if let Some(tone_porta_semitones) = self.tracker_tone_porta_pitch {
-            // Tone portamento active: convert semitones to frequency
-            // semitones 60 = middle C = 261.63 Hz, using A4 = 440 Hz reference
-            Hertz::new(440.0 * 2.0f32.powf((tone_porta_semitones.as_f32() - 69.0) / 12.0))
-        } else {
-            self.glide.get_frequency()
-        };
+        // === Calculate frequency with pitch bend ===
+        let base_freq = self.glide.get_frequency();
 
         // Apply pitch bend: bend_semitones = pitch_bend * range
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
-        let freq_after_bend = bend_semitones.apply(base_freq);
-
-        // Apply tracker pitch modulation (vibrato, portamento up/down effects)
-        // tracker_pitch_cents is in cents, convert to semitones for frequency ratio
-        // Note: This is additive modulation (vibrato, etc.), separate from tone portamento
-        let tracker_semitones = Semitones::new(self.tracker_pitch_cents.as_f32() / 100.0);
-        let freq = tracker_semitones.apply(freq_after_bend);
+        let freq = bend_semitones.apply(base_freq);
 
         // Set oscillator frequencies in the graph before processing
         self.graph.set_oscillator_frequency(freq);
-
-        // Set pitch modulation for SamplePlayer modules (tracker effects)
-        // This allows vibrato/portamento to modulate sample playback speed
-        self.graph
-            .set_sample_player_pitch_mod(tracker_semitones.as_f32());
 
         // Ensure buffers are sized correctly
         self.mono_buffer.resize(samples.as_usize());
@@ -623,24 +574,13 @@ impl Voice {
             right_out.copy_from(&self.mono_buffer);
         }
 
-        // Apply velocity scaling and tracker volume modulation
+        // Apply velocity scaling
         let amp_sens = self.expression.velocity_to_amp.as_f32();
-        let velocity_scale = (1.0 - amp_sens) + amp_sens * velocity.as_f32();
-        let tracker_vol = self.tracker_volume.as_f32();
-        let amp_scale = velocity_scale * tracker_vol;
-
-        // Apply per-voice tracker panning (linear crossfade)
-        // Linear panning is used here because instrument-level stereo_gain()
-        // also applies constant-power panning. Using constant-power at both
-        // levels would cause a 3dB volume drop at center position.
-        // center (0.0) = no change, left (-1.0) = mute right, right (1.0) = mute left
-        let pan = self.tracker_panning.as_f32();
-        let pan_l = (1.0 - pan).min(1.0);
-        let pan_r = (1.0 + pan).min(1.0);
+        let amp_scale = (1.0 - amp_sens) + amp_sens * velocity.as_f32();
 
         for i in 0..samples.as_usize() {
-            left_out[i] *= amp_scale * pan_l;
-            right_out[i] *= amp_scale * pan_r;
+            left_out[i] *= amp_scale;
+            right_out[i] *= amp_scale;
         }
     }
 
@@ -661,10 +601,6 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
-            tracker_pitch_cents: Cents::ZERO,
-            tracker_volume: NormalizedValue::MAX,
-            tracker_panning: BipolarValue::CENTER,
-            tracker_tone_porta_pitch: None,
             expression: self.expression,
             graph: cloned_graph,
             steal_fade_samples: self.steal_fade_samples,

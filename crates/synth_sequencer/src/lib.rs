@@ -1,14 +1,12 @@
 //! Sequencer module for the modular synthesizer.
 //!
-//! This crate provides a flexible sequencer that supports both tracker-style composition
-//! (inspired by ProTracker/FastTracker) and modern piano roll-style editing.
+//! This crate provides a flexible sequencer that supports piano roll-style editing.
 //!
 //! ## Core Principles
 //!
 //! - **Storage vs Runtime**: Notes are stored as objects with start time and duration.
 //!   At playback, they are converted to NoteOn/NoteOff event streams.
 //! - **Type Safety**: Uses newtypes and enums for all domain concepts.
-//! - **View Agnostic**: The same data can be rendered as tracker rows or piano roll.
 //! - **960 PPQN**: All time is measured in ticks with 960 ticks per quarter note.
 //!
 //! ## Module Structure
@@ -16,7 +14,6 @@
 //! - [`time`] - Time types (Tick, PatternTick, Duration, TimeSignature)
 //! - [`pitch`] - Pitch and velocity types
 //! - [`ids`] - Type-safe identifiers
-//! - [`effects`] - Tracker-style effect commands
 //! - [`note`] - Note storage
 //! - [`automation`] - Parameter automation
 //! - [`pattern`] - Pattern container
@@ -24,7 +21,6 @@
 //! - [`song`] - Song arrangement
 //! - [`events`] - Runtime events for playback
 //! - [`input`] - Input command abstraction
-//! - [`view`] - View helpers (tracker, piano roll)
 
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::cast_precision_loss)]
@@ -32,7 +28,6 @@
 #![allow(clippy::too_many_lines)]
 
 pub mod automation;
-pub mod effects;
 pub mod events;
 pub mod ids;
 pub mod input;
@@ -42,13 +37,10 @@ pub mod pitch;
 pub mod song;
 pub mod time;
 pub mod track;
-pub mod tracker_pattern;
-pub mod view;
 
 // Re-export commonly used types
 pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
-pub use effects::{EffectCommand, EffectWaveform};
 pub use events::{EventSorting, SequencerEvent};
 pub use ids::{
     NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
@@ -56,24 +48,15 @@ pub use ids::{
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::Note;
-pub use pattern::{EffectOnlyEvent, Pattern, RowResolution, TrackCell, TrackerGrid};
+pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
-pub use song::{
-    PatternPlacement, Song, TempoChange, TimeSignatureChange, TrackerFrequencyMode,
-    TrackerInstrumentDefaults,
-};
+pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{SequencerTrack, TrackColor, TrackMode};
-pub use tracker_pattern::{Cell, Row, Track, TrackerPattern};
-pub use view::tracker::{
-    PatternTrackerView, TrackerCell, TrackerNoteDisplay, TrackerPatternTrackerView, TrackerRow,
-    TrackerViewConfig,
-};
 
 /// Prelude module for convenient imports.
 pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
-    pub use super::effects::EffectCommand;
     pub use super::events::SequencerEvent;
     pub use super::ids::{
         NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
@@ -86,8 +69,4 @@ pub mod prelude {
     pub use super::song::Song;
     pub use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
     pub use super::track::SequencerTrack;
-    pub use super::tracker_pattern::{Cell, Row, Track, TrackerPattern};
-    pub use super::view::tracker::{
-        PatternTrackerView, TrackerPatternTrackerView, TrackerRow, TrackerViewConfig,
-    };
 }

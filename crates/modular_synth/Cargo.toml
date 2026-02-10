@@ -1,6 +1,6 @@
 [package]
 name = "modular_synth"
-version = "0.98.0"
+version = "0.99.0"
 edition = "2024"
 rust-version = "1.93"
 description = "A modular synthesizer with abstract audio backend"
@@ -20,7 +20,7 @@ debug-tools = []
 [dependencies]
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
-synth_sequencer = { path = "../synth_sequencer", features = ["gui-egui"] }
+synth_sequencer = { path = "../synth_sequencer" }
 synth_modules = { path = "../synth_modules" }
 synth_engine = { path = "../synth_engine" }
 
@@ -51,9 +51,6 @@ dirs = { workspace = true }
 
 # WAV file reading for samples
 hound = { workspace = true }
-
-# Tracker module import (MOD, XM, S3M)
-xmrs = { workspace = true }
 
 # GUI - egui (optional)
 eframe = { workspace = true, optional = true }

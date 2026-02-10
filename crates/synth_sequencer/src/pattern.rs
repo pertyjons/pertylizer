@@ -1,276 +1,19 @@
 //! Pattern storage and manipulation.
-//!
-//! Patterns support two storage modes:
-//! - **Note-based**: Piano roll style with Note objects (start time, duration, pitch)
-//! - **Cell-based**: Tracker style with TrackCell grid (row × track)
-//!
-//! The cell-based representation is optimized for tracker-style editing.
 
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
-use super::effects::EffectCommand;
-use super::ids::{NoteId, PatternId, SeqInstrumentId, TrackId};
+use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 use synth_core::Semitones;
 
 // ============================================================================
-// TrackCell - Cell-based tracker representation
-// ============================================================================
-
-/// A cell in a tracker-style pattern grid.
-///
-/// Each cell represents what happens at a specific row/track intersection.
-/// This enum-based design allows for future expansion (e.g., pure automation rows).
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub enum TrackCell {
-    /// Empty cell - no event at this position.
-    #[default]
-    Empty,
-    /// Note on event with pitch, instrument, and velocity.
-    Note {
-        /// The pitch to play.
-        pitch: Pitch,
-        /// Instrument number (0-255).
-        instrument: u8,
-        /// Velocity (normalized 0.0-1.0).
-        velocity: Velocity,
-    },
-    /// Note off marker - stops the currently playing note.
-    NoteOff,
-    /// Effect-only cell (no note trigger).
-    Effect {
-        /// Effect command type (ProTracker style).
-        command: u8,
-        /// Effect parameter value.
-        value: u8,
-    },
-}
-
-impl TrackCell {
-    /// Create a note cell.
-    #[must_use]
-    pub const fn note(pitch: Pitch, instrument: u8, velocity: Velocity) -> Self {
-        Self::Note {
-            pitch,
-            instrument,
-            velocity,
-        }
-    }
-
-    /// Create a note-off cell.
-    #[must_use]
-    pub const fn note_off() -> Self {
-        Self::NoteOff
-    }
-
-    /// Create an effect cell.
-    #[must_use]
-    pub const fn effect(command: u8, value: u8) -> Self {
-        Self::Effect { command, value }
-    }
-
-    /// Check if this cell is empty.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
-    }
-
-    /// Check if this cell triggers a note.
-    #[must_use]
-    pub const fn is_note(&self) -> bool {
-        matches!(self, Self::Note { .. })
-    }
-
-    /// Check if this cell is a note-off.
-    #[must_use]
-    pub const fn is_note_off(&self) -> bool {
-        matches!(self, Self::NoteOff)
-    }
-
-    /// Get the pitch if this is a note cell.
-    #[must_use]
-    pub const fn pitch(&self) -> Option<Pitch> {
-        match self {
-            Self::Note { pitch, .. } => Some(*pitch),
-            _ => None,
-        }
-    }
-
-    /// Get the velocity if this is a note cell.
-    #[must_use]
-    pub const fn velocity(&self) -> Option<Velocity> {
-        match self {
-            Self::Note { velocity, .. } => Some(*velocity),
-            _ => None,
-        }
-    }
-
-    /// Get the instrument if this is a note cell.
-    #[must_use]
-    pub const fn instrument(&self) -> Option<u8> {
-        match self {
-            Self::Note { instrument, .. } => Some(*instrument),
-            _ => None,
-        }
-    }
-}
-
-// ============================================================================
-// TrackerGrid - Grid-based pattern storage
-// ============================================================================
-
-/// Grid-based storage for tracker-style patterns.
-///
-/// This is optimized for tracker-style editing where data is organized
-/// by rows (time) and tracks (channels).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackerGrid {
-    /// Number of rows in this pattern.
-    pub rows: u16,
-    /// Number of tracks (channels).
-    pub tracks: u8,
-    /// Cell data: rows[row_idx][track_idx]
-    /// Outer Vec = rows, Inner Vec = tracks per row.
-    cells: Vec<Vec<TrackCell>>,
-    /// Effect columns per track (typically 1-2).
-    effects_per_track: Vec<Vec<EffectCommand>>,
-}
-
-impl TrackerGrid {
-    /// Create a new empty grid.
-    #[must_use]
-    pub fn new(rows: u16, tracks: u8) -> Self {
-        let cells = vec![vec![TrackCell::Empty; tracks as usize]; rows as usize];
-        let effects_per_track = vec![Vec::new(); rows as usize * tracks as usize];
-        Self {
-            rows,
-            tracks,
-            cells,
-            effects_per_track,
-        }
-    }
-
-    /// Get a cell at the given position.
-    #[must_use]
-    pub fn get(&self, row: u16, track: u8) -> TrackCell {
-        self.cells
-            .get(row as usize)
-            .and_then(|r| r.get(track as usize))
-            .copied()
-            .unwrap_or(TrackCell::Empty)
-    }
-
-    /// Set a cell at the given position.
-    pub fn set(&mut self, row: u16, track: u8, cell: TrackCell) {
-        if let Some(c) = self
-            .cells
-            .get_mut(row as usize)
-            .and_then(|r| r.get_mut(track as usize))
-        {
-            *c = cell;
-        }
-    }
-
-    /// Clear a cell (set to Empty).
-    pub fn clear(&mut self, row: u16, track: u8) {
-        self.set(row, track, TrackCell::Empty);
-    }
-
-    /// Get effects for a cell.
-    #[must_use]
-    pub fn effects(&self, row: u16, track: u8) -> &[EffectCommand] {
-        let idx = row as usize * self.tracks as usize + track as usize;
-        self.effects_per_track
-            .get(idx)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-    }
-
-    /// Set effects for a cell.
-    pub fn set_effects(&mut self, row: u16, track: u8, effects: Vec<EffectCommand>) {
-        let idx = row as usize * self.tracks as usize + track as usize;
-        if let Some(e) = self.effects_per_track.get_mut(idx) {
-            *e = effects;
-        }
-    }
-
-    /// Get a row as a slice.
-    #[must_use]
-    pub fn row(&self, row: u16) -> &[TrackCell] {
-        self.cells
-            .get(row as usize)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-    }
-
-    /// Resize the grid (expanding adds empty cells, shrinking truncates).
-    pub fn resize(&mut self, new_rows: u16, new_tracks: u8) {
-        // Resize rows
-        self.cells.resize(
-            new_rows as usize,
-            vec![TrackCell::Empty; new_tracks as usize],
-        );
-
-        // Resize each row's tracks
-        for row in &mut self.cells {
-            row.resize(new_tracks as usize, TrackCell::Empty);
-        }
-
-        // Resize effects storage
-        self.effects_per_track
-            .resize(new_rows as usize * new_tracks as usize, Vec::new());
-
-        self.rows = new_rows;
-        self.tracks = new_tracks;
-    }
-
-    /// Check if the grid is empty (all cells are Empty).
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.cells
-            .iter()
-            .all(|row| row.iter().all(|c| c.is_empty()))
-    }
-}
-
-// ============================================================================
-// EffectOnlyEvent - Effect events without notes
-// ============================================================================
-
-/// An effect event without an associated note.
-///
-/// Used for tracker-style effect-only rows where effects like volume slides,
-/// vibrato continuation, or panning changes occur without triggering a new note.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EffectOnlyEvent {
-    /// Position within the pattern.
-    pub tick: PatternTick,
-    /// Track/channel this effect applies to.
-    pub track: TrackId,
-    /// Effects to apply.
-    pub effects: Vec<EffectCommand>,
-}
-
-impl EffectOnlyEvent {
-    /// Create a new effect-only event.
-    #[must_use]
-    pub fn new(tick: PatternTick, track: TrackId, effects: Vec<EffectCommand>) -> Self {
-        Self {
-            tick,
-            track,
-            effects,
-        }
-    }
-}
-
-// ============================================================================
 // RowResolution - Grid timing configuration
 // ============================================================================
 
-/// Row resolution configuration for tracker view.
+/// Row resolution configuration for pattern view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowResolution {
     /// Number of rows in this pattern.
@@ -280,7 +23,7 @@ pub struct RowResolution {
 }
 
 impl RowResolution {
-    /// Standard tracker: 64 rows, 16 rows per bar at 4/4.
+    /// Standard: 64 rows, 16 rows per bar at 4/4.
     pub fn standard_64() -> Self {
         Self {
             rows: 64,
@@ -348,13 +91,6 @@ impl Default for RowResolution {
 }
 
 /// A pattern containing notes and automation.
-///
-/// Patterns support two representations:
-/// - Note-based (piano roll style): `notes` Vec for free-form timing
-/// - Grid-based (tracker style): `grid` TrackerGrid for row-aligned editing
-///
-/// The two representations can be synchronized via `sync_grid_from_notes()`
-/// and `sync_notes_from_grid()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pattern {
     /// Unique identifier.
@@ -363,29 +99,14 @@ pub struct Pattern {
     pub name: String,
     /// Length in ticks.
     pub length: Duration,
-    /// All notes, sorted by start tick (piano roll representation).
+    /// All notes, sorted by start tick.
     notes: Vec<Note>,
-    /// Effect-only events (tracker-style rows with effects but no note).
-    #[serde(default)]
-    effect_events: Vec<EffectOnlyEvent>,
     /// Automation lanes.
     pub automation: Vec<AutomationLane>,
-    /// Row resolution for tracker view.
+    /// Row resolution for grid view.
     pub row_resolution: RowResolution,
-    /// Grid-based representation for tracker editing.
-    /// This is lazily initialized when first accessed via `grid()` or `grid_mut()`.
-    #[serde(default)]
-    grid: Option<TrackerGrid>,
-    /// Number of tracks in the grid.
-    #[serde(default = "default_num_tracks")]
-    num_tracks: u8,
     /// Next note ID counter.
     next_note_id: u64,
-}
-
-/// Default number of tracks for a pattern.
-const fn default_num_tracks() -> u8 {
-    4
 }
 
 impl Pattern {
@@ -396,11 +117,8 @@ impl Pattern {
             name: String::new(),
             length,
             notes: Vec::new(),
-            effect_events: Vec::new(),
             automation: Vec::new(),
             row_resolution: RowResolution::standard_64(),
-            grid: None,
-            num_tracks: default_num_tracks(),
             next_note_id: 0,
         }
     }
@@ -417,192 +135,7 @@ impl Pattern {
     pub fn with_row_resolution(mut self, resolution: RowResolution) -> Self {
         self.length = resolution.total_ticks();
         self.row_resolution = resolution;
-        // Invalidate grid when resolution changes
-        self.grid = None;
         self
-    }
-
-    /// Set the number of tracks.
-    #[must_use]
-    pub fn with_num_tracks(mut self, tracks: u8) -> Self {
-        self.num_tracks = tracks;
-        // Invalidate grid when track count changes
-        self.grid = None;
-        self
-    }
-
-    /// Get the number of tracks.
-    #[must_use]
-    pub const fn num_tracks(&self) -> u8 {
-        self.num_tracks
-    }
-
-    /// Set the number of tracks.
-    ///
-    /// This invalidates the grid cache.
-    pub fn set_num_tracks(&mut self, tracks: u8) {
-        self.num_tracks = tracks;
-        self.grid = None;
-    }
-
-    // === Grid access ===
-
-    /// Get the tracker grid, creating it if necessary.
-    ///
-    /// The grid is lazily initialized and synchronized from notes.
-    pub fn grid(&mut self) -> &TrackerGrid {
-        if self.grid.is_none() {
-            self.sync_grid_from_notes();
-        }
-        self.grid.as_ref().unwrap_or_else(|| {
-            // This should never happen after sync, but provide a fallback
-            static EMPTY: TrackerGrid = TrackerGrid {
-                rows: 0,
-                tracks: 0,
-                cells: Vec::new(),
-                effects_per_track: Vec::new(),
-            };
-            &EMPTY
-        })
-    }
-
-    /// Get mutable access to the tracker grid.
-    pub fn grid_mut(&mut self) -> &mut TrackerGrid {
-        if self.grid.is_none() {
-            self.sync_grid_from_notes();
-        }
-        self.grid
-            .get_or_insert_with(|| TrackerGrid::new(self.row_resolution.rows, self.num_tracks))
-    }
-
-    /// Synchronize the grid from the notes Vec.
-    ///
-    /// This converts the piano roll representation to tracker grid format.
-    pub fn sync_grid_from_notes(&mut self) {
-        let rows = self.row_resolution.rows;
-        let tracks = self.num_tracks;
-        let mut grid = TrackerGrid::new(rows, tracks);
-
-        // Track which track to use for each row (simple round-robin for polyphony)
-        let mut track_usage: Vec<u8> = vec![0; rows as usize];
-
-        for note in &self.notes {
-            let row = self.row_resolution.tick_to_row(note.start);
-            if row >= rows {
-                continue;
-            }
-
-            // Find an available track for this row
-            let track = track_usage[row as usize] % tracks;
-            track_usage[row as usize] += 1;
-
-            // Set the cell
-            grid.set(
-                row,
-                track,
-                TrackCell::Note {
-                    pitch: note.pitch,
-                    instrument: note.instrument.0 as u8,
-                    velocity: note.velocity,
-                },
-            );
-
-            // Set effects if any
-            if !note.effects.is_empty() {
-                grid.set_effects(row, track, note.effects.clone());
-            }
-
-            // Add note-off if duration is specified
-            if let Some(end) = note.end() {
-                let end_row = self.row_resolution.tick_to_row(end);
-                if end_row < rows && end_row > row {
-                    // Only set note-off if that cell is empty
-                    if grid.get(end_row, track).is_empty() {
-                        grid.set(end_row, track, TrackCell::NoteOff);
-                    }
-                }
-            }
-        }
-
-        self.grid = Some(grid);
-    }
-
-    /// Synchronize notes from the grid.
-    ///
-    /// This converts the tracker grid to piano roll representation.
-    /// Clears existing notes and rebuilds from grid data.
-    pub fn sync_notes_from_grid(&mut self) {
-        let Some(grid) = self.grid.take() else {
-            return;
-        };
-
-        self.notes.clear();
-        self.next_note_id = 0;
-
-        let resolution = self.row_resolution;
-
-        for row in 0..grid.rows {
-            for track in 0..grid.tracks {
-                let cell = grid.get(row, track);
-                if let TrackCell::Note {
-                    pitch,
-                    instrument,
-                    velocity,
-                } = cell
-                {
-                    let start = resolution.row_to_tick(row);
-                    let id = NoteId(self.next_note_id);
-                    self.next_note_id += 1;
-
-                    let mut note = Note::new(
-                        id,
-                        start,
-                        pitch,
-                        velocity,
-                        SeqInstrumentId(instrument as u16),
-                    )
-                    .with_track(TrackId::new(track as u16));
-
-                    // Look for note-off in subsequent rows
-                    for end_row in (row + 1)..grid.rows {
-                        let end_cell = grid.get(end_row, track);
-                        if end_cell.is_note_off() || end_cell.is_note() {
-                            let end_tick = resolution.row_to_tick(end_row);
-                            note.duration = Some(Duration(end_tick.0 - start.0));
-                            break;
-                        }
-                    }
-
-                    // Copy effects
-                    let effects = grid.effects(row, track);
-                    if !effects.is_empty() {
-                        note.effects = effects.to_vec();
-                    }
-
-                    self.notes.push(note);
-                }
-            }
-        }
-
-        // Sort notes by start tick
-        self.notes.sort_by_key(|n| n.start);
-
-        // Restore the grid
-        self.grid = Some(grid);
-    }
-
-    /// Set a cell in the grid directly.
-    ///
-    /// This is the primary method for tracker-style editing.
-    /// Note: Call `sync_notes_from_grid()` after batch edits to update the notes Vec.
-    pub fn set_cell(&mut self, row: u16, track: u8, cell: TrackCell) {
-        let grid = self.grid_mut();
-        grid.set(row, track, cell);
-    }
-
-    /// Get a cell from the grid.
-    pub fn get_cell(&mut self, row: u16, track: u8) -> TrackCell {
-        self.grid().get(row, track)
     }
 
     // === Note ID generation ===
@@ -717,8 +250,6 @@ impl Pattern {
     }
 
     /// Transpose a note.
-    ///
-    /// Returns false if the note doesn't exist or transposition would go out of range.
     pub fn transpose_note(&mut self, id: NoteId, semitones: Semitones) -> bool {
         if let Some(note) = self.note_mut(id)
             && let Some(new_pitch) = note.pitch.transpose(semitones)
@@ -750,8 +281,6 @@ impl Pattern {
     }
 
     /// Transpose all notes that can be transposed within valid range.
-    ///
-    /// Notes that would go out of range are left unchanged.
     pub fn transpose_all(&mut self, semitones: Semitones) {
         for note in &mut self.notes {
             if let Some(new_pitch) = note.pitch.transpose(semitones) {
@@ -772,39 +301,10 @@ impl Pattern {
 
     /// Check if pattern is empty.
     pub fn is_empty(&self) -> bool {
-        self.notes.is_empty()
-            && self.effect_events.is_empty()
-            && self.automation.iter().all(|l| l.is_empty())
+        self.notes.is_empty() && self.automation.iter().all(|l| l.is_empty())
     }
 
-    // === Effect-only events ===
-
-    /// Add an effect-only event (for tracker-style effect rows without notes).
-    pub fn add_effect_event(&mut self, event: EffectOnlyEvent) {
-        // Insert sorted by tick
-        let pos = self.effect_events.partition_point(|e| e.tick <= event.tick);
-        self.effect_events.insert(pos, event);
-    }
-
-    /// Get all effect-only events.
-    pub fn effect_events(&self) -> &[EffectOnlyEvent] {
-        &self.effect_events
-    }
-
-    /// Get effect-only events at a specific tick.
-    pub fn effect_events_at(&self, tick: PatternTick) -> impl Iterator<Item = &EffectOnlyEvent> {
-        self.effect_events.iter().filter(move |e| e.tick == tick)
-    }
-
-    /// Clear all effect-only events.
-    pub fn clear_effect_events(&mut self) {
-        self.effect_events.clear();
-    }
-
-    /// Get a mutable note by its index (for tracker import key-off handling).
-    ///
-    /// This is used during import to set duration on a previously added note
-    /// when a key-off marker is encountered.
+    /// Get a mutable note by its index.
     pub fn note_by_index_mut(&mut self, index: usize) -> Option<&mut Note> {
         self.notes.get_mut(index)
     }
@@ -838,9 +338,6 @@ impl Pattern {
     // === Event generation ===
 
     /// Generate runtime events for playback within a tick range.
-    ///
-    /// This converts the stored notes into NoteOn/NoteOff events that can be
-    /// sent to the audio engine.
     pub fn generate_events(
         &self,
         pattern_start: super::time::Tick,
@@ -872,16 +369,11 @@ impl Pattern {
             // NoteOn
             if note.start >= local_start && note.start < local_end {
                 let absolute_tick = Tick(pattern_start.0 + note.start.0 as u64);
-                // Convert track to voice_index for tracker-style mono-per-track playback
-                let voice_index = note.track.map(|t| synth_core::VoiceIndex::new(t.0 as u8));
                 events.push(SequencerEvent::NoteOn {
                     tick: absolute_tick,
                     pitch: transposed_pitch,
                     velocity: note.velocity,
                     instrument,
-                    effects: note.effects.clone(),
-                    voice_index,
-                    sample_offset: synth_core::NormalizedValue::MIN,
                 });
             }
 
@@ -996,7 +488,6 @@ mod tests {
     fn test_quantize_notes() {
         let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
 
-        // Note at tick 120 (between rows 0 and 1 at 240 ticks/row)
         let id = pattern.add_note(
             PatternTick(120),
             Pitch::new(60).unwrap(),
@@ -1006,8 +497,6 @@ mod tests {
 
         pattern.quantize_notes();
 
-        // Should quantize to row 0 (tick 0) or row 1 (tick 240)
-        // 120 is exactly in the middle, so it goes to nearest (240 with rounding)
         let note = pattern.note(id).unwrap();
         assert_eq!(note.start.0, 240);
     }
@@ -1032,11 +521,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::similar_names)] // note1/note2/note3 and pattern/pattern2 are intentional
+    #[allow(clippy::similar_names)]
     fn test_notes_in_range() {
         let mut pattern = test_pattern();
 
-        // Add notes with explicit durations so they have defined end times
         let note1 = Note::new(
             NoteId(0),
             PatternTick(100),
@@ -1044,7 +532,7 @@ mod tests {
             Velocity::MF,
             SeqInstrumentId(0),
         )
-        .with_duration(Duration(40)); // Ends at 140, before range
+        .with_duration(Duration(40));
         let note2 = Note::new(
             NoteId(1),
             PatternTick(200),
@@ -1052,7 +540,7 @@ mod tests {
             Velocity::MF,
             SeqInstrumentId(0),
         )
-        .with_duration(Duration(40)); // Starts at 200, within range
+        .with_duration(Duration(40));
         let note3 = Note::new(
             NoteId(2),
             PatternTick(300),
@@ -1060,20 +548,19 @@ mod tests {
             Velocity::MF,
             SeqInstrumentId(0),
         )
-        .with_duration(Duration(40)); // Starts at 300, after range
+        .with_duration(Duration(40));
 
         pattern.insert_note(note1);
         pattern.insert_note(note2);
         pattern.insert_note(note3);
 
-        // Range 150-250 should only include note2 (starts at 200)
         let notes: Vec<_> = pattern
             .notes_in_range(PatternTick(150), PatternTick(250))
             .collect();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].start.0, 200);
 
-        // Test notes without duration (tracker-style, plays until next note off)
+        // Test notes without duration
         let mut pattern2 = test_pattern();
         pattern2.add_note(
             PatternTick(100),
@@ -1088,11 +575,10 @@ mod tests {
             SeqInstrumentId(0),
         );
 
-        // Notes without duration overlap with any range after their start
         let notes: Vec<_> = pattern2
             .notes_in_range(PatternTick(150), PatternTick(250))
             .collect();
-        assert_eq!(notes.len(), 2); // Both notes overlap: first has no end, second starts in range
+        assert_eq!(notes.len(), 2);
     }
 
     #[test]
@@ -1101,141 +587,5 @@ mod tests {
         assert_eq!(res.total_ticks().0, 64 * 240);
         assert_eq!(res.row_to_tick(4).0, 960);
         assert_eq!(res.tick_to_row(PatternTick(960)), 4);
-    }
-
-    // =========================================================================
-    // TrackCell and TrackerGrid tests
-    // =========================================================================
-
-    #[test]
-    fn test_track_cell_creation() {
-        let empty = TrackCell::Empty;
-        assert!(empty.is_empty());
-        assert!(!empty.is_note());
-        assert!(!empty.is_note_off());
-
-        let note = TrackCell::note(Pitch::new(60).unwrap(), 1, Velocity::MF);
-        assert!(!note.is_empty());
-        assert!(note.is_note());
-        assert_eq!(note.pitch(), Some(Pitch::new(60).unwrap()));
-        assert_eq!(note.instrument(), Some(1));
-
-        let note_off = TrackCell::note_off();
-        assert!(note_off.is_note_off());
-        assert!(!note_off.is_note());
-    }
-
-    #[test]
-    fn test_tracker_grid_basic() {
-        let mut grid = TrackerGrid::new(16, 4);
-        assert_eq!(grid.rows, 16);
-        assert_eq!(grid.tracks, 4);
-        assert!(grid.is_empty());
-
-        // Set a cell
-        let note = TrackCell::note(Pitch::new(60).unwrap(), 0, Velocity::MF);
-        grid.set(0, 0, note);
-        assert!(!grid.is_empty());
-
-        // Get the cell back
-        let cell = grid.get(0, 0);
-        assert!(cell.is_note());
-        assert_eq!(cell.pitch(), Some(Pitch::new(60).unwrap()));
-
-        // Clear the cell
-        grid.clear(0, 0);
-        assert!(grid.get(0, 0).is_empty());
-        assert!(grid.is_empty());
-    }
-
-    #[test]
-    fn test_tracker_grid_resize() {
-        let mut grid = TrackerGrid::new(16, 4);
-
-        // Set a note
-        grid.set(
-            0,
-            0,
-            TrackCell::note(Pitch::new(60).unwrap(), 0, Velocity::MF),
-        );
-
-        // Expand
-        grid.resize(32, 8);
-        assert_eq!(grid.rows, 32);
-        assert_eq!(grid.tracks, 8);
-        // Original note should still be there
-        assert!(grid.get(0, 0).is_note());
-
-        // New cells should be empty
-        assert!(grid.get(20, 5).is_empty());
-    }
-
-    #[test]
-    fn test_pattern_grid_sync() {
-        let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
-
-        // Add a note
-        pattern.add_note(
-            PatternTick(0), // Row 0
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
-
-        // Get the grid (triggers sync from notes)
-        let grid = pattern.grid();
-
-        // Check that the note appears in the grid
-        let cell = grid.get(0, 0);
-        assert!(cell.is_note());
-        assert_eq!(cell.pitch(), Some(Pitch::new(60).unwrap()));
-    }
-
-    #[test]
-    fn test_pattern_set_cell() {
-        let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
-
-        // Set a cell directly
-        pattern.set_cell(
-            4,
-            0,
-            TrackCell::note(Pitch::new(64).unwrap(), 1, Velocity::FORTE),
-        );
-
-        // Sync back to notes
-        pattern.sync_notes_from_grid();
-
-        // Check that the note was created
-        assert_eq!(pattern.note_count(), 1);
-        let note = pattern.notes().first().unwrap();
-        assert_eq!(note.pitch.as_midi(), 64);
-        assert_eq!(note.start.0, 4 * 240); // Row 4 * ticks_per_row
-    }
-
-    #[test]
-    fn test_grid_note_off_handling() {
-        let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
-
-        // Add a note with duration (4 rows = 960 ticks)
-        let note = Note::new(
-            NoteId(0),
-            PatternTick(0),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        )
-        .with_duration(Duration(960)); // 4 rows
-
-        pattern.insert_note(note);
-
-        // Sync to grid
-        pattern.sync_grid_from_notes();
-
-        // Check note-on at row 0
-        let grid = pattern.grid();
-        assert!(grid.get(0, 0).is_note());
-
-        // Check note-off at row 4
-        assert!(grid.get(4, 0).is_note_off());
     }
 }

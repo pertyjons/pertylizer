@@ -1,7 +1,7 @@
-//! Tracker-specific types for XM/IT compatibility.
+//! Envelope types for multi-point envelopes.
 //!
-//! These types provide type-safe wrappers for tracker format values,
-//! enabling accurate import and playback of XM/IT/S3M modules.
+//! These types provide type-safe wrappers for envelope frame positions,
+//! values, point indices, and fadeout rates.
 
 use serde::{Deserialize, Serialize};
 

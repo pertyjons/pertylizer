@@ -418,10 +418,6 @@ pub enum EngineCommand {
     /// Reset to beginning.
     Rewind,
 
-    /// Set muted tracks for sequencer playback.
-    /// Each element is true if the track at that index should be muted.
-    SetMutedTracks(Vec<bool>),
-
     /// Seek to a specific tick position during playback.
     Seek { tick: Tick },
 
@@ -869,12 +865,12 @@ impl std::fmt::Debug for EngineCommand {
                 .field("instrument_id", instrument_id)
                 .field("module", module)
                 .finish(),
-            Self::SetTempo(t) => write!(f, "SetTempo({t})"),
+            Self::SetTempo(bpm) => write!(f, "SetTempo({bpm})"),
             Self::Play => write!(f, "Play"),
             Self::Stop => write!(f, "Stop"),
             Self::Pause => write!(f, "Pause"),
             Self::Rewind => write!(f, "Rewind"),
-            Self::SetMutedTracks(tracks) => write!(f, "SetMutedTracks({tracks:?})"),
+
             Self::Seek { tick } => write!(f, "Seek({tick:?})"),
             Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),

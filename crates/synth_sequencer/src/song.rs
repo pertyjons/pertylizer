@@ -4,30 +4,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{PatternId, RowCount, TrackCount, TrackId};
+use super::ids::{PatternId, TrackId};
 use super::pattern::Pattern;
 use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
-use super::tracker_pattern::TrackerPattern;
-use synth_core::{BipolarValue, Bpm, Gain, NormalizedValue, Semitones};
-
-/// Frequency mode for tracker pitch calculations.
-///
-/// Determines how portamento and pitch effects operate:
-/// - Linear: Standard exponential (cents/semitone) space
-/// - Amiga: Period-based (hyperbolic) space from the Amiga Paula chipset
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum TrackerFrequencyMode {
-    /// Linear frequency mode (default for most XM files).
-    /// Portamento operates in cents/semitone space.
-    #[default]
-    Linear,
-    /// Amiga frequency mode (period-based).
-    /// Portamento operates in period space: period = 7680 - semitones * 64.
-    Amiga,
-}
-
-use super::ids::SeqInstrumentId;
+use synth_core::{Bpm, Gain, Semitones};
 
 /// Tempo change event.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -92,20 +73,6 @@ impl PatternPlacement {
     }
 }
 
-/// Default volume and panning for a tracker instrument's sample.
-///
-/// Used by the sequencer engine to reset channel state when a note
-/// with an explicit instrument number is triggered. Per XM spec:
-/// - Volume resets to the sample's default volume
-/// - Panning resets to the sample's default panning
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct TrackerInstrumentDefaults {
-    /// Default volume (0.0-1.0) from the sample.
-    pub volume: NormalizedValue,
-    /// Default panning (-1.0 to 1.0) from the sample.
-    pub panning: BipolarValue,
-}
-
 /// A complete song with patterns, tracks, and arrangement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Song {
@@ -114,13 +81,9 @@ pub struct Song {
     /// Song author.
     pub author: String,
 
-    // Pattern storage (piano roll style)
+    // Pattern storage
     patterns: HashMap<PatternId, Pattern>,
     next_pattern_id: u32,
-
-    // Tracker pattern storage (tracker style)
-    #[serde(default)]
-    tracker_patterns: HashMap<PatternId, TrackerPattern>,
 
     // Track storage
     tracks: HashMap<TrackId, SequencerTrack>,
@@ -136,25 +99,6 @@ pub struct Song {
     pub default_tempo: Bpm,
     /// Default time signature.
     pub default_time_signature: TimeSignature,
-    /// Default tracker speed (ticks per row, typically 6).
-    /// Used for XM/MOD/S3M/IT modules where tempo is controlled by both BPM and speed.
-    #[serde(default = "default_tracker_speed")]
-    pub default_tracker_speed: u8,
-
-    /// Per-instrument default volume/panning from tracker samples.
-    /// Used to reset channel state when a note triggers with an explicit instrument.
-    #[serde(default)]
-    tracker_instrument_defaults: HashMap<SeqInstrumentId, TrackerInstrumentDefaults>,
-
-    /// Frequency mode from tracker import (Linear or Amiga).
-    /// Affects how portamento and pitch effects operate.
-    #[serde(default)]
-    pub tracker_frequency_mode: TrackerFrequencyMode,
-}
-
-/// Default tracker speed (6 ticks per row, like FastTracker 2).
-fn default_tracker_speed() -> u8 {
-    6
 }
 
 impl Song {
@@ -165,7 +109,6 @@ impl Song {
             author: String::new(),
             patterns: HashMap::new(),
             next_pattern_id: 0,
-            tracker_patterns: HashMap::new(),
             tracks: HashMap::new(),
             next_track_id: 0,
             arrangement: Vec::new(),
@@ -173,9 +116,6 @@ impl Song {
             time_signature_changes: Vec::new(),
             default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
-            default_tracker_speed: default_tracker_speed(),
-            tracker_instrument_defaults: HashMap::new(),
-            tracker_frequency_mode: TrackerFrequencyMode::default(),
         }
     }
 
@@ -195,34 +135,6 @@ impl Song {
     pub fn with_time_signature(mut self, sig: TimeSignature) -> Self {
         self.default_time_signature = sig;
         self
-    }
-
-    /// Set the default tracker speed (builder pattern).
-    /// Speed is the number of ticks per row (typically 6 in FastTracker 2).
-    pub fn with_tracker_speed(mut self, speed: u8) -> Self {
-        self.default_tracker_speed = speed.max(1); // Prevent division by zero
-        self
-    }
-
-    // === Tracker instrument defaults ===
-
-    /// Set default volume/panning for a tracker instrument.
-    pub fn set_instrument_defaults(
-        &mut self,
-        id: SeqInstrumentId,
-        defaults: TrackerInstrumentDefaults,
-    ) {
-        self.tracker_instrument_defaults.insert(id, defaults);
-    }
-
-    /// Get default volume/panning for a tracker instrument.
-    pub fn instrument_defaults(&self, id: &SeqInstrumentId) -> Option<&TrackerInstrumentDefaults> {
-        self.tracker_instrument_defaults.get(id)
-    }
-
-    /// Get all tracker instrument defaults.
-    pub fn all_instrument_defaults(&self) -> &HashMap<SeqInstrumentId, TrackerInstrumentDefaults> {
-        &self.tracker_instrument_defaults
     }
 
     // === Pattern management ===
@@ -279,64 +191,6 @@ impl Song {
 
         self.patterns.insert(new_id, new_pattern);
         Some(new_id)
-    }
-
-    // === Tracker pattern management ===
-
-    /// Create a new tracker pattern and add it to the song.
-    pub fn create_tracker_pattern(
-        &mut self,
-        num_tracks: TrackCount,
-        num_rows: RowCount,
-    ) -> PatternId {
-        let id = PatternId(self.next_pattern_id);
-        self.next_pattern_id += 1;
-        self.tracker_patterns
-            .insert(id, TrackerPattern::new(id, num_tracks, num_rows));
-        id
-    }
-
-    /// Add a tracker pattern directly (e.g., from import).
-    pub fn add_tracker_pattern(&mut self, pattern: TrackerPattern) -> PatternId {
-        let id = pattern.id();
-        // Update next_pattern_id if needed
-        if id.0 >= self.next_pattern_id {
-            self.next_pattern_id = id.0 + 1;
-        }
-        self.tracker_patterns.insert(id, pattern);
-        id
-    }
-
-    /// Get a tracker pattern by ID.
-    pub fn tracker_pattern(&self, id: PatternId) -> Option<&TrackerPattern> {
-        self.tracker_patterns.get(&id)
-    }
-
-    /// Get a mutable tracker pattern by ID.
-    pub fn tracker_pattern_mut(&mut self, id: PatternId) -> Option<&mut TrackerPattern> {
-        self.tracker_patterns.get_mut(&id)
-    }
-
-    /// Get all tracker patterns.
-    pub fn tracker_patterns(&self) -> impl Iterator<Item = &TrackerPattern> {
-        self.tracker_patterns.values()
-    }
-
-    /// Get the number of tracker patterns.
-    pub fn tracker_pattern_count(&self) -> usize {
-        self.tracker_patterns.len()
-    }
-
-    /// Check if a pattern ID refers to a tracker pattern.
-    pub fn is_tracker_pattern(&self, id: PatternId) -> bool {
-        self.tracker_patterns.contains_key(&id)
-    }
-
-    /// Delete a tracker pattern.
-    pub fn delete_tracker_pattern(&mut self, id: PatternId) -> Option<TrackerPattern> {
-        // Also remove from arrangement
-        self.arrangement.retain(|p| p.pattern_id != id);
-        self.tracker_patterns.remove(&id)
     }
 
     // === Track management ===
@@ -446,20 +300,9 @@ impl Song {
     /// Find the pattern playing at a given tick.
     /// Returns the pattern ID and the tick offset within that pattern.
     pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
-        // Find placement that contains this tick
         for placement in &self.arrangement {
-            // Check regular patterns first
             if let Some(pattern) = self.patterns.get(&placement.pattern_id) {
                 let pattern_end = placement.end(pattern.length);
-                if tick >= placement.start && tick < pattern_end {
-                    let offset = Tick(tick.0.saturating_sub(placement.start.0));
-                    return Some((placement.pattern_id, offset));
-                }
-            }
-            // Check tracker patterns
-            else if let Some(tracker_pattern) = self.tracker_patterns.get(&placement.pattern_id) {
-                let length = Duration(tracker_pattern.length_ticks().0);
-                let pattern_end = placement.end(length);
                 if tick >= placement.start && tick < pattern_end {
                     let offset = Tick(tick.0.saturating_sub(placement.start.0));
                     return Some((placement.pattern_id, offset));

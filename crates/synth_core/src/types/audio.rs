@@ -1185,77 +1185,6 @@ impl std::fmt::Display for RowIndex {
     }
 }
 
-// ============================================================================
-// TRACKER SPEED
-// ============================================================================
-
-/// Tracker speed (ticks per row).
-///
-/// Controls how many ticks pass before advancing to the next row.
-/// Standard range is 1-31, with 6 being the classic ProTracker default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct TrackerSpeed(pub u8);
-
-impl TrackerSpeed {
-    /// Create a new speed value, clamping to [1, 31].
-    #[inline]
-    pub fn new(speed: u8) -> Self {
-        Self(speed.clamp(1, 31))
-    }
-
-    /// Create without clamping (for performance).
-    #[inline]
-    pub const fn new_unchecked(speed: u8) -> Self {
-        Self(speed)
-    }
-
-    /// Classic ProTracker default speed.
-    pub const DEFAULT: Self = Self(6);
-
-    /// Minimum speed (fastest).
-    pub const MIN: Self = Self(1);
-
-    /// Maximum speed (slowest).
-    pub const MAX: Self = Self(31);
-
-    /// Get the raw value.
-    #[inline]
-    pub const fn as_u8(self) -> u8 {
-        self.0
-    }
-
-    /// Get as usize for calculations.
-    #[inline]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Default for TrackerSpeed {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl From<u8> for TrackerSpeed {
-    fn from(speed: u8) -> Self {
-        Self::new(speed)
-    }
-}
-
-impl From<TrackerSpeed> for u8 {
-    fn from(speed: TrackerSpeed) -> Self {
-        speed.0
-    }
-}
-
-impl std::fmt::Display for TrackerSpeed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Spd {}", self.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1528,19 +1457,6 @@ mod tests {
 
         let row5 = RowIndex::new(5);
         assert!(!row5.is_beat());
-    }
-
-    #[test]
-    fn test_tracker_speed() {
-        let speed = TrackerSpeed::DEFAULT;
-        assert_eq!(speed.as_u8(), 6);
-
-        // Test clamping
-        let fast = TrackerSpeed::new(0);
-        assert_eq!(fast.as_u8(), 1);
-
-        let slow = TrackerSpeed::new(50);
-        assert_eq!(slow.as_u8(), 31);
     }
 
     #[test]

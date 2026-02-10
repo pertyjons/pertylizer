@@ -285,11 +285,6 @@ impl EngineHandle {
         self.state.transport.is_playing()
     }
 
-    /// Get the current dynamic ticks per row (affected by speed effects).
-    pub fn playback_ticks_per_row(&self) -> u32 {
-        self.state.transport.get_ticks_per_row()
-    }
-
     /// Add a visualization buffer for a module (Arc is shared with engine).
     pub fn add_visualization_buffer(
         &mut self,
@@ -322,11 +317,6 @@ impl EngineHandle {
     /// Returns None if using traditional MIDI channel routing.
     pub fn get_focused_instrument(&self) -> Option<u32> {
         self.state.get_focused_instrument()
-    }
-
-    /// Set the muted tracks for sequencer playback.
-    pub fn set_muted_tracks(&mut self, tracks: Vec<bool>) -> bool {
-        self.send(EngineCommand::SetMutedTracks(tracks))
     }
 }
 
@@ -376,10 +366,6 @@ pub struct SynthEngine {
     sequencer: SequencerEngine,
     /// Pre-allocated buffer for sequencer events (real-time safe).
     sequencer_event_buffer: Vec<SequencerEvent>,
-    /// Pre-allocated buffer for chunk rendering (tracker tick-segmented mode).
-    chunk_buffer: AudioBuffer,
-    /// Muted tracks — index = track number, true = muted.
-    muted_tracks: Vec<bool>,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -443,8 +429,6 @@ impl SynthEngine {
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
-            chunk_buffer: AudioBuffer::new(512),
-            muted_tracks: Vec::new(),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -823,9 +807,6 @@ impl SynthEngine {
                 let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
             }
-            EngineCommand::SetMutedTracks(tracks) => {
-                self.muted_tracks = tracks;
-            }
             EngineCommand::Seek { tick } => {
                 let _ = self.sequencer.seek(tick);
                 self.state.transport.set_ticks(tick.0);
@@ -896,16 +877,10 @@ impl SynthEngine {
         pattern_id: synth_sequencer::PatternId,
     ) -> Option<(synth_sequencer::Tick, synth_sequencer::Tick)> {
         for placement in song.arrangement() {
-            if placement.pattern_id == pattern_id {
-                // Try tracker pattern first
-                if let Some(tracker_pattern) = song.tracker_pattern(pattern_id) {
-                    let length = synth_sequencer::Duration(tracker_pattern.length_ticks().0);
-                    return Some((placement.start, placement.end(length)));
-                }
-                // Fall back to regular pattern
-                if let Some(pattern) = song.pattern(pattern_id) {
-                    return Some((placement.start, placement.end(pattern.length)));
-                }
+            if placement.pattern_id == pattern_id
+                && let Some(pattern) = song.pattern(pattern_id)
+            {
+                return Some((placement.start, placement.end(pattern.length)));
             }
         }
         None
@@ -1658,81 +1633,23 @@ impl Default for SynthEngine {
 }
 
 /// Route sequencer events to the appropriate instruments.
-///
-/// This handles NoteOn (with voice-cut on other instruments, sample offset),
-/// NoteOff, Modulation (pitch/volume/pan/retrigger/notecut/tone-porta), and VoiceOff.
-#[allow(clippy::too_many_lines)]
-fn route_sequencer_events(
-    events: &[SequencerEvent],
-    instruments: &mut [Box<Instrument>],
-    muted_tracks: &[bool],
-) {
+fn route_sequencer_events(events: &[SequencerEvent], instruments: &mut [Box<Instrument>]) {
     for event in events {
         match event {
             SequencerEvent::NoteOn {
                 pitch,
                 velocity,
                 instrument,
-                voice_index,
-                sample_offset,
                 ..
             } => {
-                // Filter by muted tracks
-                if let Some(v_idx) = voice_index
-                    && muted_tracks.get(v_idx.as_usize()).copied().unwrap_or(false)
-                {
-                    continue;
-                }
-
                 let note = MidiNote::new(pitch.as_midi());
                 let vel = *velocity;
                 let instrument_index = instrument.0 as usize;
 
-                // In tracker mode: cut the voice on ALL other instruments first.
-                if let Some(v_idx) = voice_index {
-                    for (idx, other_inst) in instruments.iter_mut().enumerate() {
-                        if idx != instrument_index
-                            && let Some(voice) = other_inst
-                                .allocator_mut()
-                                .voices_mut()
-                                .get_mut(v_idx.as_usize())
-                        {
-                            voice.reset();
-                        }
-                    }
-                }
-
-                // Trigger note on the matching instrument
                 if let Some(target) = instruments.get_mut(instrument_index) {
-                    if let Some(v_idx) = voice_index {
-                        target
-                            .allocator_mut()
-                            .note_on_fixed_voice(*v_idx, note, vel);
-
-                        if sample_offset.as_f32() > 0.0
-                            && let Some(voice) = target
-                                .allocator_mut()
-                                .voices_mut()
-                                .get_mut(v_idx.as_usize())
-                        {
-                            voice.retrigger_with_offset(*sample_offset);
-                        }
-                    } else {
-                        target.note_on(note, vel);
-                    }
+                    target.note_on(note, vel);
                 } else if let Some(first) = instruments.first_mut() {
-                    if let Some(v_idx) = voice_index {
-                        first.allocator_mut().note_on_fixed_voice(*v_idx, note, vel);
-
-                        if sample_offset.as_f32() > 0.0
-                            && let Some(voice) =
-                                first.allocator_mut().voices_mut().get_mut(v_idx.as_usize())
-                        {
-                            voice.retrigger_with_offset(*sample_offset);
-                        }
-                    } else {
-                        first.note_on(note, vel);
-                    }
+                    first.note_on(note, vel);
                 }
             }
             SequencerEvent::NoteOff {
@@ -1745,55 +1662,6 @@ fn route_sequencer_events(
                     target.note_off(note);
                 } else if let Some(first) = instruments.first_mut() {
                     first.note_off(note);
-                }
-            }
-            SequencerEvent::Modulation {
-                track,
-                pitch_cents,
-                volume,
-                panning,
-                note_triggered,
-                note_cut,
-                sample_offset,
-                tone_porta_pitch,
-                ..
-            } => {
-                let voice_idx = track.0 as usize;
-
-                if muted_tracks.get(voice_idx).copied().unwrap_or(false) {
-                    continue;
-                }
-
-                for instrument in instruments.iter_mut() {
-                    if let Some(voice) = instrument.allocator_mut().voices_mut().get_mut(voice_idx)
-                    {
-                        voice.tracker_pitch_cents = *pitch_cents;
-                        voice.tracker_volume = *volume;
-                        voice.tracker_panning = *panning;
-                        voice.tracker_tone_porta_pitch =
-                            tone_porta_pitch.map(synth_core::Semitones::new);
-
-                        if *note_triggered {
-                            voice.retrigger_with_offset(*sample_offset);
-                        }
-
-                        if *note_cut {
-                            voice.note_off();
-                        }
-                    }
-                }
-            }
-            SequencerEvent::VoiceOff { voice_index, .. } => {
-                let voice_idx = voice_index.as_usize();
-
-                if muted_tracks.get(voice_idx).copied().unwrap_or(false) {
-                    continue;
-                }
-
-                for instrument in instruments.iter_mut() {
-                    instrument
-                        .allocator_mut()
-                        .note_off_fixed_voice(*voice_index);
                 }
             }
             _ => {}
@@ -1818,87 +1686,18 @@ impl AudioProcessor for SynthEngine {
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
         };
 
-        if self.sequencer.is_tracker_mode() && self.state.transport.is_playing() {
-            // --- Tick-segmented rendering for tracker mode ---
-            // Each tick boundary gets its own render chunk so modulations
-            // (vibrato, volume slides, etc.) update at tick rate.
-            let total = context.frames;
-            let num_channels = 2;
-            self.mix_buffer.resize(total * num_channels);
-            self.mix_buffer.clear();
+        // Process sequencer events
+        self.sequencer_event_buffer.clear();
+        self.sequencer
+            .process(sample_count, &mut self.sequencer_event_buffer);
 
-            let mut offset = 0;
-            while offset < total {
-                self.sequencer_event_buffer.clear();
-                let chunk = self
-                    .sequencer
-                    .process_until_next_tick(total - offset, &mut self.sequencer_event_buffer);
-                if chunk == 0 {
-                    break;
-                }
+        self.state
+            .transport
+            .set_ticks(self.sequencer.current_tick().0);
 
-                route_sequencer_events(
-                    &self.sequencer_event_buffer,
-                    &mut self.instruments,
-                    &self.muted_tracks,
-                );
+        route_sequencer_events(&self.sequencer_event_buffer, &mut self.instruments);
 
-                let chunk_ctx = ProcessContext {
-                    samples: SampleCount::new(chunk),
-                    ..process_context
-                };
-
-                // Render instruments into chunk_buffer
-                self.chunk_buffer.resize(chunk * num_channels);
-                self.chunk_buffer.clear();
-                for instrument in &mut self.instruments {
-                    instrument.process(&mut self.chunk_buffer, &chunk_ctx);
-                }
-
-                // Copy chunk into the correct position in mix_buffer
-                let s = offset * num_channels;
-                let e = s + chunk * num_channels;
-                self.mix_buffer.as_mut_slice()[s..e]
-                    .copy_from_slice(&self.chunk_buffer.as_slice()[..chunk * num_channels]);
-
-                offset += chunk;
-            }
-
-            // Update transport + voice count
-            self.state
-                .transport
-                .set_ticks(self.sequencer.current_tick().0);
-            self.state
-                .transport
-                .set_ticks_per_row(self.sequencer.current_ticks_per_row());
-            #[allow(clippy::cast_possible_truncation)]
-            self.state.voice_count.store(
-                self.instruments
-                    .iter()
-                    .map(|i| i.active_voice_count())
-                    .sum::<usize>() as u32,
-            );
-        } else {
-            // --- Standard synth-mode path (unchanged) ---
-            self.sequencer_event_buffer.clear();
-            self.sequencer
-                .process(sample_count, &mut self.sequencer_event_buffer);
-
-            self.state
-                .transport
-                .set_ticks(self.sequencer.current_tick().0);
-            self.state
-                .transport
-                .set_ticks_per_row(self.sequencer.current_ticks_per_row());
-
-            route_sequencer_events(
-                &self.sequencer_event_buffer,
-                &mut self.instruments,
-                &self.muted_tracks,
-            );
-
-            self.process_voices(&process_context);
-        }
+        self.process_voices(&process_context);
 
         // Process modular graph (user-added modules)
         self.process_module_graph(&process_context);

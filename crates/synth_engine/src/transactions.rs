@@ -460,7 +460,6 @@ impl Clone for EngineCommand {
             Self::Stop => Self::Stop,
             Self::Pause => Self::Pause,
             Self::Rewind => Self::Rewind,
-            Self::SetMutedTracks(t) => Self::SetMutedTracks(t.clone()),
             Self::Seek { tick } => Self::Seek { tick: *tick },
             Self::PlayPattern { pattern_id } => Self::PlayPattern {
                 pattern_id: *pattern_id,

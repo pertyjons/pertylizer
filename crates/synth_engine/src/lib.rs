@@ -27,7 +27,6 @@ pub mod sequencer_engine;
 pub mod shared_state;
 pub mod state;
 pub mod synth_engine;
-pub mod tracker_effects;
 pub mod transactions;
 pub mod visual_state;
 pub mod visualizers;
@@ -59,9 +58,6 @@ pub use shared_state::{
 };
 pub use state::*;
 pub use synth_engine::{CommandSender, EngineHandle, SynthEngine};
-pub use tracker_effects::{
-    ChannelEffectProcessor, ChannelEffectState, ChannelModulation, TrackerSpeed,
-};
 pub use transactions::{
     BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,
 };

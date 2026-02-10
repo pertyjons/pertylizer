@@ -36,8 +36,6 @@ pub struct TopBarContext<'a> {
     pub show_settings: &'a mut bool,
     /// Callback to show about dialog.
     pub show_about: &'a mut bool,
-    /// Callback to show import song dialog.
-    pub show_import_song: &'a mut bool,
     /// Save patch name buffer.
     pub patch_save_name: &'a mut String,
     /// Callback for new patch action.
@@ -69,11 +67,6 @@ pub fn draw_top_bar(ctx: &egui::Context, bar_ctx: &mut TopBarContext<'_>) {
                 if ui.button("Save Patch...").clicked() {
                     *bar_ctx.patch_save_name = bar_ctx.patch_name.to_string();
                     *bar_ctx.show_save_patch = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("Import Song...").clicked() {
-                    *bar_ctx.show_import_song = true;
                     ui.close();
                 }
                 ui.separator();
@@ -170,7 +163,7 @@ pub fn draw_top_bar(ctx: &egui::Context, bar_ctx: &mut TopBarContext<'_>) {
                 ui.separator();
 
                 // View selector tabs
-                for view in [AppView::Mixer, AppView::Sequencer, AppView::Rack] {
+                for view in [AppView::Mixer, AppView::Rack] {
                     let is_selected = *bar_ctx.active_view == view;
                     let label = format!("{} {}", view.icon(), view.label());
                     let text = if is_selected {

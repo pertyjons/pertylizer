@@ -30,29 +30,23 @@ use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
-use crate::io::import;
 use crate::patch::{Patch, example_patches};
+use synth_core::Velocity;
 use synth_core::{
-    AmplifierParam, ChorusParam, CompressorParam, DelayParam, DistortionParam, EnvelopeParam,
-    EqParam, FlangerParam, Param, PhaserParam, ReverbParam, SamplePlayerParam,
+    ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
+    PhaserParam, ReverbParam,
 };
-use synth_core::{Describable, ModuleCategory, PolyModule};
-use synth_core::{FadeoutRate, Gain, LoopMode, NormalizedValue, ReleaseMode, Seconds, Velocity};
+use synth_core::{Describable, ModuleCategory};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
-use synth_engine::graph::Connection;
-use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
+use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
-use synth_engine::{
-    AllocationMode, AllocatorConfig, EngineCommand, EngineEvent, EngineHandle, ModuleId,
-    SynthEngine,
-};
+use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_modules::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
 use synth_modules::{
-    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, MultiPointEnvelope, NoiseGenerator,
-    Oscillator, SamplePlayer, StereoOutput, SubOscillator,
+    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
+    StereoOutput, SubOscillator,
 };
-use synth_sequencer::Song;
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -226,22 +220,13 @@ struct SynthApp {
 
     // Navigation state
     active_view: AppView,
-
-    // Tracker/Sequencer view state
-    tracker_state: synth_sequencer::view::TrackerViewState,
-
-    // Loaded song for sequencer
-    song: Option<Song>,
-
-    // Pending import file (processed on first update)
-    pending_import: Option<PathBuf>,
 }
 
 impl SynthApp {
     fn new(
         mut handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
-        config: SynthGuiConfig,
+        _config: SynthGuiConfig,
         latency: std::time::Duration,
     ) -> Self {
         // IMPORTANT: We use a startup patch instead of manually building GUI state.
@@ -312,9 +297,6 @@ impl SynthApp {
             next_instrument_id,
             master_effects: Vec::new(),
             active_view: AppView::default(),
-            tracker_state: synth_sequencer::view::TrackerViewState::default(),
-            song: None,
-            pending_import: config.import_file,
         }
     }
 
@@ -350,11 +332,6 @@ impl SynthApp {
 
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle pending import from CLI (first update only)
-        if let Some(path) = self.pending_import.take() {
-            self.import_song_file(&path);
-        }
-
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
 
@@ -435,11 +412,6 @@ impl eframe::App for SynthApp {
                             }
                         }
                     });
-                    ui.separator();
-                    if ui.button("🎵 Import Song...").clicked() {
-                        self.dialog_state.open_import_song_dialog();
-                        ui.close();
-                    }
                     ui.separator();
                     if ui.button("⚙ Settings...").clicked() {
                         self.dialog_state.show_settings = true;
@@ -538,7 +510,7 @@ impl eframe::App for SynthApp {
                     ui.separator();
 
                     // View selector tabs (rightmost, before status)
-                    for view in [AppView::Mixer, AppView::Sequencer, AppView::Rack] {
+                    for view in [AppView::Mixer, AppView::Rack] {
                         let is_selected = self.active_view == view;
                         let label = format!("{} {}", view.icon(), view.label());
                         let text = if is_selected {
@@ -548,19 +520,6 @@ impl eframe::App for SynthApp {
                         };
                         if ui.selectable_label(is_selected, text).clicked() {
                             self.active_view = view;
-                            // Manage focused instrument based on view
-                            match view {
-                                AppView::Sequencer => {
-                                    // Clear focused instrument so all instruments play
-                                    self.handle.set_focused_instrument(None);
-                                }
-                                AppView::Rack => {
-                                    // Set focused instrument to active one for solo preview
-                                    self.handle
-                                        .set_focused_instrument(Some(self.active_instrument_id));
-                                }
-                                _ => {}
-                            }
                         }
                     }
                 });
@@ -815,62 +774,6 @@ impl eframe::App for SynthApp {
                 patch_editor.apply_auto_layout(canvas_rect);
             }
                 });
-            }
-            AppView::Sequencer => {
-                // Get playback position from engine
-                let playback_tick = if self.handle.is_playing() {
-                    Some(synth_sequencer::Tick(self.handle.playback_ticks()))
-                } else {
-                    None
-                };
-                let playback_ticks_per_row = self.handle.playback_ticks_per_row();
-
-                // Show sequencer view with tracker state and loaded song
-                let result = crate::gui::views::sequencer::show(
-                    ctx,
-                    &mut self.tracker_state,
-                    self.song.as_ref(),
-                    playback_tick,
-                    playback_ticks_per_row,
-                );
-
-                // Handle transport actions
-                if let Some(action) = result.transport {
-                    use crate::gui::views::sequencer::TransportAction;
-                    match action {
-                        TransportAction::Play => {
-                            // Start from current pattern position
-                            if let Some(pattern_id) = self.tracker_state.active_pattern {
-                                self.handle
-                                    .send(EngineCommand::PlayFromPattern { pattern_id });
-                            } else {
-                                self.handle.send(EngineCommand::Play);
-                            }
-                        }
-                        TransportAction::Stop => {
-                            self.handle.send(EngineCommand::Stop);
-                        }
-                        TransportAction::Rewind => {
-                            self.handle.send(EngineCommand::Rewind);
-                        }
-                        TransportAction::PlayPattern => {
-                            // Loop only the active pattern
-                            if let Some(pattern_id) = self.tracker_state.active_pattern {
-                                self.handle.send(EngineCommand::PlayPattern { pattern_id });
-                            }
-                        }
-                    }
-                }
-
-                // Handle seek requests (pattern navigation during playback)
-                if let Some(tick) = result.seek_to {
-                    self.handle.send(EngineCommand::Seek { tick });
-                }
-
-                // Handle muted tracks changes
-                if let Some(muted) = result.muted_tracks_changed {
-                    self.handle.set_muted_tracks(muted);
-                }
             }
             AppView::Mixer => {
                 crate::gui::views::mixer::show(ctx);
@@ -1562,9 +1465,6 @@ impl SynthApp {
                         }
                     }
                 }
-                FileDialogResult::Picked(path, Some(FileDialogMode::ImportSong)) => {
-                    self.import_song_file(&path);
-                }
                 FileDialogResult::Picked(path, Some(FileDialogMode::OpenSample)) => {
                     // TODO: Handle sample loading when sample player UI is ready
                     self.dialog_state
@@ -1623,590 +1523,6 @@ impl SynthApp {
             &mut self.glide_time,
             active_id,
         );
-    }
-
-    /// Import a song from a tracker file (MOD, XM, S3M).
-    fn import_song_file(&mut self, path: &std::path::Path) {
-        match import::import_song(path) {
-            Ok(mut imported) => {
-                // === Step 1: Clear existing state ===
-                // Remove ALL existing instruments from engine (including the default one)
-                for inst in &self.instruments {
-                    self.handle.send_blocking(EngineCommand::RemoveInstrument {
-                        instrument_id: inst.id,
-                    });
-                }
-                // Clear GUI state
-                self.instruments.clear();
-                self.instance_counters.clear();
-                self.handle.visualization_buffers.clear();
-
-                // === Step 2: Sync grid from notes for tracker view ===
-                // Collect pattern IDs first to avoid borrow issues
-                let pattern_ids: Vec<_> = imported.song.patterns().map(|p| p.id).collect();
-                for pattern_id in pattern_ids {
-                    if let Some(pattern) = imported.song.pattern_mut(pattern_id) {
-                        pattern.sync_grid_from_notes();
-                    }
-                }
-
-                // === Step 3: Create instruments ===
-                let instrument_count = imported.instruments.len();
-                if instrument_count == 0 {
-                    // No instruments - create a default instrument with just StereoOutput
-                    let inst_id = InstrumentId::new(self.next_instrument_id);
-                    self.next_instrument_id += 1;
-
-                    let mut ui_state = InstrumentUiState::new(inst_id, "Default");
-                    ui_state.channel = MidiChannel::CH1;
-
-                    // Add StereoOutput to patch editor
-                    let output = StereoOutput::new();
-                    let output_desc = output.descriptor();
-                    let output_id = self.next_module_id(TypedModuleType::StereoOutput);
-                    ui_state.patch_editor.add_module(output_id, output_desc);
-
-                    // Create engine instrument with tracker config
-                    let voice_config = AllocatorConfig {
-                        max_voices: imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO),
-                        mode: AllocationMode::Tracker,
-                        ..Default::default()
-                    };
-                    let mut engine_inst = Instrument::with_config(inst_id, "Default", voice_config);
-                    engine_inst.set_midi_channel(MidiChannel::CH1);
-                    self.handle.send_blocking(EngineCommand::AddInstrument {
-                        instrument: Box::new(engine_inst),
-                    });
-
-                    // Add StereoOutput module to engine
-                    self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                        instrument_id: Some(inst_id),
-                        id: output_id,
-                        module: Box::new(output),
-                    });
-
-                    self.instruments.push(ui_state);
-                    self.active_instrument_id = inst_id;
-                    // Set focused instrument for keyboard routing
-                    self.handle.set_focused_instrument(Some(inst_id));
-                } else {
-                    // Create one synth instrument per imported instrument
-                    for (idx, inst_meta) in imported.instruments.iter().enumerate() {
-                        // Get sample for this instrument (if any)
-                        let sample = inst_meta
-                            .sample_index
-                            .and_then(|i| imported.samples.get(i))
-                            .cloned();
-
-                        // Check if instrument has a valid (non-empty) sample
-                        let has_valid_sample = sample.as_ref().is_some_and(|s| s.len().0 > 0);
-
-                        let inst_id = InstrumentId::new(self.next_instrument_id);
-                        self.next_instrument_id += 1;
-
-                        // Use instrument name or generate one
-                        let inst_name = if inst_meta.name.is_empty() {
-                            format!("Instrument {}", idx + 1)
-                        } else {
-                            inst_meta.name.clone()
-                        };
-
-                        // Assign MIDI channel (1-16, wrap around)
-                        let channel = MidiChannel::from_one_indexed(((idx % 16) + 1) as u8)
-                            .unwrap_or(MidiChannel::CH1);
-
-                        let mut ui_state = InstrumentUiState::new(inst_id, &inst_name);
-                        ui_state.channel = channel;
-
-                        // === Create engine instrument (always, to preserve indexing) ===
-                        let min_voices =
-                            imported.min_voices.unwrap_or(synth_core::VoiceCount::OCTO);
-                        let voice_config = AllocatorConfig {
-                            max_voices: min_voices,
-                            mode: AllocationMode::Tracker,
-                            ..Default::default()
-                        };
-                        let mut engine_inst =
-                            Instrument::with_config(inst_id, &inst_name, voice_config);
-                        engine_inst.set_midi_channel(channel);
-                        self.handle.send_blocking(EngineCommand::AddInstrument {
-                            instrument: Box::new(engine_inst),
-                        });
-
-                        // === Only create modules if instrument has a valid sample ===
-                        if !has_valid_sample {
-                            // Empty instrument - just add to UI and continue
-                            self.instruments.push(ui_state);
-                            if idx == 0 {
-                                self.active_instrument_id = inst_id;
-                                self.handle.set_focused_instrument(Some(inst_id));
-                            }
-                            continue;
-                        }
-
-                        // Generate waveform overview for GUI visualization
-                        if let Some(ref smp) = sample {
-                            ui_state.waveform_overview =
-                                Some(synth_core::WaveformOverview::generate(smp, 200));
-                        }
-
-                        // === Create SamplePlayer module ===
-                        let mut sample_player = SamplePlayer::new();
-
-                        // Pre-configure SamplePlayer from sample metadata (if available)
-                        // This ensures GUI and engine have matching parameters
-                        if let Some(ref smp) = sample {
-                            let sample_len = smp.len().as_usize();
-                            // Apply loop settings from sample metadata
-                            if let Some(ref loop_info) = smp.loop_info {
-                                // Convert exact sample positions to normalized values for GUI
-                                sample_player.set_param(Param::SamplePlayer(
-                                    SamplePlayerParam::LoopStart(NormalizedValue::new(
-                                        loop_info.normalized_start(sample_len),
-                                    )),
-                                ));
-                                sample_player.set_param(Param::SamplePlayer(
-                                    SamplePlayerParam::LoopEnd(NormalizedValue::new(
-                                        loop_info.normalized_end(sample_len),
-                                    )),
-                                ));
-                                if loop_info.enabled {
-                                    let loop_mode = if loop_info.ping_pong {
-                                        LoopMode::PingPong
-                                    } else {
-                                        LoopMode::Forward
-                                    };
-                                    sample_player.set_param(Param::SamplePlayer(
-                                        SamplePlayerParam::LoopMode(loop_mode),
-                                    ));
-                                }
-                            }
-
-                            // Apply default volume from sample metadata
-                            if let Some(volume) = smp.default_volume {
-                                sample_player.set_param(Param::SamplePlayer(
-                                    SamplePlayerParam::Level(Gain::new(volume)),
-                                ));
-                            }
-
-                            // Set release mode based on loop settings:
-                            // - Looped samples: Immediate (stop at note-off)
-                            // - Non-looped samples: PlayToEnd (let sample finish)
-                            let has_loop =
-                                smp.loop_info.as_ref().map(|li| li.enabled).unwrap_or(false);
-                            let release_mode = if has_loop {
-                                ReleaseMode::Immediate
-                            } else {
-                                ReleaseMode::PlayToEnd
-                            };
-                            sample_player.set_param(Param::SamplePlayer(
-                                SamplePlayerParam::ReleaseMode(release_mode),
-                            ));
-                        }
-
-                        let sample_player_desc = sample_player.descriptor();
-                        let sample_player_id = self.next_module_id(TypedModuleType::SamplePlayer);
-                        ui_state
-                            .patch_editor
-                            .add_module(sample_player_id, sample_player_desc);
-
-                        // Sync GUI parameter values with pre-configured SamplePlayer
-                        // (add_module uses descriptor defaults, so we need to override)
-                        if let Some(ref smp) = sample {
-                            let sample_len = smp.len().as_usize();
-                            if let Some(ref loop_info) = smp.loop_info {
-                                // Convert exact sample positions to normalized values for GUI
-                                ui_state.patch_editor.set_parameter_by_name(
-                                    sample_player_id,
-                                    "Loop Start",
-                                    loop_info.normalized_start(sample_len),
-                                );
-                                ui_state.patch_editor.set_parameter_by_name(
-                                    sample_player_id,
-                                    "Loop End",
-                                    loop_info.normalized_end(sample_len),
-                                );
-                                if loop_info.enabled {
-                                    let loop_mode_idx = if loop_info.ping_pong {
-                                        3.0 // PingPong = index 3
-                                    } else {
-                                        1.0 // Forward = index 1
-                                    };
-                                    ui_state.patch_editor.set_parameter_by_name(
-                                        sample_player_id,
-                                        "Loop",
-                                        loop_mode_idx,
-                                    );
-                                }
-                            }
-
-                            if let Some(volume) = smp.default_volume {
-                                ui_state.patch_editor.set_parameter_by_name(
-                                    sample_player_id,
-                                    "Level",
-                                    volume,
-                                );
-                            }
-
-                            // Set release mode in GUI
-                            let has_loop =
-                                smp.loop_info.as_ref().map(|li| li.enabled).unwrap_or(false);
-                            let release_mode_idx = if has_loop {
-                                0.0 // Immediate = index 0
-                            } else {
-                                1.0 // PlayToEnd = index 1
-                            };
-                            ui_state.patch_editor.set_parameter_by_name(
-                                sample_player_id,
-                                "Release",
-                                release_mode_idx,
-                            );
-                        }
-
-                        // Copy waveform overview to the module's panel state
-                        if let Some(ref waveform) = ui_state.waveform_overview {
-                            ui_state
-                                .patch_editor
-                                .set_module_waveform(sample_player_id, waveform.clone());
-                        }
-
-                        // Set position buffer for real-time playback position display
-                        let position_buffer = sample_player.position_buffer();
-                        ui_state
-                            .patch_editor
-                            .set_module_position_buffer(sample_player_id, position_buffer);
-
-                        // === Create Envelope + Amplifier ===
-                        // All instruments get an envelope + amplifier to ensure NoteOff works.
-                        // - With envelope points: use MultiPointEnvelope
-                        // - With ADSR (enabled but no points): use ADSR Envelope
-                        // - Without envelope: use minimal gate envelope (instant on/off)
-
-                        // Calculate tick rate from song BPM
-                        let song_bpm = imported.song.default_tempo.as_f32();
-                        let tick_rate = song_bpm * 2.0 / 5.0;
-
-                        // Create the volume envelope module
-                        let (envelope_id, envelope_module): (ModuleId, Box<dyn PolyModule>) =
-                            if inst_meta.volume_envelope.enabled
-                                && !inst_meta.envelope_points.is_empty()
-                            {
-                                // Use MultiPointEnvelope for accurate XM/IT envelope playback
-                                let mut mp_env =
-                                    MultiPointEnvelope::with_points(&inst_meta.envelope_points);
-
-                                // Set sustain point (holds until note-off)
-                                mp_env.set_sustain_point(inst_meta.envelope_sustain);
-
-                                // Set loop region (loops while sustained)
-                                if let Some((loop_start, loop_end)) = inst_meta.envelope_loop {
-                                    mp_env.set_loop(Some(loop_start), Some(loop_end));
-                                }
-
-                                // Set fadeout rate from instrument metadata
-                                // XM fadeout is stored as f32 (0.0-65535.0 range)
-                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                                let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
-                                mp_env.set_fadeout_rate(fadeout_rate);
-
-                                // Set tick rate from song BPM
-                                mp_env.set_tick_rate(tick_rate);
-
-                                let envelope_desc = mp_env.descriptor();
-                                let envelope_id =
-                                    self.next_module_id(TypedModuleType::MultiPointEnvelope);
-                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
-
-                                (envelope_id, Box::new(mp_env))
-                            } else if inst_meta.volume_envelope.enabled {
-                                // Fall back to ADSR Envelope for simple cases
-                                let mut envelope = Envelope::new();
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
-                                    inst_meta.volume_envelope.attack,
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
-                                    inst_meta.volume_envelope.decay,
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
-                                    inst_meta.volume_envelope.sustain,
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Release(
-                                    inst_meta.volume_envelope.release,
-                                )));
-
-                                let envelope_desc = envelope.descriptor();
-                                let position_buffer = envelope.position_buffer();
-                                let envelope_id = self.next_module_id(TypedModuleType::Envelope);
-                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
-                                ui_state
-                                    .patch_editor
-                                    .set_module_envelope_position(envelope_id, position_buffer);
-
-                                (envelope_id, Box::new(envelope))
-                            } else {
-                                // Gate envelope: instant on/off for instruments without volume envelope
-                                // This ensures NoteOff can silence looped samples (MOD/S3M)
-                                let mut envelope = Envelope::new();
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Attack(
-                                    Seconds::new(0.001),
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Decay(
-                                    Seconds::new(0.001),
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Sustain(
-                                    NormalizedValue::MAX,
-                                )));
-                                envelope.set_param(Param::Envelope(EnvelopeParam::Release(
-                                    Seconds::new(0.005),
-                                )));
-
-                                let envelope_desc = envelope.descriptor();
-                                let envelope_id = self.next_module_id(TypedModuleType::Envelope);
-                                ui_state.patch_editor.add_module(envelope_id, envelope_desc);
-
-                                (envelope_id, Box::new(envelope))
-                            };
-
-                        // Create Amplifier (VCA) with global volume and pan
-                        let mut amplifier = Amplifier::new();
-                        amplifier.set_param(Param::Amplifier(AmplifierParam::Level(
-                            inst_meta.global_volume,
-                        )));
-                        amplifier.set_param(Param::Amplifier(AmplifierParam::Pan(
-                            inst_meta.default_pan,
-                        )));
-
-                        let amplifier_desc = amplifier.descriptor();
-                        let amplifier_id = self.next_module_id(TypedModuleType::Amplifier);
-                        ui_state
-                            .patch_editor
-                            .add_module(amplifier_id, amplifier_desc);
-
-                        // Create panning envelope if instrument has panning envelope points
-                        let panning_envelope = if !inst_meta.panning_envelope_points.is_empty() {
-                            let mut pan_env =
-                                MultiPointEnvelope::with_points(&inst_meta.panning_envelope_points);
-
-                            // Set sustain point
-                            pan_env.set_sustain_point(inst_meta.panning_envelope_sustain);
-
-                            // Set loop region
-                            if let Some((loop_start, loop_end)) = inst_meta.panning_envelope_loop {
-                                pan_env.set_loop(Some(loop_start), Some(loop_end));
-                            }
-
-                            // Panning envelope uses same fadeout as volume
-                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                            let fadeout_rate = FadeoutRate::new(inst_meta.fadeout as u16);
-                            pan_env.set_fadeout_rate(fadeout_rate);
-
-                            // Set tick rate from song BPM
-                            pan_env.set_tick_rate(tick_rate);
-
-                            // Bipolar output: 0.0-1.0 → -1.0 to +1.0
-                            pan_env.set_output_bipolar(true);
-
-                            let pan_env_desc = pan_env.descriptor();
-                            let pan_env_id =
-                                self.next_module_id(TypedModuleType::MultiPointEnvelope);
-                            ui_state.patch_editor.add_module(pan_env_id, pan_env_desc);
-
-                            Some((pan_env_id, Box::new(pan_env) as Box<dyn PolyModule>))
-                        } else {
-                            None
-                        };
-
-                        // === Create StereoOutput module ===
-                        let stereo_output = StereoOutput::new();
-                        let stereo_output_desc = stereo_output.descriptor();
-                        let stereo_output_id = self.next_module_id(TypedModuleType::StereoOutput);
-                        ui_state
-                            .patch_editor
-                            .add_module(stereo_output_id, stereo_output_desc);
-
-                        // === Create connections in GUI ===
-                        // All instruments: SamplePlayer -> Amplifier -> StereoOutput
-                        //                  Envelope -> Amplifier CV
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            sample_player_id,
-                            "out",
-                            amplifier_id,
-                            "in",
-                        ));
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            envelope_id,
-                            "out",
-                            amplifier_id,
-                            "cv",
-                        ));
-                        // Panning envelope -> Amplifier pan_cv
-                        if let Some((pan_env_id, _)) = &panning_envelope {
-                            ui_state.patch_editor.add_connection(Connection::new(
-                                *pan_env_id,
-                                "out",
-                                amplifier_id,
-                                "pan_cv",
-                            ));
-                        }
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            amplifier_id,
-                            "left",
-                            stereo_output_id,
-                            "in_l",
-                        ));
-                        ui_state.patch_editor.add_connection(Connection::new(
-                            amplifier_id,
-                            "right",
-                            stereo_output_id,
-                            "in_r",
-                        ));
-
-                        // === Send modules to engine (all modules BEFORE connections) ===
-                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                            instrument_id: Some(inst_id),
-                            id: sample_player_id,
-                            module: Box::new(sample_player),
-                        });
-
-                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                            instrument_id: Some(inst_id),
-                            id: stereo_output_id,
-                            module: Box::new(stereo_output),
-                        });
-
-                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                            instrument_id: Some(inst_id),
-                            id: envelope_id,
-                            module: envelope_module, // Already boxed
-                        });
-                        self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                            instrument_id: Some(inst_id),
-                            id: amplifier_id,
-                            module: Box::new(amplifier),
-                        });
-
-                        // Extract panning envelope ID before consuming the module
-                        let pan_env_id_opt = panning_envelope.as_ref().map(|(id, _)| *id);
-
-                        if let Some((pan_env_id, pan_env_module)) = panning_envelope {
-                            self.handle.send_blocking(EngineCommand::AddModuleInstance {
-                                instrument_id: Some(inst_id),
-                                id: pan_env_id,
-                                module: pan_env_module,
-                            });
-                        }
-
-                        // Send connections
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(sample_player_id, "out"),
-                            to: PortId::new(amplifier_id, "in"),
-                        });
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(envelope_id, "out"),
-                            to: PortId::new(amplifier_id, "cv"),
-                        });
-                        if let Some(pan_env_id) = pan_env_id_opt {
-                            self.handle.send_blocking(EngineCommand::Connect {
-                                instrument_id: Some(inst_id),
-                                from: PortId::new(pan_env_id, "out"),
-                                to: PortId::new(amplifier_id, "pan_cv"),
-                            });
-                        }
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(amplifier_id, "left"),
-                            to: PortId::new(stereo_output_id, "in_l"),
-                        });
-                        self.handle.send_blocking(EngineCommand::Connect {
-                            instrument_id: Some(inst_id),
-                            from: PortId::new(amplifier_id, "right"),
-                            to: PortId::new(stereo_output_id, "in_r"),
-                        });
-
-                        // === Load sample(s) into SamplePlayer ===
-                        // For multisample instruments (with keymap), load the full sample bank
-                        // For single-sample instruments, use the simpler LoadSample command
-                        if let Some(keymap) = &inst_meta.sample_keymap {
-                            // Multisample instrument: collect all samples for this instrument
-                            if let Some(first_idx) = inst_meta.sample_index {
-                                let bank_samples: Vec<_> = (0..inst_meta.sample_count)
-                                    .filter_map(|offset| {
-                                        imported.samples.get(first_idx + offset).cloned()
-                                    })
-                                    .collect();
-
-                                if !bank_samples.is_empty() {
-                                    self.handle.send_blocking(EngineCommand::LoadSampleBank {
-                                        instrument_id: Some(inst_id),
-                                        module_id: sample_player_id,
-                                        samples: bank_samples,
-                                        keymap: keymap.clone(),
-                                    });
-                                }
-                            }
-                        } else if let Some(smp) = sample {
-                            // Single sample instrument
-                            self.handle.send_blocking(EngineCommand::LoadSample {
-                                instrument_id: Some(inst_id),
-                                module_id: sample_player_id,
-                                sample: smp,
-                            });
-                        }
-
-                        self.instruments.push(ui_state);
-
-                        // Set first instrument as active for keyboard input
-                        if idx == 0 {
-                            self.active_instrument_id = inst_id;
-                            // Set focused instrument for keyboard routing
-                            self.handle.set_focused_instrument(Some(inst_id));
-                        }
-                    }
-                }
-
-                // === Step 4: Store the song and set tempo ===
-                self.handle
-                    .send_blocking(EngineCommand::SetTempo(imported.song.default_tempo));
-
-                // Set the active pattern for the tracker view (first pattern in arrangement)
-                let first_pattern_id = imported.song.arrangement().first().map(|p| p.pattern_id);
-                self.tracker_state.active_pattern = first_pattern_id;
-
-                // === Step 5: Send song to engine for playback ===
-                // Create Arc<RwLock<Song>> and share with engine
-                let song_arc = std::sync::Arc::new(std::sync::RwLock::new(imported.song.clone()));
-                self.handle
-                    .send_blocking(EngineCommand::SetSong { song: song_arc });
-
-                // Store the song in GUI state
-                self.song = Some(imported.song);
-
-                // === Step 6: Reset transport ===
-                self.handle.send_blocking(EngineCommand::Stop);
-                self.handle.send_blocking(EngineCommand::Rewind);
-
-                // Show success status
-                let file_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                let sample_count = imported.samples.len();
-                self.dialog_state.set_status(format!(
-                    "Imported: {} ({} instruments, {} samples)",
-                    file_name, instrument_count, sample_count
-                ));
-
-                // Switch to sequencer view to show the imported song
-                self.active_view = AppView::Sequencer;
-                // Keep focused instrument set - keyboard input goes to active instrument,
-                // sequencer plays all instruments regardless of focus
-            }
-            Err(e) => {
-                self.dialog_state.set_status(format!("Import failed: {e}"));
-            }
-        }
     }
 
     /// Reset the active instrument to a new empty patch.

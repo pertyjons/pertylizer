@@ -180,9 +180,6 @@ pub struct TransportState {
     pub position_ticks: AtomicU64,
     /// Is playing.
     pub is_playing: std::sync::atomic::AtomicBool,
-    /// Dynamic ticks per row (updated by SetSpeed effect during playback).
-    /// Used by the GUI to calculate the correct playback row.
-    pub ticks_per_row: StdAtomicU32,
 }
 
 impl TransportState {
@@ -193,7 +190,6 @@ impl TransportState {
             position_samples: AtomicU64::new(0),
             position_ticks: AtomicU64::new(0),
             is_playing: std::sync::atomic::AtomicBool::new(false),
-            ticks_per_row: StdAtomicU32::new(240), // Default: speed 6 * 40
         }
     }
 
@@ -227,14 +223,6 @@ impl TransportState {
 
     pub fn get_ticks(&self) -> u64 {
         self.position_ticks.load(Ordering::Relaxed)
-    }
-
-    pub fn set_ticks_per_row(&self, tpr: u32) {
-        self.ticks_per_row.store(tpr, Ordering::Relaxed);
-    }
-
-    pub fn get_ticks_per_row(&self) -> u32 {
-        self.ticks_per_row.load(Ordering::Relaxed)
     }
 
     pub fn reset(&self) {

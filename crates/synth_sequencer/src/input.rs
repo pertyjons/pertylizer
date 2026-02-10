@@ -2,7 +2,6 @@
 //!
 //! Provides a unified interface for all input sources (MIDI, keyboard, GUI, etc.).
 
-use super::effects::EffectCommand;
 use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick, Tick};
@@ -55,19 +54,6 @@ pub enum InputCommand {
         note_id: NoteId,
         velocity: Velocity,
     },
-    /// Add effect to note.
-    AddEffect {
-        pattern: PatternId,
-        note_id: NoteId,
-        effect: EffectCommand,
-    },
-    /// Remove effect from note.
-    RemoveEffect {
-        pattern: PatternId,
-        note_id: NoteId,
-        effect_index: usize,
-    },
-
     // === Selection ===
     /// Select specific notes.
     SelectNotes {
@@ -201,8 +187,6 @@ impl InputCommand {
                 | Self::ResizeNote { .. }
                 | Self::TransposeNote { .. }
                 | Self::SetNoteVelocity { .. }
-                | Self::AddEffect { .. }
-                | Self::RemoveEffect { .. }
                 | Self::SelectNotes { .. }
                 | Self::SelectRange { .. }
                 | Self::AddToSelection { .. }
@@ -245,8 +229,6 @@ impl InputCommand {
                 | Self::ResizeNote { .. }
                 | Self::TransposeNote { .. }
                 | Self::SetNoteVelocity { .. }
-                | Self::AddEffect { .. }
-                | Self::RemoveEffect { .. }
                 | Self::DeleteSelection
                 | Self::CutSelection
                 | Self::PasteAt { .. }

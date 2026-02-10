@@ -10,37 +10,26 @@
 //! # Run with default GUI (egui)
 //! cargo run
 //!
-//! # Import a tracker file on startup
-//! cargo run -- song.xm
-//! cargo run -- --import /path/to/song.xm
-//!
 //! # Run with console interface
 //! cargo run -- --gui console
-//!
-//! # Debug import a tracker file (no GUI)
-//! cargo run -- --debug-import /path/to/song.xm
 //!
 //! # Or compile with only console support
 //! cargo run --no-default-features --features gui-console
 //! ```
 
 use std::env;
-use std::path::{Path, PathBuf};
 
 use modular_synth::audio::{
     self, AudioHostTrait, BufferSize, ChannelCount, SampleRate, StreamConfig,
 };
 use modular_synth::gui::{GuiType, SynthGuiConfig, create_backend, print_available_backends};
-use modular_synth::io::import::{SongImporter, TrackerImporter};
 use modular_synth::synth_core::VoiceCount;
 use modular_synth::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
 
 /// Command-line action to perform.
 enum CliAction {
-    /// Run the GUI (default behavior), optionally with a file to import.
-    RunGui(GuiType, Option<PathBuf>),
-    /// Import a tracker file and print debug information.
-    DebugImport(String),
+    /// Run the GUI (default behavior).
+    RunGui(GuiType),
     /// List available backends and exit.
     ListBackends,
 }
@@ -51,24 +40,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_args(&args)?;
 
     match action {
-        CliAction::DebugImport(path) => {
-            run_debug_import(&path)?;
-        }
         CliAction::ListBackends => {
             print_available_backends();
         }
-        CliAction::RunGui(gui_type, import_file) => {
-            run_gui(gui_type, import_file)?;
+        CliAction::RunGui(gui_type) => {
+            run_gui(gui_type)?;
         }
     }
 
     Ok(())
 }
 
-fn run_gui(
-    gui_type: GuiType,
-    import_file: Option<PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: VoiceCount::OCTO,
@@ -104,7 +87,6 @@ fn run_gui(
         height: 800,
         allocator_config,
         stream_config,
-        import_file,
     };
 
     // Create and run the selected GUI backend
@@ -118,25 +100,10 @@ fn run_gui(
 
 fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> {
     let mut gui_type: Option<GuiType> = None;
-    let mut import_file: Option<PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--debug-import" | "-d" => {
-                if i + 1 < args.len() {
-                    return Ok(CliAction::DebugImport(args[i + 1].clone()));
-                }
-                return Err("--debug-import requires a file path".into());
-            }
-            "--import" | "-i" => {
-                if i + 1 < args.len() {
-                    import_file = Some(PathBuf::from(&args[i + 1]));
-                    i += 1;
-                } else {
-                    return Err("--import requires a file path".into());
-                }
-            }
             "--gui" | "-g" => {
                 if i + 1 < args.len() {
                     let gui_name = &args[i + 1];
@@ -165,9 +132,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
                     eprintln!("Unknown option: {}", args[i]);
                     print_help();
                     std::process::exit(1);
-                } else {
-                    // Positional argument: treat as import file
-                    import_file = Some(PathBuf::from(&args[i]));
                 }
             }
         }
@@ -175,183 +139,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
     }
 
     // Default to egui if available, otherwise console
-    Ok(CliAction::RunGui(
-        gui_type.unwrap_or_else(default_gui_type),
-        import_file,
-    ))
-}
-
-fn run_debug_import(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== DEBUG XM IMPORT ===");
-    println!("File: {}\n", path);
-
-    let importer = TrackerImporter::new();
-    let imported = importer.import(Path::new(path))?;
-
-    println!("=== IMPORT SUCCESS ===");
-    println!("Song name: '{}'", imported.song.name);
-    println!(
-        "Default tempo: {} BPM",
-        imported.song.default_tempo.as_f32()
-    );
-    println!("Samples: {}", imported.samples.len());
-    println!("Instruments: {}", imported.instruments.len());
-    println!("Patterns: {}", imported.song.pattern_count());
-
-    println!("\n=== INSTRUMENTS ===");
-    for (idx, inst) in imported.instruments.iter().enumerate() {
-        let sample_info = inst
-            .sample_index
-            .map(|i| format!("sample[{}]", i))
-            .unwrap_or_else(|| "NO SAMPLE".to_string());
-        let env_info = if inst.envelope_points.is_empty() {
-            "no envelope".to_string()
-        } else {
-            let enabled = if inst.volume_envelope.enabled {
-                "ON"
-            } else {
-                "OFF"
-            };
-            let sustain = inst
-                .envelope_sustain
-                .map(|s| format!(" sus={s}"))
-                .unwrap_or_default();
-            let loop_info = inst
-                .envelope_loop
-                .map(|(s, e)| format!(" loop={s}-{e}"))
-                .unwrap_or_default();
-            format!(
-                "{} pts {} {}{}",
-                inst.envelope_points.len(),
-                enabled,
-                sustain,
-                loop_info
-            )
-        };
-        println!(
-            "  [{:02}] '{}' - {} (vol={:.2}) [{}]",
-            idx,
-            inst.name,
-            sample_info,
-            inst.global_volume.as_f32(),
-            env_info
-        );
-    }
-
-    println!("\n=== SAMPLES ===");
-    for (idx, smp) in imported.samples.iter().enumerate() {
-        let loop_info = smp
-            .loop_info
-            .as_ref()
-            .map(|li| {
-                format!(
-                    "loop={} ({:.2}-{:.2})",
-                    li.enabled, li.loop_start, li.loop_end
-                )
-            })
-            .unwrap_or_else(|| "no loop".to_string());
-        println!(
-            "  [{:02}] {} frames, {:?} - {}",
-            idx,
-            smp.len().0,
-            smp.channels,
-            loop_info
-        );
-    }
-
-    println!("\n=== ARRANGEMENT ===");
-    for (idx, placement) in imported.song.arrangement().iter().take(10).enumerate() {
-        println!(
-            "  [{}] Pattern {:?} at tick {}",
-            idx, placement.pattern_id, placement.start.0
-        );
-    }
-    if imported.song.arrangement().len() > 10 {
-        println!("  ... ({} more)", imported.song.arrangement().len() - 10);
-    }
-
-    println!("\n=== FIRST PATTERN ===");
-    let first_arrangement = imported.song.arrangement().first();
-    let first_pattern = first_arrangement.and_then(|p| imported.song.pattern(p.pattern_id));
-    if let Some(pattern) = first_pattern {
-        println!("Pattern ID: {:?}", pattern.id);
-        println!("Length: {} ticks", pattern.length.0);
-        println!("Tracks: {}", pattern.num_tracks());
-        println!("Notes: {}", pattern.notes().len());
-        println!("Effect-only events: {}", pattern.effect_events().len());
-
-        println!("\nFirst 20 notes:");
-        for (i, note) in pattern.notes().iter().take(20).enumerate() {
-            let duration_info = note
-                .duration
-                .map(|d| format!(", dur={}", d.0))
-                .unwrap_or_default();
-            println!(
-                "  [{:02}] tick={}, {} (MIDI {}), vel={:.2}, inst={:?}, track={:?}{}",
-                i,
-                note.start.0,
-                note.pitch,
-                note.pitch.as_midi(),
-                note.velocity.as_f32(),
-                note.instrument,
-                note.track,
-                duration_info
-            );
-        }
-    }
-
-    // Check for potential issues
-    println!("\n=== POTENTIAL ISSUES ===");
-
-    // Check if instruments have samples
-    let instruments_without_samples = imported
-        .instruments
-        .iter()
-        .filter(|inst| inst.sample_index.is_none())
-        .count();
-    if instruments_without_samples > 0 {
-        println!(
-            "WARNING: {} instruments have no sample!",
-            instruments_without_samples
-        );
-    }
-
-    // Check if any notes reference non-existent instruments
-    if let Some(pattern) = imported.song.patterns().next() {
-        let max_inst = imported.instruments.len();
-        let bad_refs: Vec<_> = pattern
-            .notes()
-            .iter()
-            .filter(|n| n.instrument.0 as usize >= max_inst)
-            .collect();
-        if !bad_refs.is_empty() {
-            println!(
-                "WARNING: {} notes reference instruments >= {} (out of bounds)!",
-                bad_refs.len(),
-                max_inst
-            );
-            for note in bad_refs.iter().take(5) {
-                println!(
-                    "  - Note at tick {}: inst={:?}",
-                    note.start.0, note.instrument
-                );
-            }
-        }
-    }
-
-    // Check sample sizes
-    let empty_samples = imported.samples.iter().filter(|s| s.len().0 == 0).count();
-    if empty_samples > 0 {
-        println!("WARNING: {} samples are empty!", empty_samples);
-    }
-
-    // No warnings
-    if instruments_without_samples == 0 && empty_samples == 0 {
-        println!("No issues detected.");
-    }
-
-    println!("\n=== DONE ===");
-    Ok(())
+    Ok(CliAction::RunGui(gui_type.unwrap_or_else(default_gui_type)))
 }
 
 fn default_gui_type() -> GuiType {
@@ -370,20 +158,14 @@ fn default_gui_type() -> GuiType {
 }
 
 fn print_help() {
-    println!("Modular Synthesizer v0.6.0");
+    println!("Modular Synthesizer");
     println!();
     println!("USAGE:");
-    println!("    modular-synth [OPTIONS] [FILE]");
-    println!();
-    println!("ARGS:");
-    println!("    [FILE]                 Tracker file to import on startup (MOD, XM, S3M)");
+    println!("    modular-synth [OPTIONS]");
     println!();
     println!("OPTIONS:");
-    println!("    -i, --import <FILE>    Import tracker file on startup");
     println!("    -g, --gui <TYPE>       Select GUI backend (egui, console)");
     println!("    -c, --console          Shortcut for --gui console");
-    println!("    -d, --debug-import <FILE>");
-    println!("                           Import tracker file and print debug info (no GUI)");
     println!("    --list-backends        List available GUI backends");
     println!("    -h, --help             Print this help message");
     println!();
@@ -395,8 +177,5 @@ fn print_help() {
     println!();
     println!("EXAMPLES:");
     println!("    modular-synth                      # Run with graphical interface");
-    println!("    modular-synth song.xm              # Import and play tracker file");
-    println!("    modular-synth -i song.xm           # Same as above");
     println!("    modular-synth --gui console        # Run with text interface");
-    println!("    modular-synth -d song.xm           # Debug import (no GUI)");
 }
