@@ -85,7 +85,11 @@
       "WebFetch(domain:crates.io)",
       "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline -20)",
       "Bash(do echo \"=== POSITION $pos ===\")",
-      "WebFetch(domain:forum.openmpt.org)"
+      "WebFetch(domain:forum.openmpt.org)",
+      "WebFetch(domain:lib.openmpt.org)",
+      "WebFetch(domain:xmp.sourceforge.net)",
+      "WebFetch(domain:nukep.github.io)",
+      "Bash(xargs:*)"
     ],
     "deny": [],
     "ask": []
