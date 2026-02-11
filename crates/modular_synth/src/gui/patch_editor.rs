@@ -642,10 +642,9 @@ impl PatchEditor {
                     }
                 } else {
                     // Normal modules: three-column layout (IN ports | content | OUT ports)
-                    // Measure total width BEFORE drawing anything, then allocate
-                    // fixed left/right and give the rest to the middle.
+                    // Let content determine module width naturally. After content is drawn,
+                    // fill remaining space to push the right port column flush to the edge.
                     let col_w = theme().sizes.port_column_width;
-                    let item_spacing = ui.spacing().item_spacing.x;
 
                     ui.horizontal(|ui| {
                         // Left column: input ports (fixed width)
@@ -659,36 +658,33 @@ impl PatchEditor {
 
                         ui.separator();
 
-                        // Calculate how much the right column + separator will need
-                        let right_reserve = col_w + item_spacing + 2.0;
-                        let available_for_middle = ui.available_width() - right_reserve;
-                        let middle_width =
-                            available_for_middle.max(theme().sizes.module_content_min_width);
-
-                        // Middle column: content (explicit width allocation)
-                        ui.allocate_ui(
-                            Vec2::new(middle_width, ui.available_height()),
-                            |ui| {
-                                if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                                    let vis_buffer =
-                                        handle.get_visualization_buffer(module_id);
-                                    let panel_result = draw_module_panel_params(
-                                        ui,
-                                        panel_state,
-                                        &descriptor,
-                                        accent_color,
-                                        vis_buffer,
-                                    );
-                                    for param in panel_result.param_changes {
-                                        result.param_changes.push((module_id, param));
-                                    }
+                        // Middle column: content (natural width)
+                        ui.vertical(|ui| {
+                            if let Some(panel_state) = self.panels.get_mut(&module_id) {
+                                let vis_buffer = handle.get_visualization_buffer(module_id);
+                                let panel_result = draw_module_panel_params(
+                                    ui,
+                                    panel_state,
+                                    &descriptor,
+                                    accent_color,
+                                    vis_buffer,
+                                );
+                                for param in panel_result.param_changes {
+                                    result.param_changes.push((module_id, param));
                                 }
-                            },
-                        );
+                            }
+                        });
+
+                        // Fill remaining space to push right column to the edge
+                        let right_need = col_w + ui.spacing().item_spacing.x + 2.0;
+                        let gap = (ui.available_width() - right_need).max(0.0);
+                        if gap > 0.0 {
+                            ui.add_space(gap);
+                        }
 
                         ui.separator();
 
-                        // Right column: output ports (fixed width, flush right)
+                        // Right column: output ports (flush right)
                         self.draw_port_column(
                             ui,
                             module_id,
