@@ -654,8 +654,14 @@ impl PatchEditor {
 
                         ui.separator();
 
-                        // Middle column: parameters (expands to fill)
+                        // Middle column: parameters (expand to push right column to edge)
+                        let right_col_reserve =
+                            theme().sizes.port_column_width + ui.spacing().item_spacing.x + 4.0;
+                        let middle_width = (ui.available_width() - right_col_reserve)
+                            .max(theme().sizes.module_content_min_width);
+
                         ui.vertical(|ui| {
+                            ui.set_min_width(middle_width);
                             if let Some(panel_state) = self.panels.get_mut(&module_id) {
                                 let vis_buffer = handle.get_visualization_buffer(module_id);
                                 let panel_result = draw_module_panel_params(
