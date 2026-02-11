@@ -90,7 +90,9 @@
       "WebFetch(domain:xmp.sourceforge.net)",
       "WebFetch(domain:nukep.github.io)",
       "Bash(xargs:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth add --all)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth commit -m \"$\\(cat <<''EOF''\nTa bort resterande sample-kod: SamplePlayer pitch mod, WaveformOverview, PlaybackPositionBuffer, hound-ref i ARCHITECTURE.md\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
     ],
     "deny": [],
     "ask": []

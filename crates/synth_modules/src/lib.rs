@@ -10,7 +10,6 @@
 //! - Amplifiers/VCAs (level control)
 //! - Output (final stereo output)
 //! - Physical modeling (strings, resonators, body)
-//! - Sample playback
 //! - Effects (delay, reverb, distortion, chorus)
 
 #![allow(clippy::must_use_candidate)]
@@ -27,7 +26,6 @@ pub mod math_oscillator;
 pub mod noise;
 pub mod oscillator;
 pub mod output;
-pub mod sample_player;
 pub mod sub_osc;
 
 // Physical modeling modules
@@ -47,7 +45,6 @@ pub use math_oscillator::MathOscillator;
 pub use noise::NoiseGenerator;
 pub use oscillator::Oscillator;
 pub use output::StereoOutput;
-pub use sample_player::{PlaybackPositionBuffer, SamplePlayer};
 pub use sub_osc::SubOscillator;
 
 // Physical modeling exports

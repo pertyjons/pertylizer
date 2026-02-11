@@ -847,23 +847,6 @@ pub trait PolyModule: Describable + Send {
         // Override in modules that need sample rate (oscillators, filters, etc.)
     }
 
-    /// Load a sample into this module (for sample-based modules).
-    /// Returns true if the sample was loaded, false if this module doesn't support samples.
-    fn load_sample(&mut self, _sample: std::sync::Arc<crate::types::Sample>) -> bool {
-        false
-    }
-
-    /// Load a sample bank with keymap (for multisample instruments).
-    /// The keymap maps MIDI notes (0-127) to sample indices in the bank.
-    /// Returns true if loaded, false if this module doesn't support sample banks.
-    fn load_sample_bank(
-        &mut self,
-        _samples: Vec<std::sync::Arc<crate::types::Sample>>,
-        _keymap: Vec<usize>,
-    ) -> bool {
-        false
-    }
-
     /// Clone into a boxed trait object.
     fn box_clone(&self) -> Box<dyn PolyModule>;
 }
@@ -916,9 +899,7 @@ pub trait AudioEffect: Describable + Send {
 // ============================================================================
 
 // Re-export waveform and filter types from typed_params
-pub use crate::params::{
-    DelayMode, DistortionMode, FilterMode, LfoWaveform, LoopMode, MathAlgo, Waveform,
-};
+pub use crate::params::{DelayMode, DistortionMode, FilterMode, LfoWaveform, MathAlgo, Waveform};
 
 // Type alias for backward compatibility
 pub type FilterType = FilterMode;

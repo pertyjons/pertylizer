@@ -534,27 +534,6 @@ impl Clone for EngineCommand {
                 instrument_id: *instrument_id,
                 solo: *solo,
             },
-            // Sample loading (Arc can be cloned)
-            Self::LoadSample {
-                instrument_id,
-                module_id,
-                sample,
-            } => Self::LoadSample {
-                instrument_id: *instrument_id,
-                module_id: *module_id,
-                sample: std::sync::Arc::clone(sample),
-            },
-            Self::LoadSampleBank {
-                instrument_id,
-                module_id,
-                samples,
-                keymap,
-            } => Self::LoadSampleBank {
-                instrument_id: *instrument_id,
-                module_id: *module_id,
-                samples: samples.clone(),
-                keymap: keymap.clone(),
-            },
             // Song (Arc can be cloned)
             Self::SetSong { song } => Self::SetSong {
                 song: std::sync::Arc::clone(song),

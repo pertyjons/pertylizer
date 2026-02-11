@@ -31,10 +31,7 @@ pub use effects::{
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
-pub use modules::{
-    AmplifierParam, GranularParam, LevelMeterParam, LoopMode, MixerParam, OscilloscopeParam,
-    ReleaseMode, SamplePlayerParam,
-};
+pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
 pub use physical::{
@@ -68,11 +65,6 @@ pub enum ModuleType {
     Flanger,
     Compressor,
     Eq,
-    // Sample-based
-    SamplePlayer,
-    SampleRecorder,
-    GranularSynth,
-    Wavetable,
     // Visualizers
     Oscilloscope,
     LevelMeter,
@@ -141,22 +133,11 @@ impl ModuleType {
 
     /// Check if this module type is global (not a voice module).
     ///
-    /// Global modules (effects, visualizers, sample-based) exist once per instrument
+    /// Global modules (effects, visualizers) exist once per instrument
     /// and process audio after voice mixing.
     #[inline]
     pub fn is_global(&self) -> bool {
         !self.is_voice_module()
-    }
-
-    /// Check if this module type is sample-based.
-    ///
-    /// Sample-based modules work with audio files rather than synthesis.
-    #[inline]
-    pub fn is_sample_based(&self) -> bool {
-        matches!(
-            self,
-            Self::SamplePlayer | Self::SampleRecorder | Self::GranularSynth | Self::Wavetable
-        )
     }
 
     // ========================================================================
@@ -184,10 +165,6 @@ impl ModuleType {
             Self::Flanger => "Flanger",
             Self::Compressor => "Compressor",
             Self::Eq => "EQ",
-            Self::SamplePlayer => "Sample Player",
-            Self::SampleRecorder => "Sample Recorder",
-            Self::GranularSynth => "Granular",
-            Self::Wavetable => "Wavetable",
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
             // Physical modeling
@@ -218,10 +195,6 @@ impl ModuleType {
             Self::Flanger => "fln",
             Self::Compressor => "cmp",
             Self::Eq => "equ",
-            Self::SamplePlayer => "spl",
-            Self::SampleRecorder => "rec",
-            Self::GranularSynth => "grn",
-            Self::Wavetable => "wtb",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             // Physical modeling
@@ -252,10 +225,6 @@ impl ModuleType {
             "fln" => Some(Self::Flanger),
             "cmp" => Some(Self::Compressor),
             "equ" => Some(Self::Eq),
-            "spl" => Some(Self::SamplePlayer),
-            "rec" => Some(Self::SampleRecorder),
-            "grn" => Some(Self::GranularSynth),
-            "wtb" => Some(Self::Wavetable),
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
             // Physical modeling
@@ -301,8 +270,6 @@ pub enum Param {
     Flanger(FlangerParam),
     Compressor(CompressorParam),
     Eq(EqParam),
-    SamplePlayer(SamplePlayerParam),
-    Granular(GranularParam),
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
     // Physical modeling
@@ -341,8 +308,6 @@ impl Param {
             (Self::Flanger(a), Self::Flanger(b)) => a.same_kind(b),
             (Self::Compressor(a), Self::Compressor(b)) => a.same_kind(b),
             (Self::Eq(a), Self::Eq(b)) => a.same_kind(b),
-            (Self::SamplePlayer(a), Self::SamplePlayer(b)) => a.same_kind(b),
-            (Self::Granular(a), Self::Granular(b)) => a.same_kind(b),
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
             // Physical modeling
@@ -373,8 +338,6 @@ impl Param {
             Self::Flanger(_) => ModuleType::Flanger,
             Self::Compressor(_) => ModuleType::Compressor,
             Self::Eq(_) => ModuleType::Eq,
-            Self::SamplePlayer(_) => ModuleType::SamplePlayer,
-            Self::Granular(_) => ModuleType::GranularSynth,
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
             // Physical modeling
@@ -404,8 +367,6 @@ impl Param {
             Self::Flanger(p) => p.name(),
             Self::Compressor(p) => p.name(),
             Self::Eq(p) => p.name(),
-            Self::SamplePlayer(p) => p.name(),
-            Self::Granular(p) => p.name(),
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
             // Physical modeling
@@ -435,8 +396,6 @@ impl Param {
             Self::Flanger(p) => p.as_f32(),
             Self::Compressor(p) => p.as_f32(),
             Self::Eq(p) => p.as_f32(),
-            Self::SamplePlayer(p) => p.as_f32(),
-            Self::Granular(p) => p.as_f32(),
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
             // Physical modeling
@@ -466,8 +425,6 @@ impl Param {
             Self::Flanger(p) => Self::Flanger(p.with_f32(value)),
             Self::Compressor(p) => Self::Compressor(p.with_f32(value)),
             Self::Eq(p) => Self::Eq(p.with_f32(value)),
-            Self::SamplePlayer(p) => Self::SamplePlayer(p.with_f32(value)),
-            Self::Granular(p) => Self::Granular(p.with_f32(value)),
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
             // Physical modeling

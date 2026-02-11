@@ -70,7 +70,7 @@ Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 
 ### synth_modules
 **Ansvar:** Färdiga ljudmoduler och effekter.
-**Moduler:** `Oscillator`, `Filter`, `Envelope`, `Lfo`, `Amplifier`, `SamplePlayer`
+**Moduler:** `Oscillator`, `Filter`, `Envelope`, `Lfo`, `Amplifier`
 **Effekter:** `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Eq`, `Phaser`, `Flanger`
 **Fysisk modellering:** `BodyResonance`, `MechanicalNoise`, `KeyboardPanner`
 **Beroenden:** synth_core, synth_dsp
@@ -284,6 +284,5 @@ modular-synth/
 | ringbuf | Lock-free ring buffers |
 | parking_lot | Snabbare mutex för icke-kritiska paths |
 | midir | MIDI I/O |
-| hound | WAV-filläsning för samples |
 | serde/serde_json | Serialisering för patch-filer |
 | thiserror | Ergonomisk error-hantering |

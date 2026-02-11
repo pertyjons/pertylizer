@@ -765,23 +765,6 @@ impl SynthEngine {
                 self.handle_disconnect_all(instrument_id, module);
             }
 
-            // Sample loading
-            EngineCommand::LoadSample {
-                instrument_id,
-                module_id,
-                sample,
-            } => {
-                self.handle_load_sample(instrument_id, module_id, sample);
-            }
-            EngineCommand::LoadSampleBank {
-                instrument_id,
-                module_id,
-                samples,
-                keymap,
-            } => {
-                self.handle_load_sample_bank(instrument_id, module_id, samples, keymap);
-            }
-
             // Transport control
             EngineCommand::Play => {
                 self.sequencer.play();
@@ -1475,71 +1458,6 @@ impl SynthEngine {
             }
             None => {
                 self.module_graph.disconnect_all(module);
-            }
-        }
-    }
-
-    fn handle_load_sample(
-        &mut self,
-        instrument_id: Option<InstrumentId>,
-        module_id: ModuleId,
-        sample: std::sync::Arc<synth_core::Sample>,
-    ) {
-        match instrument_id {
-            Some(inst_id) => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                    // Load sample into the voice graph (template)
-                    if instrument
-                        .voice_graph_mut()
-                        .load_sample(module_id, std::sync::Arc::clone(&sample))
-                    {
-                        // Also load into all existing voices
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice
-                                .graph
-                                .load_sample(module_id, std::sync::Arc::clone(&sample));
-                        }
-                    }
-                }
-            }
-            None => {
-                // Load into global module graph
-                self.module_graph.load_sample(module_id, sample);
-            }
-        }
-    }
-
-    fn handle_load_sample_bank(
-        &mut self,
-        instrument_id: Option<InstrumentId>,
-        module_id: ModuleId,
-        samples: Vec<std::sync::Arc<synth_core::Sample>>,
-        keymap: Vec<usize>,
-    ) {
-        match instrument_id {
-            Some(inst_id) => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                    // Load sample bank into the voice graph (template)
-                    if instrument.voice_graph_mut().load_sample_bank(
-                        module_id,
-                        samples.clone(),
-                        keymap.clone(),
-                    ) {
-                        // Also load into all existing voices
-                        for voice in instrument.allocator_mut().voices_mut() {
-                            voice.graph.load_sample_bank(
-                                module_id,
-                                samples.clone(),
-                                keymap.clone(),
-                            );
-                        }
-                    }
-                }
-            }
-            None => {
-                // Load into global module graph (not typical for sample banks)
-                self.module_graph
-                    .load_sample_bank(module_id, samples, keymap);
             }
         }
     }

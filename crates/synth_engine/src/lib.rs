@@ -71,8 +71,7 @@ pub use voice_allocator::{
 pub use synth_core::{
     AmplifierParam, AudioPort, ChorusParam, CompressorParam, ControlPort, DelayMode, DelayParam,
     DistortionMode, DistortionParam, EnvelopeParam, EqParam, FilterMode, FilterParam, FlangerParam,
-    FmMode, LevelMeterParam, LfoParam, LfoWaveform, LoopMode, MathAlgo, MathOscillatorParam,
-    MixerParam, ModuleType, NoiseParam, NoiseType, OscillatorParam, OscilloscopeParam, Param,
-    PhaserParam, Port, ReverbParam, SamplePlayerParam, SubOscOctave, SubOscParam, SubOscWaveform,
-    Waveform,
+    FmMode, LevelMeterParam, LfoParam, LfoWaveform, MathAlgo, MathOscillatorParam, MixerParam,
+    ModuleType, NoiseParam, NoiseType, OscillatorParam, OscilloscopeParam, Param, PhaserParam,
+    Port, ReverbParam, SubOscOctave, SubOscParam, SubOscWaveform, Waveform,
 };

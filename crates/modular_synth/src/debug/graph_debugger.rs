@@ -447,22 +447,6 @@ impl<'a> GraphDebugger<'a> {
             }
         }
 
-        // Check for sample player without gate (for instruments with envelope)
-        if let Some(sample_player) = self.find_module(ModuleType::SamplePlayer)
-            && self.find_module(ModuleType::Envelope).is_some()
-        {
-            let has_gate = self
-                .graph
-                .connections()
-                .any(|c| c.to_module == sample_player && c.to_port.as_str() == "gate");
-            if !has_gate {
-                issues.push(format!(
-                    "SamplePlayer {} has envelope but no gate input connected",
-                    sample_player
-                ));
-            }
-        }
-
         // Check for isolated modules (no connections at all)
         for id in self.graph.module_ids() {
             if self.graph.is_source(id) && self.graph.is_sink(id) {

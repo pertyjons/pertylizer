@@ -507,36 +507,6 @@ pub enum EngineCommand {
         enabled: bool,
     },
 
-    // === Sample control ===
-    /// Load a sample into a SamplePlayer module.
-    ///
-    /// The sample is pre-loaded in the GUI thread via SampleManager and sent
-    /// as an Arc<Sample> for thread-safe sharing. No file I/O happens in the
-    /// audio thread.
-    LoadSample {
-        /// Target instrument (None for global modules).
-        instrument_id: Option<InstrumentId>,
-        /// The SamplePlayer module to load the sample into.
-        module_id: ModuleId,
-        /// The pre-loaded sample data.
-        sample: std::sync::Arc<synth_core::Sample>,
-    },
-
-    /// Load a sample bank into a SamplePlayer module for multisample instruments.
-    ///
-    /// This loads multiple samples and a keymap that maps MIDI notes to sample indices.
-    /// Used for multisample instruments that have different samples for different note ranges.
-    LoadSampleBank {
-        /// Target instrument (None for global modules).
-        instrument_id: Option<InstrumentId>,
-        /// The SamplePlayer module to load the samples into.
-        module_id: ModuleId,
-        /// The sample bank (all samples for this instrument).
-        samples: Vec<std::sync::Arc<synth_core::Sample>>,
-        /// Keymap: maps MIDI note (0-127) to sample index in the bank.
-        keymap: Vec<usize>,
-    },
-
     /// Set the song for the sequencer.
     ///
     /// The song is shared via Arc<RwLock<Song>> for thread-safe access.
@@ -932,28 +902,6 @@ impl std::fmt::Debug for EngineCommand {
                 .field("instrument_id", instrument_id)
                 .field("effect_type", effect_type)
                 .field("enabled", enabled)
-                .finish(),
-            Self::LoadSample {
-                instrument_id,
-                module_id,
-                sample,
-            } => f
-                .debug_struct("LoadSample")
-                .field("instrument_id", instrument_id)
-                .field("module_id", module_id)
-                .field("sample", &sample.name)
-                .finish(),
-            Self::LoadSampleBank {
-                instrument_id,
-                module_id,
-                samples,
-                keymap,
-            } => f
-                .debug_struct("LoadSampleBank")
-                .field("instrument_id", instrument_id)
-                .field("module_id", module_id)
-                .field("sample_count", &samples.len())
-                .field("keymap_len", &keymap.len())
                 .finish(),
             Self::SetSong { .. } => write!(f, "SetSong"),
         }

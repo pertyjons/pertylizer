@@ -88,10 +88,6 @@ pub struct ModuleGraph {
     /// Pre-allocated vec for gathering incoming connections.
     /// Uses PortName for zero-allocation copying of connection info.
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
-    /// External pitch modulation value (semitones).
-    external_pitch_mod: f32,
-    /// Pre-allocated buffer for pitch modulation CV.
-    pitch_mod_buffer: AudioBuffer,
 }
 
 impl ModuleGraph {
@@ -106,8 +102,6 @@ impl ModuleGraph {
             buffer_size: 256,
             input_buffers: Vec::with_capacity(8),
             incoming_cache: Vec::with_capacity(16),
-            external_pitch_mod: 0.0,
-            pitch_mod_buffer: AudioBuffer::new(0),
         }
     }
 
@@ -311,43 +305,10 @@ impl ModuleGraph {
         self.nodes.get(&module)?.module.get_param(param)
     }
 
-    /// Load a sample into a module (for sample-based modules like SamplePlayer).
-    /// Returns true if the sample was loaded, false if the module doesn't exist
-    /// or doesn't support sample loading.
-    pub fn load_sample(
-        &mut self,
-        module: ModuleId,
-        sample: std::sync::Arc<synth_core::Sample>,
-    ) -> bool {
-        if let Some(node) = self.nodes.get_mut(&module) {
-            node.module.load_sample(sample)
-        } else {
-            false
-        }
-    }
-
-    /// Load a sample bank into a module (for multisample instruments).
-    /// Returns true if loaded, false if module doesn't exist or doesn't support it.
-    pub fn load_sample_bank(
-        &mut self,
-        module: ModuleId,
-        samples: Vec<std::sync::Arc<synth_core::Sample>>,
-        keymap: Vec<usize>,
-    ) -> bool {
-        if let Some(node) = self.nodes.get_mut(&module) {
-            node.module.load_sample_bank(samples, keymap)
-        } else {
-            false
-        }
-    }
-
     /// Process the graph.
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
         // Ensure buffer sizes
         self.resize_buffers(context.samples.as_usize());
-
-        // Inject external inputs (pitch modulation)
-        self.inject_external_inputs(context.samples.as_usize());
 
         // Update processing order if needed
         if self.order_dirty {
@@ -454,27 +415,6 @@ impl ModuleGraph {
                 node.module
                     .set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
             }
-        }
-    }
-
-    /// Set pitch modulation for all SamplePlayer modules in the graph.
-    /// Used by Voice to inject pitch modulation (vibrato, portamento).
-    /// The value is in semitones and will be applied to the pitch_mod input.
-    pub fn set_sample_player_pitch_mod(&mut self, semitones: f32) {
-        // Store the pitch mod value for injection during process
-        // This will be used by inject_external_inputs() to fill the pitch_mod buffer
-        self.external_pitch_mod = semitones;
-    }
-
-    /// Inject external inputs (like pitch modulation) into module input buffers.
-    /// Called at the start of process() to prepare external CV sources.
-    fn inject_external_inputs(&mut self, samples: usize) {
-        // Fill pitch_mod input buffer for SamplePlayer modules
-        if self.external_pitch_mod.abs() > 0.001 || self.pitch_mod_buffer.len() != samples {
-            self.pitch_mod_buffer.resize(samples);
-            self.pitch_mod_buffer
-                .as_mut_slice()
-                .fill(self.external_pitch_mod);
         }
     }
 
@@ -697,30 +637,6 @@ impl ModuleGraph {
                     buf.copy_from(output_buf);
                     self.input_buffers.push((*to_port, buf));
                 }
-            }
-        }
-
-        // Inject external pitch modulation for SamplePlayer modules.
-        // This allows vibrato/portamento to modulate sample playback pitch.
-        let pitch_mod_port = PortName::intern("pitch_mod");
-        let is_sample_player = self
-            .nodes
-            .get(&module_id)
-            .map(|n| n.descriptor.type_id.as_str() == "sample_player")
-            .unwrap_or(false);
-
-        if is_sample_player && self.external_pitch_mod.abs() > 0.0001 {
-            // Check if pitch_mod is not already connected
-            let has_pitch_mod = self
-                .input_buffers
-                .iter()
-                .any(|(name, _)| *name == pitch_mod_port);
-
-            if !has_pitch_mod {
-                // Clone pitch_mod buffer and add to input_buffers
-                let mut buf = AudioBuffer::new(context.samples.as_usize());
-                buf.copy_from(&self.pitch_mod_buffer);
-                self.input_buffers.push((pitch_mod_port, buf));
             }
         }
 

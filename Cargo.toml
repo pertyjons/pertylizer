@@ -45,9 +45,6 @@ arrayvec = "0.7.6"
 # File system paths
 dirs = "6.0.0"
 
-# WAV file reading for samples
-hound = "3.5.1"
-
 # GUI - egui (optional)
 eframe = { version = "0.33.3", default-features = false, features = [
     "default_fonts",

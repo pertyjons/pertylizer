@@ -7,7 +7,7 @@ use super::patch_editor::PatchEditor;
 use super::theme::theme;
 use super::widgets::Knob;
 use eframe::egui::{self, Color32, RichText, Ui};
-use synth_core::{BipolarValue, Gain, MidiNote, Semitones, WaveformOverview};
+use synth_core::{BipolarValue, Gain, MidiNote, Semitones};
 use synth_engine::{
     EngineCommand, EngineHandle, InstrumentParam,
     instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel},
@@ -45,8 +45,6 @@ pub struct InstrumentUiState {
     pub transpose: Semitones,
     /// MIDI learn state for key range assignment.
     pub learn_state: LearnState,
-    /// Sample waveform overview for visualization (if this is a sample-based instrument).
-    pub waveform_overview: Option<WaveformOverview>,
 }
 
 impl Default for InstrumentUiState {
@@ -64,7 +62,6 @@ impl Default for InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
-            waveform_overview: None,
         }
     }
 }
@@ -85,7 +82,6 @@ impl InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
-            waveform_overview: None,
         }
     }
 

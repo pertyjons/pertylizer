@@ -164,24 +164,6 @@ impl PatchEditor {
         ))
     }
 
-    /// Set waveform overview for a module (used for SamplePlayer visualization).
-    pub fn set_module_waveform(&mut self, id: ModuleId, waveform: synth_core::WaveformOverview) {
-        if let Some(panel) = self.panels.get_mut(&id) {
-            panel.waveform_overview = Some(waveform);
-        }
-    }
-
-    /// Set position buffer for a module (used for SamplePlayer playback position).
-    pub fn set_module_position_buffer(
-        &mut self,
-        id: ModuleId,
-        buffer: std::sync::Arc<synth_modules::PlaybackPositionBuffer>,
-    ) {
-        if let Some(panel) = self.panels.get_mut(&id) {
-            panel.position_buffer = Some(buffer);
-        }
-    }
-
     /// Set envelope position buffer for a module (used for Envelope visualization).
     pub fn set_module_envelope_position(
         &mut self,
@@ -1399,41 +1381,6 @@ fn draw_module_panel_params(
         draw_visualizer_display(ui, state, descriptor, vis_buffer, &mut param_changes);
         // Skip regular parameter drawing for visualizers - the display is the main UI
         return PanelParamsResult { param_changes };
-    }
-
-    // Sample waveform display for SamplePlayer modules
-    if descriptor.type_id.0 == "sample_player"
-        && let Some(ref overview) = state.waveform_overview
-    {
-        ui.add_space(4.0);
-        let width = ui.available_width().clamp(150.0, 300.0);
-        let height = if overview.is_stereo { 80.0 } else { 60.0 };
-
-        // Get playback position from position buffer (lock-free)
-        let playback_position = state.position_buffer.as_ref().map(|buf| buf.get());
-
-        // Get loop region from module parameters
-        // Loop mode: 0 = Off, 1 = Forward, 2 = Backward, 3 = PingPong
-        let loop_mode = state.param_values.get("Loop").copied().unwrap_or(0.0);
-        let loop_region = if loop_mode > 0.5 {
-            // Loop is enabled (any mode other than Off)
-            let loop_start = state.param_values.get("Loop Start").copied().unwrap_or(0.0);
-            let loop_end = state.param_values.get("Loop End").copied().unwrap_or(1.0);
-            Some((loop_start, loop_end))
-        } else {
-            None
-        };
-
-        super::widgets::draw_sample_waveform(
-            ui,
-            overview,
-            playback_position,
-            loop_region,
-            width,
-            height,
-            accent_color,
-        );
-        ui.add_space(4.0);
     }
 
     // Special handling for Envelope modules - use interactive EnvelopeEditor
