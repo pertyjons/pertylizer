@@ -77,7 +77,7 @@ pub fn calculate_layout(
     }
 
     // Constants - kompakta storlekar efter widget-uppdateringar
-    const MIN_MODULE_WIDTH: f32 = 140.0;
+    const MIN_MODULE_WIDTH: f32 = 180.0;
     const MIN_MODULE_HEIGHT: f32 = 100.0;
     const GAP: f32 = 8.0;
 

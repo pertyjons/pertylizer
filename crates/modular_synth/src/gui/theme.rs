@@ -625,6 +625,12 @@ pub struct Sizes {
 
     /// Port circle diameter.
     pub port_size: f32,
+    /// Width of the port column (left/right side of module).
+    pub port_column_width: f32,
+    /// Vertical spacing between ports in a column.
+    pub port_vertical_spacing: f32,
+    /// Minimum width for module content area (between port columns).
+    pub module_content_min_width: f32,
 
     /// Module minimum width.
     pub module_min_width: f32,
@@ -659,8 +665,11 @@ impl Sizes {
             knob_label_height: 12.0,
 
             port_size: 12.0,
+            port_column_width: 28.0,
+            port_vertical_spacing: 24.0,
+            module_content_min_width: 100.0,
 
-            module_min_width: 140.0,
+            module_min_width: 180.0,
             module_min_height: 80.0,
 
             meter_width: 60.0,

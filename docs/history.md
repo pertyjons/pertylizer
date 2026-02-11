@@ -1,5 +1,14 @@
 # Version History
 
+## [0.102.0] - 2026-02-11
+### Changed - Ny modullayout: portar på sidorna
+- **Tre-kolumnlayout**: Portar renderas nu i vertikala kolumner till vänster (IN) och höger (OUT) om modulinnehållet, istället för i en horisontell sektion mellan header och parametrar. Minskar modulhöjden och eliminerar dött utrymme.
+- **Portkolumner**: 28px breda kolumner med portar centrerade vertikalt, labels visas som tooltips vid hover
+- **Effekt/Visualizer-moduler**: Behåller full bredd utan portkolumner (har inga portar)
+- **Ökad minsta modulbredd**: 140px → 180px (28px portkolumn + 100px innehåll + 28px portkolumn + marginaler)
+- **Nya theme-konstanter**: `port_column_width`, `port_vertical_spacing`, `module_content_min_width` i `Sizes`
+- **Auto-layout uppdaterad**: `MIN_MODULE_WIDTH` ökad till 180px
+
 ## [0.101.0] - 2026-02-11
 ### Fixed - 3 GUI↔Engine-buggar
 - **Kabelbortkoppling (KRITISK)**: `connections_to_remove` från patch editor processerades aldrig — Disconnect-kommandon skickas nu till engine

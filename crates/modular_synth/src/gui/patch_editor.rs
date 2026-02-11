@@ -450,7 +450,7 @@ impl PatchEditor {
                 .open(&mut open)
                 .collapsible(true)
                 .resizable(true)
-                .min_width(140.0)
+                .min_width(theme().sizes.module_min_width)
                 .min_height(80.0)
                 .frame(frame);
 
@@ -589,27 +589,99 @@ impl PatchEditor {
 
                 ui.separator();
 
-                // Draw ports section
-                self.draw_ports_section(ui, module_id, &descriptor, &connected_ports);
+                // Check if this is a global module (no ports to show in columns)
+                let is_global = matches!(
+                    descriptor.category,
+                    ModuleCategory::Effect | ModuleCategory::Visualizer
+                );
 
-                ui.separator();
-
-                // Draw parameters - need to get panel_state here
-                if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                    // Get visualization buffer for this module if it exists
-                    let vis_buffer = handle.get_visualization_buffer(module_id);
-                    let panel_result = draw_module_panel_params(
-                        ui,
-                        panel_state,
-                        &descriptor,
-                        accent_color,
-                        vis_buffer,
-                    );
-
-                    // Collect parameter changes
-                    for param in panel_result.param_changes {
-                        result.param_changes.push((module_id, param));
+                if is_global {
+                    // Global modules: full-width content, no port columns
+                    let is_effect = descriptor.category == ModuleCategory::Effect;
+                    if is_effect {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("⚡ Effect Chain")
+                                    .size(11.0)
+                                    .color(theme().colors.text_dim),
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new("Applied automatically after voice mixing")
+                                .size(9.0)
+                                .color(theme().colors.text_dim.gamma_multiply(0.7)),
+                        );
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("📊 Visualizer")
+                                    .size(11.0)
+                                    .color(theme().colors.text_dim),
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new("Displays final output signal")
+                                .size(9.0)
+                                .color(theme().colors.text_dim.gamma_multiply(0.7)),
+                        );
                     }
+                    ui.separator();
+
+                    if let Some(panel_state) = self.panels.get_mut(&module_id) {
+                        let vis_buffer = handle.get_visualization_buffer(module_id);
+                        let panel_result = draw_module_panel_params(
+                            ui,
+                            panel_state,
+                            &descriptor,
+                            accent_color,
+                            vis_buffer,
+                        );
+                        for param in panel_result.param_changes {
+                            result.param_changes.push((module_id, param));
+                        }
+                    }
+                } else {
+                    // Normal modules: three-column layout (IN ports | content | OUT ports)
+                    ui.horizontal(|ui| {
+                        // Left column: input ports
+                        self.draw_port_column(
+                            ui,
+                            module_id,
+                            &descriptor,
+                            WidgetPortDirection::Input,
+                            &connected_ports,
+                        );
+
+                        ui.separator();
+
+                        // Middle column: parameters (expands to fill)
+                        ui.vertical(|ui| {
+                            if let Some(panel_state) = self.panels.get_mut(&module_id) {
+                                let vis_buffer = handle.get_visualization_buffer(module_id);
+                                let panel_result = draw_module_panel_params(
+                                    ui,
+                                    panel_state,
+                                    &descriptor,
+                                    accent_color,
+                                    vis_buffer,
+                                );
+                                for param in panel_result.param_changes {
+                                    result.param_changes.push((module_id, param));
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        // Right column: output ports
+                        self.draw_port_column(
+                            ui,
+                            module_id,
+                            &descriptor,
+                            WidgetPortDirection::Output,
+                            &connected_ports,
+                        );
+                    });
                 }
             });
 
@@ -710,110 +782,79 @@ impl PatchEditor {
             });
     }
 
-    /// Draw ports section with clickable ports.
-    fn draw_ports_section(
+    /// Draw a vertical column of ports (input or output side).
+    fn draw_port_column(
         &mut self,
         ui: &mut Ui,
         module_id: ModuleId,
         descriptor: &ModuleDescriptor,
+        direction: WidgetPortDirection,
         connected_ports: &[String],
     ) {
         use synth_core::PortDirection as CorePortDirection;
 
         let t = theme();
-        let port_label_size = 11.0;
+        let col_width = t.sizes.port_column_width;
+        let spacing = t.sizes.port_vertical_spacing;
 
-        // Effect chain modules and visualizers don't need port connections -
-        // show an informational label instead of ports.
-        let is_effect = descriptor.category == ModuleCategory::Effect;
-        let is_visualizer = descriptor.category == ModuleCategory::Visualizer;
+        let core_dir = match direction {
+            WidgetPortDirection::Input => CorePortDirection::Input,
+            WidgetPortDirection::Output => CorePortDirection::Output,
+        };
 
-        if is_effect {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("⚡ Effect Chain")
-                        .size(port_label_size)
-                        .color(t.colors.text_dim),
-                );
-            });
-            ui.label(
-                egui::RichText::new("Applied automatically after voice mixing")
-                    .size(9.0)
-                    .color(t.colors.text_dim.gamma_multiply(0.7)),
-            );
-            return;
-        }
-
-        if is_visualizer {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("📊 Visualizer")
-                        .size(port_label_size)
-                        .color(t.colors.text_dim),
-                );
-            });
-            ui.label(
-                egui::RichText::new("Displays final output signal")
-                    .size(9.0)
-                    .color(t.colors.text_dim.gamma_multiply(0.7)),
-            );
-            return;
-        }
-
-        let input_ports: Vec<_> = descriptor
+        let ports: Vec<_> = descriptor
             .ports
             .iter()
-            .filter(|p| p.direction == CorePortDirection::Input)
+            .filter(|p| p.direction == core_dir)
             .collect();
 
-        let output_ports: Vec<_> = descriptor
-            .ports
-            .iter()
-            .filter(|p| p.direction == CorePortDirection::Output)
-            .collect();
-
-        let available_width = ui.available_width();
-
-        // Check if we have a pending connection and extract info for highlighting
+        // Check if we have a pending connection for highlighting
         let pending_info = self
             .pending_connection
             .as_ref()
             .map(|p| (p.from_module, p.from_type, p.from_direction));
 
-        ui.horizontal(|ui| {
-            // Input ports - left aligned
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                ui.vertical(|ui| {
-                    if !input_ports.is_empty() {
-                        ui.label(
-                            egui::RichText::new("IN")
-                                .size(port_label_size)
-                                .color(t.colors.text_dim),
-                        );
-                    }
-                    for port in &input_ports {
-                        let port_type = convert_port_type(port.port_type);
-                        let is_connected = connected_ports.contains(&port.name);
+        ui.set_min_width(col_width);
+        ui.set_max_width(col_width);
 
-                        // Check if this port is a valid connection target
-                        let is_highlighted = pending_info
-                            .map(|(from_module, from_type, from_dir)| {
-                                from_module != module_id
-                                    && from_dir != WidgetPortDirection::Input
-                                    && from_type == port_type
-                            })
-                            .unwrap_or(false);
+        ui.vertical(|ui| {
+            ui.set_min_width(col_width);
+            // Small label at top
+            let label = match direction {
+                WidgetPortDirection::Input => "IN",
+                WidgetPortDirection::Output => "OUT",
+            };
+            if !ports.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .size(8.0)
+                            .color(t.colors.text_dim),
+                    );
+                });
+            }
 
-                        ui.horizontal(|ui| {
-                            let (response, center) = super::widgets::PortWidget::new(
-                                port_type,
-                                WidgetPortDirection::Input,
-                            )
-                            .connected(is_connected)
-                            .highlighted(is_highlighted)
-                            .show(ui);
+            // Draw each port centered in the column
+            for port in &ports {
+                let port_type = convert_port_type(port.port_type);
+                let is_connected = connected_ports.contains(&port.name);
 
-                            // Store port position (screen coordinates)
+                let is_highlighted = pending_info
+                    .map(|(from_module, from_type, from_dir)| {
+                        from_module != module_id && from_dir != direction && from_type == port_type
+                    })
+                    .unwrap_or(false);
+
+                ui.vertical_centered(|ui| {
+                    ui.allocate_ui(Vec2::new(col_width, spacing), |ui| {
+                        ui.centered_and_justified(|ui| {
+                            let (response, center) =
+                                super::widgets::PortWidget::new(port_type, direction)
+                                    .connected(is_connected)
+                                    .highlighted(is_highlighted)
+                                    .show(ui);
+
+                            // Store port position for cable rendering
                             self.port_positions.insert(
                                 (module_id, port.name.clone()),
                                 PortPosition {
@@ -821,100 +862,21 @@ impl PatchEditor {
                                     port_name: port.name.clone(),
                                     position: center,
                                     port_type,
-                                    direction: WidgetPortDirection::Input,
+                                    direction,
                                 },
                             );
 
-                            // Show label on hover for compact view, or always if space allows
-                            let label_response = ui.label(
-                                egui::RichText::new(&port.label)
-                                    .size(port_label_size)
-                                    .color(t.colors.text_secondary),
-                            );
-
-                            // Tooltip with full description
-                            if response.hovered() || label_response.hovered() {
-                                let tooltip = if port.description.is_empty() {
-                                    port.label.clone()
-                                } else {
-                                    format!("{}: {}", port.label, port.description)
-                                };
-                                response.on_hover_text(&tooltip);
-                            }
+                            // Show label and description as tooltip
+                            let tooltip = if port.description.is_empty() {
+                                port.label.clone()
+                            } else {
+                                format!("{}: {}", port.label, port.description)
+                            };
+                            response.on_hover_text(tooltip);
                         });
-                    }
-                });
-            });
-
-            // Flexible space in the middle
-            let used_width = 80.0; // Approximate width for ports
-            let middle_space = (available_width - used_width * 2.0).max(10.0);
-            ui.add_space(middle_space);
-
-            // Output ports - right aligned
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                ui.vertical(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        if !output_ports.is_empty() {
-                            ui.label(
-                                egui::RichText::new("OUT")
-                                    .size(port_label_size)
-                                    .color(t.colors.text_dim),
-                            );
-                        }
                     });
-                    for port in &output_ports {
-                        let port_type = convert_port_type(port.port_type);
-                        let is_connected = connected_ports.contains(&port.name);
-
-                        // Check if this port is a valid connection target
-                        let is_highlighted = pending_info
-                            .map(|(from_module, from_type, from_dir)| {
-                                from_module != module_id
-                                    && from_dir != WidgetPortDirection::Output
-                                    && from_type == port_type
-                            })
-                            .unwrap_or(false);
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            let (response, center) = super::widgets::PortWidget::new(
-                                port_type,
-                                WidgetPortDirection::Output,
-                            )
-                            .connected(is_connected)
-                            .highlighted(is_highlighted)
-                            .show(ui);
-
-                            self.port_positions.insert(
-                                (module_id, port.name.clone()),
-                                PortPosition {
-                                    module_id,
-                                    port_name: port.name.clone(),
-                                    position: center,
-                                    port_type,
-                                    direction: WidgetPortDirection::Output,
-                                },
-                            );
-
-                            let label_response = ui.label(
-                                egui::RichText::new(&port.label)
-                                    .size(port_label_size)
-                                    .color(t.colors.text_secondary),
-                            );
-
-                            // Tooltip with full description
-                            if response.hovered() || label_response.hovered() {
-                                let tooltip = if port.description.is_empty() {
-                                    port.label.clone()
-                                } else {
-                                    format!("{}: {}", port.label, port.description)
-                                };
-                                response.on_hover_text(&tooltip);
-                            }
-                        });
-                    }
                 });
-            });
+            }
         });
     }
 
