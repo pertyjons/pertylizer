@@ -642,52 +642,73 @@ impl PatchEditor {
                     }
                 } else {
                     // Normal modules: three-column layout (IN ports | content | OUT ports)
-                    ui.horizontal(|ui| {
-                        // Left column: input ports
-                        self.draw_port_column(
-                            ui,
-                            module_id,
-                            &descriptor,
-                            WidgetPortDirection::Input,
-                            &connected_ports,
-                        );
+                    // Use columns() to get fixed left/right with expanding middle
+                    let col_w = theme().sizes.port_column_width;
+                    let total_width = ui.available_width();
+                    let separator_space = 2.0; // thin separators
+                    let middle_width =
+                        (total_width - col_w * 2.0 - separator_space * 2.0).max(100.0);
 
-                        ui.separator();
-
-                        // Middle column: parameters (expand to push right column to edge)
-                        let right_col_reserve =
-                            theme().sizes.port_column_width + ui.spacing().item_spacing.x + 4.0;
-                        let middle_width = (ui.available_width() - right_col_reserve)
-                            .max(theme().sizes.module_content_min_width);
-
-                        ui.vertical(|ui| {
-                            ui.set_min_width(middle_width);
-                            if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                                let vis_buffer = handle.get_visualization_buffer(module_id);
-                                let panel_result = draw_module_panel_params(
+                    egui::Grid::new((module_id.to_string(), "port_layout"))
+                        .num_columns(5)
+                        .min_col_width(0.0)
+                        .max_col_width(total_width)
+                        .spacing(egui::vec2(0.0, 0.0))
+                        .show(ui, |ui| {
+                            // Col 0: Input ports (fixed width)
+                            ui.allocate_ui(Vec2::new(col_w, ui.available_height()), |ui| {
+                                self.draw_port_column(
                                     ui,
-                                    panel_state,
+                                    module_id,
                                     &descriptor,
-                                    accent_color,
-                                    vis_buffer,
+                                    WidgetPortDirection::Input,
+                                    &connected_ports,
                                 );
-                                for param in panel_result.param_changes {
-                                    result.param_changes.push((module_id, param));
-                                }
-                            }
+                            });
+
+                            // Col 1: separator
+                            ui.separator();
+
+                            // Col 2: Content (expanding middle)
+                            ui.allocate_ui(
+                                Vec2::new(middle_width, ui.available_height()),
+                                |ui| {
+                                    ui.set_min_width(middle_width);
+                                    if let Some(panel_state) =
+                                        self.panels.get_mut(&module_id)
+                                    {
+                                        let vis_buffer =
+                                            handle.get_visualization_buffer(module_id);
+                                        let panel_result = draw_module_panel_params(
+                                            ui,
+                                            panel_state,
+                                            &descriptor,
+                                            accent_color,
+                                            vis_buffer,
+                                        );
+                                        for param in panel_result.param_changes {
+                                            result.param_changes.push((module_id, param));
+                                        }
+                                    }
+                                },
+                            );
+
+                            // Col 3: separator
+                            ui.separator();
+
+                            // Col 4: Output ports (fixed width, flush right)
+                            ui.allocate_ui(Vec2::new(col_w, ui.available_height()), |ui| {
+                                self.draw_port_column(
+                                    ui,
+                                    module_id,
+                                    &descriptor,
+                                    WidgetPortDirection::Output,
+                                    &connected_ports,
+                                );
+                            });
+
+                            ui.end_row();
                         });
-
-                        ui.separator();
-
-                        // Right column: output ports
-                        self.draw_port_column(
-                            ui,
-                            module_id,
-                            &descriptor,
-                            WidgetPortDirection::Output,
-                            &connected_ports,
-                        );
-                    });
                 }
             });
 
