@@ -1,5 +1,16 @@
 # Version History
 
+## [0.100.0] - 2026-02-11
+### Removed - Död kod och icke-fungerande GUI-element
+- **Mixer-vy**: Hela placeholder-vyn (8 dummy-faders + "coming soon"-text), `AppView::Mixer`-variant, vy-selektorn i top bar
+- **layout.rs**: Oanvänd alternativ top bar-implementation (290 rader), `TopPanel`-enum
+- **Sample-dialog**: `OpenSample`-variant, `open_sample_dialog()`-metod, matcharm i fildialogshanteringen (aldrig anropad, handler var TODO)
+- **"Audio settings coming soon"**: Placeholder-sektion i Settings-dialogen
+- **MIDI Refresh-knapp**: Knapp i MIDI-dropdown som bara stängde menyn utan att göra något
+- **MultiPointEnvelope**: Tracker-specifika envelope-typer (`MultiPointEnvelope`, `EnvelopePoint`, `EnvelopeType`)
+- **Tracker-referenser**: Kvarvarande död kod och importer relaterade till borttagen tracker-funktionalitet
+- **Sample-kod**: `SamplePlayer` pitch mod, `WaveformOverview`, `PlaybackPositionBuffer`, hound-referens i ARCHITECTURE.md
+
 ## [0.99.0] - 2026-02-10
 ### Removed - All tracker import functionality
 - **Beslut**: Efter v0.87–v0.98 (2 dagar, 9 buggfixar) insåg vi att tracker-uppspelning (XM/MOD/S3M via xmrs) inte passar arkitekturen. Syntmotorn är polyfonisk/semitone-baserad medan tracker kräver period-baserad pitch med tight-kopplad effektprocessering. Varje fix avslöjade nya buggar.
