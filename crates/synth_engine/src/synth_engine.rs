@@ -845,8 +845,9 @@ impl SynthEngine {
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
             }
-
-            _ => {}
+            EngineCommand::SetTempo(bpm) => {
+                self.state.transport.set_tempo(bpm.as_f32());
+            }
         }
     }
 
@@ -1220,13 +1221,22 @@ impl SynthEngine {
     // ========================================================================
 
     fn handle_set_bypass(&mut self, module: ModuleId, bypass: bool) {
+        // Try effect chain first
         for instrument in &mut self.instruments {
             if let Some(slot) = instrument
                 .effect_chain_mut()
                 .find_effect_by_type(module.module_type)
             {
                 slot.state = crate::effect_chain::EnabledState::from(!bypass);
-                break;
+                return;
+            }
+        }
+
+        // Also set bypass on voice graph modules (osc, filter, env, LFO)
+        for instrument in &mut self.instruments {
+            instrument.voice_graph_mut().set_bypass(module, bypass);
+            for voice in instrument.allocator_mut().voices_mut() {
+                voice.graph.set_bypass(module, bypass);
             }
         }
     }

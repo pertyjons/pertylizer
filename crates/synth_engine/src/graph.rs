@@ -88,6 +88,8 @@ pub struct ModuleGraph {
     /// Pre-allocated vec for gathering incoming connections.
     /// Uses PortName for zero-allocation copying of connection info.
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
+    /// Set of bypassed modules (outputs zeroed instead of processing).
+    bypassed: HashSet<ModuleId>,
 }
 
 impl ModuleGraph {
@@ -102,6 +104,7 @@ impl ModuleGraph {
             buffer_size: 256,
             input_buffers: Vec::with_capacity(8),
             incoming_cache: Vec::with_capacity(16),
+            bypassed: HashSet::new(),
         }
     }
 
@@ -114,6 +117,7 @@ impl ModuleGraph {
         self.order_dirty = true;
         self.input_buffers.clear();
         self.incoming_cache.clear();
+        self.bypassed.clear();
     }
 
     /// Get the next instance number for a module type.
@@ -298,6 +302,21 @@ impl ModuleGraph {
         if let Some(node) = self.nodes.get_mut(&module) {
             node.module.set_param(param);
         }
+    }
+
+    /// Set bypass state for a module.
+    pub fn set_bypass(&mut self, module_id: ModuleId, bypass: bool) {
+        if bypass {
+            self.bypassed.insert(module_id);
+        } else {
+            self.bypassed.remove(&module_id);
+        }
+    }
+
+    /// Check if a module is bypassed.
+    #[must_use]
+    pub fn is_bypassed(&self, module_id: ModuleId) -> bool {
+        self.bypassed.contains(&module_id)
     }
 
     /// Get a parameter from a module.
@@ -661,6 +680,11 @@ impl ModuleGraph {
             // Clear output buffers
             for buf in node.outputs.values_mut() {
                 buf.clear();
+            }
+
+            // If bypassed, leave outputs zeroed (already cleared above)
+            if self.bypassed.contains(&module_id) {
+                return;
             }
 
             // Process

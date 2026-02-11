@@ -1265,7 +1265,6 @@ pub struct PatchEditorResult {
     /// Connections to add.
     pub connections_to_add: Vec<Connection>,
     /// Connections to remove.
-    #[allow(dead_code)]
     pub connections_to_remove: Vec<Connection>,
     /// Request auto-layout of modules.
     pub request_auto_layout: bool,

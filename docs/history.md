@@ -1,5 +1,12 @@
 # Version History
 
+## [0.101.0] - 2026-02-11
+### Fixed - 3 GUI↔Engine-buggar
+- **Kabelbortkoppling (KRITISK)**: `connections_to_remove` från patch editor processerades aldrig — Disconnect-kommandon skickas nu till engine
+- **Bypass för voice-moduler (HÖG)**: `SetBypass` sökte bara i effect chain. Bypass stöds nu i `ModuleGraph` (voice graph) med nollställda outputs för bypassed moduler
+- **SetTempo (LÅG)**: `EngineCommand::SetTempo` fångades av catch-all `_ => {}` — kopplas nu till `TransportState::set_tempo()`
+- Tog bort onåbar catch-all (`_ => {}`) i command-matchning nu när alla varianter hanteras
+
 ## [0.100.0] - 2026-02-11
 ### Removed - Död kod och icke-fungerande GUI-element
 - **Mixer-vy**: Hela placeholder-vyn (8 dummy-faders + "coming soon"-text), `AppView::Mixer`-variant, vy-selektorn i top bar

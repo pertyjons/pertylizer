@@ -741,6 +741,15 @@ impl eframe::App for SynthApp {
                 });
             }
 
+            // Handle removed connections - send Disconnect commands to engine
+            for connection in result.connections_to_remove {
+                self.handle.send(EngineCommand::Disconnect {
+                    instrument_id: Some(active_id),
+                    from: PortId::new(connection.from_module, connection.from_port),
+                    to: PortId::new(connection.to_module, connection.to_port),
+                });
+            }
+
             // Handle bypass toggles - send SetBypass commands to engine
             for (module_id, new_bypass_state) in result.bypass_toggles {
                 self.handle.send(EngineCommand::SetBypass {
