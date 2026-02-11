@@ -496,10 +496,6 @@ impl eframe::App for SynthApp {
                                 }
                             }
                         }
-                        ui.separator();
-                        if ui.button("🔄 Refresh").clicked() {
-                            ui.close();
-                        }
                     });
                     ui.separator();
                     // Current patch name
@@ -508,20 +504,6 @@ impl eframe::App for SynthApp {
                             .color(theme().colors.accent_cyan),
                     );
                     ui.separator();
-
-                    // View selector tabs (rightmost, before status)
-                    for view in [AppView::Mixer, AppView::Rack] {
-                        let is_selected = self.active_view == view;
-                        let label = format!("{} {}", view.icon(), view.label());
-                        let text = if is_selected {
-                            RichText::new(label).color(theme().colors.accent_primary)
-                        } else {
-                            RichText::new(label).color(theme().colors.text_secondary)
-                        };
-                        if ui.selectable_label(is_selected, text).clicked() {
-                            self.active_view = view;
-                        }
-                    }
                 });
             });
         });
@@ -774,9 +756,6 @@ impl eframe::App for SynthApp {
                 patch_editor.apply_auto_layout(canvas_rect);
             }
                 });
-            }
-            AppView::Mixer => {
-                crate::gui::views::mixer::show(ctx);
             }
         }
 
@@ -1464,11 +1443,6 @@ impl SynthApp {
                             self.dialog_state.set_status(format!("Error loading: {e}"));
                         }
                     }
-                }
-                FileDialogResult::Picked(path, Some(FileDialogMode::OpenSample)) => {
-                    // TODO: Handle sample loading when sample player UI is ready
-                    self.dialog_state
-                        .set_status(format!("Sample selected: {}", path.display()));
                 }
                 FileDialogResult::Saved(path, Some(FileDialogMode::SavePatch)) => {
                     if let Some(patch) = self.create_patch_from_rack() {

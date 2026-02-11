@@ -20,8 +20,6 @@ pub enum FileDialogMode {
     OpenPatch,
     /// Saving a patch file.
     SavePatch,
-    /// Opening a WAV sample.
-    OpenSample,
 }
 
 /// State for all application dialogs.
@@ -103,22 +101,6 @@ impl DialogState {
         self.file_dialog.save_file();
     }
 
-    /// Open the file dialog for opening a sample.
-    pub fn open_sample_dialog(&mut self) {
-        self.file_dialog_mode = Some(FileDialogMode::OpenSample);
-        self.file_dialog = FileDialog::new()
-            .add_file_filter(
-                "Audio files",
-                Arc::new(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
-                }),
-            )
-            .add_file_filter("All files", Arc::new(|_| true));
-        self.file_dialog.pick_file();
-    }
-
     /// Update the file dialog and return any completed result.
     pub fn update_file_dialog(&mut self, ctx: &egui::Context) -> Option<FileDialogResult> {
         self.file_dialog.update(ctx);
@@ -196,13 +178,6 @@ pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme:
                         }
                     }
                 });
-
-            ui.add_space(12.0);
-            ui.separator();
-
-            // Audio section (placeholder)
-            ui.heading("Audio");
-            ui.label("Audio settings coming soon...");
 
             ui.add_space(12.0);
             ui.separator();

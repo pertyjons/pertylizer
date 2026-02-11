@@ -14,40 +14,6 @@ pub enum AppView {
     /// Instrument rack and patch editor view (default).
     #[default]
     Rack,
-    /// Mixer view with channel strips.
-    Mixer,
-}
-
-impl AppView {
-    /// Get the display icon for this view.
-    #[must_use]
-    pub const fn icon(self) -> &'static str {
-        match self {
-            Self::Rack => "🔌",
-            Self::Mixer => "🎚",
-        }
-    }
-
-    /// Get the display label for this view.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Rack => "Rack",
-            Self::Mixer => "Mixer",
-        }
-    }
-}
-
-/// Top panel drawer state (expandable panels).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TopPanel {
-    /// No panel open.
-    #[default]
-    None,
-    /// MIDI settings panel.
-    Midi,
-    /// Engine/audio settings panel.
-    Engine,
 }
 
 // Re-export effect types from views module to avoid duplication
