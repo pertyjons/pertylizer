@@ -1,11 +1,14 @@
 # Version History
 
+## [0.106.0] - 2026-02-13
+### Changed - Klaviatur visar fler tangenter vid bredare fönster
+- **Fasta tangentstorlekar**: Vita tangenter 24px, svarta 14px — storleken ändras aldrig
+- **Fler tangenter vid bredd**: Bredare fönster visar fler av de 88 tangenterna, centrerade om alla ryms
+- **Villkorlig scroll**: Scroll och scroll-indikatorer visas bara när alla tangenter inte ryms
+
 ## [0.105.0] - 2026-02-13
-### Changed - Resizable moduler & full-width klaviatur
+### Changed - Resizable modulfönster
 - **Resizable modulfönster**: Moduler kan nu dras bredare/smalare med `resizable(true)`. Mittinnehållet fyller tillgänglig bredd, OUT-portar sitter alltid mot högerkanten.
-- **Dynamisk tangentbredd**: Pianoklaviaturen beräknar tangentbredd baserat på tillgänglig bredd (`available_width / antal_vita_tangenter`), med minimum 14px per tangent.
-- **Centrerad klaviatur**: Om alla 88 tangenter ryms i fönstret centreras klaviaturen istället för att visa scroll-indikatorer.
-- **Villkorlig scroll**: Scroll-funktionalitet och scroll-indikatorer visas bara när alla tangenter inte ryms.
 
 ## [0.104.0] - 2026-02-13
 ### Fixed - Kompakta modulfönster
