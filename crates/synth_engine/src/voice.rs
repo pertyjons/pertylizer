@@ -664,9 +664,6 @@ impl Voice {
         // Read mod matrix configuration through get_param and calculate modulations ourselves
         let slots = self.read_mod_matrix_slots(mm_id);
         for slot in &slots {
-            if !slot.3 {
-                continue; // not enabled
-            }
             let src_idx = slot.0;
             let dst = slot.1;
             let amount = slot.2;
@@ -685,14 +682,28 @@ impl Voice {
     }
 
     /// Read mod matrix slot configurations via get_param.
-    /// Returns Vec of (source_index, destination, amount, enabled).
+    /// Reads the grid size first and only returns slots within that range.
+    /// Returns Vec of (source_index, destination, amount).
     fn read_mod_matrix_slots(
         &self,
         mm_id: crate::ModuleId,
-    ) -> Vec<(usize, synth_core::ModDestination, f32, bool)> {
-        use synth_core::{MOD_MATRIX_SLOTS, ModDestination, ModMatrixParam, ModSource as MS};
-        let mut slots = Vec::with_capacity(MOD_MATRIX_SLOTS);
-        for i in 0..MOD_MATRIX_SLOTS {
+    ) -> Vec<(usize, synth_core::ModDestination, f32)> {
+        use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource as MS};
+
+        // Read grid size to determine how many slots to process
+        let grid_size_idx = self
+            .graph
+            .get_param(
+                mm_id,
+                &Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::default())),
+            )
+            .map(|v| v as usize)
+            .unwrap_or(ModMatrixGridSize::default().index());
+        let grid_size = ModMatrixGridSize::from_index(grid_size_idx);
+        let slot_count = grid_size.slot_count();
+
+        let mut slots = Vec::with_capacity(slot_count);
+        for i in 0..slot_count {
             let slot = i as u8;
             let src_idx = self
                 .graph
@@ -717,17 +728,9 @@ impl Voice {
                     &Param::ModMatrix(ModMatrixParam::SlotAmount(slot, BipolarValue::CENTER)),
                 )
                 .unwrap_or(0.0);
-            let enabled = self
-                .graph
-                .get_param(
-                    mm_id,
-                    &Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
-                )
-                .map(|v| v > 0.5)
-                .unwrap_or(true);
 
             let dst = ModDestination::from_index(dst_idx);
-            slots.push((src_idx, dst, amount, enabled));
+            slots.push((src_idx, dst, amount));
         }
         slots
     }

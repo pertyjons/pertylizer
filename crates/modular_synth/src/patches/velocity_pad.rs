@@ -118,26 +118,23 @@ Use the mod wheel for additional expression.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::ModMatrix)
             .position(650.0, 300.0)
+            .param_choice("grid size", "2x2")
             // Slot 1: Velocity → Filter Cutoff, amount +0.6
             .param_choice("slot 1 source", "velocity")
             .param_choice("slot 1 dest", "flt1_cutoff")
             .param_f("slot 1 amount", 0.6)
-            .param_f("slot 1 on", 1.0)
             // Slot 2: Velocity → Amp Level, amount +0.4
             .param_choice("slot 2 source", "velocity")
             .param_choice("slot 2 dest", "amp_level")
             .param_f("slot 2 amount", 0.4)
-            .param_f("slot 2 on", 1.0)
             // Slot 3: LFO 1 → Filter Cutoff, amount +0.2 (gentle movement)
             .param_choice("slot 3 source", "lfo1")
             .param_choice("slot 3 dest", "flt1_cutoff")
             .param_f("slot 3 amount", 0.2)
-            .param_f("slot 3 on", 1.0)
             // Slot 4: Env 2 → Filter Cutoff, amount +0.5
             .param_choice("slot 4 source", "env2")
             .param_choice("slot 4 dest", "flt1_cutoff")
             .param_f("slot 4 amount", 0.5)
-            .param_f("slot 4 on", 1.0)
             .build(),
     );
 

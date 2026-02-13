@@ -32,7 +32,9 @@ pub use effects::{
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
-pub use mod_matrix::{MOD_MATRIX_SLOTS, ModDestination, ModMatrixParam, ModSource};
+pub use mod_matrix::{
+    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
+};
 pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};

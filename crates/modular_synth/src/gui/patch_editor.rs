@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use synth_core::{ModMatrixParam, ModuleType, Param};
+use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
 use synth_core::{ModuleCategory, ModuleDescriptor};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
@@ -1486,6 +1486,11 @@ fn draw_module_panel_params(
         return PanelParamsResult { param_changes };
     }
 
+    // Special handling for Mod Matrix — custom grid rendering
+    if descriptor.type_id.0 == "mod_matrix" {
+        return draw_mod_matrix_grid(ui, state, descriptor, accent_color, analysis);
+    }
+
     // Group parameters by widget hint (non-Envelope modules)
     let waveform_params: Vec<_> = descriptor
         .parameters
@@ -1699,6 +1704,211 @@ fn draw_module_panel_params(
             }
         });
     }
+
+    PanelParamsResult { param_changes }
+}
+
+/// Draw mod matrix as a grid with size selector.
+#[allow(clippy::too_many_lines)]
+fn draw_mod_matrix_grid(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    accent_color: Color32,
+    analysis: &PatchAnalysis,
+) -> PanelParamsResult {
+    use super::widgets::Knob;
+
+    let mut param_changes = Vec::new();
+
+    // --- Grid Size selector ---
+    let grid_size_param = descriptor
+        .parameters
+        .iter()
+        .find(|p| matches!(p.id, Param::ModMatrix(ModMatrixParam::GridSize(_))));
+
+    let mut grid_size = ModMatrixGridSize::default();
+    if let Some(gs_param) = grid_size_param
+        && let Some(ref choices) = gs_param.choices
+    {
+        let current = state
+            .param_values
+            .get(&gs_param.name)
+            .copied()
+            .unwrap_or(gs_param.range.default);
+        let mut selected = current.round() as usize;
+
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Grid")
+                    .size(theme().fonts.size_normal)
+                    .color(theme().colors.text_secondary),
+            );
+            let text = choices
+                .get(selected)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "?".into());
+            egui::ComboBox::from_id_salt("mod_matrix_grid_size")
+                .selected_text(text)
+                .show_ui(ui, |ui| {
+                    for (i, choice) in choices.iter().enumerate() {
+                        if ui.selectable_label(selected == i, &choice.name).clicked() {
+                            selected = i;
+                        }
+                    }
+                });
+        });
+
+        if selected as f32 != current.round() {
+            state
+                .param_values
+                .insert(gs_param.name.clone(), selected as f32);
+            param_changes.push(gs_param.id.with_f32(selected as f32));
+        }
+
+        grid_size = ModMatrixGridSize::from_index(selected);
+    }
+
+    let dim = grid_size.grid_dimension();
+    let slot_count = grid_size.slot_count();
+
+    ui.add_space(4.0);
+
+    // --- Grid of slots ---
+    egui::Grid::new("mod_matrix_grid")
+        .num_columns(dim)
+        .spacing(egui::vec2(4.0, 4.0))
+        .show(ui, |ui| {
+            for slot_idx in 0..slot_count {
+                let slot_num = slot_idx + 1;
+
+                // Find params for this slot
+                let src_param = descriptor.parameters.iter().find(|p| {
+                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotSource(s, _)) if s as usize == slot_idx)
+                });
+                let dst_param = descriptor.parameters.iter().find(|p| {
+                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotDestination(s, _)) if s as usize == slot_idx)
+                });
+                let amt_param = descriptor.parameters.iter().find(|p| {
+                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotAmount(s, _)) if s as usize == slot_idx)
+                });
+
+                ui.group(|ui| {
+                    ui.set_min_width(100.0);
+                    ui.vertical(|ui| {
+                        // Slot label
+                        ui.label(
+                            egui::RichText::new(format!("Slot {slot_num}"))
+                                .size(theme().fonts.size_small)
+                                .color(theme().colors.text_dim),
+                        );
+
+                        // Source ComboBox
+                        if let Some(sp) = src_param
+                            && let Some(ref choices) = sp.choices
+                        {
+                            let current = state
+                                .param_values
+                                .get(&sp.name)
+                                .copied()
+                                .unwrap_or(sp.range.default);
+                            let mut selected = current.round() as usize;
+                            let text = choices
+                                .get(selected)
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "?".into());
+                            egui::ComboBox::from_id_salt(format!("mm_src_{slot_idx}"))
+                                .selected_text(text)
+                                .width(80.0)
+                                .show_ui(ui, |ui| {
+                                    for (i, choice) in choices.iter().enumerate() {
+                                        if !is_mod_choice_available(
+                                            &choice.id, true, analysis,
+                                        ) {
+                                            continue;
+                                        }
+                                        if ui
+                                            .selectable_label(selected == i, &choice.name)
+                                            .clicked()
+                                        {
+                                            selected = i;
+                                        }
+                                    }
+                                });
+                            if selected as f32 != current.round() {
+                                state
+                                    .param_values
+                                    .insert(sp.name.clone(), selected as f32);
+                                param_changes.push(sp.id.with_f32(selected as f32));
+                            }
+                        }
+
+                        // Destination ComboBox
+                        if let Some(dp) = dst_param
+                            && let Some(ref choices) = dp.choices
+                        {
+                            let current = state
+                                .param_values
+                                .get(&dp.name)
+                                .copied()
+                                .unwrap_or(dp.range.default);
+                            let mut selected = current.round() as usize;
+                            let text = choices
+                                .get(selected)
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "?".into());
+                            egui::ComboBox::from_id_salt(format!("mm_dst_{slot_idx}"))
+                                .selected_text(text)
+                                .width(80.0)
+                                .show_ui(ui, |ui| {
+                                    for (i, choice) in choices.iter().enumerate() {
+                                        if !is_mod_choice_available(
+                                            &choice.id, false, analysis,
+                                        ) {
+                                            continue;
+                                        }
+                                        if ui
+                                            .selectable_label(selected == i, &choice.name)
+                                            .clicked()
+                                        {
+                                            selected = i;
+                                        }
+                                    }
+                                });
+                            if selected as f32 != current.round() {
+                                state
+                                    .param_values
+                                    .insert(dp.name.clone(), selected as f32);
+                                param_changes.push(dp.id.with_f32(selected as f32));
+                            }
+                        }
+
+                        // Amount knob
+                        if let Some(ap) = amt_param {
+                            let current = state
+                                .param_values
+                                .get(&ap.name)
+                                .copied()
+                                .unwrap_or(ap.range.default);
+                            let mut value = current;
+                            Knob::from_descriptor(&mut value, ap)
+                                .size(theme().sizes.knob_size_small)
+                                .accent_color(accent_color)
+                                .show(ui);
+                            if (value - current).abs() > f32::EPSILON {
+                                state.param_values.insert(ap.name.clone(), value);
+                                param_changes.push(ap.id.with_f32(value));
+                            }
+                        }
+                    });
+                });
+
+                // End row after `dim` columns
+                if (slot_idx + 1) % dim == 0 {
+                    ui.end_row();
+                }
+            }
+        });
 
     PanelParamsResult { param_changes }
 }

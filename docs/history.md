@@ -1,5 +1,13 @@
 # Version History
 
+## [0.110.0] - 2026-02-13
+### Changed - Mod Matrix Grid-redesign
+- **Grid-baserad layout**: Mod Matrix renderas nu som ett rutnät istället för en platt lista. Grid-storlek väljs via selectbox: 1×1, 2×2 (standard), 3×3, 4×4 — ger 1, 4, 9 eller 16 slots.
+- **16 slots**: Max antal slots utökat från 8 till 16 (4×4 grid).
+- **Borttagen enabled-toggle**: Slots med Source=None är automatiskt inaktiva, separat on/off-toggle borttagen.
+- **Kompakta celler**: Varje cell i rutnätet visar Source- och Destination-dropdowns samt Amount-knob.
+- **Grid size-param**: Ny `GridSize`-parameter styr hur många slots som processas och visas.
+
 ## [0.109.0] - 2026-02-13
 ### Changed - Konsekvent modulnamngivning
 - **Alltid siffersuffix**: Alla moduler visar nu alltid instansnummer (t.ex. "LFO 1", "Oscillator 1", "Filter 1") även om det bara finns en modul av den typen. Selectboxar matchar nu alltid modulnamnen i vyn.

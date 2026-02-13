@@ -1,11 +1,12 @@
 //! Mod Matrix module — routes modulation sources to destinations.
 //!
-//! The mod matrix provides 8 modulation slots. Each slot has:
+//! The mod matrix provides up to 16 modulation slots arranged in a selectable grid
+//! (1x1, 2x2, 3x3, 4x4). Each slot has:
 //! - A source (LFO, envelope, velocity, note number, aftertouch, mod wheel, pitch bend)
 //! - A destination (osc pitch, filter cutoff, amp level, etc.)
 //! - A bipolar amount (-1.0 to +1.0)
-//! - An enable toggle
 //!
+//! A slot with Source=None is effectively inactive.
 //! The actual modulation is applied by `Voice` before graph processing.
 //! This module stores the routing configuration and caches source values.
 
@@ -15,7 +16,9 @@ use synth_core::{
     AudioBuffer, BipolarValue, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, Param, ParameterDescriptor, PolyModule, ProcessContext, WidgetHint,
 };
-use synth_core::{MOD_MATRIX_SLOTS, ModDestination, ModMatrixParam, ModSource};
+use synth_core::{
+    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
+};
 use synth_core::{MidiNote, SampleRate, Velocity};
 
 /// A single modulation routing slot.
@@ -24,7 +27,6 @@ pub struct ModSlot {
     pub source: ModSource,
     pub destination: ModDestination,
     pub amount: BipolarValue,
-    pub enabled: bool,
 }
 
 impl Default for ModSlot {
@@ -33,7 +35,6 @@ impl Default for ModSlot {
             source: ModSource::None,
             destination: ModDestination::None,
             amount: BipolarValue::CENTER,
-            enabled: true,
         }
     }
 }
@@ -45,13 +46,14 @@ pub struct ModulationOutput {
     pub value: f32,
 }
 
-/// Mod Matrix — 8-slot modulation routing.
+/// Mod Matrix — grid-based modulation routing (up to 16 slots).
 ///
 /// Lives in the voice graph as a `PolyModule` for parameter storage and GUI,
 /// but `process()` is a no-op. The actual modulation logic runs from `Voice`.
 #[derive(Clone)]
 pub struct ModMatrix {
-    slots: [ModSlot; MOD_MATRIX_SLOTS],
+    slots: [ModSlot; MAX_MOD_MATRIX_SLOTS],
+    grid_size: ModMatrixGridSize,
     /// Cached source values, indexed by `ModSource::index()`.
     source_values: [f32; 16],
 }
@@ -59,7 +61,8 @@ pub struct ModMatrix {
 impl ModMatrix {
     pub fn new() -> Self {
         Self {
-            slots: [ModSlot::default(); MOD_MATRIX_SLOTS],
+            slots: [ModSlot::default(); MAX_MOD_MATRIX_SLOTS],
+            grid_size: ModMatrixGridSize::default(),
             source_values: [0.0; 16],
         }
     }
@@ -74,29 +77,29 @@ impl ModMatrix {
 
     /// Calculate all active modulations.
     ///
+    /// Only iterates slots within the current grid size.
     /// Returns an iterator of (destination, scaled value) for active slots.
     pub fn calculate_modulations(&self) -> impl Iterator<Item = ModulationOutput> + '_ {
-        self.slots.iter().filter_map(|slot| {
-            if !slot.enabled {
-                return None;
-            }
-            if matches!(slot.source, ModSource::None)
-                || matches!(slot.destination, ModDestination::None)
-            {
-                return None;
-            }
-            let src_idx = slot.source.index();
-            let src_value = if src_idx < self.source_values.len() {
-                self.source_values[src_idx]
-            } else {
-                0.0
-            };
-            let scaled = src_value * slot.amount.as_f32();
-            Some(ModulationOutput {
-                destination: slot.destination,
-                value: scaled,
+        self.slots[..self.grid_size.slot_count()]
+            .iter()
+            .filter_map(|slot| {
+                if matches!(slot.source, ModSource::None)
+                    || matches!(slot.destination, ModDestination::None)
+                {
+                    return None;
+                }
+                let src_idx = slot.source.index();
+                let src_value = if src_idx < self.source_values.len() {
+                    self.source_values[src_idx]
+                } else {
+                    0.0
+                };
+                let scaled = src_value * slot.amount.as_f32();
+                Some(ModulationOutput {
+                    destination: slot.destination,
+                    value: scaled,
+                })
             })
-        })
     }
 
     /// Get a slot reference.
@@ -112,15 +115,26 @@ impl Default for ModMatrix {
 }
 
 impl Describable for ModMatrix {
+    #[allow(clippy::too_many_lines)]
     fn descriptor(&self) -> ModuleDescriptor {
         let mut desc = ModuleDescriptor::new("mod_matrix", "Mod Matrix")
-            .description("8-slot modulation routing matrix")
+            .description("Grid-based modulation routing matrix (up to 16 slots)")
             .category(ModuleCategory::Utility)
             .tag("modulation")
             .tag("routing");
 
-        // Add parameters for each slot (source, destination, amount, enabled)
-        for i in 0..MOD_MATRIX_SLOTS {
+        // Grid size selector (first parameter)
+        desc = desc.parameter(
+            ParameterDescriptor::choice(
+                Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::default())),
+                "Grid Size".to_string(),
+                ModMatrixGridSize::to_choices(),
+            )
+            .description("Number of modulation slots (grid dimensions)".to_string()),
+        );
+
+        // Add parameters for each slot (source, destination, amount)
+        for i in 0..MAX_MOD_MATRIX_SLOTS {
             let slot = i as u8;
             let slot_num = i + 1;
 
@@ -152,18 +166,6 @@ impl Describable for ModMatrix {
                 .widget(WidgetHint::Knob)
                 .description(format!("Modulation amount for slot {slot_num}")),
             );
-
-            desc = desc.parameter(
-                ParameterDescriptor::float(
-                    Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
-                    format!("Slot {slot_num} On"),
-                )
-                .range(0.0, 1.0)
-                .default(1.0)
-                .widget(WidgetHint::Toggle)
-                .description(format!("Enable slot {slot_num}"))
-                .modulatable(false),
-            );
         }
 
         desc
@@ -182,47 +184,61 @@ impl PolyModule for ModMatrix {
 
     fn set_param(&mut self, param: Param) {
         if let Param::ModMatrix(mm_param) = param {
-            let slot = mm_param.slot() as usize;
-            if slot >= MOD_MATRIX_SLOTS {
-                return;
-            }
             match mm_param {
-                ModMatrixParam::SlotSource(_, src) => self.slots[slot].source = src,
-                ModMatrixParam::SlotDestination(_, dst) => self.slots[slot].destination = dst,
-                ModMatrixParam::SlotAmount(_, amt) => self.slots[slot].amount = amt,
-                ModMatrixParam::SlotEnabled(_, en) => self.slots[slot].enabled = en,
+                ModMatrixParam::GridSize(gs) => self.grid_size = gs,
+                ModMatrixParam::SlotSource(_, _)
+                | ModMatrixParam::SlotDestination(_, _)
+                | ModMatrixParam::SlotAmount(_, _) => {
+                    let slot = mm_param.slot() as usize;
+                    if slot >= MAX_MOD_MATRIX_SLOTS {
+                        return;
+                    }
+                    match mm_param {
+                        ModMatrixParam::SlotSource(_, src) => self.slots[slot].source = src,
+                        ModMatrixParam::SlotDestination(_, dst) => {
+                            self.slots[slot].destination = dst;
+                        }
+                        ModMatrixParam::SlotAmount(_, amt) => self.slots[slot].amount = amt,
+                        ModMatrixParam::GridSize(_) => {}
+                    }
+                }
             }
         }
     }
 
     fn get_param(&self, param: &Param) -> Option<f32> {
         if let Param::ModMatrix(mm_param) = param {
-            let slot = mm_param.slot() as usize;
-            if slot >= MOD_MATRIX_SLOTS {
-                return None;
-            }
-            Some(match mm_param {
-                ModMatrixParam::SlotSource(_, _) => self.slots[slot].source.index() as f32,
-                ModMatrixParam::SlotDestination(_, _) => {
-                    self.slots[slot].destination.index() as f32
+            match mm_param {
+                ModMatrixParam::GridSize(_) =>
+                {
+                    #[allow(clippy::cast_precision_loss)]
+                    Some(self.grid_size.index() as f32)
                 }
-                ModMatrixParam::SlotAmount(_, _) => self.slots[slot].amount.as_f32(),
-                ModMatrixParam::SlotEnabled(_, _) => {
-                    if self.slots[slot].enabled {
-                        1.0
-                    } else {
-                        0.0
+                _ => {
+                    let slot = mm_param.slot() as usize;
+                    if slot >= MAX_MOD_MATRIX_SLOTS {
+                        return None;
                     }
+                    #[allow(clippy::cast_precision_loss)]
+                    Some(match mm_param {
+                        ModMatrixParam::SlotSource(_, _) => self.slots[slot].source.index() as f32,
+                        ModMatrixParam::SlotDestination(_, _) => {
+                            self.slots[slot].destination.index() as f32
+                        }
+                        ModMatrixParam::SlotAmount(_, _) => self.slots[slot].amount.as_f32(),
+                        ModMatrixParam::GridSize(_) => 0.0, // unreachable
+                    })
                 }
-            })
+            }
         } else {
             None
         }
     }
 
     fn get_params(&self) -> Vec<Param> {
-        let mut params = Vec::with_capacity(MOD_MATRIX_SLOTS * 4);
-        for i in 0..MOD_MATRIX_SLOTS {
+        let mut params = Vec::with_capacity(1 + MAX_MOD_MATRIX_SLOTS * 3);
+        params.push(Param::ModMatrix(ModMatrixParam::GridSize(self.grid_size)));
+        for i in 0..MAX_MOD_MATRIX_SLOTS {
             let slot = i as u8;
             params.push(Param::ModMatrix(ModMatrixParam::SlotSource(
                 slot,
@@ -235,10 +251,6 @@ impl PolyModule for ModMatrix {
             params.push(Param::ModMatrix(ModMatrixParam::SlotAmount(
                 slot,
                 self.slots[i].amount,
-            )));
-            params.push(Param::ModMatrix(ModMatrixParam::SlotEnabled(
-                slot,
-                self.slots[i].enabled,
             )));
         }
         params
@@ -269,7 +281,7 @@ mod tests {
     #[test]
     fn test_mod_matrix_creation() {
         let mm = ModMatrix::new();
-        for i in 0..MOD_MATRIX_SLOTS {
+        for i in 0..MAX_MOD_MATRIX_SLOTS {
             let slot = mm.slot(i).unwrap();
             assert_eq!(slot.source, ModSource::None);
             assert_eq!(slot.destination, ModDestination::None);
@@ -305,9 +317,24 @@ mod tests {
     }
 
     #[test]
-    fn test_disabled_slot_not_in_output() {
+    fn test_none_source_slot_not_in_output() {
+        let mm = ModMatrix::new();
+
+        // All slots have Source=None by default, so no modulations
+        let mods: Vec<_> = mm.calculate_modulations().collect();
+        assert_eq!(mods.len(), 0);
+    }
+
+    #[test]
+    fn test_slots_beyond_grid_size_not_processed() {
         let mut mm = ModMatrix::new();
 
+        // Set grid size to 1x1 (only slot 0)
+        mm.set_param(Param::ModMatrix(ModMatrixParam::GridSize(
+            ModMatrixGridSize::Grid1x1,
+        )));
+
+        // Set up slot 0 and slot 1
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotSource(
             0,
             ModSource::Velocity,
@@ -316,11 +343,61 @@ mod tests {
             0,
             ModDestination::FilterCutoff(0),
         )));
-        mm.set_param(Param::ModMatrix(ModMatrixParam::SlotEnabled(0, false)));
+        mm.set_param(Param::ModMatrix(ModMatrixParam::SlotAmount(
+            0,
+            BipolarValue::new(0.5),
+        )));
+
+        mm.set_param(Param::ModMatrix(ModMatrixParam::SlotSource(
+            1,
+            ModSource::ModWheel,
+        )));
+        mm.set_param(Param::ModMatrix(ModMatrixParam::SlotDestination(
+            1,
+            ModDestination::AmpLevel(0),
+        )));
+        mm.set_param(Param::ModMatrix(ModMatrixParam::SlotAmount(
+            1,
+            BipolarValue::new(1.0),
+        )));
 
         mm.update_source(ModSource::Velocity, 1.0);
+        mm.update_source(ModSource::ModWheel, 1.0);
 
+        // Only slot 0 should produce output (grid is 1x1)
         let mods: Vec<_> = mm.calculate_modulations().collect();
-        assert_eq!(mods.len(), 0);
+        assert_eq!(mods.len(), 1);
+        assert_eq!(mods[0].destination, ModDestination::FilterCutoff(0));
+
+        // Now expand to 2x2 — both slots should work
+        mm.set_param(Param::ModMatrix(ModMatrixParam::GridSize(
+            ModMatrixGridSize::Grid2x2,
+        )));
+        let mods: Vec<_> = mm.calculate_modulations().collect();
+        assert_eq!(mods.len(), 2);
+    }
+
+    #[test]
+    fn test_grid_size_param() {
+        let mut mm = ModMatrix::new();
+
+        // Default is 2x2
+        let gs = mm
+            .get_param(&Param::ModMatrix(ModMatrixParam::GridSize(
+                ModMatrixGridSize::default(),
+            )))
+            .unwrap();
+        assert_eq!(gs as usize, ModMatrixGridSize::Grid2x2.index());
+
+        // Set to 3x3
+        mm.set_param(Param::ModMatrix(ModMatrixParam::GridSize(
+            ModMatrixGridSize::Grid3x3,
+        )));
+        let gs = mm
+            .get_param(&Param::ModMatrix(ModMatrixParam::GridSize(
+                ModMatrixGridSize::default(),
+            )))
+            .unwrap();
+        assert_eq!(gs as usize, ModMatrixGridSize::Grid3x3.index());
     }
 }

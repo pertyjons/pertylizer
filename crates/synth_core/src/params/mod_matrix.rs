@@ -1,14 +1,102 @@
 //! Mod Matrix parameter types.
 //!
-//! The mod matrix provides 8 modulation slots, each routing a source
-//! to a destination with a bipolar amount control.
+//! The mod matrix provides up to 16 modulation slots arranged in a grid.
+//! Grid size is selectable (1x1, 2x2, 3x3, 4x4) giving 1, 4, 9, or 16 slots.
+//! Each slot routes a source to a destination with a bipolar amount control.
+//! A slot with Source=None is effectively inactive.
 
 use serde::{Deserialize, Serialize};
 
 use crate::types::BipolarValue;
 
-/// Maximum number of mod matrix slots.
-pub const MOD_MATRIX_SLOTS: usize = 8;
+/// Maximum number of mod matrix slots (4x4 grid).
+pub const MAX_MOD_MATRIX_SLOTS: usize = 16;
+
+// ============================================================================
+// GRID SIZE
+// ============================================================================
+
+/// Grid size for the mod matrix display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ModMatrixGridSize {
+    /// 1x1 grid (1 slot).
+    Grid1x1,
+    /// 2x2 grid (4 slots).
+    #[default]
+    Grid2x2,
+    /// 3x3 grid (9 slots).
+    Grid3x3,
+    /// 4x4 grid (16 slots).
+    Grid4x4,
+}
+
+impl ModMatrixGridSize {
+    pub const ALL: [Self; 4] = [Self::Grid1x1, Self::Grid2x2, Self::Grid3x3, Self::Grid4x4];
+
+    /// Number of active slots for this grid size.
+    #[must_use]
+    pub const fn slot_count(self) -> usize {
+        match self {
+            Self::Grid1x1 => 1,
+            Self::Grid2x2 => 4,
+            Self::Grid3x3 => 9,
+            Self::Grid4x4 => 16,
+        }
+    }
+
+    /// Grid dimension (columns = rows).
+    #[must_use]
+    pub const fn grid_dimension(self) -> usize {
+        match self {
+            Self::Grid1x1 => 1,
+            Self::Grid2x2 => 2,
+            Self::Grid3x3 => 3,
+            Self::Grid4x4 => 4,
+        }
+    }
+
+    /// Display name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Grid1x1 => "1\u{d7}1",
+            Self::Grid2x2 => "2\u{d7}2",
+            Self::Grid3x3 => "3\u{d7}3",
+            Self::Grid4x4 => "4\u{d7}4",
+        }
+    }
+
+    /// Identifier string.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Grid1x1 => "1x1",
+            Self::Grid2x2 => "2x2",
+            Self::Grid3x3 => "3x3",
+            Self::Grid4x4 => "4x4",
+        }
+    }
+
+    /// Create from index (0-3).
+    #[must_use]
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
+    }
+
+    /// Get the index (0-3).
+    #[must_use]
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|g| *g == self).unwrap_or(0)
+    }
+
+    /// Generate choices for GUI dropdown.
+    pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|g| crate::module_traits::ChoiceOption::new(g.id(), g.name()))
+            .collect()
+    }
+}
 
 // ============================================================================
 // MODULATION SOURCE
@@ -211,94 +299,129 @@ impl ModDestination {
 // MOD MATRIX PARAMETER ENUM (with typed values)
 // ============================================================================
 
+/// Slot name lookup table (1-indexed display names).
+const SLOT_NAMES_SOURCE: [&str; 16] = [
+    "Slot 1 Source",
+    "Slot 2 Source",
+    "Slot 3 Source",
+    "Slot 4 Source",
+    "Slot 5 Source",
+    "Slot 6 Source",
+    "Slot 7 Source",
+    "Slot 8 Source",
+    "Slot 9 Source",
+    "Slot 10 Source",
+    "Slot 11 Source",
+    "Slot 12 Source",
+    "Slot 13 Source",
+    "Slot 14 Source",
+    "Slot 15 Source",
+    "Slot 16 Source",
+];
+
+const SLOT_NAMES_DEST: [&str; 16] = [
+    "Slot 1 Dest",
+    "Slot 2 Dest",
+    "Slot 3 Dest",
+    "Slot 4 Dest",
+    "Slot 5 Dest",
+    "Slot 6 Dest",
+    "Slot 7 Dest",
+    "Slot 8 Dest",
+    "Slot 9 Dest",
+    "Slot 10 Dest",
+    "Slot 11 Dest",
+    "Slot 12 Dest",
+    "Slot 13 Dest",
+    "Slot 14 Dest",
+    "Slot 15 Dest",
+    "Slot 16 Dest",
+];
+
+const SLOT_NAMES_AMOUNT: [&str; 16] = [
+    "Slot 1 Amount",
+    "Slot 2 Amount",
+    "Slot 3 Amount",
+    "Slot 4 Amount",
+    "Slot 5 Amount",
+    "Slot 6 Amount",
+    "Slot 7 Amount",
+    "Slot 8 Amount",
+    "Slot 9 Amount",
+    "Slot 10 Amount",
+    "Slot 11 Amount",
+    "Slot 12 Amount",
+    "Slot 13 Amount",
+    "Slot 14 Amount",
+    "Slot 15 Amount",
+    "Slot 16 Amount",
+];
+
 /// Mod matrix parameter with typed value.
 ///
-/// Each slot (0-7) has source, destination, amount, and enabled state.
+/// Each slot (0-15) has source, destination, and amount.
+/// A slot with `Source = None` is effectively inactive.
+/// `GridSize` controls how many slots are visible and processed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ModMatrixParam {
+    /// Grid size selector.
+    GridSize(ModMatrixGridSize),
     /// Source for slot N.
     SlotSource(u8, ModSource),
     /// Destination for slot N.
     SlotDestination(u8, ModDestination),
     /// Amount for slot N (-1.0 to +1.0).
     SlotAmount(u8, BipolarValue),
-    /// Whether slot N is enabled.
-    SlotEnabled(u8, bool),
 }
 
 impl ModMatrixParam {
     /// Check if two parameters are the same kind (ignoring values).
     pub fn same_kind(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::GridSize(_), Self::GridSize(_)) => true,
             (Self::SlotSource(a, _), Self::SlotSource(b, _)) => a == b,
             (Self::SlotDestination(a, _), Self::SlotDestination(b, _)) => a == b,
             (Self::SlotAmount(a, _), Self::SlotAmount(b, _)) => a == b,
-            (Self::SlotEnabled(a, _), Self::SlotEnabled(b, _)) => a == b,
             _ => false,
         }
     }
 
     /// Get the parameter name.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::SlotSource(0, _) => "Slot 1 Source",
-            Self::SlotDestination(0, _) => "Slot 1 Dest",
-            Self::SlotAmount(0, _) => "Slot 1 Amount",
-            Self::SlotEnabled(0, _) => "Slot 1 On",
-            Self::SlotSource(1, _) => "Slot 2 Source",
-            Self::SlotDestination(1, _) => "Slot 2 Dest",
-            Self::SlotAmount(1, _) => "Slot 2 Amount",
-            Self::SlotEnabled(1, _) => "Slot 2 On",
-            Self::SlotSource(2, _) => "Slot 3 Source",
-            Self::SlotDestination(2, _) => "Slot 3 Dest",
-            Self::SlotAmount(2, _) => "Slot 3 Amount",
-            Self::SlotEnabled(2, _) => "Slot 3 On",
-            Self::SlotSource(3, _) => "Slot 4 Source",
-            Self::SlotDestination(3, _) => "Slot 4 Dest",
-            Self::SlotAmount(3, _) => "Slot 4 Amount",
-            Self::SlotEnabled(3, _) => "Slot 4 On",
-            Self::SlotSource(4, _) => "Slot 5 Source",
-            Self::SlotDestination(4, _) => "Slot 5 Dest",
-            Self::SlotAmount(4, _) => "Slot 5 Amount",
-            Self::SlotEnabled(4, _) => "Slot 5 On",
-            Self::SlotSource(5, _) => "Slot 6 Source",
-            Self::SlotDestination(5, _) => "Slot 6 Dest",
-            Self::SlotAmount(5, _) => "Slot 6 Amount",
-            Self::SlotEnabled(5, _) => "Slot 6 On",
-            Self::SlotSource(6, _) => "Slot 7 Source",
-            Self::SlotDestination(6, _) => "Slot 7 Dest",
-            Self::SlotAmount(6, _) => "Slot 7 Amount",
-            Self::SlotEnabled(6, _) => "Slot 7 On",
-            Self::SlotSource(7, _) => "Slot 8 Source",
-            Self::SlotDestination(7, _) => "Slot 8 Dest",
-            Self::SlotAmount(7, _) => "Slot 8 Amount",
-            Self::SlotEnabled(7, _) => "Slot 8 On",
-            Self::SlotSource(_, _) => "Slot Source",
-            Self::SlotDestination(_, _) => "Slot Dest",
-            Self::SlotAmount(_, _) => "Slot Amount",
-            Self::SlotEnabled(_, _) => "Slot On",
+            Self::GridSize(_) => "Grid Size",
+            Self::SlotSource(i, _) => SLOT_NAMES_SOURCE
+                .get(*i as usize)
+                .copied()
+                .unwrap_or("Slot Source"),
+            Self::SlotDestination(i, _) => SLOT_NAMES_DEST
+                .get(*i as usize)
+                .copied()
+                .unwrap_or("Slot Dest"),
+            Self::SlotAmount(i, _) => SLOT_NAMES_AMOUNT
+                .get(*i as usize)
+                .copied()
+                .unwrap_or("Slot Amount"),
         }
     }
 
     /// Get the value as f32 (for GUI).
+    #[allow(clippy::cast_precision_loss)]
     pub fn as_f32(&self) -> f32 {
         match self {
+            Self::GridSize(g) => g.index() as f32,
             Self::SlotSource(_, s) => s.index() as f32,
             Self::SlotDestination(_, d) => d.index() as f32,
             Self::SlotAmount(_, a) => a.as_f32(),
-            Self::SlotEnabled(_, e) => {
-                if *e {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
         }
     }
 
     /// Create the same parameter variant with a new f32 value (for GUI).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
+            Self::GridSize(_) => Self::GridSize(ModMatrixGridSize::from_index(value as usize)),
             Self::SlotSource(slot, _) => {
                 Self::SlotSource(*slot, ModSource::from_index(value as usize))
             }
@@ -306,17 +429,14 @@ impl ModMatrixParam {
                 Self::SlotDestination(*slot, ModDestination::from_index(value as usize))
             }
             Self::SlotAmount(slot, _) => Self::SlotAmount(*slot, BipolarValue::new(value)),
-            Self::SlotEnabled(slot, _) => Self::SlotEnabled(*slot, value > 0.5),
         }
     }
 
-    /// Get the slot index for this parameter.
+    /// Get the slot index for this parameter (returns 0 for GridSize).
     pub fn slot(&self) -> u8 {
         match self {
-            Self::SlotSource(s, _)
-            | Self::SlotDestination(s, _)
-            | Self::SlotAmount(s, _)
-            | Self::SlotEnabled(s, _) => *s,
+            Self::GridSize(_) => 0,
+            Self::SlotSource(s, _) | Self::SlotDestination(s, _) | Self::SlotAmount(s, _) => *s,
         }
     }
 }
