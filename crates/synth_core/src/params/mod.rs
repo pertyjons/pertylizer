@@ -21,6 +21,7 @@ mod noise;
 mod oscillators;
 mod physical;
 mod sub_osc;
+mod waveshaper;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,7 @@ pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
+pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
 
 // ============================================================================
 // MODULE TYPE ENUM
@@ -69,6 +71,7 @@ pub enum ModuleType {
     Flanger,
     Compressor,
     Eq,
+    Waveshaper,
     // Visualizers
     Oscilloscope,
     LevelMeter,
@@ -127,6 +130,7 @@ impl ModuleType {
                 | Self::Flanger
                 | Self::Compressor
                 | Self::Eq
+                | Self::Waveshaper
         )
     }
 
@@ -172,6 +176,7 @@ impl ModuleType {
             Self::Flanger => "Flanger",
             Self::Compressor => "Compressor",
             Self::Eq => "EQ",
+            Self::Waveshaper => "Waveshaper",
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
             Self::ModMatrix => "Mod Matrix",
@@ -203,6 +208,7 @@ impl ModuleType {
             Self::Flanger => "fln",
             Self::Compressor => "cmp",
             Self::Eq => "equ",
+            Self::Waveshaper => "wsh",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             Self::ModMatrix => "mmx",
@@ -234,6 +240,7 @@ impl ModuleType {
             "fln" => Some(Self::Flanger),
             "cmp" => Some(Self::Compressor),
             "equ" => Some(Self::Eq),
+            "wsh" => Some(Self::Waveshaper),
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
             "mmx" => Some(Self::ModMatrix),
@@ -280,6 +287,7 @@ pub enum Param {
     Flanger(FlangerParam),
     Compressor(CompressorParam),
     Eq(EqParam),
+    Waveshaper(WaveshaperParam),
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
     ModMatrix(ModMatrixParam),
@@ -319,6 +327,7 @@ impl Param {
             (Self::Flanger(a), Self::Flanger(b)) => a.same_kind(b),
             (Self::Compressor(a), Self::Compressor(b)) => a.same_kind(b),
             (Self::Eq(a), Self::Eq(b)) => a.same_kind(b),
+            (Self::Waveshaper(a), Self::Waveshaper(b)) => a.same_kind(b),
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
             (Self::ModMatrix(a), Self::ModMatrix(b)) => a.same_kind(b),
@@ -350,6 +359,7 @@ impl Param {
             Self::Flanger(_) => ModuleType::Flanger,
             Self::Compressor(_) => ModuleType::Compressor,
             Self::Eq(_) => ModuleType::Eq,
+            Self::Waveshaper(_) => ModuleType::Waveshaper,
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
             Self::ModMatrix(_) => ModuleType::ModMatrix,
@@ -380,6 +390,7 @@ impl Param {
             Self::Flanger(p) => p.name(),
             Self::Compressor(p) => p.name(),
             Self::Eq(p) => p.name(),
+            Self::Waveshaper(p) => p.name(),
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
             Self::ModMatrix(p) => p.name(),
@@ -410,6 +421,7 @@ impl Param {
             Self::Flanger(p) => p.as_f32(),
             Self::Compressor(p) => p.as_f32(),
             Self::Eq(p) => p.as_f32(),
+            Self::Waveshaper(p) => p.as_f32(),
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
             Self::ModMatrix(p) => p.as_f32(),
@@ -440,6 +452,7 @@ impl Param {
             Self::Flanger(p) => Self::Flanger(p.with_f32(value)),
             Self::Compressor(p) => Self::Compressor(p.with_f32(value)),
             Self::Eq(p) => Self::Eq(p.with_f32(value)),
+            Self::Waveshaper(p) => Self::Waveshaper(p.with_f32(value)),
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
             Self::ModMatrix(p) => Self::ModMatrix(p.with_f32(value)),
@@ -588,6 +601,7 @@ mod tests {
         assert!(ModuleType::Flanger.is_effect());
         assert!(ModuleType::Compressor.is_effect());
         assert!(ModuleType::Eq.is_effect());
+        assert!(ModuleType::Waveshaper.is_effect());
 
         // Non-effects (should be false)
         assert!(!ModuleType::Oscillator.is_effect());

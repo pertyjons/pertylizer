@@ -14,6 +14,7 @@ mod drum_snare;
 mod expressive_lead;
 mod fm_bell;
 mod formant_voice;
+mod glitch_pad;
 mod grand_piano;
 mod karplus_guitar;
 mod noise_sweep;
@@ -26,6 +27,7 @@ mod sub_bass;
 mod velocity_pad;
 mod vintage_lead;
 mod wave_folder_bass;
+mod waveshaper_lead;
 
 pub use aggressive_bass::patch_aggressive_bass;
 pub use ambient_keys::patch_ambient_keys;
@@ -39,6 +41,7 @@ pub use drum_snare::patch_drum_snare;
 pub use expressive_lead::patch_expressive_lead;
 pub use fm_bell::patch_fm_bell;
 pub use formant_voice::patch_formant_voice;
+pub use glitch_pad::patch_glitch_pad;
 pub use grand_piano::patch_grand_piano;
 pub use karplus_guitar::patch_karplus_guitar;
 pub use noise_sweep::patch_noise_sweep;
@@ -51,6 +54,7 @@ pub use sub_bass::patch_sub_bass;
 pub use velocity_pad::patch_velocity_pad;
 pub use vintage_lead::patch_vintage_lead;
 pub use wave_folder_bass::patch_wave_folder_bass;
+pub use waveshaper_lead::patch_waveshaper_lead;
 
 use crate::patch::Patch;
 
@@ -89,5 +93,8 @@ pub fn example_patches() -> Vec<Patch> {
         // Mod Matrix patches
         patch_velocity_pad(),
         patch_expressive_lead(),
+        // Waveshaper patches
+        patch_waveshaper_lead(),
+        patch_glitch_pad(),
     ]
 }

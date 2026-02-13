@@ -20,7 +20,7 @@ use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
 use synth_engine::{EngineCommand, EngineHandle, ModuleId};
-use synth_modules::effects::{Chorus, Delay, Distortion, Reverb};
+use synth_modules::effects::{Chorus, Delay, Distortion, Reverb, Waveshaper};
 use synth_modules::{
     Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
     StereoOutput, SubOscillator,
@@ -426,6 +426,25 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::Waveshaper => {
+            let e = Waveshaper::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Waveshaper),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
             patch_editor.add_module_at(module_id, descriptor, position);
@@ -639,7 +658,14 @@ pub fn create_patch_from_rack(
                 ModuleCategory::Amplifier => PatchModuleType::Amplifier,
                 ModuleCategory::Mixer => PatchModuleType::Mixer,
                 ModuleCategory::Output => PatchModuleType::StereoOutput,
-                ModuleCategory::Effect => PatchModuleType::Delay, // Default to delay for effects
+                ModuleCategory::Effect => match descriptor.type_id.0.as_str() {
+                    "delay" => PatchModuleType::Delay,
+                    "reverb" => PatchModuleType::Reverb,
+                    "distortion" => PatchModuleType::Distortion,
+                    "chorus" => PatchModuleType::Chorus,
+                    "waveshaper" => PatchModuleType::Waveshaper,
+                    _ => PatchModuleType::Delay, // Fallback for other effects
+                },
                 ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
                     "mod_matrix" => PatchModuleType::ModMatrix,
                     _ => continue,
@@ -705,6 +731,7 @@ pub fn get_effect_type_from_module(
         "flanger" => Some(EffectType::Flanger),
         "compressor" => Some(EffectType::Compressor),
         "eq" => Some(EffectType::Eq),
+        "waveshaper" => Some(EffectType::Waveshaper),
         _ => None,
     }
 }

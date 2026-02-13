@@ -56,6 +56,11 @@ pub enum MasterEffectParams {
         tone: f32,  // 0-1
         mix: f32,   // 0-1
     },
+    Waveshaper {
+        drive: f32, // 0-1
+        mix: f32,   // 0-1
+        bias: f32,  // -1 to 1
+    },
 }
 
 impl MasterEffectParams {
@@ -110,6 +115,11 @@ impl MasterEffectParams {
                 tone: 0.5,
                 mix: 0.5,
             },
+            EffectType::Waveshaper => Self::Waveshaper {
+                drive: 0.3,
+                mix: 1.0,
+                bias: 0.0,
+            },
         }
     }
 }
@@ -154,6 +164,7 @@ impl MasterEffectUiState {
             EffectType::Phaser => "Phaser",
             EffectType::Flanger => "Flanger",
             EffectType::Distortion => "Distortion",
+            EffectType::Waveshaper => "Waveshaper",
         }
     }
 }

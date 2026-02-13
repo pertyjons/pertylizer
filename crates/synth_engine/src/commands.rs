@@ -535,6 +535,7 @@ pub enum EffectType {
     Flanger,
     Compressor,
     Eq,
+    Waveshaper,
 }
 
 impl EffectType {
@@ -550,6 +551,7 @@ impl EffectType {
             MT::Flanger => Some(Self::Flanger),
             MT::Compressor => Some(Self::Compressor),
             MT::Eq => Some(Self::Eq),
+            MT::Waveshaper => Some(Self::Waveshaper),
             _ => None,
         }
     }
@@ -568,6 +570,7 @@ impl EffectType {
             Self::Flanger => MT::Flanger,
             Self::Compressor => MT::Compressor,
             Self::Eq => MT::Eq,
+            Self::Waveshaper => MT::Waveshaper,
         }
     }
 }

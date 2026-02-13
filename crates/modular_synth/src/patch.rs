@@ -92,6 +92,7 @@ pub enum PatchModuleType {
     Reverb,
     Distortion,
     Chorus,
+    Waveshaper,
     // Visualizers
     Oscilloscope,
     LevelMeter,
@@ -120,6 +121,7 @@ impl PatchModuleType {
             Self::Reverb => "reverb",
             Self::Distortion => "distortion",
             Self::Chorus => "chorus",
+            Self::Waveshaper => "waveshaper",
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
             Self::ModMatrix => "mod_matrix",
@@ -147,6 +149,7 @@ impl PatchModuleType {
             Self::Reverb => "rev",
             Self::Distortion => "dst",
             Self::Chorus => "chr",
+            Self::Waveshaper => "wsh",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             Self::ModMatrix => "mmx",
@@ -165,7 +168,7 @@ impl PatchModuleType {
     pub const fn is_effect_chain_module(&self) -> bool {
         matches!(
             self,
-            Self::Delay | Self::Reverb | Self::Distortion | Self::Chorus
+            Self::Delay | Self::Reverb | Self::Distortion | Self::Chorus | Self::Waveshaper
         )
     }
 
@@ -391,6 +394,11 @@ impl ModuleBuilder {
     /// Convenience: set distortion mode.
     pub fn distortion_mode(self, mode: &str) -> Self {
         self.param_choice("mode", mode)
+    }
+
+    /// Convenience: set waveshaper curve.
+    pub fn waveshaper_curve(self, curve: &str) -> Self {
+        self.param_choice("curve", curve)
     }
 
     /// Convenience: set algorithm for math oscillator.

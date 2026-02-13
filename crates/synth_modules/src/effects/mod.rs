@@ -19,6 +19,7 @@ pub mod eq;
 pub mod flanger;
 pub mod phaser;
 pub mod reverb;
+pub mod waveshaper;
 
 pub use chorus::Chorus;
 pub use compressor::Compressor;
@@ -28,3 +29,4 @@ pub use eq::Eq;
 pub use flanger::Flanger;
 pub use phaser::Phaser;
 pub use reverb::Reverb;
+pub use waveshaper::Waveshaper;

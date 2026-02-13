@@ -56,7 +56,7 @@ pub use mechanical_noise::MechanicalNoise;
 
 // Effects exports
 pub use effects::{
-    Chorus, Compressor, Delay, Distortion, DistortionType, Eq, Flanger, Phaser, Reverb,
+    Chorus, Compressor, Delay, Distortion, DistortionType, Eq, Flanger, Phaser, Reverb, Waveshaper,
 };
 
 // Re-export param types from synth_core for convenience

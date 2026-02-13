@@ -34,7 +34,7 @@ use crate::patch::{Patch, example_patches};
 use synth_core::Velocity;
 use synth_core::{
     ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
-    PhaserParam, ReverbParam,
+    PhaserParam, ReverbParam, WaveshaperParam,
 };
 use synth_core::{Describable, ModuleCategory};
 use synth_engine::ModuleType as TypedModuleType;
@@ -42,7 +42,9 @@ use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
-use synth_modules::effects::{Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb};
+use synth_modules::effects::{
+    Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb, Waveshaper,
+};
 use synth_modules::{
     Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
     StereoOutput, SubOscillator,
@@ -1022,6 +1024,11 @@ impl SynthApp {
                 let d = e.descriptor();
                 (Box::new(e), d, TypedModuleType::Eq)
             }
+            EffectType::Waveshaper => {
+                let e = Waveshaper::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::Waveshaper)
+            }
         };
 
         let next_id = self.next_module_id(module_type);
@@ -1115,6 +1122,9 @@ impl SynthApp {
                     (Box::new(Compressor::new()), TypedModuleType::Compressor)
                 }
                 EffectType::Eq => (Box::new(Eq::new()), TypedModuleType::Eq),
+                EffectType::Waveshaper => {
+                    (Box::new(Waveshaper::new()), TypedModuleType::Waveshaper)
+                }
             };
 
         let next_id = self.next_module_id(module_type);
@@ -1359,6 +1369,7 @@ impl SynthApp {
                         (EffectType::Phaser, "Phaser"),
                         (EffectType::Flanger, "Flanger"),
                         (EffectType::Distortion, "Distortion"),
+                        (EffectType::Waveshaper, "Waveshaper"),
                     ];
 
                     for (effect_type, name) in effect_types {
@@ -2578,6 +2589,99 @@ fn draw_effect_params(
                         param_changes.push((
                             effect_type,
                             Param::Distortion(DistortionParam::Mix(NormalizedValue::new(val))),
+                        ));
+                    }
+                }
+            }
+
+            MasterEffectParams::Waveshaper { drive, mix, bias } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::Waveshaper {
+                    drive: dr,
+                    mix: mx,
+                    bias: bi,
+                } = &mut effect.params
+                {
+                    // Drive
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Drive")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", drive * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *drive;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *dr = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Waveshaper(WaveshaperParam::Drive(NormalizedValue::new(val))),
+                        ));
+                    }
+
+                    // Bias
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Bias")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:+.2}", bias))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *bias;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -1.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *bi = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Waveshaper(WaveshaperParam::Bias(
+                                synth_core::BipolarValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Waveshaper(WaveshaperParam::Mix(NormalizedValue::new(val))),
                         ));
                     }
                 }

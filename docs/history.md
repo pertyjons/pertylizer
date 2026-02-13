@@ -1,5 +1,13 @@
 # Version History
 
+## [0.113.0] - 2026-02-13
+### Added - Waveshaper-modul
+- **Waveshaper-effekt**: Ny kreativ waveshaping-modul med 6 kurvor: Soft Clip, Asymmetric, Fold, Chebyshev, Sine Fold, Quantize.
+- **Parametrar**: Curve (kurvval), Drive (exponentiell 1x-20x), Mix (dry/wet), Bias (DC-offset), Symmetry (asymmetrisk kontroll).
+- **GUI-integration**: Tillgänglig i effektpaletten, master-bus dropdown, och patch-editor.
+- **Patch: Waveshaper Lead**: Skarp lead med Sine Fold-kurva, saw-oscillator och filter-envelope-modulation.
+- **Patch: Glitch Pad**: Evolverande pad med Fold-kurva, triangle-oscillator och LFO-filtermodulation.
+
 ## [0.112.0] - 2026-02-13
 ### Changed - Mod Matrix: enabled-checkbox & Amount-label
 - **Enabled-checkbox**: Varje slot har nu en checkbox bredvid Amount-knoben för att aktivera/inaktivera sloten.

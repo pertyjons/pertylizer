@@ -2087,6 +2087,11 @@ impl ModulePalette {
                     selected = Some(PaletteSelection::Effect(EffectType::Eq));
                     ui.close();
                 }
+                ui.separator();
+                if ui.button("🔊 Waveshaper").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Waveshaper));
+                    ui.close();
+                }
             });
 
             // Visualizer submenu
