@@ -7,6 +7,7 @@
 //! Cables are rendered in a foreground layer so they appear above modules.
 
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
+use egui_extras as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use synth_core::Param;
@@ -449,9 +450,8 @@ impl PatchEditor {
                 .id(window_id)
                 .open(&mut open)
                 .collapsible(true)
-                .resizable(true)
+                .resizable(false)
                 .min_width(theme().sizes.module_min_width)
-                .min_height(80.0)
                 .frame(frame);
 
             // Use current_pos for forced repositioning, default_pos for normal operation
@@ -642,26 +642,30 @@ impl PatchEditor {
                     }
                 } else {
                     // Normal modules: three-column layout (IN ports | content | OUT ports)
-                    // Let content determine module width naturally. After content is drawn,
-                    // fill remaining space to push the right port column flush to the edge.
                     let col_w = theme().sizes.port_column_width;
+                    let min_content = theme().sizes.module_content_min_width;
 
                     ui.horizontal(|ui| {
-                        // Left column: input ports (fixed width)
-                        self.draw_port_column(
-                            ui,
-                            module_id,
-                            &descriptor,
-                            WidgetPortDirection::Input,
-                            &connected_ports,
-                        );
-
-                        ui.separator();
-
-                        // Middle column: content (natural width)
+                        // Left port column (IN) - fixed width
                         ui.vertical(|ui| {
-                            if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                                let vis_buffer = handle.get_visualization_buffer(module_id);
+                            ui.set_width(col_w);
+                            self.draw_port_column(
+                                ui,
+                                module_id,
+                                &descriptor,
+                                WidgetPortDirection::Input,
+                                &connected_ports,
+                            );
+                        });
+
+                        // Content column - sized by content, min width enforced
+                        ui.vertical(|ui| {
+                            ui.set_min_width(min_content);
+                            if let Some(panel_state) =
+                                self.panels.get_mut(&module_id)
+                            {
+                                let vis_buffer =
+                                    handle.get_visualization_buffer(module_id);
                                 let panel_result = draw_module_panel_params(
                                     ui,
                                     panel_state,
@@ -675,23 +679,17 @@ impl PatchEditor {
                             }
                         });
 
-                        // Fill remaining space to push right column to the edge
-                        let right_need = col_w + ui.spacing().item_spacing.x + 2.0;
-                        let gap = (ui.available_width() - right_need).max(0.0);
-                        if gap > 0.0 {
-                            ui.add_space(gap);
-                        }
-
-                        ui.separator();
-
-                        // Right column: output ports (flush right)
-                        self.draw_port_column(
-                            ui,
-                            module_id,
-                            &descriptor,
-                            WidgetPortDirection::Output,
-                            &connected_ports,
-                        );
+                        // Right port column (OUT) - fixed width
+                        ui.vertical(|ui| {
+                            ui.set_width(col_w);
+                            self.draw_port_column(
+                                ui,
+                                module_id,
+                                &descriptor,
+                                WidgetPortDirection::Output,
+                                &connected_ports,
+                            );
+                        });
                     });
                 }
             });
@@ -825,11 +823,7 @@ impl PatchEditor {
             .as_ref()
             .map(|p| (p.from_module, p.from_type, p.from_direction));
 
-        ui.set_min_width(col_width);
-        ui.set_max_width(col_width);
-
         ui.vertical(|ui| {
-            ui.set_min_width(col_width);
             // Small label at top
             let label = match direction {
                 WidgetPortDirection::Input => "IN",

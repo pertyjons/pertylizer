@@ -1,5 +1,18 @@
 # Version History
 
+## [0.104.0] - 2026-02-13
+### Fixed - Kompakta modulfönster
+- **Auto-fit höjd**: Ersatt `StripBuilder::horizontal` (som expanderade celler till full tillgänglig höjd) med `ui.horizontal` + `ui.vertical` — modulfönster anpassar nu höjden till sitt innehåll utan dödyta
+- **Fast modulbredd**: Moduler expanderar inte längre med huvudfönstret — content-kolumnen använder `set_min_width` istället för `available_width()`
+- **Icke-resizable fönster**: Modulfönster är nu `resizable(false)` och auto-fitar alltid till innehållet
+- **Borttaget `StripBuilder`-beroende**: `egui_extras::StripBuilder` och `Size` används inte längre i modullayouten
+
+## [0.103.0] - 2026-02-13
+### Changed - StripBuilder för modullayout
+- **StripBuilder-layout**: Ersatt manuell `ui.horizontal()` + gap-fill med `egui_extras::StripBuilder` för tre-kolumnslayouten (IN | innehåll | OUT). Portkolumner använder `Size::exact()` och mittinnehållet `Size::remainder()`, vilket ger exakta kolumnbredder utan fragil gap-beräkning.
+- **Högerkolumn flush**: OUT-portar sitter nu garanterat flush mot modulens högerkant tack vare StripBuilders fasta kolumnstorlekar.
+- **Förenklad `draw_port_column`**: Borttaget manuellt `set_min_width`/`set_max_width` — StripBuilder hanterar kolumnbredden.
+
 ## [0.102.0] - 2026-02-11
 ### Changed - Ny modullayout: portar på sidorna
 - **Tre-kolumnlayout**: Portar renderas nu i vertikala kolumner till vänster (IN) och höger (OUT) om modulinnehållet, istället för i en horisontell sektion mellan header och parametrar. Minskar modulhöjden och eliminerar dött utrymme.

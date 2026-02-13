@@ -92,7 +92,16 @@
       "Bash(xargs:*)",
       "Bash(git tag:*)",
       "Bash(git -C /home/per/Dokument/rust-projects/modular-synth add --all)",
-      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth commit -m \"$\\(cat <<''EOF''\nTa bort resterande sample-kod: SamplePlayer pitch mod, WaveformOverview, PlaybackPositionBuffer, hound-ref i ARCHITECTURE.md\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth commit -m \"$\\(cat <<''EOF''\nTa bort resterande sample-kod: SamplePlayer pitch mod, WaveformOverview, PlaybackPositionBuffer, hound-ref i ARCHITECTURE.md\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "WebFetch(domain:releases.rs)",
+      "Bash(rustc:*)",
+      "Bash(do echo -n \"$crate: \")",
+      "Bash(cargo search:*)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline 7103a92eaf81ebb79c6238ec9aaa76d36f33c6aa~1..731a6a5e7ee1602769ae50a96805173fb6f8eac0)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth diff 7103a92eaf81ebb79c6238ec9aaa76d36f33c6aa~1..731a6a5e7ee1602769ae50a96805173fb6f8eac0 --stat)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth diff 7103a92eaf81ebb79c6238ec9aaa76d36f33c6aa~1..731a6a5e7ee1602769ae50a96805173fb6f8eac0 -- crates/modular_synth/src/gui/patch_editor.rs)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth show 7103a92eaf81ebb79c6238ec9aaa76d36f33c6aa~1:crates/modular_synth/src/gui/patch_editor.rs)"
     ],
     "deny": [],
     "ask": []
