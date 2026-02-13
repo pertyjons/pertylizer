@@ -915,7 +915,9 @@ pub trait AudioEffect: Describable + Send {
 // ============================================================================
 
 // Re-export waveform and filter types from typed_params
-pub use crate::params::{DelayMode, DistortionMode, FilterMode, LfoWaveform, MathAlgo, Waveform};
+pub use crate::params::{
+    DelayMode, DistortionMode, FilterMode, FilterModel, LfoWaveform, MathAlgo, Waveform,
+};
 
 // Type alias for backward compatibility
 pub type FilterType = FilterMode;
@@ -944,6 +946,15 @@ impl FilterMode {
         Self::ALL
             .iter()
             .map(|f| ChoiceOption::new(f.id(), f.name()))
+            .collect()
+    }
+}
+
+impl FilterModel {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| ChoiceOption::new(m.id(), m.name()))
             .collect()
     }
 }

@@ -19,5 +19,7 @@ pub mod filters;
 pub mod oscillators;
 
 pub use delay::{DelayLine, InterpolatedDelayLine};
-pub use filters::{BiquadCoeffs, SvfCoeffs, SvfFilterType};
+pub use filters::{
+    AcidFilter, BiquadCoeffs, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType,
+};
 pub use oscillators::{poly_blep, poly_blep_integrated};

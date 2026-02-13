@@ -1,5 +1,14 @@
 # Version History
 
+## [0.115.0] - 2026-02-13
+### Added - Character Filters (Analog filtermodeller)
+- **FilterModel-parameter**: Ny Model-väljare i Filter-modulen med 4 alternativ: Standard, Fluid, Screamer, Acid.
+- **Fluid** (Oberheim-inspirerad): SVF med normaliserad tanh-saturation och kontinuerlig Morph-kontroll (LP→BP→HP→Notch) via constant-power crossfade.
+- **Screamer** (MS-20-inspirerad): Sallen-Key HP→LP-kaskad med asymmetrisk diod-clipping i feedbackloopen. Aggressiv, skrikande resonans.
+- **Acid** (Steiner-Parker-inspirerad): ZDF 2-pol med resonansberoende variabel saturation (tanh→sine-fold blend). Stöder LP/BP/HP-modes.
+- **Morph-knob**: Ny parameter för Fluid-modellen som smidigt korsfadar mellan filterutgångar.
+- **Realtidssäkert**: Alla filterstructs är Copy med enbart f32-fält, inga heap-allokeringar.
+
 ## [0.114.0] - 2026-02-13
 ### Added - Intra-voice Unison i Oscillator
 - **Unison-röster**: 1-7 detunade oscillatorkopior inuti varje röst, ger fett unison-ljud utan att multiplicera röstkostnaden.

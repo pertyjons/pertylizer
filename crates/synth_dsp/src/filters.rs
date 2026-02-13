@@ -215,6 +215,259 @@ impl BiquadCoeffs {
     }
 }
 
+// ============================================================================
+// CHARACTER FILTER: FLUID (Oberheim-inspired SVF with morph)
+// ============================================================================
+
+/// Oberheim-inspired SVF with continuous LP→BP→HP→Notch morph.
+///
+/// Features normalized tanh pre-saturation and constant-power crossfade
+/// between filter outputs controlled by the morph parameter.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FluidFilter {
+    pub ic1eq: f32,
+    pub ic2eq: f32,
+}
+
+impl FluidFilter {
+    /// Process a single sample through the Fluid filter.
+    ///
+    /// # Arguments
+    /// * `input` - Input sample
+    /// * `coeffs` - Pre-computed SVF coefficients
+    /// * `drive` - Drive amount (1.0 = unity)
+    /// * `morph` - Morph position (0.0 = LP, 0.33 = BP, 0.67 = HP, 1.0 = Notch)
+    #[inline]
+    pub fn process(&mut self, input: f32, coeffs: &SvfCoeffs, drive: f32, morph: f32) -> f32 {
+        // Pre-filter: normalized tanh saturation
+        let drive_clamped = drive.max(0.01);
+        let saturated = (input * drive_clamped).tanh() / drive_clamped;
+
+        // SVF computation
+        let v3 = saturated - self.ic2eq;
+        let v1 = coeffs.a1 * self.ic1eq + coeffs.a2 * v3;
+        let v2 = self.ic2eq + coeffs.a2 * self.ic1eq + coeffs.a3 * v3;
+
+        self.ic1eq = 2.0 * v1 - self.ic1eq;
+        self.ic2eq = 2.0 * v2 - self.ic2eq;
+
+        // All outputs simultaneously
+        let lp = v2;
+        let bp = v1;
+        let hp = saturated - coeffs.k * v1 - v2;
+        let notch = saturated - coeffs.k * v1;
+
+        // Morph: 3 zones (LP→BP, BP→HP, HP→Notch)
+        let morph_scaled = morph * 3.0;
+        let zone = morph_scaled as u32;
+        let t = morph_scaled - zone as f32;
+        let half_pi = std::f32::consts::FRAC_PI_2;
+        let cos_t = (t * half_pi).cos();
+        let sin_t = (t * half_pi).sin();
+
+        match zone {
+            0 => lp * cos_t + bp * sin_t,
+            1 => bp * cos_t + hp * sin_t,
+            _ => hp * cos_t + notch * sin_t,
+        }
+    }
+
+    /// Flush denormals to zero for consistent performance.
+    #[inline]
+    pub fn flush_denormals(&mut self) {
+        if self.ic1eq.abs() < 1e-15 {
+            self.ic1eq = 0.0;
+        }
+        if self.ic2eq.abs() < 1e-15 {
+            self.ic2eq = 0.0;
+        }
+    }
+
+    /// Reset filter state.
+    pub fn reset(&mut self) {
+        self.ic1eq = 0.0;
+        self.ic2eq = 0.0;
+    }
+}
+
+// ============================================================================
+// CHARACTER FILTER: SCREAMER (MS-20 Sallen-Key with diode clipping)
+// ============================================================================
+
+/// MS-20 inspired Sallen-Key filter with asymmetric diode clipping.
+///
+/// Features a 2-pole HP→LP cascade with diode-clipped feedback
+/// that creates the aggressive, screaming resonance character.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScreamerFilter {
+    pub hp_s1: f32,
+    pub hp_s2: f32,
+    pub lp_s1: f32,
+    pub lp_s2: f32,
+}
+
+impl ScreamerFilter {
+    /// Asymmetric diode clipping function.
+    ///
+    /// Positive half clips softer (0.8x), negative half clips harder (1.2x),
+    /// creating the characteristic MS-20 harmonic asymmetry.
+    #[inline]
+    fn diode_clip(x: f32) -> f32 {
+        if x >= 0.0 {
+            1.0 - (-x * 0.8).exp()
+        } else {
+            -(1.0 - (x * 1.2).exp())
+        }
+    }
+
+    /// Process a single sample through the Screamer filter.
+    ///
+    /// # Arguments
+    /// * `input` - Input sample
+    /// * `g` - Filter coefficient from `Hertz::to_tan_coeff()`
+    /// * `resonance` - Resonance amount (0.0 to 1.0)
+    /// * `drive` - Drive amount (1.0 = unity)
+    #[inline]
+    pub fn process(&mut self, input: f32, g: f32, resonance: f32, drive: f32) -> f32 {
+        // Diode-clipped feedback
+        let feedback = Self::diode_clip(self.lp_s2 * drive) * resonance * 4.0;
+        let input_fb = input - feedback;
+
+        // HP section: trapezoidal integrator
+        let hp_v = (input_fb - self.hp_s1) * g / (1.0 + g);
+        let hp_out = hp_v + self.hp_s1;
+        self.hp_s1 = hp_out + hp_v;
+
+        let hp2_v = (hp_out - self.hp_s2) * g / (1.0 + g);
+        let hp2_out = hp2_v + self.hp_s2;
+        self.hp_s2 = hp2_out + hp2_v;
+
+        // LP section: trapezoidal integrator
+        let lp_v = (hp2_out - self.lp_s1) * g / (1.0 + g);
+        let lp_out = lp_v + self.lp_s1;
+        self.lp_s1 = lp_out + lp_v;
+
+        let lp2_v = (lp_out - self.lp_s2) * g / (1.0 + g);
+        let lp2_out = lp2_v + self.lp_s2;
+        self.lp_s2 = lp2_out + lp2_v;
+
+        lp2_out
+    }
+
+    /// Flush denormals to zero for consistent performance.
+    #[inline]
+    pub fn flush_denormals(&mut self) {
+        if self.hp_s1.abs() < 1e-15 {
+            self.hp_s1 = 0.0;
+        }
+        if self.hp_s2.abs() < 1e-15 {
+            self.hp_s2 = 0.0;
+        }
+        if self.lp_s1.abs() < 1e-15 {
+            self.lp_s1 = 0.0;
+        }
+        if self.lp_s2.abs() < 1e-15 {
+            self.lp_s2 = 0.0;
+        }
+    }
+
+    /// Reset filter state.
+    pub fn reset(&mut self) {
+        self.hp_s1 = 0.0;
+        self.hp_s2 = 0.0;
+        self.lp_s1 = 0.0;
+        self.lp_s2 = 0.0;
+    }
+}
+
+// ============================================================================
+// CHARACTER FILTER: ACID (Steiner-Parker with variable saturation)
+// ============================================================================
+
+/// Steiner-Parker inspired filter with variable saturation.
+///
+/// Features a resonance-dependent saturation that morphs from tanh
+/// to sine-fold as resonance increases, creating the squelchy acid character.
+/// Supports LP, BP, and HP modes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AcidFilter {
+    pub s1: f32,
+    pub s2: f32,
+}
+
+impl AcidFilter {
+    /// Variable saturation that blends tanh→sine-fold based on resonance.
+    #[inline]
+    fn variable_saturate(x: f32, resonance: f32) -> f32 {
+        let blend = resonance * resonance;
+        let tanh_out = x.tanh();
+        let fold_out = (x * std::f32::consts::FRAC_PI_2).sin();
+        tanh_out * (1.0 - blend) + fold_out * blend
+    }
+
+    /// Process a single sample through the Acid filter.
+    ///
+    /// # Arguments
+    /// * `input` - Input sample
+    /// * `g` - Filter coefficient from `Hertz::to_tan_coeff()`
+    /// * `resonance` - Resonance amount (0.0 to 1.0)
+    /// * `drive` - Drive amount (1.0 = unity)
+    /// * `filter_mode` - Filter output type (LP, BP, HP supported; others fallback to LP)
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: f32,
+        g: f32,
+        resonance: f32,
+        drive: f32,
+        filter_mode: SvfFilterType,
+    ) -> f32 {
+        // Mode-dependent Q scaling
+        let q_scale = match filter_mode {
+            SvfFilterType::Lowpass => 4.0,
+            SvfFilterType::Bandpass => 3.0,
+            SvfFilterType::Highpass => 2.5,
+            _ => 3.5,
+        };
+
+        // Variable-saturated feedback
+        let feedback = Self::variable_saturate(self.s2 * drive, resonance) * resonance * q_scale;
+        let v0 = input - feedback;
+
+        // ZDF 2-pole
+        let v1 = (g * v0 + self.s1) / (1.0 + g);
+        let v2 = (g * v1 + self.s2) / (1.0 + g);
+
+        self.s1 = 2.0 * v1 - self.s1;
+        self.s2 = 2.0 * v2 - self.s2;
+
+        // Mode output
+        match filter_mode {
+            SvfFilterType::Lowpass => v2,
+            SvfFilterType::Highpass => v0 - v1 - v2,
+            SvfFilterType::Bandpass => v1,
+            _ => v2, // Fallback to LP for unsupported modes
+        }
+    }
+
+    /// Flush denormals to zero for consistent performance.
+    #[inline]
+    pub fn flush_denormals(&mut self) {
+        if self.s1.abs() < 1e-15 {
+            self.s1 = 0.0;
+        }
+        if self.s2.abs() < 1e-15 {
+            self.s2 = 0.0;
+        }
+    }
+
+    /// Reset filter state.
+    pub fn reset(&mut self) {
+        self.s1 = 0.0;
+        self.s2 = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

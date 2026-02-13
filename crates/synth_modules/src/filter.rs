@@ -16,13 +16,16 @@ use synth_core::{
     BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate,
     Velocity,
 };
-use synth_core::{FilterMode, FilterParam, ModuleType, Param};
+use synth_core::{FilterMode, FilterModel, FilterParam, ModuleType, Param};
+use synth_dsp::{AcidFilter, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
 pub struct Filter {
     // Parameters
     filter_type: FilterMode,
+    model: FilterModel,
+    morph: NormalizedValue,
     cutoff: Hertz,
     resonance: NormalizedValue,
     key_tracking: NormalizedValue,
@@ -38,6 +41,11 @@ pub struct Filter {
     ic2eq: FilterState,
     base_note: MidiNote,
 
+    // Character filter states
+    fluid: FluidFilter,
+    screamer: ScreamerFilter,
+    acid: AcidFilter,
+
     // Mod matrix offsets (applied before processing, cleared after)
     /// Cutoff modulation offset in semitones.
     mod_offset_cutoff: f32,
@@ -52,6 +60,8 @@ impl Filter {
     pub fn new() -> Self {
         Self {
             filter_type: FilterMode::Lowpass,
+            model: FilterModel::Standard,
+            morph: NormalizedValue::MIN,
             cutoff: Hertz::new(1000.0),
             resonance: NormalizedValue::MIN,
             key_tracking: NormalizedValue::MIN,
@@ -62,6 +72,9 @@ impl Filter {
             ic1eq: FilterState::ZERO,
             ic2eq: FilterState::ZERO,
             base_note: MidiNote::C4,
+            fluid: FluidFilter::default(),
+            screamer: ScreamerFilter::default(),
+            acid: AcidFilter::default(),
             mod_offset_cutoff: 0.0,
             mod_offset_resonance: 0.0,
             output_buffer: AudioBuffer::new(256),
@@ -77,7 +90,30 @@ impl Filter {
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
     }
 
+    /// Map FilterMode to SvfFilterType for character filters.
+    fn filter_mode_to_svf_type(&self) -> SvfFilterType {
+        match self.filter_type {
+            FilterMode::Lowpass => SvfFilterType::Lowpass,
+            FilterMode::Highpass => SvfFilterType::Highpass,
+            FilterMode::Bandpass => SvfFilterType::Bandpass,
+            FilterMode::Notch => SvfFilterType::Notch,
+            FilterMode::Peak => SvfFilterType::Peak,
+            FilterMode::LowShelf => SvfFilterType::LowShelf,
+            FilterMode::HighShelf => SvfFilterType::HighShelf,
+        }
+    }
+
+    /// Reset all filter states (standard SVF + character filters).
+    fn reset_filter_states(&mut self) {
+        self.ic1eq = FilterState::ZERO;
+        self.ic2eq = FilterState::ZERO;
+        self.fluid.reset();
+        self.screamer.reset();
+        self.acid.reset();
+    }
+
     #[inline]
+    #[allow(clippy::too_many_lines)]
     fn process_sample(&mut self, input: f32, cutoff_mod: f32, res_mod: f32) -> f32 {
         let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod))
             .clamp(20.0, self.sample_rate.as_f32() * 0.49);
@@ -86,51 +122,80 @@ impl Filter {
         let resonance =
             (self.resonance.as_f32() + res_mod + self.mod_offset_resonance).clamp(0.0, 0.99);
 
-        // Apply drive as pre-gain with soft saturation
-        let driven = if self.drive.as_f32() > 1.0 {
-            (input * self.drive.as_f32()).tanh()
-        } else {
-            input * self.drive.as_f32()
-        };
+        match self.model {
+            FilterModel::Standard => {
+                // Apply drive as pre-gain with soft saturation
+                let driven = if self.drive.as_f32() > 1.0 {
+                    (input * self.drive.as_f32()).tanh()
+                } else {
+                    input * self.drive.as_f32()
+                };
 
-        let g = cutoff.to_tan_coeff(self.sample_rate);
-        let k = 2.0 - 2.0 * resonance;
+                let g = cutoff.to_tan_coeff(self.sample_rate);
+                let k = 2.0 - 2.0 * resonance;
 
-        let a1 = 1.0 / (1.0 + g * (g + k));
-        let a2 = g * a1;
-        let a3 = g * a2;
+                let a1 = 1.0 / (1.0 + g * (g + k));
+                let a2 = g * a1;
+                let a3 = g * a2;
 
-        let ic1 = self.ic1eq.as_f32();
-        let ic2 = self.ic2eq.as_f32();
+                let ic1 = self.ic1eq.as_f32();
+                let ic2 = self.ic2eq.as_f32();
 
-        let v3 = driven - ic2;
-        let v1 = a1 * ic1 + a2 * v3;
-        let v2 = ic2 + a2 * ic1 + a3 * v3;
+                let v3 = driven - ic2;
+                let v1 = a1 * ic1 + a2 * v3;
+                let v2 = ic2 + a2 * ic1 + a3 * v3;
 
-        self.ic1eq = FilterState::new(2.0 * v1 - ic1);
-        self.ic2eq = FilterState::new(2.0 * v2 - ic2);
+                self.ic1eq = FilterState::new(2.0 * v1 - ic1);
+                self.ic2eq = FilterState::new(2.0 * v2 - ic2);
 
-        // Prevent denormals for consistent performance
-        self.ic1eq.flush_denormals();
-        self.ic2eq.flush_denormals();
+                // Prevent denormals for consistent performance
+                self.ic1eq.flush_denormals();
+                self.ic2eq.flush_denormals();
 
-        match self.filter_type {
-            FilterMode::Lowpass => v2,
-            FilterMode::Highpass => input - k * v1 - v2,
-            FilterMode::Bandpass => v1,
-            FilterMode::Notch => input - k * v1,
-            FilterMode::Peak => {
-                let lp = v2;
-                let hp = input - k * v1 - v2;
-                lp - hp
+                match self.filter_type {
+                    FilterMode::Lowpass => v2,
+                    FilterMode::Highpass => input - k * v1 - v2,
+                    FilterMode::Bandpass => v1,
+                    FilterMode::Notch => input - k * v1,
+                    FilterMode::Peak => {
+                        let lp = v2;
+                        let hp = input - k * v1 - v2;
+                        lp - hp
+                    }
+                    FilterMode::LowShelf => {
+                        let lp = v2;
+                        input * 0.5 + lp * 0.5
+                    }
+                    FilterMode::HighShelf => {
+                        let hp = input - k * v1 - v2;
+                        input * 0.5 + hp * 0.5
+                    }
+                }
             }
-            FilterMode::LowShelf => {
-                let lp = v2;
-                input * 0.5 + lp * 0.5
+            FilterModel::Fluid => {
+                let coeffs = SvfCoeffs::new(cutoff, resonance, self.sample_rate);
+                let out =
+                    self.fluid
+                        .process(input, &coeffs, self.drive.as_f32(), self.morph.as_f32());
+                self.fluid.flush_denormals();
+                out
             }
-            FilterMode::HighShelf => {
-                let hp = input - k * v1 - v2;
-                input * 0.5 + hp * 0.5
+            FilterModel::Screamer => {
+                let g = cutoff.to_tan_coeff(self.sample_rate);
+                let out = self
+                    .screamer
+                    .process(input, g, resonance, self.drive.as_f32());
+                self.screamer.flush_denormals();
+                out
+            }
+            FilterModel::Acid => {
+                let g = cutoff.to_tan_coeff(self.sample_rate);
+                let svf_type = self.filter_mode_to_svf_type();
+                let out = self
+                    .acid
+                    .process(input, g, resonance, self.drive.as_f32(), svf_type);
+                self.acid.flush_denormals();
+                out
             }
         }
     }
@@ -149,6 +214,24 @@ impl Describable for Filter {
             .category(ModuleCategory::Filter)
             .tag("filter")
             .tag("svf")
+            .parameter(
+                ParameterDescriptor::choice(
+                    Param::Filter(FilterParam::Model(FilterModel::Standard)),
+                    "Model",
+                    FilterModel::to_choices(),
+                )
+                .description("Filter character model"),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Filter(FilterParam::Morph(NormalizedValue::MIN)),
+                    "Morph",
+                )
+                .range(0.0, 1.0)
+                .default(0.0)
+                .description("Fluid: LP→BP→HP→Notch crossfade")
+                .widget(WidgetHint::Knob),
+            )
             .parameter(
                 ParameterDescriptor::choice(
                     Param::Filter(FilterParam::Mode(FilterMode::Lowpass)),
@@ -259,6 +342,11 @@ impl PolyModule for Filter {
                 FilterParam::Drive(d) => self.drive = d,
                 FilterParam::EnvAmount(e) => self.env_amount = e,
                 FilterParam::CutoffMod(c) => self.cutoff_mod_amount = c,
+                FilterParam::Model(m) => {
+                    self.model = m;
+                    self.reset_filter_states();
+                }
+                FilterParam::Morph(v) => self.morph = v,
             }
         }
     }
@@ -273,6 +361,8 @@ impl PolyModule for Filter {
                 FilterParam::Drive(_) => self.drive.as_f32(),
                 FilterParam::EnvAmount(_) => self.env_amount.as_f32(),
                 FilterParam::CutoffMod(_) => self.cutoff_mod_amount.as_f32(),
+                FilterParam::Model(_) => self.model.index() as f32,
+                FilterParam::Morph(_) => self.morph.as_f32(),
             })
         } else {
             None
@@ -281,6 +371,8 @@ impl PolyModule for Filter {
 
     fn get_params(&self) -> Vec<Param> {
         vec![
+            Param::Filter(FilterParam::Model(self.model)),
+            Param::Filter(FilterParam::Morph(self.morph)),
             Param::Filter(FilterParam::Mode(self.filter_type)),
             Param::Filter(FilterParam::Cutoff(self.cutoff)),
             Param::Filter(FilterParam::Resonance(self.resonance)),
@@ -295,8 +387,7 @@ impl PolyModule for Filter {
     }
 
     fn reset(&mut self) {
-        self.ic1eq = FilterState::ZERO;
-        self.ic2eq = FilterState::ZERO;
+        self.reset_filter_states();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {

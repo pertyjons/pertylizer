@@ -31,7 +31,7 @@ pub use effects::{
     FlangerParam, PhaserParam, ReverbParam,
 };
 pub use envelopes::EnvelopeParam;
-pub use filters::{FilterMode, FilterParam};
+pub use filters::{FilterMode, FilterModel, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
