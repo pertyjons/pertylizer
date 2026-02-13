@@ -1,5 +1,12 @@
 # Version History
 
+## [0.105.0] - 2026-02-13
+### Changed - Resizable moduler & full-width klaviatur
+- **Resizable modulfönster**: Moduler kan nu dras bredare/smalare med `resizable(true)`. Mittinnehållet fyller tillgänglig bredd, OUT-portar sitter alltid mot högerkanten.
+- **Dynamisk tangentbredd**: Pianoklaviaturen beräknar tangentbredd baserat på tillgänglig bredd (`available_width / antal_vita_tangenter`), med minimum 14px per tangent.
+- **Centrerad klaviatur**: Om alla 88 tangenter ryms i fönstret centreras klaviaturen istället för att visa scroll-indikatorer.
+- **Villkorlig scroll**: Scroll-funktionalitet och scroll-indikatorer visas bara när alla tangenter inte ryms.
+
 ## [0.104.0] - 2026-02-13
 ### Fixed - Kompakta modulfönster
 - **Auto-fit höjd**: Ersatt `StripBuilder::horizontal` (som expanderade celler till full tillgänglig höjd) med `ui.horizontal` + `ui.vertical` — modulfönster anpassar nu höjden till sitt innehåll utan dödyta

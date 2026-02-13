@@ -151,8 +151,8 @@ impl PianoKeyboard {
                 .clicked()
             {
                 let (start, _) = self.get_highlight_range();
-                let white_key_width = 24.0;
-                self.scroll_offset = Self::key_x_position(start, white_key_width) - 50.0;
+                // Use a reasonable key width for centering (actual width calculated below)
+                self.scroll_offset = Self::key_x_position(start, 24.0) - 50.0;
             }
         });
 
@@ -162,32 +162,46 @@ impl PianoKeyboard {
         let available = ui.available_size();
         let keyboard_height = 100.0;
 
-        // Key dimensions
-        let white_key_width = 24.0;
-        let white_key_height = keyboard_height - 10.0;
-        let black_key_width = 14.0;
-        let black_key_height = 55.0;
-
         // Count total white keys
         let total_white_keys: u32 = (PIANO_LOW_NOTE..=PIANO_HIGH_NOTE)
             .filter(|&n| !Self::is_black_key(n))
             .count() as u32;
 
+        // Key dimensions - scale to fill available width, with min size
+        let inner_width = available.x - 10.0; // account for shrink(5.0) padding
+        let min_key_width = 14.0;
+        let white_key_width = (inner_width / total_white_keys as f32).max(min_key_width);
+        let white_key_height = keyboard_height - 10.0;
+        let black_key_width = white_key_width * 0.583; // proportional (14/24)
+        let black_key_height = 55.0;
+
         let total_keyboard_width = total_white_keys as f32 * white_key_width;
+        let fits_all = total_keyboard_width <= inner_width;
+
+        // Center offset when all keys fit
+        let center_offset = if fits_all {
+            (inner_width - total_keyboard_width) / 2.0
+        } else {
+            0.0
+        };
 
         // Allocate space for the keyboard
         let (outer_rect, _outer_response) =
             ui.allocate_exact_size(Vec2::new(available.x, keyboard_height), Sense::hover());
 
-        // Clamp scroll offset
-        let max_scroll = (total_keyboard_width - outer_rect.width() + 20.0).max(0.0);
+        // Clamp scroll offset (no scroll when all keys fit)
+        let max_scroll = if fits_all {
+            0.0
+        } else {
+            (total_keyboard_width - outer_rect.width() + 20.0).max(0.0)
+        };
         self.scroll_offset = self.scroll_offset.clamp(0.0, max_scroll);
 
         // Create a clip rect for the keyboard area
         let inner_rect = outer_rect.shrink(5.0);
 
-        // Handle scroll with mouse wheel
-        if ui.rect_contains_pointer(outer_rect) {
+        // Handle scroll with mouse wheel (only when not all keys fit)
+        if !fits_all && ui.rect_contains_pointer(outer_rect) {
             ui.input(|input| {
                 let scroll_delta = input.smooth_scroll_delta.x - input.smooth_scroll_delta.y * 2.0;
                 self.scroll_offset = (self.scroll_offset - scroll_delta).clamp(0.0, max_scroll);
@@ -221,6 +235,7 @@ impl PianoKeyboard {
             }
 
             let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + center_offset
                 + inner_rect.left();
             let key_rect = Rect::from_min_size(
                 Pos2::new(key_x, inner_rect.top() + 2.0),
@@ -241,6 +256,7 @@ impl PianoKeyboard {
             }
 
             let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + center_offset
                 + inner_rect.left();
 
             // Skip keys outside visible area
@@ -325,6 +341,7 @@ impl PianoKeyboard {
             }
 
             let key_x = Self::key_x_position(note, white_key_width) - self.scroll_offset
+                + center_offset
                 + inner_rect.left();
 
             // Skip keys outside visible area
@@ -414,8 +431,8 @@ impl PianoKeyboard {
             }
         }
 
-        // Draw scroll indicators if not at edges
-        if self.scroll_offset > 0.0 {
+        // Draw scroll indicators if not at edges (only when scrolling is needed)
+        if !fits_all && self.scroll_offset > 0.0 {
             // Left arrow indicator
             let arrow_rect = Rect::from_min_size(
                 outer_rect.left_top() + Vec2::new(2.0, keyboard_height / 2.0 - 10.0),
@@ -431,7 +448,7 @@ impl PianoKeyboard {
             );
         }
 
-        if self.scroll_offset < max_scroll {
+        if !fits_all && self.scroll_offset < max_scroll {
             // Right arrow indicator
             let arrow_rect = Rect::from_min_size(
                 outer_rect.right_top() + Vec2::new(-17.0, keyboard_height / 2.0 - 10.0),

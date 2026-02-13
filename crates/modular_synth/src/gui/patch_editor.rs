@@ -450,7 +450,7 @@ impl PatchEditor {
                 .id(window_id)
                 .open(&mut open)
                 .collapsible(true)
-                .resizable(false)
+                .resizable(true)
                 .min_width(theme().sizes.module_min_width)
                 .frame(frame);
 
@@ -644,6 +644,9 @@ impl PatchEditor {
                     // Normal modules: three-column layout (IN ports | content | OUT ports)
                     let col_w = theme().sizes.port_column_width;
                     let min_content = theme().sizes.module_content_min_width;
+                    let available_w = ui.available_width();
+                    let content_w = (available_w - 2.0 * col_w - ui.spacing().item_spacing.x * 2.0)
+                        .max(min_content);
 
                     ui.horizontal(|ui| {
                         // Left port column (IN) - fixed width
@@ -658,9 +661,9 @@ impl PatchEditor {
                             );
                         });
 
-                        // Content column - sized by content, min width enforced
+                        // Content column - fills remaining width
                         ui.vertical(|ui| {
-                            ui.set_min_width(min_content);
+                            ui.set_width(content_w);
                             if let Some(panel_state) =
                                 self.panels.get_mut(&module_id)
                             {
@@ -679,7 +682,7 @@ impl PatchEditor {
                             }
                         });
 
-                        // Right port column (OUT) - fixed width
+                        // Right port column (OUT) - fixed width, right-aligned
                         ui.vertical(|ui| {
                             ui.set_width(col_w);
                             self.draw_port_column(
