@@ -1,5 +1,16 @@
 # Version History
 
+## [0.118.0] - 2026-02-14
+### Added - 8 nya kreativa patchar med Ring Mod, Envelope Follower & Wavetable
+- **Vocal Pad**: Eterisk körliknande pad med Formant-wavetable och LFO-driven vokal-morphing genom vowel-shapes.
+- **Metallic Bell**: Skimrande metallisk klocka — Digital wavetable genom Ring Mod med keyboard tracking skapar inharmoniska övertoner.
+- **Auto-Wah Bass**: Funky auto-wah bass där Envelope Follower trackar speladynamik och driver Acid-filtrets cutoff i realtid.
+- **Digital Chime**: Kristallint chime-ljud med Digital wavetable och envelope-driven position-sweep genom komplexa vågformer.
+- **Warm Evolving**: Långsamt evolverande ambient-textur med Warm wavetable, mycket långsam LFO-scanning och djup reverb.
+- **Harmonic Lead**: Expressiv lead med Harmonics wavetable — envelope sveper från enkel sinuston till 32 harmoniska på varje ton.
+- **Ring Mod Drone**: Djupt evolverande drone — LFO modulerar Ring Mod carrier-frekvens för kontinuerligt skiftande sidband.
+- **PWM E-Piano**: Varmt elpiano med PWM wavetable, envelope-driven pulsbredd-sweep, Fluid-filter och klassisk chorus.
+
 ## [0.117.0] - 2026-02-14
 ### Improved - Kategoriserade undermenyer för Example Patches
 - **Kategoriserad patch-meny**: Example Patches-menyn visar nu patchar i 8 undermenyer grupperade efter kategori istället för en platt lista med 35 patchar.
