@@ -22,8 +22,12 @@ mod pluck_synth;
 mod punchy_stab;
 mod shepard_riser;
 mod spacey_bass;
+mod stereo_unison_pad;
 mod string_ensemble;
 mod sub_bass;
+mod unison_pwm_strings;
+mod unison_supersaw;
+mod unison_sync_lead;
 mod velocity_pad;
 mod vintage_lead;
 mod wave_folder_bass;
@@ -49,8 +53,12 @@ pub use pluck_synth::patch_pluck_synth;
 pub use punchy_stab::patch_punchy_stab;
 pub use shepard_riser::patch_shepard_riser;
 pub use spacey_bass::patch_spacey_bass;
+pub use stereo_unison_pad::patch_stereo_unison_pad;
 pub use string_ensemble::patch_string_ensemble;
 pub use sub_bass::patch_sub_bass;
+pub use unison_pwm_strings::patch_unison_pwm_strings;
+pub use unison_supersaw::patch_unison_supersaw;
+pub use unison_sync_lead::patch_unison_sync_lead;
 pub use velocity_pad::patch_velocity_pad;
 pub use vintage_lead::patch_vintage_lead;
 pub use wave_folder_bass::patch_wave_folder_bass;
@@ -96,5 +104,10 @@ pub fn example_patches() -> Vec<Patch> {
         // Waveshaper patches
         patch_waveshaper_lead(),
         patch_glitch_pad(),
+        // Unison patches
+        patch_unison_supersaw(),
+        patch_stereo_unison_pad(),
+        patch_unison_sync_lead(),
+        patch_unison_pwm_strings(),
     ]
 }

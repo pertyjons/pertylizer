@@ -7,6 +7,10 @@
 - **Stereo-utgångar**: Nya `out_l` och `out_r`-portar med constant-power panorering för stereo-unison. Mono `out`-porten är bakåtkompatibel.
 - **Realtidssäkert**: Alla arrayer är fixed-size [T; 7], ingen heap-allokering i process(). Fasrandomisering via lock-free fastrand.
 - **n=1 specialfall**: När unison är av (1 röst) skippas panorering helt, exakt samma beteende som innan.
+- **Patch: Unison Supersaw**: Klassisk trance-supersaw med 7-voice unison, filter-envelope och chorus.
+- **Patch: Stereo Unison Pad**: Bred ambient-pad med triangle-unison via stereo-utgångar (out_l/out_r) direkt till amp.
+- **Patch: Unison Sync Lead**: Aggressiv hard-sync lead med tight 3-voice mono-unison och waveshaper.
+- **Patch: Unison PWM Strings**: Lush strängensemble med puls-PWM, 5-voice stereo-unison, chorus och reverb.
 
 ## [0.113.0] - 2026-02-13
 ### Added - Waveshaper-modul
