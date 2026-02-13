@@ -1774,10 +1774,18 @@ fn draw_mod_matrix_grid(
 
     ui.add_space(4.0);
 
+    // Calculate fixed slot width so all slots are equal size
+    let grid_spacing = 4.0;
+    let available_width = ui.available_width();
+    let slot_width = ((available_width - (dim as f32 - 1.0) * grid_spacing) / dim as f32)
+        // Account for group frame margins (~8px per side)
+        - 16.0;
+    let combo_width = (slot_width - 20.0).max(60.0);
+
     // --- Grid of slots ---
     egui::Grid::new("mod_matrix_grid")
         .num_columns(dim)
-        .spacing(egui::vec2(4.0, 4.0))
+        .spacing(egui::vec2(grid_spacing, grid_spacing))
         .show(ui, |ui| {
             for slot_idx in 0..slot_count {
                 let slot_num = slot_idx + 1;
@@ -1794,7 +1802,7 @@ fn draw_mod_matrix_grid(
                 });
 
                 ui.group(|ui| {
-                    ui.set_min_width(100.0);
+                    ui.set_width(slot_width);
                     ui.vertical(|ui| {
                         // Slot label
                         ui.label(
@@ -1819,7 +1827,7 @@ fn draw_mod_matrix_grid(
                                 .unwrap_or_else(|| "?".into());
                             egui::ComboBox::from_id_salt(format!("mm_src_{slot_idx}"))
                                 .selected_text(text)
-                                .width(80.0)
+                                .width(combo_width)
                                 .show_ui(ui, |ui| {
                                     for (i, choice) in choices.iter().enumerate() {
                                         if !is_mod_choice_available(
@@ -1859,7 +1867,7 @@ fn draw_mod_matrix_grid(
                                 .unwrap_or_else(|| "?".into());
                             egui::ComboBox::from_id_salt(format!("mm_dst_{slot_idx}"))
                                 .selected_text(text)
-                                .width(80.0)
+                                .width(combo_width)
                                 .show_ui(ui, |ui| {
                                     for (i, choice) in choices.iter().enumerate() {
                                         if !is_mod_choice_available(
@@ -1899,6 +1907,8 @@ fn draw_mod_matrix_grid(
                                 state.param_values.insert(ap.name.clone(), value);
                                 param_changes.push(ap.id.with_f32(value));
                             }
+                            // Extra space so the knob label stays inside the group frame
+                            ui.add_space(2.0);
                         }
                     });
                 });

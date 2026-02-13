@@ -1,5 +1,11 @@
 # Version History
 
+## [0.111.0] - 2026-02-13
+### Fixed - Mod Matrix Grid-layout
+- **Lika stora slots**: Alla slots i rutnätet har nu samma fasta bredd, beräknad från tillgängligt utrymme och antal kolumner.
+- **Amount-etikett innanför ramen**: "Slot X Amount"-texten under knoben hamnar nu helt innanför gruppramens kant.
+- **Dynamisk ComboBox-bredd**: Dropdowns anpassar sin bredd till slotens storlek istället för fast 80px.
+
 ## [0.110.0] - 2026-02-13
 ### Changed - Mod Matrix Grid-redesign
 - **Grid-baserad layout**: Mod Matrix renderas nu som ett rutnät istället för en platt lista. Grid-storlek väljs via selectbox: 1×1, 2×2 (standard), 3×3, 4×4 — ger 1, 4, 9 eller 16 slots.
