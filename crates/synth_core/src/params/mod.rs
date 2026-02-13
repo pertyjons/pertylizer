@@ -12,6 +12,7 @@
 //! - Comparison: `same_kind()` to compare param types ignoring values
 
 mod effects;
+mod envelope_follower;
 mod envelopes;
 mod filters;
 mod lfo;
@@ -20,8 +21,10 @@ mod modules;
 mod noise;
 mod oscillators;
 mod physical;
+mod ring_mod;
 mod sub_osc;
 mod waveshaper;
+mod wavetable;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +33,7 @@ pub use effects::{
     ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode, DistortionParam, EqParam,
     FlangerParam, PhaserParam, ReverbParam,
 };
+pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
@@ -42,8 +46,10 @@ pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Wa
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
+pub use ring_mod::RingModParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
+pub use wavetable::{WavetableParam, WavetableSelect};
 
 // ============================================================================
 // MODULE TYPE ENUM
@@ -77,6 +83,10 @@ pub enum ModuleType {
     LevelMeter,
     // Modulation
     ModMatrix,
+    // Modulation / Utility
+    RingMod,
+    EnvelopeFollower,
+    WavetableOsc,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -107,6 +117,10 @@ impl ModuleType {
                 | Self::Mixer
                 | Self::StereoOutput
                 | Self::ModMatrix
+                // Modulation / Utility
+                | Self::RingMod
+                | Self::EnvelopeFollower
+                | Self::WavetableOsc
                 // Physical modeling modules (per-voice)
                 | Self::KeyboardPanner
                 | Self::BodyResonance
@@ -180,6 +194,10 @@ impl ModuleType {
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
             Self::ModMatrix => "Mod Matrix",
+            // Modulation / Utility
+            Self::RingMod => "Ring Mod",
+            Self::EnvelopeFollower => "Env Follower",
+            Self::WavetableOsc => "Wavetable",
             // Physical modeling
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
@@ -212,6 +230,10 @@ impl ModuleType {
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             Self::ModMatrix => "mmx",
+            // Modulation / Utility
+            Self::RingMod => "rng",
+            Self::EnvelopeFollower => "efl",
+            Self::WavetableOsc => "wtb",
             // Physical modeling
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
@@ -244,6 +266,10 @@ impl ModuleType {
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
             "mmx" => Some(Self::ModMatrix),
+            // Modulation / Utility
+            "rng" => Some(Self::RingMod),
+            "efl" => Some(Self::EnvelopeFollower),
+            "wtb" => Some(Self::WavetableOsc),
             // Physical modeling
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
@@ -291,6 +317,10 @@ pub enum Param {
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
     ModMatrix(ModMatrixParam),
+    // Modulation / Utility
+    RingMod(RingModParam),
+    EnvelopeFollower(EnvelopeFollowerParam),
+    WavetableOsc(WavetableParam),
     // Physical modeling
     KeyboardPanner(KeyboardPannerParam),
     BodyResonance(BodyResonanceParam),
@@ -331,6 +361,10 @@ impl Param {
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
             (Self::ModMatrix(a), Self::ModMatrix(b)) => a.same_kind(b),
+            // Modulation / Utility
+            (Self::RingMod(a), Self::RingMod(b)) => a.same_kind(b),
+            (Self::EnvelopeFollower(a), Self::EnvelopeFollower(b)) => a.same_kind(b),
+            (Self::WavetableOsc(a), Self::WavetableOsc(b)) => a.same_kind(b),
             // Physical modeling
             (Self::KeyboardPanner(a), Self::KeyboardPanner(b)) => a.same_kind(b),
             (Self::BodyResonance(a), Self::BodyResonance(b)) => a.same_kind(b),
@@ -363,6 +397,10 @@ impl Param {
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
             Self::ModMatrix(_) => ModuleType::ModMatrix,
+            // Modulation / Utility
+            Self::RingMod(_) => ModuleType::RingMod,
+            Self::EnvelopeFollower(_) => ModuleType::EnvelopeFollower,
+            Self::WavetableOsc(_) => ModuleType::WavetableOsc,
             // Physical modeling
             Self::KeyboardPanner(_) => ModuleType::KeyboardPanner,
             Self::BodyResonance(_) => ModuleType::BodyResonance,
@@ -394,6 +432,10 @@ impl Param {
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
             Self::ModMatrix(p) => p.name(),
+            // Modulation / Utility
+            Self::RingMod(p) => p.name(),
+            Self::EnvelopeFollower(p) => p.name(),
+            Self::WavetableOsc(p) => p.name(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.name(),
             Self::BodyResonance(p) => p.name(),
@@ -425,6 +467,10 @@ impl Param {
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
             Self::ModMatrix(p) => p.as_f32(),
+            // Modulation / Utility
+            Self::RingMod(p) => p.as_f32(),
+            Self::EnvelopeFollower(p) => p.as_f32(),
+            Self::WavetableOsc(p) => p.as_f32(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.as_f32(),
             Self::BodyResonance(p) => p.as_f32(),
@@ -456,6 +502,10 @@ impl Param {
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
             Self::ModMatrix(p) => Self::ModMatrix(p.with_f32(value)),
+            // Modulation / Utility
+            Self::RingMod(p) => Self::RingMod(p.with_f32(value)),
+            Self::EnvelopeFollower(p) => Self::EnvelopeFollower(p.with_f32(value)),
+            Self::WavetableOsc(p) => Self::WavetableOsc(p.with_f32(value)),
             // Physical modeling
             Self::KeyboardPanner(p) => Self::KeyboardPanner(p.with_f32(value)),
             Self::BodyResonance(p) => Self::BodyResonance(p.with_f32(value)),

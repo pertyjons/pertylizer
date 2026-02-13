@@ -554,6 +554,63 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::RingMod => {
+            let m = synth_modules::RingMod::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::EnvelopeFollower => {
+            let m = synth_modules::EnvelopeFollower::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::WavetableOsc => {
+            let m = synth_modules::WavetableOsc::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
     }
 }
 
@@ -649,6 +706,8 @@ pub fn create_patch_from_rack(
                         "math_oscillator" => PatchModuleType::MathOscillator,
                         "sub_oscillator" => PatchModuleType::SubOscillator,
                         "noise" => PatchModuleType::Noise,
+                        "ring_mod" => PatchModuleType::RingMod,
+                        "wavetable_osc" => PatchModuleType::WavetableOsc,
                         _ => PatchModuleType::Oscillator,
                     }
                 }
@@ -668,6 +727,7 @@ pub fn create_patch_from_rack(
                 },
                 ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
                     "mod_matrix" => PatchModuleType::ModMatrix,
+                    "envelope_follower" => PatchModuleType::EnvelopeFollower,
                     _ => continue,
                 },
                 ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {

@@ -98,6 +98,10 @@ pub enum PatchModuleType {
     LevelMeter,
     // Modulation
     ModMatrix,
+    // Modulation / Utility
+    RingMod,
+    EnvelopeFollower,
+    WavetableOsc,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -125,6 +129,10 @@ impl PatchModuleType {
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
             Self::ModMatrix => "mod_matrix",
+            // Modulation / Utility
+            Self::RingMod => "ring_mod",
+            Self::EnvelopeFollower => "envelope_follower",
+            Self::WavetableOsc => "wavetable_osc",
             // Physical modeling
             Self::KeyboardPanner => "keyboard_panner",
             Self::BodyResonance => "body_resonance",
@@ -153,6 +161,10 @@ impl PatchModuleType {
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             Self::ModMatrix => "mmx",
+            // Modulation / Utility
+            Self::RingMod => "rng",
+            Self::EnvelopeFollower => "efl",
+            Self::WavetableOsc => "wtb",
             // Physical modeling
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",

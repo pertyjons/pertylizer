@@ -1,5 +1,20 @@
 # Version History
 
+## [0.116.0] - 2026-02-13
+### Added - Våg 1: Ring Modulation, Envelope Follower, Wavetable Syntes
+- **Ring Modulation**: Ny voice-modul som multiplicerar insignal med intern carrier-oscillator. Stöder 5 vågformer (sine/tri/saw/square/pulse), keyboard tracking, frekvensratio (0.25x-4.0x), dry/wet mix och freq CV-ingång. Ger metalliska klockljud, sci-fi-texturer och inharmoniska övertoner.
+- **Envelope Follower**: Ny voice-modul som trackar amplituden av en insignal och producerar en kontrollsignal (0.0-1.0). One-pole filter med separata attack/release-koefficienter och sensitivity-kontroll. Användbar för auto-wah, sidechain-liknande effekter och dynamisk modulering.
+- **Wavetable Syntes**: Ny voice-modul med 6 inbyggda wavetable-banker:
+  - **Basic**: Sine → Triangle → Saw → Square morph (64 frames)
+  - **Harmonics**: 1→32 harmoniska additiv syntes (32 frames)
+  - **PWM**: Pulsbredd 50%→5% (32 frames)
+  - **Formant**: Vokalformanter a/e/i/o/u med interpolation (32 frames)
+  - **Digital**: FM, hard sync, bitcrush, ring mod-liknande (32 frames)
+  - **Warm**: Mjuka analoga varianter med harmonisk saturation (32 frames)
+- **Wavetable-scanning**: Position-parameter (0.0-1.0) med CV-modulering för timbral rörelse.
+- **GUI-integration**: Wavetable i Oscillator-menyn, Ring Mod och Env Follower i ny "Modulation"-submeny.
+- **Patch-serialisering**: Alla tre moduler stöder save/load med PatchModuleType.
+
 ## [0.115.0] - 2026-02-13
 ### Added - Character Filters (Analog filtermodeller)
 - **FilterModel-parameter**: Ny Model-väljare i Filter-modulen med 4 alternativ: Standard, Fluid, Screamer, Acid.

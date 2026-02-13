@@ -1994,6 +1994,10 @@ pub enum PaletteSelection {
     Effect(EffectType),
     Visualizer(PaletteVisualizerType),
     StereoOutput,
+    // Modulation / Utility
+    RingMod,
+    EnvelopeFollower,
+    WavetableOsc,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -2027,6 +2031,11 @@ impl ModulePalette {
                     }
                     if ui.button("🌫 Noise").clicked() {
                         selected = Some(PaletteSelection::Noise);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("📊 Wavetable").clicked() {
+                        selected = Some(PaletteSelection::WavetableOsc);
                         ui.close();
                     }
                 },
@@ -2109,6 +2118,22 @@ impl ModulePalette {
                         selected = Some(PaletteSelection::Visualizer(
                             PaletteVisualizerType::LevelMeter,
                         ));
+                        ui.close();
+                    }
+                },
+            );
+
+            // Modulation submenu
+            let mod_color = category_color(ModuleCategory::Utility);
+            ui.menu_button(
+                egui::RichText::new("🔀 Modulation").color(mod_color),
+                |ui| {
+                    if ui.button("🔔 Ring Mod").clicked() {
+                        selected = Some(PaletteSelection::RingMod);
+                        ui.close();
+                    }
+                    if ui.button("📈 Env Follower").clicked() {
+                        selected = Some(PaletteSelection::EnvelopeFollower);
                         ui.close();
                     }
                 },

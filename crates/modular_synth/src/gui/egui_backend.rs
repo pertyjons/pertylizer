@@ -540,6 +540,16 @@ impl eframe::App for SynthApp {
                             PaletteSelection::StereoOutput => {
                                 self.add_stereo_output_module();
                             }
+                            // Modulation / Utility
+                            PaletteSelection::RingMod => {
+                                self.add_ring_mod_module();
+                            }
+                            PaletteSelection::EnvelopeFollower => {
+                                self.add_envelope_follower_module();
+                            }
+                            PaletteSelection::WavetableOsc => {
+                                self.add_wavetable_osc_module();
+                            }
                             // Physical modeling
                             PaletteSelection::KeyboardPanner => {
                                 self.add_keyboard_panner_module();
@@ -965,6 +975,60 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::MechanicalNoise);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_ring_mod_module(&mut self) {
+        let m = synth_modules::RingMod::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::RingMod);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_envelope_follower_module(&mut self) {
+        let m = synth_modules::EnvelopeFollower::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::EnvelopeFollower);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_wavetable_osc_module(&mut self) {
+        let m = synth_modules::WavetableOsc::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::WavetableOsc);
         let Some(editor) = self.active_patch_editor() else {
             return;
         };

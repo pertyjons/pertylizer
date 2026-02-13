@@ -17,12 +17,12 @@
 
 | Kategori | Implementerad | Delvis | Saknas | Totalt |
 |----------|:---:|:---:|:---:|:---:|
-| Del 1: Ljudgenerering | 9 | 4 | 7 | 20 |
-| Del 2: Effekter | 6 | 1 | 13 | 20 |
-| Del 3: Hemliga ingredienser | 8 | 5 | 7 | 20 |
-| **Totalt** | **23** | **10** | **27** | **60** |
+| Del 1: Ljudgenerering | 10 | 4 | 6 | 20 |
+| Del 2: Effekter | 7 | 1 | 12 | 20 |
+| Del 3: Hemliga ingredienser | 10 | 5 | 5 | 20 |
+| **Totalt** | **27** | **10** | **23** | **60** |
 
-**38% fullt implementerade, 17% delvis, 45% saknas**
+**45% fullt implementerade, 17% delvis, 38% saknas**
 
 ---
 
@@ -35,7 +35,7 @@
 | 3 | **FM (Frequency Modulation)** | KLAR | SineFM + FeedbackFM i Math Oscillator + FM-ingång på huvudoscillatorn |
 | 4 | **PM (Phase Modulation)** | KLAR | PM-modulationsingång på huvudoscillatorn |
 | 5 | **Karplus-Strong** | KLAR | KarplusStrong-algoritm i Math Oscillator |
-| 6 | **Wavetable** | SAKNAS | Ingen wavetable-implementation |
+| 6 | **Wavetable** | KLAR | WavetableOsc med 6 inbyggda banker (Basic/Harmonics/PWM/Formant/Digital/Warm), scanbar position, FM, detune, octave |
 | 7 | **Granular** | SAKNAS | Ingen granulärsyntes |
 | 8 | **Physical Modeling** | DELVIS | Body Resonance + Mechanical Noise, men inga fullständiga modeller (strängar, rör) |
 | 9 | **Vector Synthesis** | SAKNAS | Ingen 2D-mixning mellan 4 källor |
@@ -60,7 +60,7 @@
 | 21 | **FFT** | SAKNAS | Ingen FFT-baserad bearbetning |
 | 22 | **Convolution** | SAKNAS | Ingen faltningsreverb/kabinettsimulering |
 | 23 | **Phase Vocoder** | SAKNAS | Ingen pitch-shifting oberoende av tid |
-| 24 | **Ring Modulation** | SAKNAS | Ingen dedikerad ring mod |
+| 24 | **Ring Modulation** | KLAR | RingMod-modul med intern carrier (5 vågformer), keyboard tracking, freq ratio, dry/wet mix |
 | 25 | **All-pass Filters** | KLAR | Phaser (kaskadade all-pass) + Schroeder-reverb (2 serie-allpass) |
 | 26 | **FDN (Feedback Delay Network)** | DELVIS | Schroeder-reverb (4 comb + 2 allpass), men inte fullständigt FDN |
 | 27 | **Compression** | KLAR | Compressor med threshold, ratio, attack, release, makeup gain |
@@ -75,7 +75,7 @@
 | 36 | **Wavelet Transform** | SAKNAS | Ingen wavelet-analys |
 | 37 | **Adaptive Filtering** | SAKNAS | Inga adaptiva filter |
 | 38 | **Soft Clipping** | KLAR | SoftClip (tanh) i Distortion + Waveshaper, Tube-distortion |
-| 39 | **Envelope Following** | SAKNAS | Ingen envelope follower som kontrollsignal |
+| 39 | **Envelope Following** | KLAR | EnvelopeFollower-modul med attack/release/sensitivity, one-pole tracking |
 | 40 | **Mid-Side Processing** | SAKNAS | Ingen M/S-bearbetning |
 
 ---
@@ -90,7 +90,7 @@
 | 44 | **Probability Gates** | SAKNAS | Ingen sannolikhetsstyrd triggering |
 | 45 | **Microtonal Tuning** | SAKNAS | Ingen mikrotonalitet/Scala-stöd |
 | 46 | **Self-Oscillating Filters** | KLAR | Screamer + Acid vid hög resonans |
-| 47 | **Slew Rate Limiting** | SAKNAS | Ingen glide/portamento-modul |
+| 47 | **Slew Rate Limiting** | KLAR | Glide/portamento implementerat i voice.rs med GlideState + GUI-slider |
 | 48 | **Logic Operators** | KLAR | BitWise-algoritm i Math Oscillator |
 | 49 | **Jitter & Drift** | KLAR | Phase randomization i unison + Lorenz/Logistic som modulationskällor |
 | 50 | **Sample & Hold** | KLAR | S&H-vågform i LFO |

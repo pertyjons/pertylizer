@@ -20,6 +20,7 @@
 
 pub mod amplifier;
 pub mod envelope;
+pub mod envelope_follower;
 pub mod filter;
 pub mod lfo;
 pub mod math_oscillator;
@@ -27,7 +28,10 @@ pub mod mod_matrix;
 pub mod noise;
 pub mod oscillator;
 pub mod output;
+pub mod ring_mod;
 pub mod sub_osc;
+pub mod wavetable_data;
+pub mod wavetable_osc;
 
 // Physical modeling modules
 pub mod body_resonance;
@@ -40,6 +44,7 @@ pub mod effects;
 // Module exports
 pub use amplifier::{Amplifier, Mixer};
 pub use envelope::{Envelope, EnvelopePositionBuffer, EnvelopeStage};
+pub use envelope_follower::EnvelopeFollower;
 pub use filter::{Filter, LadderFilter};
 pub use lfo::Lfo;
 pub use math_oscillator::MathOscillator;
@@ -47,7 +52,9 @@ pub use mod_matrix::ModMatrix;
 pub use noise::NoiseGenerator;
 pub use oscillator::Oscillator;
 pub use output::StereoOutput;
+pub use ring_mod::RingMod;
 pub use sub_osc::SubOscillator;
+pub use wavetable_osc::WavetableOsc;
 
 // Physical modeling exports
 pub use body_resonance::BodyResonance;
