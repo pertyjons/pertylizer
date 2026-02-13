@@ -1,15 +1,16 @@
-# Implementeringsplan: 5 funktioner for bättre ljud
+# Implementeringsplan: Funktioner for bättre ljud
 
 > Status: UTKAST | Datum: 2026-02-13 | Basversion: 0.106.0
 
 ## Innehåll
 
-1. [Modulationsmatris (Mod Matrix)](#1-modulationsmatris-mod-matrix)
-2. [Unison / Supervoices](#2-unison--supervoices)
-3. [Waveshaper / Wavetable-position](#3-waveshaper--wavetable-position)
+1. [Modulationsmatris (Mod Matrix)](#1-modulationsmatris-mod-matrix) — KLAR (0.107.0-0.112.0)
+2. [Unison / Supervoices](#2-unison--supervoices) — KLAR (0.114.0)
+3. [Waveshaper / Wavetable-position](#3-waveshaper--wavetable-position) — Waveshaper KLAR (0.113.0)
 4. [MSEG / Looping Envelopes](#4-mseg--looping-envelopes)
 5. [Generativ sekvensering](#5-generativ-sekvensering)
-6. [Implementeringsordning](#6-implementeringsordning)
+6. [Character Filters](#6-character-filters-analog-filtermodeller)
+7. [Implementeringsordning](#7-implementeringsordning)
 
 ---
 
@@ -1295,71 +1296,513 @@ Om ingen extern clock är kopplad, körs intern clock baserad på `context.tempo
 
 ---
 
-## 6. Implementeringsordning
+## 6. Character Filters — Analog filtermodeller
 
-### Rekommenderad ordning
+### Vad och varför
+
+Befintliga filter (SVF med 7 modes + LadderFilter) är funktionella men saknar den distinkta *karaktär* som definierar ikonisk analog hårdvara. Moog, Korg MS-20 och Oberheim har alla unika olinjäriteter — asymmetrisk saturation, feedback-distortion, resonans som "skriker" — som ger dem personlighet.
+
+Målet är att utöka befintlig `Filter`-modul med tre nya filtermodeller som var och en emulerar en specifik analog topologi med autentiska olinjäriteter. Alla använder Zero-Delay Feedback (ZDF) via trapezoidal integration för stabil, musikalisk resonans vid snabb cutoff-modulation.
+
+### Designbeslut
+
+**Utöka befintlig Filter, inte ny modul.** Lägg till en `FilterModel`-parameter (liknande `FmMode` på oscillatorn). Alla modeller delar Cutoff, Resonance, Drive — men *beter sig* annorlunda.
+
+**ZDF ja, ADAA nej.** Trapezoidal integration (redan delvis på plats i SVF) ger stabilt beteende. ADAA kräver analytiska integraler per saturations-funktion och ger marginell vinst vid 48kHz med mjuk saturation. Kodbasens TODO har "2x oversampling" som löser aliasing generellt.
+
+**Skalär f32, ingen SIMD.** Kodbasen processar en röst åt gången genom `PolyModule::process()`. Det finns ingen infrastruktur för `f32x4` — att införa det kräver ändring av hela engine-arkitekturen.
+
+**Befintlig denormal-hantering.** `FilterState::flush_denormals()` (nollställer < 1e-15) fungerar bra. Inget behov av brusinjektion.
+
+### De fyra modellerna
 
 ```
-Fas 1: Mod Matrix          ← Ger mest värde till befintliga moduler
-  │
-Fas 2: Waveshaper          ← Enklast, direkt nytta, testar modulpipelinen
-  │
-Fas 3: Unison              ← Stor effekt, begränsat till oscillator
-  │
-Fas 4: MSEG                ← Komplexare (GUI-editor), men stor kreativ vinst
-  │
-Fas 5: Generativa moduler  ← Störst scope, men beroende av mod matrix
+┌────────────────────────────────────────────────────────────────┐
+│ FilterModel::Standard                                          │
+│ Befintlig SVF (7 modes). Ren, mångsidig, neutral karaktär.    │
+│ Topology: 2-integrator SVF, trapezoidal.                       │
+│ Redan implementerad — inga ändringar.                          │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ FilterModel::Fluid (Oberheim-inspirerad SVF med morph)         │
+│ Samma SVF-topologi, men med:                                   │
+│ • Pre-filter tanh saturation (analog OP-amp värme)             │
+│ • Morph-parameter: LP ↔ BP ↔ HP ↔ Notch                       │
+│   via constant-power crossfade (sin/cos interpolation)         │
+│ Karaktär: Varm, musikalisk, mjukt mättad. "Creamy."           │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ FilterModel::Screamer (Korg MS-20 K-35 inspirerad)             │
+│ Topology: Sallen-Key, HP + LP i serie (12dB/oct).              │
+│ • Asymmetrisk diod-clipping i feedback-loopen                  │
+│ • Resonansen mättar filtret inifrån                            │
+│ • Vid max resonans: asymmetrisk självsvängning ("skriker")     │
+│ Karaktär: Rå, aggressiv, oförutsägbar. "Nasty."               │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ FilterModel::Acid (Steiner-Parker inspirerad)                  │
+│ Topology: Unik multimode med feedback-förstärkning.            │
+│ • Variabel saturation som ändras med resonansmängden           │
+│ • Resonansens gain-omfång beror på vilken mode (LP/BP/HP)      │
+│ • Wavefolding-liknande distortion vid hög resonans             │
+│ Karaktär: Squelchy, aggressiv, levande. "Acid."               │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-### Varför denna ordning
+### Nya typer (synth_core)
 
-1. **Mod Matrix först:** Den multiplicerar värdet av alla andra moduler. LFO → filter cutoff med velocity-skalning omedelbart. Och de generativa modulerna i fas 5 *behöver* mod matrix för att koppla CV till destinations.
+```rust
+/// Filtermodell — väljer underliggande topologi och karaktär.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum FilterModel {
+    /// Standard SVF — ren, mångsidig, befintligt beteende
+    #[default]
+    Standard,
+    /// Oberheim-inspirerad SVF med morph och pre-saturation
+    Fluid,
+    /// MS-20-inspirerad Sallen-Key med diod-clipping
+    Screamer,
+    /// Steiner-Parker-inspirerad multimode med variabel saturation
+    Acid,
+}
 
-2. **Waveshaper som andra:** Liten, fristående modul — perfekt för att validera att "lägg till ny modultyp"-pipelinen fungerar (params → modul → graph → UI → patch). Fungerar som template för resten.
+impl FilterModel {
+    pub const ALL: [Self; 4] = [Self::Standard, Self::Fluid, Self::Screamer, Self::Acid];
 
-3. **Unison som tredje:** Helt inkapslad i oscillatorn, inga beroenden. Ger massivt annorlunda ljud direkt.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Fluid => "Fluid",
+            Self::Screamer => "Screamer",
+            Self::Acid => "Acid",
+        }
+    }
 
-4. **MSEG som fjärde:** Kräver en visuell editor (mest GUI-arbete). Men med mod matrix redan på plats kan MSEG:ens output kopplas till vilken destination som helst.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Fluid => "fluid",
+            Self::Screamer => "screamer",
+            Self::Acid => "acid",
+        }
+    }
+}
+```
 
-5. **Generativa moduler sist:** Mest nytta när mod matrix + MSEG redan finns, eftersom de producerar gate/CV som routas genom matrisen.
+### Nya parametrar (synth_core/params/filters.rs)
+
+```rust
+pub enum FilterParam {
+    // ... befintliga ...
+    Mode(FilterMode),
+    Cutoff(Hertz),
+    Resonance(NormalizedValue),
+    KeyTracking(NormalizedValue),
+    Drive(Gain),
+    EnvAmount(BipolarValue),
+    CutoffMod(BipolarValue),
+
+    // NYA
+    /// Filtermodell (Standard, Fluid, Screamer, Acid)
+    Model(FilterModel),
+    /// Morph-parameter för Fluid-modellen (LP→BP→HP→Notch)
+    Morph(NormalizedValue),
+}
+```
+
+`Model` och `Morph` behöver `name()`, `as_f32()`, `with_f32()` och default-helpers, precis som befintliga varianter.
+
+### DSP-implementationer (synth_dsp/src/filters.rs)
+
+#### Fluid — SVF med morph och pre-saturation
+
+```rust
+/// Fluid filter: Oberheim-inspirerad SVF med morph och ingångssaturation.
+/// Använder befintlig SvfCoeffs men beräknar alla utgångar simultant.
+pub struct FluidFilter {
+    ic1eq: f32,
+    ic2eq: f32,
+}
+
+impl FluidFilter {
+    /// Process med morph-parameter.
+    /// morph: 0.0=LP, 0.33=BP, 0.66=HP, 1.0=Notch
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: f32,
+        coeffs: &SvfCoeffs,
+        drive: f32,
+        morph: f32,
+    ) -> f32 {
+        // Pre-filter saturation: mjuk tanh för analog OP-amp värme
+        let saturated = (input * drive).tanh() / drive.max(0.01);
+
+        // SVF — beräkna alla utgångar simultant
+        let v3 = saturated - self.ic2eq;
+        let v1 = coeffs.a1 * self.ic1eq + coeffs.a2 * v3;
+        let v2 = self.ic2eq + coeffs.a2 * self.ic1eq + coeffs.a3 * v3;
+        self.ic1eq = 2.0 * v1 - self.ic1eq;
+        self.ic2eq = 2.0 * v2 - self.ic2eq;
+
+        let lp = v2;
+        let bp = v1;
+        let hp = saturated - coeffs.k * v1 - v2;
+        let notch = saturated - coeffs.k * v1;
+
+        // Constant-power morph: sin/cos crossfade mellan utgångar
+        // 4 zoner: LP(0.0) → BP(0.33) → HP(0.66) → Notch(1.0)
+        let morph_scaled = morph * 3.0;
+        let zone = morph_scaled.floor().min(2.0) as u8;
+        let t = morph_scaled.fract();
+        let angle = t * std::f32::consts::FRAC_PI_2;
+        let (a, b) = match zone {
+            0 => (lp, bp),
+            1 => (bp, hp),
+            _ => (hp, notch),
+        };
+        a * angle.cos() + b * angle.sin()
+    }
+}
+```
+
+#### Screamer — Sallen-Key med diod-clipping
+
+```rust
+/// Screamer filter: MS-20-inspirerad Sallen-Key med asymmetrisk diod-clipping.
+/// HP och LP i serie (12dB/oct totalt), diod-clip i feedback.
+pub struct ScreamerFilter {
+    /// HP-sektionens state
+    hp_s1: f32,
+    hp_s2: f32,
+    /// LP-sektionens state
+    lp_s1: f32,
+    lp_s2: f32,
+}
+
+impl ScreamerFilter {
+    /// Asymmetrisk diod-clipping: hårdare knä än tanh, positiv/negativ asymmetri.
+    #[inline]
+    fn diode_clip(x: f32) -> f32 {
+        // Mjuk diod-modell: asymmetrisk positive/negative clipping
+        if x > 0.0 {
+            // Positivt: genomsläppande med mjuk kompression
+            1.0 - (-x * 0.8).exp()
+        } else {
+            // Negativt: hårdare clipping (simulerar diod-drop)
+            -(1.0 - (x * 1.2).exp())
+        }
+    }
+
+    /// Process en sample genom HP → LP kedjan med diod-feedback.
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: f32,
+        g: f32,        // tan(pi * fc / fs) — ZDF-koefficient
+        resonance: f32, // 0.0-1.0
+        drive: f32,     // 1.0-20.0
+    ) -> f32 {
+        // Feedback med diod-clipping (det som ger "skrik"-karaktären)
+        let feedback = Self::diode_clip(self.lp_s2 * drive) * resonance * 4.0;
+
+        // HP-sektion (trapezoidal integration)
+        let hp_in = input - feedback;
+        let hp_out = (hp_in - self.hp_s1 - self.hp_s2) / (1.0 + g + g * g);
+        let hp_v1 = g * hp_out;
+        self.hp_s1 += 2.0 * hp_v1;
+        self.hp_s2 += 2.0 * g * (hp_out + hp_v1);
+
+        // LP-sektion
+        let lp_in = hp_out + hp_v1 + self.hp_s2; // BP-output in i LP
+        let lp_out = (lp_in + self.lp_s1 * g + self.lp_s2) / (1.0 + g + g * g);
+        let lp_v1 = g * (lp_in - lp_out);
+        self.lp_s1 += 2.0 * lp_v1;
+        self.lp_s2 = lp_out;
+
+        lp_out
+    }
+}
+```
+
+#### Acid — Steiner-Parker med variabel saturation
+
+```rust
+/// Acid filter: Steiner-Parker-inspirerad med resonans-beroende saturation.
+/// Unik egenskap: resonansens gain ändras beroende på vilken mode som är aktiv.
+pub struct AcidFilter {
+    s1: f32,
+    s2: f32,
+}
+
+impl AcidFilter {
+    /// Variabel saturation som ändras med resonansmängd.
+    /// Låg resonans → mjuk tanh. Hög resonans → wavefolding-liknande.
+    #[inline]
+    fn variable_saturate(x: f32, resonance: f32) -> f32 {
+        let blend = resonance * resonance; // Exponentiell kurva
+        let soft = x.tanh();
+        // Enkel wavefold: sin(x * pi/2) ger vikning vid ±1
+        let fold = (x * std::f32::consts::FRAC_PI_2).sin();
+        soft * (1.0 - blend) + fold * blend
+    }
+
+    /// Process en sample. filter_mode påverkar resonansens gain-omfång.
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: f32,
+        g: f32,
+        resonance: f32,
+        drive: f32,
+        filter_mode: SvfFilterType, // LP, BP, HP
+    ) -> f32 {
+        // Resonansens gain beror på mode (Steiner-Parker-egenskap)
+        let q_scale = match filter_mode {
+            SvfFilterType::Lowpass => 4.0,   // Mest resonans i LP
+            SvfFilterType::Bandpass => 3.0,  // Något mindre i BP
+            SvfFilterType::Highpass => 2.5,  // Minst i HP
+            _ => 3.5,
+        };
+
+        let feedback = Self::variable_saturate(self.s2 * drive, resonance)
+            * resonance * q_scale;
+
+        // ZDF 2-pole med saturation i feedback
+        let v0 = input - feedback;
+        let v1 = (g * v0 + self.s1) / (1.0 + g);
+        self.s1 = 2.0 * v1 - self.s1;
+        let v2 = (g * v1 + self.s2) / (1.0 + g);
+        self.s2 = 2.0 * v2 - self.s2;
+
+        // Välj utgång baserat på mode
+        match filter_mode {
+            SvfFilterType::Lowpass => v2,
+            SvfFilterType::Highpass => v0 - v1 - v2,
+            SvfFilterType::Bandpass => v1,
+            _ => v2, // Fallback till LP
+        }
+    }
+}
+```
+
+### Ändringar i Filter-modulen (synth_modules/src/filter.rs)
+
+```rust
+pub struct Filter {
+    // ... befintliga parametrar (cutoff, resonance, drive, etc.) ...
+
+    // NYA
+    model: FilterModel,
+    morph: NormalizedValue,  // Bara för Fluid
+
+    // State per modell (alla pre-allokerade, bara en används åt gången)
+    svf_ic1eq: f32,       // Standard
+    svf_ic2eq: f32,
+    fluid: FluidFilter,   // Fluid
+    screamer: ScreamerFilter, // Screamer
+    acid: AcidFilter,     // Acid
+
+    // ... befintliga mod offsets, output buffer, etc. ...
+}
+```
+
+Process-loopen väljer modell via match:
+
+```rust
+fn process(&mut self, /* ... */) {
+    // ... befintlig cutoff/resonance/drive-beräkning ...
+    // ... befintlig CV-input-hantering ...
+
+    for i in 0..n_samples {
+        let input = /* ... */;
+        let g = cutoff.to_tan_coeff(self.sample_rate);
+
+        let output = match self.model {
+            FilterModel::Standard => {
+                // Befintlig SVF-kod (oförändrad)
+                self.svf_coeffs.process(input, &mut self.svf_ic1eq, &mut self.svf_ic2eq, svf_type)
+            }
+            FilterModel::Fluid => {
+                let coeffs = SvfCoeffs::new(cutoff, resonance, self.sample_rate);
+                self.fluid.process(input, &coeffs, drive, self.morph.as_f32())
+            }
+            FilterModel::Screamer => {
+                self.screamer.process(input, g, resonance, drive)
+            }
+            FilterModel::Acid => {
+                self.acid.process(input, g, resonance, drive, svf_type)
+            }
+        };
+
+        // Denormal-hantering
+        self.flush_all_states();
+
+        self.output_buffer[i] = output;
+    }
+}
+```
+
+### Descriptor-uppdatering
+
+```rust
+// Ny parameter i descriptor():
+.parameter(
+    ParameterDescriptor::choice(
+        Param::Filter(FilterParam::Model(FilterModel::Standard)),
+        "Model",
+        FilterModel::to_choices(),
+    )
+    .description("Filter model: Standard, Fluid, Screamer, Acid")
+    .widget(WidgetHint::Dropdown),
+)
+.parameter(
+    ParameterDescriptor::float(
+        Param::Filter(FilterParam::Morph(NormalizedValue::ZERO)),
+        "Morph",
+    )
+    .description("Fluid: LP→BP→HP→Notch crossfade")
+    .range(0.0, 1.0)
+    .default(0.0)
+    .widget(WidgetHint::Knob),
+)
+```
+
+### set_param / get_param / get_params
+
+```rust
+// I set_param:
+FilterParam::Model(m) => {
+    self.model = m;
+    // Nollställ alla filter-states vid modellbyte
+    self.reset_filter_states();
+}
+FilterParam::Morph(v) => self.morph = v,
+
+// I get_param:
+FilterParam::Model(_) => self.model.index() as f32,
+FilterParam::Morph(_) => self.morph.as_f32(),
+
+// I get_params: lägg till båda
+```
+
+### Realtidssäkerhet
+
+- **Inga allokeringar:** Alla filter-states är fasta fält i structen. `FluidFilter`, `ScreamerFilter`, `AcidFilter` är Copy-typer med enbart `f32`-fält.
+- **Ingen branching per sample (nästan):** Match på `FilterModel` sker en gång per sample — förutsägbar branch som CPU:ns branch predictor hanterar väl (modellen ändras inte under buffern).
+- **Denormal-hantering:** `flush_denormals()` på alla aktiva state-variabler.
+- **Koefficient-beräkning:** `SvfCoeffs::new()` (trigonometri) kan lyftas ut ur sample-loopen om cutoff inte moduleras per-sample. Vid CV-modulation beräknas den per sample (samma som befintlig kod).
+
+### Bakåtkompatibilitet
+
+- **Default = Standard:** Befintliga patchar som inte sätter `Model` får `FilterModel::Standard` och beter sig exakt som innan.
+- **Morph ignoreras:** Om `Model != Fluid` har Morph-parametern ingen effekt.
+- **Inga ändrade portar:** Samma in/ut-portar som innan.
+
+### Implementeringsordning (inom denna feature)
+
+1. **Fluid först** — närmast befintlig SVF, mest straight-forward. Validerar `FilterModel`-infrastrukturen.
+2. **Screamer** — unik topologi (Sallen-Key), kräver egen ZDF-implementation.
+3. **Acid** — mest komplex (variabel saturation, mode-beroende resonans). Implementeras sist.
+
+### Berörda filer
+
+| Crate | Fil | Ändring |
+|-------|-----|---------|
+| synth_core | `params/filters.rs` | `FilterModel` enum, `Model(FilterModel)` + `Morph(NormalizedValue)` varianter |
+| synth_dsp | `filters.rs` | `FluidFilter`, `ScreamerFilter`, `AcidFilter` structs + DSP |
+| synth_modules | `filter.rs` | `model`/`morph` fält, match i `process()`, uppdaterad `descriptor()` |
+| modular_synth | `gui/module_panel.rs` | Model-dropdown, Morph-knob (synlig när Fluid) |
+| modular_synth | `patch.rs` | Serialisering (bakåtkompatibel — saknad Model = Standard) |
+
+### Uppskattad omfattning
+
+- **synth_core:** ~80 rader (FilterModel enum + 2 nya FilterParam-varianter)
+- **synth_dsp:** ~200 rader (3 filter-structs med process-metoder)
+- **synth_modules:** ~100 rader (integration i filter.rs)
+- **modular_synth:** ~30 rader (GUI + patch)
+- **Totalt:** ~410 rader
+
+---
+
+## 7. Implementeringsordning
+
+### Status (2026-02-13)
+
+| # | Feature | Status | Version |
+|---|---------|--------|---------|
+| 1 | Mod Matrix | KLAR | 0.107.0–0.112.0 |
+| 2 | Waveshaper | KLAR | 0.113.0 |
+| 3 | Unison | KLAR | 0.114.0 |
+| 4 | Character Filters | PLANERAD | — |
+| 5 | MSEG | PLANERAD | — |
+| 6 | Wavetable-oscillator | PLANERAD | — |
+| 7 | Generativa moduler | PLANERAD | — |
+
+### Rekommenderad ordning för resterande features
+
+```
+Nästa: Character Filters    ← Direkt ljudkvalitetsvinst, utökar befintlig modul
+  │
+Sedan: MSEG                 ← Stor kreativ vinst, modulerar Character Filters
+  │
+Sedan: Wavetable-oscillator ← Ny ljudkälla, kräver mest ny infrastruktur
+  │
+Sist:  Generativa moduler   ← Störst scope, beroende av mod matrix
+```
+
+### Prioritering och motivering
+
+1. **Character Filters näst** — Ger omedelbar uppgradering av *varje* befintlig patch som använder filter. Tre distinkta analoga karaktärer (Fluid, Screamer, Acid) förvandlar synten från "bra filter" till "val av klassiska filtermodeller". Bygger på befintlig `Filter`-modul (~410 rader, inga nya filer). Snabbast att implementera av de resterande.
+
+2. **MSEG efter det** — Kräver visuell editor (mest GUI-arbete) men ger enorm kreativ kraft. Med mod matrix + character filters redan på plats kan MSEG modulera nya parametrar (filter morph, model-specifik drive) för evolverande ljud.
+
+3. **Wavetable-oscillator** — Ny ljudkälla med scanbar position. Mest ny infrastruktur (wavetable data-format, interpolation, inbyggda tables). Oberoende av andra features men ger mest värde *efter* att modulationskedjan (mod matrix + MSEG) redan finns.
+
+4. **Generativa moduler sist** — Euclidean, Turing Machine, Random Gates. Störst scope (3 nya moduler), och mest nytta när hela modulationskedjan finns. Producerar gate/CV som routas genom matrisen till filter, oscillatorer och envelopes.
 
 ### Beroendegraf
 
 ```
-                 ┌──────────────┐
-                 │  Mod Matrix  │
-                 └──────┬───────┘
-                        │
-            ┌───────────┼───────────┐
-            │           │           │
-     ┌──────▼──┐  ┌─────▼────┐ ┌───▼────────────┐
-     │ Unison  │  │   MSEG   │ │ Generativa     │
-     └─────────┘  └──────────┘ │ (Euclidean,    │
-                               │  Turing, Gates) │
-     ┌──────────┐              └─────────────────┘
-     │Waveshaper│  (oberoende)
-     └──────────┘
+  ┌──────────────┐
+  │  Mod Matrix  │ ✓ KLAR
+  └──────┬───────┘
+         │
+  ┌──────▼───────┐     ┌──────────┐
+  │  Waveshaper  │ ✓   │  Unison  │ ✓
+  └──────────────┘     └──────────┘
+
+  ┌─────────────────────────────────────────────────┐
+  │  Resterande (i prioritetsordning):               │
+  │                                                   │
+  │  1. Character Filters  (utökar Filter)            │
+  │     │                                             │
+  │  2. MSEG  (modulerar character filter params)     │
+  │     │                                             │
+  │  3. Wavetable Osc  (oberoende, ny ljudkälla)      │
+  │     │                                             │
+  │  4. Generativa moduler  (Euclidean, Turing, Gates)│
+  └─────────────────────────────────────────────────┘
 ```
 
-### Total omfattning
+### Total omfattning (resterande)
 
 | Feature | Rader (uppskattning) | Nya filer | Ändrade filer |
 |---------|---------------------|-----------|--------------|
-| Mod Matrix | ~700 | 2 | 8 |
-| Unison | ~400 | 0 | 5 |
-| Waveshaper + Wavetable | ~850 | 4 | 5 |
+| Character Filters | ~410 | 0 | 4 |
 | MSEG | ~830 | 2 | 5 |
+| Wavetable-oscillator | ~600 | 3 | 4 |
 | Generativa moduler | ~900 | 4 | 5 |
-| **Totalt** | **~3680** | **12** | **~15 unika** |
+| **Totalt resterande** | **~2740** | **9** | **~13 unika** |
 
-### Versionering
+### Historisk versionering (genomförda)
 
 | Version | Innehåll |
 |---------|----------|
-| 0.107.0 | Mod Matrix (8 slots) |
-| 0.108.0 | Waveshaper-modul |
-| 0.109.0 | Wavetable-oscillator med inbyggda tables |
-| 0.110.0 | Unison i Oscillator (1-7 röster, detune, spread) |
-| 0.111.0 | MSEG (multi-stage envelope med loop) |
-| 0.112.0 | Euclidean Sequencer |
-| 0.113.0 | Turing Machine + Random Gates |
+| 0.107.0 | Mod Matrix (8 slots, 10 källor, 11 destinationer) |
+| 0.108.0–0.112.0 | Mod Matrix: smarta namn, grid-layout, enabled-checkbox |
+| 0.113.0 | Waveshaper-modul (6 kurvor: Soft Clip, Fold, Chebyshev, etc.) |
+| 0.114.0 | Intra-voice Unison i Oscillator (1-7 röster, detune, stereo spread) |
