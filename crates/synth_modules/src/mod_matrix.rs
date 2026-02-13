@@ -27,6 +27,7 @@ pub struct ModSlot {
     pub source: ModSource,
     pub destination: ModDestination,
     pub amount: BipolarValue,
+    pub enabled: bool,
 }
 
 impl Default for ModSlot {
@@ -35,6 +36,7 @@ impl Default for ModSlot {
             source: ModSource::None,
             destination: ModDestination::None,
             amount: BipolarValue::CENTER,
+            enabled: true,
         }
     }
 }
@@ -83,7 +85,8 @@ impl ModMatrix {
         self.slots[..self.grid_size.slot_count()]
             .iter()
             .filter_map(|slot| {
-                if matches!(slot.source, ModSource::None)
+                if !slot.enabled
+                    || matches!(slot.source, ModSource::None)
                     || matches!(slot.destination, ModDestination::None)
                 {
                     return None;
@@ -166,6 +169,16 @@ impl Describable for ModMatrix {
                 .widget(WidgetHint::Knob)
                 .description(format!("Modulation amount for slot {slot_num}")),
             );
+
+            desc = desc.parameter(
+                ParameterDescriptor::float(
+                    Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
+                    format!("Slot {slot_num} Enabled"),
+                )
+                .range(0.0, 1.0)
+                .default(1.0)
+                .description(format!("Enable/disable slot {slot_num}")),
+            );
         }
 
         desc
@@ -188,7 +201,8 @@ impl PolyModule for ModMatrix {
                 ModMatrixParam::GridSize(gs) => self.grid_size = gs,
                 ModMatrixParam::SlotSource(_, _)
                 | ModMatrixParam::SlotDestination(_, _)
-                | ModMatrixParam::SlotAmount(_, _) => {
+                | ModMatrixParam::SlotAmount(_, _)
+                | ModMatrixParam::SlotEnabled(_, _) => {
                     let slot = mm_param.slot() as usize;
                     if slot >= MAX_MOD_MATRIX_SLOTS {
                         return;
@@ -199,6 +213,7 @@ impl PolyModule for ModMatrix {
                             self.slots[slot].destination = dst;
                         }
                         ModMatrixParam::SlotAmount(_, amt) => self.slots[slot].amount = amt,
+                        ModMatrixParam::SlotEnabled(_, en) => self.slots[slot].enabled = en,
                         ModMatrixParam::GridSize(_) => {}
                     }
                 }
@@ -226,6 +241,13 @@ impl PolyModule for ModMatrix {
                             self.slots[slot].destination.index() as f32
                         }
                         ModMatrixParam::SlotAmount(_, _) => self.slots[slot].amount.as_f32(),
+                        ModMatrixParam::SlotEnabled(_, _) => {
+                            if self.slots[slot].enabled {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
                         ModMatrixParam::GridSize(_) => 0.0, // unreachable
                     })
                 }
@@ -236,7 +258,7 @@ impl PolyModule for ModMatrix {
     }
 
     fn get_params(&self) -> Vec<Param> {
-        let mut params = Vec::with_capacity(1 + MAX_MOD_MATRIX_SLOTS * 3);
+        let mut params = Vec::with_capacity(1 + MAX_MOD_MATRIX_SLOTS * 4);
         params.push(Param::ModMatrix(ModMatrixParam::GridSize(self.grid_size)));
         for i in 0..MAX_MOD_MATRIX_SLOTS {
             let slot = i as u8;
@@ -251,6 +273,10 @@ impl PolyModule for ModMatrix {
             params.push(Param::ModMatrix(ModMatrixParam::SlotAmount(
                 slot,
                 self.slots[i].amount,
+            )));
+            params.push(Param::ModMatrix(ModMatrixParam::SlotEnabled(
+                slot,
+                self.slots[i].enabled,
             )));
         }
         params

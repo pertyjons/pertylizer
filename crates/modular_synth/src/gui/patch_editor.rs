@@ -1800,6 +1800,9 @@ fn draw_mod_matrix_grid(
                 let amt_param = descriptor.parameters.iter().find(|p| {
                     matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotAmount(s, _)) if s as usize == slot_idx)
                 });
+                let en_param = descriptor.parameters.iter().find(|p| {
+                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotEnabled(s, _)) if s as usize == slot_idx)
+                });
 
                 ui.group(|ui| {
                     ui.set_width(slot_width);
@@ -1891,25 +1894,41 @@ fn draw_mod_matrix_grid(
                             }
                         }
 
-                        // Amount knob
-                        if let Some(ap) = amt_param {
-                            let current = state
-                                .param_values
-                                .get(&ap.name)
-                                .copied()
-                                .unwrap_or(ap.range.default);
-                            let mut value = current;
-                            Knob::from_descriptor(&mut value, ap)
-                                .size(theme().sizes.knob_size_small)
-                                .accent_color(accent_color)
-                                .show(ui);
-                            if (value - current).abs() > f32::EPSILON {
-                                state.param_values.insert(ap.name.clone(), value);
-                                param_changes.push(ap.id.with_f32(value));
+                        // Amount knob + Enabled checkbox side by side
+                        ui.horizontal(|ui| {
+                            if let Some(ap) = amt_param {
+                                let current = state
+                                    .param_values
+                                    .get(&ap.name)
+                                    .copied()
+                                    .unwrap_or(ap.range.default);
+                                let mut value = current;
+                                Knob::from_descriptor(&mut value, ap)
+                                    .label("Amount")
+                                    .size(theme().sizes.knob_size_small)
+                                    .accent_color(accent_color)
+                                    .show(ui);
+                                if (value - current).abs() > f32::EPSILON {
+                                    state.param_values.insert(ap.name.clone(), value);
+                                    param_changes.push(ap.id.with_f32(value));
+                                }
                             }
-                            // Extra space so the knob label stays inside the group frame
-                            ui.add_space(2.0);
-                        }
+
+                            if let Some(ep) = en_param {
+                                let current = state
+                                    .param_values
+                                    .get(&ep.name)
+                                    .copied()
+                                    .unwrap_or(ep.range.default);
+                                let mut enabled = current > 0.5;
+                                if ui.checkbox(&mut enabled, "").changed() {
+                                    let val = if enabled { 1.0 } else { 0.0 };
+                                    state.param_values.insert(ep.name.clone(), val);
+                                    param_changes.push(ep.id.with_f32(val));
+                                }
+                            }
+                        });
+                        ui.add_space(2.0);
                     });
                 });
 

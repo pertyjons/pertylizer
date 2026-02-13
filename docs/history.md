@@ -1,5 +1,11 @@
 # Version History
 
+## [0.112.0] - 2026-02-13
+### Changed - Mod Matrix: enabled-checkbox & Amount-label
+- **Enabled-checkbox**: Varje slot har nu en checkbox bredvid Amount-knoben för att aktivera/inaktivera sloten.
+- **Kortare knob-label**: Knoben visar nu "Amount" istället för "Slot X Amount".
+- **SlotEnabled-param**: Ny parameter `SlotEnabled` per slot styr om modulering är aktiv.
+
 ## [0.111.0] - 2026-02-13
 ### Fixed - Mod Matrix Grid-layout
 - **Lika stora slots**: Alla slots i rutnätet har nu samma fasta bredd, beräknad från tillgängligt utrymme och antal kolumner.

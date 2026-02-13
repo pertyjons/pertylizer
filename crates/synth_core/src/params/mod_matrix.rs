@@ -357,10 +357,28 @@ const SLOT_NAMES_AMOUNT: [&str; 16] = [
     "Slot 16 Amount",
 ];
 
+const SLOT_NAMES_ENABLED: [&str; 16] = [
+    "Slot 1 Enabled",
+    "Slot 2 Enabled",
+    "Slot 3 Enabled",
+    "Slot 4 Enabled",
+    "Slot 5 Enabled",
+    "Slot 6 Enabled",
+    "Slot 7 Enabled",
+    "Slot 8 Enabled",
+    "Slot 9 Enabled",
+    "Slot 10 Enabled",
+    "Slot 11 Enabled",
+    "Slot 12 Enabled",
+    "Slot 13 Enabled",
+    "Slot 14 Enabled",
+    "Slot 15 Enabled",
+    "Slot 16 Enabled",
+];
+
 /// Mod matrix parameter with typed value.
 ///
-/// Each slot (0-15) has source, destination, and amount.
-/// A slot with `Source = None` is effectively inactive.
+/// Each slot (0-15) has source, destination, amount, and enabled flag.
 /// `GridSize` controls how many slots are visible and processed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ModMatrixParam {
@@ -372,6 +390,8 @@ pub enum ModMatrixParam {
     SlotDestination(u8, ModDestination),
     /// Amount for slot N (-1.0 to +1.0).
     SlotAmount(u8, BipolarValue),
+    /// Enabled flag for slot N.
+    SlotEnabled(u8, bool),
 }
 
 impl ModMatrixParam {
@@ -382,6 +402,7 @@ impl ModMatrixParam {
             (Self::SlotSource(a, _), Self::SlotSource(b, _)) => a == b,
             (Self::SlotDestination(a, _), Self::SlotDestination(b, _)) => a == b,
             (Self::SlotAmount(a, _), Self::SlotAmount(b, _)) => a == b,
+            (Self::SlotEnabled(a, _), Self::SlotEnabled(b, _)) => a == b,
             _ => false,
         }
     }
@@ -403,6 +424,10 @@ impl ModMatrixParam {
                 .get(*i as usize)
                 .copied()
                 .unwrap_or("Slot Amount"),
+            Self::SlotEnabled(i, _) => SLOT_NAMES_ENABLED
+                .get(*i as usize)
+                .copied()
+                .unwrap_or("Slot Enabled"),
         }
     }
 
@@ -414,6 +439,13 @@ impl ModMatrixParam {
             Self::SlotSource(_, s) => s.index() as f32,
             Self::SlotDestination(_, d) => d.index() as f32,
             Self::SlotAmount(_, a) => a.as_f32(),
+            Self::SlotEnabled(_, e) => {
+                if *e {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -429,6 +461,7 @@ impl ModMatrixParam {
                 Self::SlotDestination(*slot, ModDestination::from_index(value as usize))
             }
             Self::SlotAmount(slot, _) => Self::SlotAmount(*slot, BipolarValue::new(value)),
+            Self::SlotEnabled(slot, _) => Self::SlotEnabled(*slot, value > 0.5),
         }
     }
 
@@ -436,7 +469,10 @@ impl ModMatrixParam {
     pub fn slot(&self) -> u8 {
         match self {
             Self::GridSize(_) => 0,
-            Self::SlotSource(s, _) | Self::SlotDestination(s, _) | Self::SlotAmount(s, _) => *s,
+            Self::SlotSource(s, _)
+            | Self::SlotDestination(s, _)
+            | Self::SlotAmount(s, _)
+            | Self::SlotEnabled(s, _) => *s,
         }
     }
 }
