@@ -162,20 +162,19 @@ impl PianoKeyboard {
         let available = ui.available_size();
         let keyboard_height = 100.0;
 
+        // Key dimensions (fixed sizes)
+        let white_key_width = 24.0;
+        let white_key_height = keyboard_height - 10.0;
+        let black_key_width = 14.0;
+        let black_key_height = 55.0;
+
         // Count total white keys
         let total_white_keys: u32 = (PIANO_LOW_NOTE..=PIANO_HIGH_NOTE)
             .filter(|&n| !Self::is_black_key(n))
             .count() as u32;
 
-        // Key dimensions - scale to fill available width, with min size
-        let inner_width = available.x - 10.0; // account for shrink(5.0) padding
-        let min_key_width = 14.0;
-        let white_key_width = (inner_width / total_white_keys as f32).max(min_key_width);
-        let white_key_height = keyboard_height - 10.0;
-        let black_key_width = white_key_width * 0.583; // proportional (14/24)
-        let black_key_height = 55.0;
-
         let total_keyboard_width = total_white_keys as f32 * white_key_width;
+        let inner_width = available.x - 10.0; // account for shrink(5.0) padding
         let fits_all = total_keyboard_width <= inner_width;
 
         // Center offset when all keys fit
