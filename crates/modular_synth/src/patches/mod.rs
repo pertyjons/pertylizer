@@ -81,46 +81,82 @@ pub fn default_patch() -> Patch {
 
 /// Get all example patches.
 pub fn example_patches() -> Vec<Patch> {
+    categorized_patches()
+        .into_iter()
+        .flat_map(|(_, patches)| patches)
+        .collect()
+}
+
+/// Get example patches grouped by category.
+#[must_use]
+pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
     vec![
-        patch_grand_piano(), // Default startup patch
-        patch_spacey_bass(),
-        patch_deep_space_pad(),
-        patch_aggressive_bass(),
-        patch_vintage_lead(),
-        patch_ambient_keys(),
-        patch_drum_kick(),
-        patch_drum_snare(),
-        patch_drum_hihat(),
-        patch_pluck_synth(),
-        patch_fm_bell(),
-        patch_noise_sweep(),
-        // Math oscillator patches
-        patch_chaos_drone(),
-        patch_karplus_guitar(),
-        patch_shepard_riser(),
-        patch_bytebeat_glitch(),
-        patch_wave_folder_bass(),
-        patch_formant_voice(),
-        // New DSP feature patches
-        patch_sub_bass(),
-        patch_brown_drone(),
-        patch_punchy_stab(),
-        patch_string_ensemble(),
-        // Mod Matrix patches
-        patch_velocity_pad(),
-        patch_expressive_lead(),
-        // Waveshaper patches
-        patch_waveshaper_lead(),
-        patch_glitch_pad(),
-        // Unison patches
-        patch_unison_supersaw(),
-        patch_stereo_unison_pad(),
-        patch_unison_sync_lead(),
-        patch_unison_pwm_strings(),
-        // Character filter patches
-        patch_fluid_pad(),
-        patch_fluid_keys(),
-        patch_screamer_lead(),
-        patch_acid_bass(),
+        (
+            "\u{1f3b9} Keys & Piano",
+            vec![
+                patch_grand_piano(),
+                patch_ambient_keys(),
+                patch_fluid_keys(),
+            ],
+        ),
+        (
+            "\u{1f3b8} Bass",
+            vec![
+                patch_spacey_bass(),
+                patch_aggressive_bass(),
+                patch_sub_bass(),
+                patch_acid_bass(),
+                patch_wave_folder_bass(),
+            ],
+        ),
+        (
+            "\u{1f3b5} Lead",
+            vec![
+                patch_vintage_lead(),
+                patch_expressive_lead(),
+                patch_waveshaper_lead(),
+                patch_screamer_lead(),
+                patch_unison_supersaw(),
+                patch_unison_sync_lead(),
+            ],
+        ),
+        (
+            "\u{1f30a} Pad",
+            vec![
+                patch_deep_space_pad(),
+                patch_velocity_pad(),
+                patch_glitch_pad(),
+                patch_fluid_pad(),
+                patch_stereo_unison_pad(),
+            ],
+        ),
+        (
+            "\u{1f941} Drums",
+            vec![patch_drum_kick(), patch_drum_snare(), patch_drum_hihat()],
+        ),
+        (
+            "\u{1f3bb} Strings & Bell",
+            vec![
+                patch_string_ensemble(),
+                patch_unison_pwm_strings(),
+                patch_fm_bell(),
+                patch_pluck_synth(),
+                patch_punchy_stab(),
+            ],
+        ),
+        (
+            "\u{1f52c} Experimental",
+            vec![
+                patch_chaos_drone(),
+                patch_karplus_guitar(),
+                patch_shepard_riser(),
+                patch_bytebeat_glitch(),
+                patch_formant_voice(),
+            ],
+        ),
+        (
+            "\u{1f32b}\u{fe0f} Ambient & Texture",
+            vec![patch_brown_drone(), patch_noise_sweep()],
+        ),
     ]
 }

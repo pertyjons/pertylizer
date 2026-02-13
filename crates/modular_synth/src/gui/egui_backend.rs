@@ -30,7 +30,7 @@ use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
-use crate::patch::{Patch, example_patches};
+use crate::patch::{Patch, categorized_patches};
 use synth_core::Velocity;
 use synth_core::{
     ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
@@ -404,14 +404,18 @@ impl eframe::App for SynthApp {
                     }
                     ui.separator();
                     ui.menu_button("📋 Example Patches", |ui| {
-                        for patch in example_patches() {
-                            if ui.button(&patch.name).clicked() {
-                                self.load_patch_data(&patch);
-                                self.current_patch_name = patch.name.clone();
-                                self.dialog_state
-                                    .set_status(format!("Loaded: {}", patch.name));
-                                ui.close();
-                            }
+                        for (category, patches) in categorized_patches() {
+                            ui.menu_button(category, |ui| {
+                                for patch in patches {
+                                    if ui.button(&patch.name).clicked() {
+                                        self.load_patch_data(&patch);
+                                        self.current_patch_name = patch.name.clone();
+                                        self.dialog_state
+                                            .set_status(format!("Loaded: {}", patch.name));
+                                        ui.close();
+                                    }
+                                }
+                            });
                         }
                     });
                     ui.separator();

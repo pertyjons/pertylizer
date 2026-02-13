@@ -1,5 +1,11 @@
 # Version History
 
+## [0.117.0] - 2026-02-14
+### Improved - Kategoriserade undermenyer för Example Patches
+- **Kategoriserad patch-meny**: Example Patches-menyn visar nu patchar i 8 undermenyer grupperade efter kategori istället för en platt lista med 35 patchar.
+- **Kategorier**: Keys & Piano, Bass, Lead, Pad, Drums, Strings & Bell, Experimental, Ambient & Texture.
+- **Ny funktion `categorized_patches()`**: Returnerar patchar grupperade per kategori, används av menyn. `example_patches()` finns kvar som platt lista.
+
 ## [0.116.0] - 2026-02-13
 ### Added - Våg 1: Ring Modulation, Envelope Follower, Wavetable Syntes
 - **Ring Modulation**: Ny voice-modul som multiplicerar insignal med intern carrier-oscillator. Stöder 5 vågformer (sine/tri/saw/square/pulse), keyboard tracking, frekvensratio (0.25x-4.0x), dry/wet mix och freq CV-ingång. Ger metalliska klockljud, sci-fi-texturer och inharmoniska övertoner.

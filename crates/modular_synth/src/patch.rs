@@ -432,4 +432,4 @@ impl ModuleBuilder {
 // EXAMPLE PATCHES (re-exported from patches module)
 // ============================================================================
 
-pub use crate::patches::example_patches;
+pub use crate::patches::{categorized_patches, example_patches};
