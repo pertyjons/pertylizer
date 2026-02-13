@@ -11,6 +11,7 @@ mod deep_space_pad;
 mod drum_hihat;
 mod drum_kick;
 mod drum_snare;
+mod expressive_lead;
 mod fm_bell;
 mod formant_voice;
 mod grand_piano;
@@ -22,6 +23,7 @@ mod shepard_riser;
 mod spacey_bass;
 mod string_ensemble;
 mod sub_bass;
+mod velocity_pad;
 mod vintage_lead;
 mod wave_folder_bass;
 
@@ -34,6 +36,7 @@ pub use deep_space_pad::patch_deep_space_pad;
 pub use drum_hihat::patch_drum_hihat;
 pub use drum_kick::patch_drum_kick;
 pub use drum_snare::patch_drum_snare;
+pub use expressive_lead::patch_expressive_lead;
 pub use fm_bell::patch_fm_bell;
 pub use formant_voice::patch_formant_voice;
 pub use grand_piano::patch_grand_piano;
@@ -45,6 +48,7 @@ pub use shepard_riser::patch_shepard_riser;
 pub use spacey_bass::patch_spacey_bass;
 pub use string_ensemble::patch_string_ensemble;
 pub use sub_bass::patch_sub_bass;
+pub use velocity_pad::patch_velocity_pad;
 pub use vintage_lead::patch_vintage_lead;
 pub use wave_folder_bass::patch_wave_folder_bass;
 
@@ -82,5 +86,8 @@ pub fn example_patches() -> Vec<Patch> {
         patch_brown_drone(),
         patch_punchy_stab(),
         patch_string_ensemble(),
+        // Mod Matrix patches
+        patch_velocity_pad(),
+        patch_expressive_lead(),
     ]
 }

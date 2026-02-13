@@ -1,5 +1,27 @@
 # Version History
 
+## [0.109.0] - 2026-02-13
+### Changed - Konsekvent modulnamngivning
+- **Alltid siffersuffix**: Alla moduler visar nu alltid instansnummer (t.ex. "LFO 1", "Oscillator 1", "Filter 1") även om det bara finns en modul av den typen. Selectboxar matchar nu alltid modulnamnen i vyn.
+
+## [0.108.0] - 2026-02-13
+### Improved - Smarta modulnamn & filtrerade Mod Matrix-val
+- **Numrerade modultitlar**: Har man 2+ moduler av samma typ visas "Oscillator 1" / "Oscillator 2". En ensam modul visas utan nummer ("LFO").
+- **Filtrerade Mod Matrix-dropdowns**: Sources och destinations som refererar till moduler som inte finns i patchen döljs. T.ex. "LFO 2" visas inte som källa om bara en LFO finns, "Osc 2 Pitch" döljs utan en andra oscillator.
+- **PatchAnalysis**: Ny intern analysstruktur som räknar modultyper per frame och driver både namngivning och filtrering.
+
+## [0.107.0] - 2026-02-13
+### Added - Mod Matrix (8-slot modulationsrouting)
+- **Mod Matrix modul**: Nytt 8-slot modulationsroutingsystem som lever i varje röst
+- **10 modulationskällor**: None, LFO 1/2, Env 1/2, Velocity, Note Number, Aftertouch, Mod Wheel, Pitch Bend
+- **11 modulationsdestinationer**: None, Osc 1/2 Pitch, Osc 1 Level, Filter 1/2 Cutoff, Filter 1 Reso, Amp Level/Pan, LFO 1 Rate/Depth
+- **Bipolär amount**: Varje slot har -1.0 till +1.0 skalning med knob-kontroll
+- **Enable/disable per slot**: Toggle för att aktivera/inaktivera enskilda slots
+- **Voice-integration**: Modulering appliceras automatiskt innan grafprocessning, med one-block latency (~1ms)
+- **Mod offsets i destinationsmoduler**: Filter, oscillator, amplifier och LFO stödjer nu moduleringsoffsets
+- **GUI**: Mod Matrix tillgänglig via "Mod Matrix" knapp i modulpaletten (Utility-kategori)
+- **Patch-serialisering**: Mod Matrix-inställningar sparas och laddas med patches
+
 ## [0.106.0] - 2026-02-13
 ### Changed - Klaviatur visar fler tangenter vid bredare fönster
 - **Fasta tangentstorlekar**: Vita tangenter 24px, svarta 14px — storleken ändras aldrig

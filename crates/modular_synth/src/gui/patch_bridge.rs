@@ -458,6 +458,25 @@ fn load_module(
                 buffer,
             });
         }
+        PatchModuleType::ModMatrix => {
+            let m = synth_modules::ModMatrix::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
         // Physical modeling modules - instantiated via crate::modules
         PatchModuleType::KeyboardPanner => {
             let m = synth_modules::KeyboardPanner::new();
@@ -562,8 +581,9 @@ pub fn apply_module_parameters(
                 }
             };
 
-            // Update patch_editor
-            patch_editor.set_parameter_by_name(module_id, param_name, f32_value);
+            // Update patch_editor — use descriptor name (not patch file name) to match
+            // the key case used when param_values was initialized from the descriptor.
+            patch_editor.set_parameter_by_name(module_id, &param_desc.name, f32_value);
 
             // Create the Param with value and send to engine
             let param = param_desc.id.with_f32(f32_value);
@@ -604,13 +624,37 @@ pub fn create_patch_from_rack(
     for module_id in patch_editor.module_ids() {
         if let Some((descriptor, position, params)) = patch_editor.get_module_data(module_id) {
             let module_type = match descriptor.category {
-                ModuleCategory::Oscillator => PatchModuleType::Oscillator,
+                ModuleCategory::Oscillator => {
+                    // Distinguish oscillator subtypes by type_id
+                    match descriptor.type_id.0.as_str() {
+                        "math_oscillator" => PatchModuleType::MathOscillator,
+                        "sub_oscillator" => PatchModuleType::SubOscillator,
+                        "noise" => PatchModuleType::Noise,
+                        _ => PatchModuleType::Oscillator,
+                    }
+                }
                 ModuleCategory::Filter => PatchModuleType::Filter,
                 ModuleCategory::Envelope => PatchModuleType::Envelope,
                 ModuleCategory::LFO => PatchModuleType::Lfo,
                 ModuleCategory::Amplifier => PatchModuleType::Amplifier,
                 ModuleCategory::Mixer => PatchModuleType::Mixer,
+                ModuleCategory::Output => PatchModuleType::StereoOutput,
                 ModuleCategory::Effect => PatchModuleType::Delay, // Default to delay for effects
+                ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
+                    "mod_matrix" => PatchModuleType::ModMatrix,
+                    _ => continue,
+                },
+                ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {
+                    "keyboard_panner" => PatchModuleType::KeyboardPanner,
+                    "body_resonance" => PatchModuleType::BodyResonance,
+                    "mechanical_noise" => PatchModuleType::MechanicalNoise,
+                    _ => continue,
+                },
+                ModuleCategory::Visualizer => match descriptor.type_id.0.as_str() {
+                    "oscilloscope" => PatchModuleType::Oscilloscope,
+                    "level_meter" => PatchModuleType::LevelMeter,
+                    _ => continue,
+                },
                 _ => continue,
             };
 

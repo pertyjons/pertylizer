@@ -526,6 +526,9 @@ impl eframe::App for SynthApp {
                             PaletteSelection::Noise => {
                                 self.add_noise_module();
                             }
+                            PaletteSelection::ModMatrix => {
+                                self.add_mod_matrix_module();
+                            }
                             PaletteSelection::Effect(effect_type) => {
                                 self.add_effect_module(effect_type);
                             }
@@ -888,6 +891,24 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::Noise);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_mod_matrix_module(&mut self) {
+        let m = synth_modules::ModMatrix::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::ModMatrix);
         let Some(editor) = self.active_patch_editor() else {
             return;
         };

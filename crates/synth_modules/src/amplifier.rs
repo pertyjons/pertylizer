@@ -21,6 +21,11 @@ pub struct Amplifier {
     /// When true, CV input is bipolar (-1 to +1), allowing ring modulation
     cv_bipolar: bool,
     sample_rate: SampleRate,
+    // Mod matrix offsets
+    /// Level offset (multiplicative factor, from mod matrix).
+    mod_offset_level: f32,
+    /// Pan offset (additive, from mod matrix).
+    mod_offset_pan: f32,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
 }
@@ -33,6 +38,8 @@ impl Amplifier {
             clip_mode: ClipMode::Off,
             cv_bipolar: false,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offset_level: 0.0,
+            mod_offset_pan: 0.0,
             output_left: AudioBuffer::new(256),
             output_right: AudioBuffer::new(256),
         }
@@ -142,12 +149,14 @@ impl PolyModule for Amplifier {
             // In bipolar mode, CV can be negative (ring modulation)
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
-            let effective_level = self.level.as_f32() * cv_scaled;
+            // Apply mod matrix level offset (additive to base level)
+            let base_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
+            let effective_level = base_level * cv_scaled;
 
             let effective_pan = if let Some(pan_mod) = pan_cv {
-                BipolarValue::new(self.pan.as_f32() + pan_mod[i])
+                BipolarValue::new(self.pan.as_f32() + pan_mod[i] + self.mod_offset_pan)
             } else {
-                self.pan
+                BipolarValue::new((self.pan.as_f32() + self.mod_offset_pan).clamp(-1.0, 1.0))
             };
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
@@ -219,6 +228,19 @@ impl PolyModule for Amplifier {
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
+
+    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
+        match dest_index {
+            0 => self.mod_offset_level += value,
+            1 => self.mod_offset_pan += value,
+            _ => {}
+        }
+    }
+
+    fn clear_mod_offsets(&mut self) {
+        self.mod_offset_level = 0.0;
+        self.mod_offset_pan = 0.0;
+    }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())

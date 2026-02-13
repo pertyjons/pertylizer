@@ -36,6 +36,11 @@ pub struct Lfo {
     retrigger_mode: RetriggerMode,
     /// Previous retrigger signal value for edge detection (persists across buffers).
     prev_retrigger: f32,
+    // Mod matrix offsets
+    /// Rate offset (additive Hz, from mod matrix).
+    mod_offset_rate: f32,
+    /// Depth offset (additive, from mod matrix).
+    mod_offset_depth: f32,
     output_buffer: AudioBuffer,
 }
 
@@ -55,6 +60,8 @@ impl Lfo {
             sync_division: BeatDivision::QUARTER,
             retrigger_mode: RetriggerMode::Continue,
             prev_retrigger: 0.0,
+            mod_offset_rate: 0.0,
+            mod_offset_depth: 0.0,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -92,7 +99,8 @@ impl Lfo {
             LfoMode::Unipolar => (raw + 1.0) * 0.5,
         };
 
-        output * self.depth.as_f32()
+        let effective_depth = (self.depth.as_f32() + self.mod_offset_depth).clamp(0.0, 1.0);
+        output * effective_depth
     }
 
     pub fn retrigger(&mut self) {
@@ -188,7 +196,8 @@ impl PolyModule for Lfo {
                 let base_rate = if self.sync_mode.is_tempo_sync() {
                     Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
                 } else {
-                    self.rate
+                    // Apply mod matrix rate offset
+                    Hertz::new((self.rate.as_f32() + self.mod_offset_rate).clamp(0.01, 50.0))
                 };
 
                 let effective_rate = if let Some(cv) = rate_cv {
@@ -274,6 +283,19 @@ impl PolyModule for Lfo {
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
+
+    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
+        match dest_index {
+            0 => self.mod_offset_rate += value,
+            1 => self.mod_offset_depth += value,
+            _ => {}
+        }
+    }
+
+    fn clear_mod_offsets(&mut self) {
+        self.mod_offset_rate = 0.0;
+        self.mod_offset_depth = 0.0;
+    }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())

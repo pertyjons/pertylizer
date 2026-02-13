@@ -95,6 +95,8 @@ pub enum PatchModuleType {
     // Visualizers
     Oscilloscope,
     LevelMeter,
+    // Modulation
+    ModMatrix,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -120,6 +122,7 @@ impl PatchModuleType {
             Self::Chorus => "chorus",
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
+            Self::ModMatrix => "mod_matrix",
             // Physical modeling
             Self::KeyboardPanner => "keyboard_panner",
             Self::BodyResonance => "body_resonance",
@@ -146,6 +149,7 @@ impl PatchModuleType {
             Self::Chorus => "chr",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
+            Self::ModMatrix => "mmx",
             // Physical modeling
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",

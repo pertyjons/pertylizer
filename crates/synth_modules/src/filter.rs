@@ -38,6 +38,12 @@ pub struct Filter {
     ic2eq: FilterState,
     base_note: MidiNote,
 
+    // Mod matrix offsets (applied before processing, cleared after)
+    /// Cutoff modulation offset in semitones.
+    mod_offset_cutoff: f32,
+    /// Resonance modulation offset (additive, 0-1 range).
+    mod_offset_resonance: f32,
+
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -56,6 +62,8 @@ impl Filter {
             ic1eq: FilterState::ZERO,
             ic2eq: FilterState::ZERO,
             base_note: MidiNote::C4,
+            mod_offset_cutoff: 0.0,
+            mod_offset_resonance: 0.0,
             output_buffer: AudioBuffer::new(256),
         }
     }
@@ -63,7 +71,9 @@ impl Filter {
     fn effective_cutoff(&self) -> Hertz {
         let tracking_offset =
             (self.base_note.as_u8() as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
-        let tracked = self.cutoff.as_f32() * (tracking_offset / 1200.0).exp2();
+        // Apply mod matrix offset (in semitones, converted to exponential scaling)
+        let total_offset = tracking_offset + self.mod_offset_cutoff * 100.0;
+        let tracked = self.cutoff.as_f32() * (total_offset / 1200.0).exp2();
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
     }
 
@@ -73,7 +83,8 @@ impl Filter {
             .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
         // Clamp resonance to 0.99 max to prevent instability at self-oscillation
-        let resonance = (self.resonance.as_f32() + res_mod).clamp(0.0, 0.99);
+        let resonance =
+            (self.resonance.as_f32() + res_mod + self.mod_offset_resonance).clamp(0.0, 0.99);
 
         // Apply drive as pre-gain with soft saturation
         let driven = if self.drive.as_f32() > 1.0 {
@@ -296,6 +307,19 @@ impl PolyModule for Filter {
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
+    }
+
+    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
+        match dest_index {
+            0 => self.mod_offset_cutoff += value,
+            1 => self.mod_offset_resonance += value,
+            _ => {}
+        }
+    }
+
+    fn clear_mod_offsets(&mut self) {
+        self.mod_offset_cutoff = 0.0;
+        self.mod_offset_resonance = 0.0;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

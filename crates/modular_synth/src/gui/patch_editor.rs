@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use synth_core::Param;
+use synth_core::{ModMatrixParam, ModuleType, Param};
 use synth_core::{ModuleCategory, ModuleDescriptor};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
@@ -21,6 +21,41 @@ use super::widgets::{
     WidgetPortDirection, WidgetPortType, cable_color, draw_cable, draw_cable_dragging,
     draw_cable_highlighted, point_near_cable,
 };
+
+/// Patch analysis: counts module types to enable smart display names and filtering.
+///
+/// Built once per frame from the current panels. Used for:
+/// - Numbered module titles ("LFO 1" / "LFO 2" when 2+ LFOs, "LFO" when only 1)
+/// - Filtering mod matrix dropdown choices (hide "LFO 2" source if only 1 LFO exists)
+pub(crate) struct PatchAnalysis {
+    /// How many of each module type exist.
+    module_counts: HashMap<ModuleType, u16>,
+}
+
+impl PatchAnalysis {
+    /// Build from current patch panels.
+    fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
+        let mut module_counts: HashMap<ModuleType, u16> = HashMap::new();
+        for id in panels.keys() {
+            *module_counts.entry(id.module_type).or_insert(0) += 1;
+        }
+        Self { module_counts }
+    }
+
+    /// Get count of a specific module type.
+    fn count(&self, module_type: ModuleType) -> u16 {
+        self.module_counts.get(&module_type).copied().unwrap_or(0)
+    }
+
+    /// Generate display name for a module.
+    ///
+    /// Always appends the instance number for consistency,
+    /// e.g. "LFO 1", "Oscillator 1", even when only one exists.
+    #[must_use]
+    fn display_name(&self, module_id: ModuleId, base_name: &str) -> String {
+        format!("{base_name} {}", module_id.instance)
+    }
+}
 
 /// Module connectivity status for visualization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -360,6 +395,9 @@ impl PatchEditor {
         // Clear port positions for this frame
         self.port_positions.clear();
 
+        // Build patch analysis for display names and mod matrix filtering
+        let analysis = PatchAnalysis::from_panels(&self.panels);
+
         // Collect data before mutable iteration
         let module_ids: Vec<_> = self.z_order.clone();
         let connected_ports_map: HashMap<ModuleId, Vec<String>> = module_ids
@@ -399,11 +437,11 @@ impl PatchEditor {
             let connectivity_status = self.get_connectivity(module_id);
             let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
 
-            // Global modules (effects, visualizers) are always "connected" since they
-            // process the final mixed output automatically via the effect chain
+            // Global modules (effects, visualizers) and internal routing modules (Utility
+            // like Mod Matrix) are always "connected" — they work automatically without cables.
             let is_global_module = matches!(
                 descriptor.category,
-                ModuleCategory::Effect | ModuleCategory::Visualizer
+                ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility
             );
 
             // Dim modules that aren't connected to output, or are bypassed
@@ -446,7 +484,8 @@ impl PatchEditor {
             // Check if this module needs repositioning (after auto-layout)
             let needs_reposition = self.needs_reposition.contains(&module_id);
 
-            let window = egui::Window::new(&descriptor.name)
+            let title = analysis.display_name(module_id, &descriptor.name);
+            let window = egui::Window::new(&title)
                 .id(window_id)
                 .open(&mut open)
                 .collapsible(true)
@@ -522,12 +561,18 @@ impl PatchEditor {
                         ui.add_space(2.0);
 
                         // Connectivity status indicator - diamond shapes
-                        // Global modules (effects, visualizers) are always connected via effect chain
+                        // Global modules (effects, visualizers, utility) are always connected
                         let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
+                            let tooltip =
+                                if descriptor.category == ModuleCategory::Utility {
+                                    "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
+                                } else {
+                                    "⚡ Global Module\nProcessed automatically via effect chain."
+                                };
                             (
                                 "◆",
                                 Color32::from_rgb(100, 180, 220),
-                                "⚡ Global Module\nProcessed automatically via effect chain.",
+                                tooltip,
                             )
                         } else {
                             match connectivity_status {
@@ -635,6 +680,7 @@ impl PatchEditor {
                             &descriptor,
                             accent_color,
                             vis_buffer,
+                            &analysis,
                         );
                         for param in panel_result.param_changes {
                             result.param_changes.push((module_id, param));
@@ -675,6 +721,7 @@ impl PatchEditor {
                                     &descriptor,
                                     accent_color,
                                     vis_buffer,
+                                    &analysis,
                                 );
                                 for param in panel_result.param_changes {
                                     result.param_changes.push((module_id, param));
@@ -1339,6 +1386,7 @@ fn draw_module_panel_params(
     descriptor: &ModuleDescriptor,
     accent_color: Color32,
     vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
+    analysis: &PatchAnalysis,
 ) -> PanelParamsResult {
     use super::widgets::{EnvelopeEditor, Knob, WaveformSelector};
     use synth_core::WidgetHint;
@@ -1561,6 +1609,13 @@ fn draw_module_panel_params(
                 .unwrap_or(param.range.default);
             let mut selected = current.round() as usize;
 
+            // Detect mod matrix source/destination dropdowns for filtering
+            let is_mm_source = matches!(param.id, Param::ModMatrix(ModMatrixParam::SlotSource(..)));
+            let is_mm_dest = matches!(
+                param.id,
+                Param::ModMatrix(ModMatrixParam::SlotDestination(..))
+            );
+
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(&param.name)
@@ -1575,6 +1630,12 @@ fn draw_module_panel_params(
                     .selected_text(text)
                     .show_ui(ui, |ui| {
                         for (i, choice) in choices.iter().enumerate() {
+                            // Filter mod matrix choices based on available modules
+                            if (is_mm_source || is_mm_dest)
+                                && !is_mod_choice_available(&choice.id, is_mm_source, analysis)
+                            {
+                                continue;
+                            }
                             if ui.selectable_label(selected == i, &choice.name).clicked() {
                                 selected = i;
                             }
@@ -1642,6 +1703,32 @@ fn draw_module_panel_params(
     PanelParamsResult { param_changes }
 }
 
+/// Check if a mod matrix dropdown choice should be shown, based on available modules.
+///
+/// Hides choices that reference modules not present in the patch.
+/// For example, "LFO 2" is hidden if only one LFO exists.
+fn is_mod_choice_available(choice_id: &str, is_source: bool, analysis: &PatchAnalysis) -> bool {
+    if is_source {
+        match choice_id {
+            "lfo1" => analysis.count(ModuleType::Lfo) >= 1,
+            "lfo2" => analysis.count(ModuleType::Lfo) >= 2,
+            "env1" => analysis.count(ModuleType::Envelope) >= 1,
+            "env2" => analysis.count(ModuleType::Envelope) >= 2,
+            _ => true, // none, velocity, note, aftertouch, mod_wheel, pitch_bend
+        }
+    } else {
+        match choice_id {
+            "osc1_pitch" | "osc1_level" => analysis.count(ModuleType::Oscillator) >= 1,
+            "osc2_pitch" => analysis.count(ModuleType::Oscillator) >= 2,
+            "flt1_cutoff" | "flt1_reso" => analysis.count(ModuleType::Filter) >= 1,
+            "flt2_cutoff" => analysis.count(ModuleType::Filter) >= 2,
+            "amp_level" | "amp_pan" => analysis.count(ModuleType::Amplifier) >= 1,
+            "lfo1_rate" | "lfo1_depth" => analysis.count(ModuleType::Lfo) >= 1,
+            _ => true, // none
+        }
+    }
+}
+
 /// Available modules that can be added.
 pub struct ModulePalette;
 
@@ -1664,6 +1751,7 @@ pub enum PaletteSelection {
     MathOscillator,
     SubOscillator,
     Noise,
+    ModMatrix,
     Effect(EffectType),
     Visualizer(PaletteVisualizerType),
     StereoOutput,
@@ -1808,6 +1896,14 @@ impl ModulePalette {
                 egui::Button::new(egui::RichText::new("🔈 Output").color(output_color));
             if ui.add(output_button).clicked() {
                 selected = Some(PaletteSelection::StereoOutput);
+            }
+
+            // Mod Matrix button
+            let utility_color = category_color(ModuleCategory::Utility);
+            let mod_matrix_button =
+                egui::Button::new(egui::RichText::new("🔀 Mod Matrix").color(utility_color));
+            if ui.add(mod_matrix_button).clicked() {
+                selected = Some(PaletteSelection::ModMatrix);
             }
         });
 

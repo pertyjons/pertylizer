@@ -847,6 +847,22 @@ pub trait PolyModule: Describable + Send {
         // Override in modules that need sample rate (oscillators, filters, etc.)
     }
 
+    /// Apply a modulation offset from the mod matrix.
+    ///
+    /// `dest_index` identifies which parameter to modulate (module-specific):
+    /// - Oscillator: 0 = pitch (semitones), 1 = level
+    /// - Filter: 0 = cutoff (semitones), 1 = resonance
+    /// - Amplifier: 0 = level, 1 = pan
+    /// - LFO: 0 = rate, 1 = depth
+    fn set_mod_offset(&mut self, _dest_index: u8, _value: f32) {
+        // Default: no modulation support
+    }
+
+    /// Clear all modulation offsets back to zero.
+    fn clear_mod_offsets(&mut self) {
+        // Default: nothing to clear
+    }
+
     /// Clone into a boxed trait object.
     fn box_clone(&self) -> Box<dyn PolyModule>;
 }

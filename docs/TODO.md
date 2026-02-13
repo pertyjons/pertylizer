@@ -24,6 +24,7 @@
 7.  **Patch Browser & Taggar** (Nytt - UX)
     * [ ] Byt ut fil-dialogen mot en inbyggd browser med tag-filtrering (Bass, Pad, FX).
 8.  **Makro-system & Mod Matrix** (Nytt - Ljuddesign)
+    * [x] ~~Mod Matrix: 8-slot modulationsrouting med 10 källor och 11 destinationer per röst~~ *(0.107.0)*
     * [ ] Skapa 4 globala Makro-rattar som kan styra flera parametrar. Detta ersätter behovet av komplex kabeldragning för "Performance"-rattar.
 9.  **Dynamic MIDI Learn** (Nytt - UX)
     * [ ] Högerklick på parameter -> "Learn MIDI CC". Nödvändigt för hårdvarukontroll.

@@ -13,7 +13,7 @@ use synth_core::{
     AudioBuffer, InputPorts, ModuleCategory, ModuleDescriptor, PolyModule, PortDirection,
     ProcessContext,
 };
-use synth_core::{MidiNote, PortName, Velocity};
+use synth_core::{MidiNote, ModDestination, PortName, Velocity};
 use synth_core::{ModuleType, Param};
 
 /// A connection between two ports.
@@ -440,6 +440,63 @@ impl ModuleGraph {
     /// Get all module IDs.
     pub fn module_ids(&self) -> impl Iterator<Item = ModuleId> + '_ {
         self.nodes.keys().copied()
+    }
+
+    /// Apply a modulation offset to the appropriate module(s) for a given destination.
+    ///
+    /// Maps `ModDestination` to the correct module type and `set_mod_offset()` index.
+    /// The `instance` in the destination variant determines which module instance
+    /// (e.g., `OscPitch(0)` targets osc-1, `FilterCutoff(1)` targets flt-2).
+    pub fn apply_mod_offset(&mut self, dest: ModDestination, value: f32) {
+        let (module_type, instance, offset_index) = match dest {
+            ModDestination::None => return,
+            ModDestination::OscPitch(i) => (ModuleType::Oscillator, i, 0u8),
+            ModDestination::OscLevel(i) => (ModuleType::Oscillator, i, 1),
+            ModDestination::FilterCutoff(i) => (ModuleType::Filter, i, 0),
+            ModDestination::FilterResonance(i) => (ModuleType::Filter, i, 1),
+            ModDestination::AmpLevel(i) => (ModuleType::Amplifier, i, 0),
+            ModDestination::AmpPan(i) => (ModuleType::Amplifier, i, 1),
+            ModDestination::LfoRate(i) => (ModuleType::Lfo, i, 0),
+            ModDestination::LfoDepth(i) => (ModuleType::Lfo, i, 1),
+        };
+
+        // Find the Nth instance of the target module type (0-based)
+        let target_instance = instance as u16 + 1; // ModuleId instances are 1-based
+        // Try exact instance match first
+        let target_id = crate::ModuleId::new(module_type, target_instance);
+        if let Some(node) = self.nodes.get_mut(&target_id) {
+            node.module.set_mod_offset(offset_index, value);
+            return;
+        }
+        // Fallback: find first module of matching type (for instance 0)
+        if instance == 0
+            && let Some(node) = self
+                .nodes
+                .iter_mut()
+                .find(|(id, _)| id.module_type == module_type)
+                .map(|(_, n)| n)
+        {
+            node.module.set_mod_offset(offset_index, value);
+        }
+    }
+
+    /// Clear all modulation offsets on all modules in the graph.
+    pub fn clear_mod_offsets(&mut self) {
+        for node in self.nodes.values_mut() {
+            node.module.clear_mod_offsets();
+        }
+    }
+
+    /// Get the last output sample value from a module (first sample of "out" port).
+    ///
+    /// Used to read LFO/Envelope output values for the mod matrix.
+    /// Returns the first sample of the previous block (one-block latency).
+    pub fn get_last_output_value(&self, module_id: ModuleId) -> f32 {
+        self.nodes
+            .get(&module_id)
+            .and_then(|n| n.outputs.get("out"))
+            .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+            .unwrap_or(0.0)
     }
 
     /// Check if the graph is empty.

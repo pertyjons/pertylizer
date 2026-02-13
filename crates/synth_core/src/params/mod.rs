@@ -15,6 +15,7 @@ mod effects;
 mod envelopes;
 mod filters;
 mod lfo;
+mod mod_matrix;
 mod modules;
 mod noise;
 mod oscillators;
@@ -31,6 +32,7 @@ pub use effects::{
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterParam};
 pub use lfo::{LfoParam, LfoWaveform};
+pub use mod_matrix::{MOD_MATRIX_SLOTS, ModDestination, ModMatrixParam, ModSource};
 pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
@@ -68,6 +70,8 @@ pub enum ModuleType {
     // Visualizers
     Oscilloscope,
     LevelMeter,
+    // Modulation
+    ModMatrix,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -97,6 +101,7 @@ impl ModuleType {
                 | Self::Amplifier
                 | Self::Mixer
                 | Self::StereoOutput
+                | Self::ModMatrix
                 // Physical modeling modules (per-voice)
                 | Self::KeyboardPanner
                 | Self::BodyResonance
@@ -167,6 +172,7 @@ impl ModuleType {
             Self::Eq => "EQ",
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
+            Self::ModMatrix => "Mod Matrix",
             // Physical modeling
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
@@ -197,6 +203,7 @@ impl ModuleType {
             Self::Eq => "equ",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
+            Self::ModMatrix => "mmx",
             // Physical modeling
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
@@ -227,6 +234,7 @@ impl ModuleType {
             "equ" => Some(Self::Eq),
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
+            "mmx" => Some(Self::ModMatrix),
             // Physical modeling
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
@@ -272,6 +280,7 @@ pub enum Param {
     Eq(EqParam),
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
+    ModMatrix(ModMatrixParam),
     // Physical modeling
     KeyboardPanner(KeyboardPannerParam),
     BodyResonance(BodyResonanceParam),
@@ -310,6 +319,7 @@ impl Param {
             (Self::Eq(a), Self::Eq(b)) => a.same_kind(b),
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
+            (Self::ModMatrix(a), Self::ModMatrix(b)) => a.same_kind(b),
             // Physical modeling
             (Self::KeyboardPanner(a), Self::KeyboardPanner(b)) => a.same_kind(b),
             (Self::BodyResonance(a), Self::BodyResonance(b)) => a.same_kind(b),
@@ -340,6 +350,7 @@ impl Param {
             Self::Eq(_) => ModuleType::Eq,
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
+            Self::ModMatrix(_) => ModuleType::ModMatrix,
             // Physical modeling
             Self::KeyboardPanner(_) => ModuleType::KeyboardPanner,
             Self::BodyResonance(_) => ModuleType::BodyResonance,
@@ -369,6 +380,7 @@ impl Param {
             Self::Eq(p) => p.name(),
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
+            Self::ModMatrix(p) => p.name(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.name(),
             Self::BodyResonance(p) => p.name(),
@@ -398,6 +410,7 @@ impl Param {
             Self::Eq(p) => p.as_f32(),
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
+            Self::ModMatrix(p) => p.as_f32(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.as_f32(),
             Self::BodyResonance(p) => p.as_f32(),
@@ -427,6 +440,7 @@ impl Param {
             Self::Eq(p) => Self::Eq(p.with_f32(value)),
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
+            Self::ModMatrix(p) => Self::ModMatrix(p.with_f32(value)),
             // Physical modeling
             Self::KeyboardPanner(p) => Self::KeyboardPanner(p.with_f32(value)),
             Self::BodyResonance(p) => Self::BodyResonance(p.with_f32(value)),

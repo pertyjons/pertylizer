@@ -294,6 +294,9 @@ pub struct Voice {
     /// Priority: StereoOutput > Amplifier > Mixer
     output_module_id: Option<crate::ModuleId>,
 
+    /// Cached mod matrix module ID (if present in graph).
+    mod_matrix_id: Option<crate::ModuleId>,
+
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
 }
@@ -315,6 +318,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: None,
+            mod_matrix_id: None,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
@@ -326,6 +330,8 @@ impl Voice {
             .find_module_by_type(ModuleType::StereoOutput)
             .or_else(|| graph.find_module_by_type(ModuleType::Amplifier))
             .or_else(|| graph.find_module_by_type(ModuleType::Mixer));
+
+        let mod_matrix_id = graph.find_module_by_type(ModuleType::ModMatrix);
 
         Self {
             id,
@@ -340,6 +346,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: output_id,
+            mod_matrix_id,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
@@ -532,12 +539,32 @@ impl Voice {
         // Set oscillator frequencies in the graph before processing
         self.graph.set_oscillator_frequency(freq);
 
+        // === Mod Matrix: update sources and apply modulations ===
+        if let Some(mm_id) = self.mod_matrix_id {
+            // Update performance controller sources on the mod matrix module
+            if let Some(mm_module) = self.graph.get_module_mut(mm_id) {
+                // Downcast to ModMatrix to call update_source
+                // We use set_param indirectly — but update_source needs direct access.
+                // Since PolyModule doesn't expose update_source, we read LFO/Env outputs
+                // from graph and use a two-phase approach:
+                // Phase 1: Gather source values
+                // Phase 2: Apply modulations to graph
+                let _ = mm_module; // drop borrow
+            }
+            self.apply_mod_matrix(mm_id);
+        }
+
         // Ensure buffers are sized correctly
         self.mono_buffer.resize(samples.as_usize());
         self.mono_buffer.clear();
 
         // Process the entire graph
         self.graph.process(&mut self.mono_buffer, context);
+
+        // Clear mod offsets after processing
+        if self.mod_matrix_id.is_some() {
+            self.graph.clear_mod_offsets();
+        }
 
         // Extract stereo output from the output module if available
         if let Some(out_id) = self.output_module_id {
@@ -584,6 +611,127 @@ impl Voice {
         }
     }
 
+    /// Apply modulation matrix: update source values and apply offsets to destination modules.
+    fn apply_mod_matrix(&mut self, mm_id: crate::ModuleId) {
+        // Gather source values from the voice state and previous block outputs
+        let velocity_val = self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0);
+        let note_val = self
+            .state
+            .note()
+            .map(|n| n.as_u8() as f32 / 127.0)
+            .unwrap_or(0.0);
+        let aftertouch_val = self.aftertouch.as_f32();
+        let mod_wheel_val = self.mod_wheel.as_f32();
+        let pitch_bend_val = self.pitch_bend.as_f32();
+
+        // Read LFO/Envelope outputs from previous block
+        let mut lfo_values = [0.0f32; 2];
+        let mut env_values = [0.0f32; 2];
+        let mut lfo_count = 0u8;
+        let mut env_count = 0u8;
+        for module_id in self.graph.module_ids().collect::<Vec<_>>() {
+            match module_id.module_type {
+                ModuleType::Lfo if lfo_count < 2 => {
+                    lfo_values[lfo_count as usize] = self.graph.get_last_output_value(module_id);
+                    lfo_count += 1;
+                }
+                ModuleType::Envelope if env_count < 2 => {
+                    env_values[env_count as usize] = self.graph.get_last_output_value(module_id);
+                    env_count += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Build source values array matching ModSource::ALL indices
+        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber, Aftertouch, ModWheel, PitchBend]
+        let source_values: [f32; 10] = [
+            0.0,            // None
+            lfo_values[0],  // Lfo(0)
+            lfo_values[1],  // Lfo(1)
+            env_values[0],  // Envelope(0)
+            env_values[1],  // Envelope(1)
+            velocity_val,   // Velocity
+            note_val,       // NoteNumber
+            aftertouch_val, // Aftertouch
+            mod_wheel_val,  // ModWheel
+            pitch_bend_val, // PitchBend
+        ];
+
+        // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config
+        // through get_param and calculate modulations here in Voice.
+
+        // Read mod matrix configuration through get_param and calculate modulations ourselves
+        let slots = self.read_mod_matrix_slots(mm_id);
+        for slot in &slots {
+            if !slot.3 {
+                continue; // not enabled
+            }
+            let src_idx = slot.0;
+            let dst = slot.1;
+            let amount = slot.2;
+
+            if src_idx == 0 || matches!(dst, synth_core::ModDestination::None) {
+                continue;
+            }
+            let src_value = if src_idx < source_values.len() {
+                source_values[src_idx]
+            } else {
+                0.0
+            };
+            let scaled = src_value * amount;
+            self.graph.apply_mod_offset(dst, scaled);
+        }
+    }
+
+    /// Read mod matrix slot configurations via get_param.
+    /// Returns Vec of (source_index, destination, amount, enabled).
+    fn read_mod_matrix_slots(
+        &self,
+        mm_id: crate::ModuleId,
+    ) -> Vec<(usize, synth_core::ModDestination, f32, bool)> {
+        use synth_core::{MOD_MATRIX_SLOTS, ModDestination, ModMatrixParam, ModSource as MS};
+        let mut slots = Vec::with_capacity(MOD_MATRIX_SLOTS);
+        for i in 0..MOD_MATRIX_SLOTS {
+            let slot = i as u8;
+            let src_idx = self
+                .graph
+                .get_param(
+                    mm_id,
+                    &Param::ModMatrix(ModMatrixParam::SlotSource(slot, MS::None)),
+                )
+                .map(|v| v as usize)
+                .unwrap_or(0);
+            let dst_idx = self
+                .graph
+                .get_param(
+                    mm_id,
+                    &Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
+                )
+                .map(|v| v as usize)
+                .unwrap_or(0);
+            let amount = self
+                .graph
+                .get_param(
+                    mm_id,
+                    &Param::ModMatrix(ModMatrixParam::SlotAmount(slot, BipolarValue::CENTER)),
+                )
+                .unwrap_or(0.0);
+            let enabled = self
+                .graph
+                .get_param(
+                    mm_id,
+                    &Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
+                )
+                .map(|v| v > 0.5)
+                .unwrap_or(true);
+
+            let dst = ModDestination::from_index(dst_idx);
+            slots.push((src_idx, dst, amount, enabled));
+        }
+        slots
+    }
+
     /// Clone the voice structure (for voice allocation).
     pub fn clone_structure(&self) -> Self {
         let cloned_graph = self.graph.clone_structure();
@@ -593,6 +741,8 @@ impl Voice {
             .find_module_by_type(ModuleType::StereoOutput)
             .or_else(|| cloned_graph.find_module_by_type(ModuleType::Amplifier))
             .or_else(|| cloned_graph.find_module_by_type(ModuleType::Mixer));
+
+        let mod_matrix_id = cloned_graph.find_module_by_type(ModuleType::ModMatrix);
 
         Self {
             id: self.id,
@@ -607,6 +757,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: self.glide_time,
             output_module_id: output_id,
+            mod_matrix_id,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
         }
     }
@@ -619,6 +770,7 @@ impl Voice {
             .find_module_by_type(ModuleType::StereoOutput)
             .or_else(|| self.graph.find_module_by_type(ModuleType::Amplifier))
             .or_else(|| self.graph.find_module_by_type(ModuleType::Mixer));
+        self.mod_matrix_id = self.graph.find_module_by_type(ModuleType::ModMatrix);
     }
 }
 

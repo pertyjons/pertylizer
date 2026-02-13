@@ -41,6 +41,12 @@ pub struct Oscillator {
     /// Previous sync signal value for edge detection (persists across buffers).
     prev_sync: f32,
 
+    // Mod matrix offsets
+    /// Pitch offset in semitones (from mod matrix).
+    mod_offset_pitch: f32,
+    /// Level offset (additive, from mod matrix).
+    mod_offset_level: f32,
+
     // Outputs
     output_buffer: AudioBuffer,
 }
@@ -60,15 +66,19 @@ impl Oscillator {
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             prev_sync: 0.0,
+            mod_offset_pitch: 0.0,
+            mod_offset_level: 0.0,
             output_buffer: AudioBuffer::new(256),
         }
     }
 
-    /// Calculate the actual frequency including detune and octave.
+    /// Calculate the actual frequency including detune, octave, and mod matrix pitch offset.
     #[inline]
     fn actual_frequency(&self) -> Hertz {
         let octave_mult = 2.0f32.powf(self.octave.as_f32() / 12.0);
-        Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult)
+        // Apply mod matrix pitch offset (in semitones)
+        let mod_mult = (self.mod_offset_pitch / 12.0).exp2();
+        Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
     }
 
     /// Generate a single sample with optional frequency and phase modulation.
@@ -128,7 +138,8 @@ impl Oscillator {
         };
 
         self.phase = self.phase.advance(dt);
-        sample * self.level.as_f32()
+        let effective_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
+        sample * effective_level
     }
 
     /// Set frequency from MIDI note.
@@ -357,6 +368,19 @@ impl PolyModule for Oscillator {
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
+    }
+
+    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
+        match dest_index {
+            0 => self.mod_offset_pitch += value,
+            1 => self.mod_offset_level += value,
+            _ => {}
+        }
+    }
+
+    fn clear_mod_offsets(&mut self) {
+        self.mod_offset_pitch = 0.0;
+        self.mod_offset_level = 0.0;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
