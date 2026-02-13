@@ -1,14 +1,15 @@
-//! Oscillator module with multiple waveforms.
+//! Oscillator module with multiple waveforms and intra-voice unison.
 //!
 //! Features:
-//! - Multiple waveforms (sine, triangle, saw, square, pulse, noise)
+//! - Multiple waveforms (sine, triangle, saw, square, pulse)
 //! - Band-limited waveforms using PolyBLEP for anti-aliasing
 //! - Pulse width modulation
 //! - Hard sync
 //! - FM and PM inputs
+//! - Intra-voice unison with detune and stereo spread
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_PI_4, TAU};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -21,7 +22,10 @@ use synth_core::{
 use synth_core::{FmMode, ModuleType, OscillatorParam, Param};
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
 
-/// A band-limited oscillator.
+/// Maximum number of unison voices per oscillator.
+const MAX_UNISON_VOICES: usize = 7;
+
+/// A band-limited oscillator with optional intra-voice unison.
 #[derive(Clone)]
 pub struct Oscillator {
     // Parameters
@@ -35,8 +39,18 @@ pub struct Oscillator {
     fm_mode: FmMode,
     fm_amount: BipolarValue,
 
+    // Unison parameters
+    unison_voice_count: u8,
+    unison_detune: Cents,
+    unison_spread: NormalizedValue,
+    unison_phase_random: NormalizedValue,
+
+    // Unison pre-computed state (updated on param change)
+    unison_detune_ratios: [f32; MAX_UNISON_VOICES],
+    unison_pans: [f32; MAX_UNISON_VOICES],
+
     // State
-    phase: Phase,
+    unison_phases: [Phase; MAX_UNISON_VOICES],
     sample_rate: SampleRate,
     /// Previous sync signal value for edge detection (persists across buffers).
     prev_sync: f32,
@@ -49,6 +63,8 @@ pub struct Oscillator {
 
     // Outputs
     output_buffer: AudioBuffer,
+    output_buffer_left: AudioBuffer,
+    output_buffer_right: AudioBuffer,
 }
 
 impl Oscillator {
@@ -63,12 +79,20 @@ impl Oscillator {
             phase_offset: Phase::ZERO,
             fm_mode: FmMode::Exponential,
             fm_amount: BipolarValue::MAX,
-            phase: Phase::ZERO,
+            unison_voice_count: 1,
+            unison_detune: Cents::new(10.0),
+            unison_spread: NormalizedValue::CENTER,
+            unison_phase_random: NormalizedValue::MAX,
+            unison_detune_ratios: [1.0; MAX_UNISON_VOICES],
+            unison_pans: [0.0; MAX_UNISON_VOICES],
+            unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
             sample_rate: SampleRate::DVD_QUALITY,
             prev_sync: 0.0,
             mod_offset_pitch: 0.0,
             mod_offset_level: 0.0,
             output_buffer: AudioBuffer::new(256),
+            output_buffer_left: AudioBuffer::new(256),
+            output_buffer_right: AudioBuffer::new(256),
         }
     }
 
@@ -81,65 +105,72 @@ impl Oscillator {
         Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
     }
 
-    /// Generate a single sample with optional frequency and phase modulation.
+    /// Recalculate unison detune ratios and pan positions.
+    /// Called when unison parameters change.
+    fn recalculate_unison_spread(&mut self) {
+        let n = self.unison_voice_count as usize;
+        if n <= 1 {
+            self.unison_detune_ratios[0] = 1.0;
+            self.unison_pans[0] = 0.0;
+            return;
+        }
+        let total_cents = self.unison_detune.as_f32();
+        let spread = self.unison_spread.as_f32();
+        #[allow(clippy::cast_precision_loss)]
+        let n_minus_1 = (n - 1) as f32;
+        for i in 0..n {
+            #[allow(clippy::cast_precision_loss)]
+            let t = (i as f32) / n_minus_1 * 2.0 - 1.0; // -1.0 to 1.0
+            let cents = t * total_cents * 0.5;
+            self.unison_detune_ratios[i] = (cents / 1200.0).exp2();
+            self.unison_pans[i] = t * spread;
+        }
+    }
+
+    /// Generate a single sample for one oscillator voice (no level applied).
+    /// Returns the sample and the advanced phase.
     #[inline]
-    fn generate_sample(
-        &mut self,
-        freq_mod: f32,
+    fn generate_single_sample(
+        &self,
+        freq: Hertz,
+        phase: Phase,
         phase_mod: f32,
         effective_pulse_width: NormalizedValue,
-    ) -> f32 {
-        let base_freq = self.actual_frequency();
-        let freq = match self.fm_mode {
-            FmMode::Exponential => {
-                let freq_mult = (freq_mod * 2.0).exp2();
-                Hertz::new(base_freq.as_f32() * freq_mult)
-            }
-            FmMode::Linear => {
-                Hertz::new((base_freq.as_f32() + freq_mod * base_freq.as_f32() * 4.0).max(1.0))
-            }
-        };
-
+    ) -> (f32, Phase) {
         let dt = freq.phase_increment(self.sample_rate);
-        // Apply phase modulation and static phase offset
-        let phase = (self.phase.advance(phase_mod).as_f32() + self.phase_offset.as_f32()) % 1.0;
+        let p = (phase.advance(phase_mod).as_f32() + self.phase_offset.as_f32()) % 1.0;
 
         let sample = match self.waveform {
-            Waveform::Sine => (phase * TAU).sin(),
+            Waveform::Sine => (p * TAU).sin(),
             Waveform::Triangle => {
-                // Apply PolyBLAMP at triangle corners (0.25 and 0.75)
-                let mut tri = Phase::new_unchecked(phase).triangle();
-                // Corner at phase 0.25 (peak)
-                let dist_to_peak = phase - 0.25;
-                tri += poly_blamp(dist_to_peak, dt) * 4.0; // Scale by slope change magnitude
-                // Corner at phase 0.75 (trough)
-                let dist_to_trough = phase - 0.75;
+                let mut tri = Phase::new_unchecked(p).triangle();
+                let dist_to_peak = p - 0.25;
+                tri += poly_blamp(dist_to_peak, dt) * 4.0;
+                let dist_to_trough = p - 0.75;
                 tri -= poly_blamp(dist_to_trough, dt) * 4.0;
                 tri
             }
             Waveform::Sawtooth => {
-                let mut saw = Phase::new_unchecked(phase).sawtooth();
-                saw -= poly_blep(phase, dt);
+                let mut saw = Phase::new_unchecked(p).sawtooth();
+                saw -= poly_blep(p, dt);
                 saw
             }
             Waveform::Square => {
-                let mut sq = Phase::new_unchecked(phase).pulse(NormalizedValue::CENTER);
-                sq += poly_blep(phase, dt);
-                sq -= poly_blep((phase + 0.5).rem_euclid(1.0), dt);
+                let mut sq = Phase::new_unchecked(p).pulse(NormalizedValue::CENTER);
+                sq += poly_blep(p, dt);
+                sq -= poly_blep((p + 0.5).rem_euclid(1.0), dt);
                 sq
             }
             Waveform::Pulse => {
-                let mut pulse = Phase::new_unchecked(phase).pulse(effective_pulse_width);
+                let mut pulse = Phase::new_unchecked(p).pulse(effective_pulse_width);
                 let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
-                pulse += poly_blep(phase, dt);
-                pulse -= poly_blep((phase + (1.0 - pw)).rem_euclid(1.0), dt);
+                pulse += poly_blep(p, dt);
+                pulse -= poly_blep((p + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse
             }
         };
 
-        self.phase = self.phase.advance(dt);
-        let effective_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
-        sample * effective_level
+        (sample, phase.advance(dt))
     }
 
     /// Set frequency from MIDI note.
@@ -167,7 +198,7 @@ impl Default for Oscillator {
 impl Describable for Oscillator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("oscillator", "Oscillator")
-            .description("Band-limited oscillator with multiple waveforms")
+            .description("Band-limited oscillator with multiple waveforms and unison")
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")
             .tag("source")
@@ -244,17 +275,61 @@ impl Describable for Oscillator {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::unison_voices_default()),
+                    "Unison",
+                )
+                .description("Number of unison voices (1 = off)")
+                .range(1.0, 7.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::unison_detune_default()),
+                    "Uni Detune",
+                )
+                .description("Unison detune spread in cents")
+                .range(0.0, 100.0)
+                .default(10.0)
+                .unit(ParameterUnit::Cents)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::unison_spread_default()),
+                    "Uni Spread",
+                )
+                .description("Unison stereo spread (0 = mono, 1 = full)")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::unison_phase_random_default()),
+                    "Uni Phase",
+                )
+                .description("Phase randomization on note-on")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
             )
             .port(PortDescriptor::control_input("pm", "PM").description("Phase modulation input"))
             .port(PortDescriptor::control_input("pwm", "PWM").description("Pulse width modulation"))
             .port(PortDescriptor::gate_input("sync", "Sync").description("Hard sync input"))
-            .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
+            .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
+            .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))
     }
 }
 
 impl PolyModule for Oscillator {
+    #[allow(clippy::too_many_lines)]
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
@@ -262,7 +337,10 @@ impl PolyModule for Oscillator {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
-        self.output_buffer.resize(context.samples.as_usize());
+        let n_samples = context.samples.as_usize();
+        self.output_buffer.resize(n_samples);
+        self.output_buffer_left.resize(n_samples);
+        self.output_buffer_right.resize(n_samples);
 
         let fm_input = inputs.get(PortName::FM);
         let pm_input = inputs.get(PortName::PM);
@@ -271,10 +349,23 @@ impl PolyModule for Oscillator {
         let pwm_input = inputs.get(PortName::PWM);
         let sync_input = inputs.get(PortName::SYNC);
 
-        for i in 0..context.samples.as_usize() {
+        let voice_count = self.unison_voice_count as usize;
+        let base_freq = self.actual_frequency();
+
+        for i in 0..n_samples {
             let fm = fm_input
                 .map(|f| f[i] * self.fm_amount.as_f32())
                 .unwrap_or(0.0);
+
+            let freq = match self.fm_mode {
+                FmMode::Exponential => {
+                    let freq_mult = (fm * 2.0).exp2();
+                    Hertz::new(base_freq.as_f32() * freq_mult)
+                }
+                FmMode::Linear => {
+                    Hertz::new((base_freq.as_f32() + fm * base_freq.as_f32() * 4.0).max(1.0))
+                }
+            };
 
             let effective_pulse_width = if let Some(pwm) = pwm_input {
                 NormalizedValue::new((self.pulse_width.as_f32() + pwm[i] * 0.49).clamp(0.01, 0.99))
@@ -285,17 +376,58 @@ impl PolyModule for Oscillator {
             if let Some(sync) = sync_input {
                 let sync_val = sync[i];
                 if sync_val > 0.5 && self.prev_sync <= 0.5 {
-                    self.phase = Phase::ZERO;
+                    for phase in &mut self.unison_phases[..voice_count] {
+                        *phase = Phase::ZERO;
+                    }
                 }
                 self.prev_sync = sync_val;
             }
 
             let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
-            self.output_buffer[i] = self.generate_sample(fm, pm, effective_pulse_width);
+            let effective_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
+
+            if voice_count == 1 {
+                // Single voice: no panning, write directly to all ports
+                let phase = self.unison_phases[0];
+                let (sample, new_phase) =
+                    self.generate_single_sample(freq, phase, pm, effective_pulse_width);
+                self.unison_phases[0] = new_phase;
+                let out = sample * effective_level;
+                self.output_buffer[i] = out;
+                self.output_buffer_left[i] = out;
+                self.output_buffer_right[i] = out;
+            } else {
+                let mut left = 0.0f32;
+                let mut right = 0.0f32;
+                #[allow(clippy::cast_precision_loss)]
+                let gain = 1.0 / (voice_count as f32).sqrt();
+
+                for j in 0..voice_count {
+                    let voice_freq = Hertz::new(freq.as_f32() * self.unison_detune_ratios[j]);
+                    let phase = self.unison_phases[j];
+                    let (sample, new_phase) =
+                        self.generate_single_sample(voice_freq, phase, pm, effective_pulse_width);
+                    self.unison_phases[j] = new_phase;
+
+                    let angle = (self.unison_pans[j] + 1.0) * FRAC_PI_4;
+                    left += sample * angle.cos() * gain;
+                    right += sample * angle.sin() * gain;
+                }
+
+                self.output_buffer[i] = (left + right) * 0.5 * effective_level;
+                self.output_buffer_left[i] = left * effective_level;
+                self.output_buffer_right[i] = right * effective_level;
+            }
         }
 
         if let Some(out) = outputs.get_mut("out") {
             out.copy_from(&self.output_buffer);
+        }
+        if let Some(out_l) = outputs.get_mut("out_l") {
+            out_l.copy_from(&self.output_buffer_left);
+        }
+        if let Some(out_r) = outputs.get_mut("out_r") {
+            out_r.copy_from(&self.output_buffer_right);
         }
     }
 
@@ -304,17 +436,30 @@ impl PolyModule for Oscillator {
             match osc_param {
                 OscillatorParam::Waveform(w) => self.waveform = w,
                 OscillatorParam::Frequency(f) => {
-                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0))
+                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0));
                 }
                 OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
                 OscillatorParam::Octave(o) => self.octave = o,
                 OscillatorParam::PulseWidth(pw) => {
-                    self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99))
+                    self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99));
                 }
                 OscillatorParam::Level(l) => self.level = l,
                 OscillatorParam::Phase(p) => self.phase_offset = p,
                 OscillatorParam::FmMode(m) => self.fm_mode = m,
                 OscillatorParam::FmAmount(a) => self.fm_amount = a,
+                OscillatorParam::UnisonVoices(n) => {
+                    self.unison_voice_count = n.clamp(1, 7);
+                    self.recalculate_unison_spread();
+                }
+                OscillatorParam::UnisonDetune(c) => {
+                    self.unison_detune = Cents::new(c.as_f32().clamp(0.0, 100.0));
+                    self.recalculate_unison_spread();
+                }
+                OscillatorParam::UnisonSpread(v) => {
+                    self.unison_spread = v;
+                    self.recalculate_unison_spread();
+                }
+                OscillatorParam::UnisonPhaseRandom(v) => self.unison_phase_random = v,
             }
         }
     }
@@ -331,6 +476,10 @@ impl PolyModule for Oscillator {
                 OscillatorParam::Phase(_) => self.phase_offset.as_f32(),
                 OscillatorParam::FmMode(_) => self.fm_mode.index() as f32,
                 OscillatorParam::FmAmount(_) => self.fm_amount.as_f32(),
+                OscillatorParam::UnisonVoices(_) => f32::from(self.unison_voice_count),
+                OscillatorParam::UnisonDetune(_) => self.unison_detune.as_f32(),
+                OscillatorParam::UnisonSpread(_) => self.unison_spread.as_f32(),
+                OscillatorParam::UnisonPhaseRandom(_) => self.unison_phase_random.as_f32(),
             })
         } else {
             None
@@ -348,6 +497,10 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::Phase(self.phase_offset)),
             Param::Oscillator(OscillatorParam::FmMode(self.fm_mode)),
             Param::Oscillator(OscillatorParam::FmAmount(self.fm_amount)),
+            Param::Oscillator(OscillatorParam::UnisonVoices(self.unison_voice_count)),
+            Param::Oscillator(OscillatorParam::UnisonDetune(self.unison_detune)),
+            Param::Oscillator(OscillatorParam::UnisonSpread(self.unison_spread)),
+            Param::Oscillator(OscillatorParam::UnisonPhaseRandom(self.unison_phase_random)),
         ]
     }
 
@@ -356,12 +509,21 @@ impl PolyModule for Oscillator {
     }
 
     fn reset(&mut self) {
-        self.phase = Phase::ZERO;
+        self.unison_phases = [Phase::ZERO; MAX_UNISON_VOICES];
         self.prev_sync = 0.0;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.set_note(note);
+        let n = self.unison_voice_count as usize;
+        let random = self.unison_phase_random.as_f32();
+        for phase in &mut self.unison_phases[..n] {
+            *phase = if random > 0.0 {
+                Phase::new(fastrand::f32() * random)
+            } else {
+                Phase::ZERO
+            };
+        }
     }
 
     fn note_off(&mut self) {}
@@ -397,6 +559,7 @@ mod tests {
         let osc = Oscillator::new();
         assert_eq!(osc.waveform, Waveform::Sawtooth);
         assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
+        assert_eq!(osc.unison_voice_count, 1);
     }
 
     #[test]
@@ -417,9 +580,95 @@ mod tests {
         osc.sample_rate = SampleRate::DVD_QUALITY;
 
         let effective_pulse_width = osc.pulse_width;
+        let freq = osc.actual_frequency();
         for _ in 0..100 {
-            let sample = osc.generate_sample(0.0, 0.0, effective_pulse_width);
-            assert!(sample >= -1.0 && sample <= 1.0);
+            let phase = osc.unison_phases[0];
+            let (sample, new_phase) =
+                osc.generate_single_sample(freq, phase, 0.0, effective_pulse_width);
+            osc.unison_phases[0] = new_phase;
+            assert!(
+                (-1.0..=1.0).contains(&sample),
+                "sample {sample} out of range"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unison_spread_calculation() {
+        let mut osc = Oscillator::new();
+        osc.unison_voice_count = 3;
+        osc.unison_detune = Cents::new(20.0);
+        osc.unison_spread = NormalizedValue::new(0.8);
+        osc.recalculate_unison_spread();
+
+        // Detune ratios should be symmetric around 1.0
+        assert!(
+            osc.unison_detune_ratios[0] < 1.0,
+            "first voice should be detuned down"
+        );
+        assert!(
+            (osc.unison_detune_ratios[1] - 1.0).abs() < 0.0001,
+            "center voice should be at 1.0"
+        );
+        assert!(
+            osc.unison_detune_ratios[2] > 1.0,
+            "last voice should be detuned up"
+        );
+
+        // Pans should be symmetric around center
+        assert!(osc.unison_pans[0] < 0.0, "first voice should pan left");
+        assert!(
+            osc.unison_pans[1].abs() < 0.0001,
+            "center voice should be center"
+        );
+        assert!(osc.unison_pans[2] > 0.0, "last voice should pan right");
+
+        // Symmetry: ratios should mirror, pans should be opposite
+        let ratio_diff =
+            (osc.unison_detune_ratios[0] - 1.0).abs() - (osc.unison_detune_ratios[2] - 1.0).abs();
+        assert!(ratio_diff.abs() < 0.0001, "detune should be symmetric");
+        assert!(
+            (osc.unison_pans[0] + osc.unison_pans[2]).abs() < 0.0001,
+            "pans should be symmetric"
+        );
+    }
+
+    #[test]
+    fn test_unison_single_voice_unchanged() {
+        let mut osc = Oscillator::new();
+        osc.unison_voice_count = 1;
+        osc.recalculate_unison_spread();
+
+        assert!(
+            (osc.unison_detune_ratios[0] - 1.0).abs() < 0.0001,
+            "single voice should have no detune"
+        );
+        assert!(
+            osc.unison_pans[0].abs() < 0.0001,
+            "single voice should be center"
+        );
+    }
+
+    #[test]
+    fn test_unison_generates_valid_samples() {
+        let mut osc = Oscillator::new();
+        osc.waveform = Waveform::Sawtooth;
+        osc.frequency = Hertz::new(440.0);
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.unison_voice_count = 5;
+        osc.unison_detune = Cents::new(30.0);
+        osc.unison_spread = NormalizedValue::MAX;
+        osc.recalculate_unison_spread();
+
+        let freq = osc.actual_frequency();
+        for j in 0..5 {
+            let voice_freq = Hertz::new(freq.as_f32() * osc.unison_detune_ratios[j]);
+            let phase = osc.unison_phases[j];
+            let (sample, _) = osc.generate_single_sample(voice_freq, phase, 0.0, osc.pulse_width);
+            assert!(
+                sample.abs() <= 1.5,
+                "voice {j} sample {sample} out of reasonable range"
+            );
         }
     }
 }

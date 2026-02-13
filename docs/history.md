@@ -1,5 +1,13 @@
 # Version History
 
+## [0.114.0] - 2026-02-13
+### Added - Intra-voice Unison i Oscillator
+- **Unison-röster**: 1-7 detunade oscillatorkopior inuti varje röst, ger fett unison-ljud utan att multiplicera röstkostnaden.
+- **Parametrar**: Unison (antal röster), Uni Detune (0-100 cent spridning), Uni Spread (stereo-panorering), Uni Phase (fasrandomisering vid note-on).
+- **Stereo-utgångar**: Nya `out_l` och `out_r`-portar med constant-power panorering för stereo-unison. Mono `out`-porten är bakåtkompatibel.
+- **Realtidssäkert**: Alla arrayer är fixed-size [T; 7], ingen heap-allokering i process(). Fasrandomisering via lock-free fastrand.
+- **n=1 specialfall**: När unison är av (1 röst) skippas panorering helt, exakt samma beteende som innan.
+
 ## [0.113.0] - 2026-02-13
 ### Added - Waveshaper-modul
 - **Waveshaper-effekt**: Ny kreativ waveshaping-modul med 6 kurvor: Soft Clip, Asymmetric, Fold, Chebyshev, Sine Fold, Quantize.

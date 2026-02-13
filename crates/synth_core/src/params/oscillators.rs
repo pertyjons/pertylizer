@@ -294,6 +294,14 @@ pub enum OscillatorParam {
     FmMode(FmMode),
     /// FM input attenuverter (-1.0 to 1.0)
     FmAmount(BipolarValue),
+    /// Number of unison voices (1-7, 1 = off)
+    UnisonVoices(u8),
+    /// Total unison detune spread in cents (0-100)
+    UnisonDetune(Cents),
+    /// Unison stereo spread (0.0 = mono, 1.0 = full)
+    UnisonSpread(NormalizedValue),
+    /// Phase randomization on note-on (0.0 = none, 1.0 = full)
+    UnisonPhaseRandom(NormalizedValue),
 }
 
 impl OscillatorParam {
@@ -314,6 +322,10 @@ impl OscillatorParam {
             Self::Phase(_) => "Phase",
             Self::FmMode(_) => "FM Mode",
             Self::FmAmount(_) => "FM Amount",
+            Self::UnisonVoices(_) => "Unison",
+            Self::UnisonDetune(_) => "Uni Detune",
+            Self::UnisonSpread(_) => "Uni Spread",
+            Self::UnisonPhaseRandom(_) => "Uni Phase",
         }
     }
 
@@ -329,6 +341,10 @@ impl OscillatorParam {
             Self::Phase(p) => p.as_f32(),
             Self::FmMode(m) => m.index() as f32,
             Self::FmAmount(a) => a.as_f32(),
+            Self::UnisonVoices(n) => f32::from(*n),
+            Self::UnisonDetune(c) => c.as_f32(),
+            Self::UnisonSpread(v) => v.as_f32(),
+            Self::UnisonPhaseRandom(v) => v.as_f32(),
         }
     }
 
@@ -346,6 +362,11 @@ impl OscillatorParam {
             Self::Phase(_) => Self::Phase(Phase::new(value)),
             Self::FmMode(_) => Self::FmMode(FmMode::from_index(value as usize).unwrap_or_default()),
             Self::FmAmount(_) => Self::FmAmount(BipolarValue::new(value)),
+            #[allow(clippy::cast_possible_truncation)]
+            Self::UnisonVoices(_) => Self::UnisonVoices((value.round() as u8).clamp(1, 7)),
+            Self::UnisonDetune(_) => Self::UnisonDetune(Cents::new(value.clamp(0.0, 100.0))),
+            Self::UnisonSpread(_) => Self::UnisonSpread(NormalizedValue::new(value)),
+            Self::UnisonPhaseRandom(_) => Self::UnisonPhaseRandom(NormalizedValue::new(value)),
         }
     }
 
@@ -376,6 +397,18 @@ impl OscillatorParam {
     }
     pub fn fm_amount_default() -> Self {
         Self::FmAmount(BipolarValue::MAX)
+    }
+    pub fn unison_voices_default() -> Self {
+        Self::UnisonVoices(1)
+    }
+    pub fn unison_detune_default() -> Self {
+        Self::UnisonDetune(Cents::new(10.0))
+    }
+    pub fn unison_spread_default() -> Self {
+        Self::UnisonSpread(NormalizedValue::CENTER)
+    }
+    pub fn unison_phase_random_default() -> Self {
+        Self::UnisonPhaseRandom(NormalizedValue::MAX)
     }
 }
 
