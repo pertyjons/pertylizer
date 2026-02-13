@@ -8,6 +8,10 @@
 - **Acid** (Steiner-Parker-inspirerad): ZDF 2-pol med resonansberoende variabel saturation (tanh→sine-fold blend). Stöder LP/BP/HP-modes.
 - **Morph-knob**: Ny parameter för Fluid-modellen som smidigt korsfadar mellan filterutgångar.
 - **Realtidssäkert**: Alla filterstructs är Copy med enbart f32-fält, inga heap-allokeringar.
+- **Patch: Fluid Pad**: Evolverande pad med Fluid-filtrets morph svept av LFO, 5-voice triangle unison och reverb.
+- **Patch: Fluid Keys**: Varmt elpiano med Fluid-morph som skapar klockliknande övertoner via envelope-sweep, chorus.
+- **Patch: Screamer Lead**: Aggressiv lead med Screamer-filtrets diod-clipping, hög resonans och snabb envelope-sweep.
+- **Patch: Acid Bass**: Klassisk 303-acid med Acid-filtrets variabla saturation, square-oscillator och snabb cutoff-sweep.
 
 ## [0.114.0] - 2026-02-13
 ### Added - Intra-voice Unison i Oscillator

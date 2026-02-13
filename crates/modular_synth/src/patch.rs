@@ -396,6 +396,11 @@ impl ModuleBuilder {
         self.param_choice("mode", mode)
     }
 
+    /// Convenience: set filter model (standard, fluid, screamer, acid).
+    pub fn filter_model(self, model: &str) -> Self {
+        self.param_choice("model", model)
+    }
+
     /// Convenience: set waveshaper curve.
     pub fn waveshaper_curve(self, curve: &str) -> Self {
         self.param_choice("curve", curve)
