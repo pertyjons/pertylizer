@@ -1,5 +1,34 @@
 # Version History
 
+## [0.123.0] - 2026-02-14
+### Added - AWE (Acoustic World Engine) Fas 0 — Infrastruktur
+
+**FDN-extraktion (synth_dsp):**
+- Ny `fdn`-modul med `FdnCore` struct — extraherad från Reverb.
+- 8-kanal FDN med Hadamard-matris, per-kanal damping/lowcut, modulerade delay-linjer.
+- `FdnCore::process_sample()` tar mono in, returnerar stereo `FdnStereoOutput`.
+- Reverb delegerar nu till `FdnCore` — alla befintliga tester passerar.
+
+**synth_awe crate (ny):**
+- `AweEngine`: Pass-through processor (ingen DSP i Fas 0).
+- `AweParam`: Enum med RoomShape, Material, SourcePos, ListenerPos, DryWet, m.fl.
+- `AweSnapshot`: Copy-struct för batch-uppdatering av numeriska parametrar.
+- `AweState`: Serde-serialiserbar state för patch-persistence.
+- `RoomShape`: Box-variant med length/width/height, volume(), surface_area(), axial_modes().
+- `Material`: 6 konstanter (CONCRETE, WOOD, GLASS, METAL, FABRIC, TILE) med frekvens-beroende absorption.
+
+**Engine-integration:**
+- Tre nya `EngineCommand`-varianter: `SetAweParameter`, `SetAweEnabled`, `SetAweState`.
+- `AweEngine`-fält i `SynthEngine`, processas efter master effects.
+- Master-level visualizers körs nu efter AWE (visar slutsignal).
+
+**GUI:**
+- Ny `AppView::AcousticWorld` variant med toggle-knapp i menyraden.
+- Placeholder AWE-vy med enable/disable toggle.
+
+**Persistence:**
+- `PatchSettings.awe: Option<AweState>` — sparas/laddas automatiskt.
+
 ## [0.122.0] - 2026-02-14
 ### Added - Vosim, Spectrum Analyzer, Oversampling
 

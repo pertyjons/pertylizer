@@ -72,6 +72,9 @@ pub mod views;
 pub mod app;
 
 #[cfg(feature = "gui-egui")]
+pub mod awe_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod panels;
 
 use crate::audio::{AudioHostTrait, StreamConfig};

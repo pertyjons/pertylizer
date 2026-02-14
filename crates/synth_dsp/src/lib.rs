@@ -15,12 +15,14 @@
 #![allow(clippy::suboptimal_flops)]
 
 pub mod delay;
+pub mod fdn;
 pub mod filters;
 pub mod oscillators;
 pub mod oversampling;
 pub mod spectral;
 
 pub use delay::{DelayLine, InterpolatedDelayLine};
+pub use fdn::FdnCore;
 pub use filters::{
     AcidFilter, BiquadCoeffs, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType,
 };

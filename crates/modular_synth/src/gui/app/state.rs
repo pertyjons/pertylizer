@@ -14,6 +14,8 @@ pub enum AppView {
     /// Instrument rack and patch editor view (default).
     #[default]
     Rack,
+    /// Acoustic World Engine view.
+    AcousticWorld,
 }
 
 // Re-export effect types from views module to avoid duplication

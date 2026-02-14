@@ -21,6 +21,7 @@ use crate::sequencer_engine::SequencerEngine;
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
+use synth_awe::AweEngine;
 use synth_core::{
     AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, Bpm,
     EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType, NormalizedValue,
@@ -342,6 +343,10 @@ pub struct SynthEngine {
     /// Effects like master reverb, limiter, EQ go here.
     master_effects: EffectChain,
 
+    // === AWE (Acoustic World Engine) ===
+    /// Room simulation engine, processed after master effects.
+    awe_engine: AweEngine,
+
     // === Global module graph ===
     /// The global module graph for modular routing.
     /// Contains all user-added modules and their connections.
@@ -420,6 +425,7 @@ impl SynthEngine {
             state: Arc::clone(&state),
             instruments: vec![Box::new(default_instrument)],
             master_effects: EffectChain::new(),
+            awe_engine: AweEngine::new(),
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             sample_rate: 48000.0,
@@ -847,6 +853,17 @@ impl SynthEngine {
             }
             EngineCommand::SetTempo(bpm) => {
                 self.state.transport.set_tempo(bpm.as_f32());
+            }
+
+            // AWE commands
+            EngineCommand::SetAweParameter { param } => {
+                self.awe_engine.set_param(param);
+            }
+            EngineCommand::SetAweEnabled { enabled } => {
+                self.awe_engine.set_enabled(enabled);
+            }
+            EngineCommand::SetAweState { snapshot } => {
+                self.awe_engine.apply_snapshot(snapshot);
             }
         }
     }
@@ -1634,6 +1651,15 @@ impl AudioProcessor for SynthEngine {
 
         // Process master effects (master bus: reverb, limiter, EQ, etc.)
         self.process_master_effects(&process_context);
+
+        // Process AWE (room simulation) after master effects
+        if self.awe_engine.enabled() {
+            self.awe_engine
+                .process(self.mix_buffer.as_mut_slice(), self.sample_rate);
+        }
+
+        // Process master-level visualizers after AWE (so they show final signal)
+        self.master_effects.process_visualizers(&self.mix_buffer);
 
         // Copy to output with master volume
         let channels = context.channels as usize;

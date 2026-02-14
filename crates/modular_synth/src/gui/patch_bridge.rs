@@ -126,6 +126,16 @@ pub fn load_patch(
         patch.settings.glide_time,
     )));
 
+    // Load AWE state if present
+    if let Some(awe) = &patch.settings.awe {
+        handle.send_blocking(EngineCommand::SetAweEnabled {
+            enabled: awe.enabled,
+        });
+        handle.send_blocking(EngineCommand::SetAweState {
+            snapshot: awe.to_snapshot(),
+        });
+    }
+
     // Ensure the target instrument is enabled after loading
     handle.send_blocking(EngineCommand::SetInstrumentEnabled {
         instrument_id,
@@ -917,6 +927,7 @@ pub fn create_patch_from_rack(
     keyboard: &PianoKeyboard,
     handle: &EngineHandle,
     glide_time: f32,
+    awe_enabled: bool,
 ) -> Option<Patch> {
     let mut patch = Patch::new(patch_name);
     patch.author = Some("User".to_string());
@@ -1008,6 +1019,14 @@ pub fn create_patch_from_rack(
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = handle.master_volume();
     patch.settings.glide_time = glide_time;
+
+    // Save AWE state (minimal in Fas 0 — just enabled status)
+    if awe_enabled {
+        patch.settings.awe = Some(synth_awe::AweState {
+            enabled: true,
+            ..Default::default()
+        });
+    }
 
     Some(patch)
 }

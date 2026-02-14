@@ -1,6 +1,6 @@
 [package]
 name = "modular_synth"
-version = "0.122.0"
+version = "0.123.0"
 edition = "2024"
 rust-version = "1.93"
 description = "A modular synthesizer with abstract audio backend"
@@ -22,6 +22,7 @@ synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
 synth_sequencer = { path = "../synth_sequencer" }
 synth_modules = { path = "../synth_modules" }
+synth_awe = { path = "../synth_awe" }
 synth_engine = { path = "../synth_engine" }
 
 # Audio I/O

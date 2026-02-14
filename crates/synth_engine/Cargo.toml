@@ -14,6 +14,7 @@ workspace = true
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
 synth_modules = { path = "../synth_modules" }
+synth_awe = { path = "../synth_awe" }
 synth_sequencer = { path = "../synth_sequencer" }
 serde = { workspace = true }
 thiserror = { workspace = true }

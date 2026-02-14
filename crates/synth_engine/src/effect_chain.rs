@@ -269,10 +269,11 @@ impl EffectChain {
         &self.slots
     }
 
-    /// Process the effect chain.
+    /// Process the effect chain (effects only, visualizers are skipped).
     ///
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
-    /// Effects modify the signal; visualizers only capture it without modification.
+    /// Visualizers are processed separately via `process_visualizers()` so they
+    /// can run after AWE to show the final post-AWE signal.
     pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext) {
         self.working_buffer.resize(context.samples.as_usize() * 2);
 
@@ -291,15 +292,26 @@ impl EffectChain {
                         );
                     }
                 }
-                ChainSlot::Visualizer(viz_slot) => {
-                    if viz_slot.state.is_active() {
-                        // Visualizers capture audio data but don't modify the signal
-                        viz_slot.buffer.write_interleaved(mix_buffer.as_slice());
-                        viz_slot
-                            .buffer
-                            .update_levels_interleaved(mix_buffer.as_slice());
-                    }
+                ChainSlot::Visualizer(_) => {
+                    // Visualizers are processed post-AWE via process_visualizers()
+                    continue;
                 }
+            }
+        }
+    }
+
+    /// Process visualizers only (called after AWE to capture final signal).
+    ///
+    /// Visualizers capture audio data without modifying the signal.
+    pub fn process_visualizers(&mut self, mix_buffer: &AudioBuffer) {
+        for slot in &mut self.slots {
+            if let ChainSlot::Visualizer(viz_slot) = slot
+                && viz_slot.state.is_active()
+            {
+                viz_slot.buffer.write_interleaved(mix_buffer.as_slice());
+                viz_slot
+                    .buffer
+                    .update_levels_interleaved(mix_buffer.as_slice());
             }
         }
     }

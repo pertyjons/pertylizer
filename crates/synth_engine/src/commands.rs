@@ -514,6 +514,16 @@ pub enum EngineCommand {
     SetSong {
         song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
     },
+
+    // === AWE (Acoustic World Engine) ===
+    /// Set a single AWE parameter.
+    SetAweParameter { param: synth_awe::AweParam },
+
+    /// Enable or disable the AWE engine.
+    SetAweEnabled { enabled: bool },
+
+    /// Apply a batch AWE parameter snapshot.
+    SetAweState { snapshot: synth_awe::AweSnapshot },
 }
 
 /// Type of visualizer to add.
@@ -925,6 +935,18 @@ impl std::fmt::Debug for EngineCommand {
                 .field("enabled", enabled)
                 .finish(),
             Self::SetSong { .. } => write!(f, "SetSong"),
+            Self::SetAweParameter { param } => f
+                .debug_struct("SetAweParameter")
+                .field("param", param)
+                .finish(),
+            Self::SetAweEnabled { enabled } => f
+                .debug_struct("SetAweEnabled")
+                .field("enabled", enabled)
+                .finish(),
+            Self::SetAweState { snapshot } => f
+                .debug_struct("SetAweState")
+                .field("snapshot", snapshot)
+                .finish(),
         }
     }
 }

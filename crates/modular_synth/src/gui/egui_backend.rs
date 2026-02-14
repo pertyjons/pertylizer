@@ -223,6 +223,9 @@ struct SynthApp {
 
     // Navigation state
     active_view: AppView,
+
+    // AWE state
+    awe_enabled: bool,
 }
 
 impl SynthApp {
@@ -300,6 +303,7 @@ impl SynthApp {
             next_instrument_id,
             master_effects: Vec::new(),
             active_view: AppView::default(),
+            awe_enabled: false,
         }
     }
 
@@ -510,6 +514,19 @@ impl eframe::App for SynthApp {
                         RichText::new(format!("Patch: {}", self.current_patch_name))
                             .color(theme().colors.accent_cyan),
                     );
+                    ui.separator();
+
+                    // AWE view toggle
+                    let view_label = match self.active_view {
+                        AppView::Rack => "AWE",
+                        AppView::AcousticWorld => "Rack",
+                    };
+                    if ui.button(view_label).clicked() {
+                        self.active_view = match self.active_view {
+                            AppView::Rack => AppView::AcousticWorld,
+                            AppView::AcousticWorld => AppView::Rack,
+                        };
+                    }
                     ui.separator();
                 });
             });
@@ -804,6 +821,14 @@ impl eframe::App for SynthApp {
                 patch_editor.apply_auto_layout(canvas_rect);
             }
                 });
+            }
+            AppView::AcousticWorld => {
+                crate::gui::awe_view::draw_awe_view(
+                    ctx,
+                    &mut self.handle,
+                    &mut self.awe_enabled,
+                    &mut self.active_view,
+                );
             }
         }
 
@@ -1846,6 +1871,7 @@ impl SynthApp {
             &self.keyboard,
             &self.handle,
             self.glide_time,
+            self.awe_enabled,
         )
     }
 }

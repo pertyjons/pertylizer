@@ -551,6 +551,12 @@ impl Clone for EngineCommand {
             Self::AddVisualizer { .. } => {
                 panic!("AddVisualizer cannot be cloned - visualizer buffers are shared")
             }
+            // AWE commands
+            Self::SetAweParameter { param } => Self::SetAweParameter { param: *param },
+            Self::SetAweEnabled { enabled } => Self::SetAweEnabled { enabled: *enabled },
+            Self::SetAweState { snapshot } => Self::SetAweState {
+                snapshot: *snapshot,
+            },
         }
     }
 }

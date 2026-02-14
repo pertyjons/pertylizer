@@ -1,0 +1,16 @@
+[package]
+name = "synth_awe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Acoustic World Engine - real-time room simulation"
+authors = ["Per"]
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }
+serde = { workspace = true }

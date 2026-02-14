@@ -305,6 +305,9 @@ pub struct PatchSettings {
     /// Glide/portamento time in seconds (0.0 = off).
     #[serde(default)]
     pub glide_time: f32,
+    /// AWE (Acoustic World Engine) state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awe: Option<synth_awe::AweState>,
 }
 
 fn default_master_volume() -> f32 {
@@ -318,6 +321,7 @@ impl Default for PatchSettings {
             bpm: Some(120.0),
             octave_offset: 0,
             glide_time: 0.0,
+            awe: None,
         }
     }
 }

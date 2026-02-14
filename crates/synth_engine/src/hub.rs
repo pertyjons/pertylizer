@@ -365,6 +365,11 @@ impl EngineHub {
             EngineCommand::Reset => perms.can_modify_topology,
             EngineCommand::SetBypass { .. } => perms.can_modify_params,
             EngineCommand::SetEffectEnabled { .. } => perms.can_modify_params,
+
+            // AWE commands
+            EngineCommand::SetAweParameter { .. }
+            | EngineCommand::SetAweEnabled { .. }
+            | EngineCommand::SetAweState { .. } => perms.can_modify_params,
         }
     }
 

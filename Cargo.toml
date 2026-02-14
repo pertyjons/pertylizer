@@ -5,6 +5,7 @@ members = [
     "crates/synth_dsp",
     "crates/synth_sequencer",
     "crates/synth_modules",
+    "crates/synth_awe",
     "crates/synth_engine",
     "crates/modular_synth",
 ]
