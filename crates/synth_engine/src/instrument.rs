@@ -20,9 +20,10 @@ use crate::graph::ModuleGraph;
 use crate::voice::VoiceState;
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext, Seconds,
-    Semitones, SoloState, Velocity,
+    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
+    SampleCount, SampleRate, Seconds, Semitones, SoloState, Velocity,
 };
+use synth_dsp::oversampling::{Downsampler, OversamplingFactor};
 
 // ============================================================================
 // Key Range & Learn State Types
@@ -397,6 +398,16 @@ pub struct Instrument {
     velocity_amp_sensitivity: NormalizedValue,
     /// Default velocity-to-filter sensitivity for new voices.
     velocity_filter_sensitivity: NormalizedValue,
+    /// Oversampling factor (Off/2x/4x) for anti-aliased voice processing.
+    oversampling: OversamplingFactor,
+    /// Left channel downsampler for oversampled voice output.
+    downsampler_l: Downsampler,
+    /// Right channel downsampler for oversampled voice output.
+    downsampler_r: Downsampler,
+    /// Oversampled left channel buffer (pre-allocated for up to 4x).
+    os_voice_left: AudioBuffer,
+    /// Oversampled right channel buffer (pre-allocated for up to 4x).
+    os_voice_right: AudioBuffer,
 }
 
 impl Instrument {
@@ -426,6 +437,11 @@ impl Instrument {
             temp_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             velocity_amp_sensitivity: NormalizedValue::MAX, // Full dynamic range
             velocity_filter_sensitivity: NormalizedValue::CENTER, // 50% filter sensitivity
+            oversampling: OversamplingFactor::default(),
+            downsampler_l: Downsampler::new(),
+            downsampler_r: Downsampler::new(),
+            os_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
+            os_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
         }
     }
 
@@ -455,6 +471,11 @@ impl Instrument {
             temp_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE),
             velocity_amp_sensitivity: NormalizedValue::MAX,
             velocity_filter_sensitivity: NormalizedValue::CENTER,
+            oversampling: OversamplingFactor::default(),
+            downsampler_l: Downsampler::new(),
+            downsampler_r: Downsampler::new(),
+            os_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
+            os_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
         }
     }
 
@@ -729,6 +750,21 @@ impl Instrument {
         }
     }
 
+    /// Get the oversampling factor.
+    #[inline]
+    pub fn oversampling(&self) -> OversamplingFactor {
+        self.oversampling
+    }
+
+    /// Set the oversampling factor and reset downsampler state.
+    pub fn set_oversampling(&mut self, factor: OversamplingFactor) {
+        if self.oversampling != factor {
+            self.oversampling = factor;
+            self.downsampler_l.reset();
+            self.downsampler_r.reset();
+        }
+    }
+
     /// Get the number of active voices in this instrument.
     #[inline]
     pub fn active_voice_count(&self) -> usize {
@@ -795,6 +831,7 @@ impl Instrument {
     ///
     /// # Returns
     /// The number of active voices processed.
+    #[allow(clippy::too_many_lines)]
     pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) -> u32 {
         if self.mute_state.is_muted() {
             return 0;
@@ -803,6 +840,10 @@ impl Instrument {
         let samples = context.samples;
         let sample_count = samples.as_usize();
         let mut active_count = 0u32;
+
+        // Determine oversampled parameters
+        let os_factor = self.oversampling.factor();
+        let os_count = sample_count * os_factor;
 
         // Ensure internal buffers are sized correctly
         self.voice_left.resize(sample_count);
@@ -818,66 +859,165 @@ impl Instrument {
         let mut temp_left = std::mem::take(&mut self.temp_voice_left);
         let mut temp_right = std::mem::take(&mut self.temp_voice_right);
 
-        // Resize temp buffers if needed (no allocation if capacity is sufficient)
-        temp_left.resize(sample_count);
-        temp_right.resize(sample_count);
+        if os_factor > 1 {
+            // === OVERSAMPLED PATH ===
+            // Process voices at higher sample rate, then downsample
 
-        // Process each voice in this instrument and sum into voice_left/voice_right
-        for voice in self.allocator.voices_mut() {
-            if !voice.is_active() {
-                continue;
-            }
+            let os_sample_rate = SampleRate::new(context.sample_rate.as_f32() * os_factor as f32);
+            let os_samples = SampleCount::new(os_count);
+            let os_context = ProcessContext {
+                sample_rate: os_sample_rate,
+                samples: os_samples,
+                ..*context
+            };
 
-            active_count += 1;
+            // Resize oversampled buffers (no allocation if capacity sufficient)
+            self.os_voice_left.resize(os_count);
+            self.os_voice_right.resize(os_count);
+            self.os_voice_left.clear();
+            self.os_voice_right.clear();
 
-            // Update glide and increment age
-            let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
-            voice.glide.update(delta_time);
-            voice.age = voice.age + samples;
+            // Resize temp buffers for oversampled processing
+            temp_left.resize(os_count);
+            temp_right.resize(os_count);
 
-            // Handle stealing fade-out completion
-            if let VoiceState::Stealing { fade_counter, .. } = voice.state
-                && fade_counter == 0
-            {
-                voice.reset();
-                continue;
-            }
-
-            // Clear temp buffers for this voice
-            temp_left.clear();
-            temp_right.clear();
-
-            // Process the voice signal chain
-            voice.process_audio(&mut temp_left, &mut temp_right, context);
-
-            // Apply stealing fade-out if needed
-            if let VoiceState::Stealing {
-                fade_counter,
-                fade_total,
-            } = voice.state
-            {
-                let fade_samples = fade_counter.min(sample_count);
-                for i in 0..sample_count {
-                    let fade = if i < fade_samples {
-                        (fade_counter - i) as f32 / fade_total as f32
-                    } else {
-                        0.0
-                    };
-                    temp_left[i] *= fade;
-                    temp_right[i] *= fade;
+            // Process each voice at the oversampled rate
+            for voice in self.allocator.voices_mut() {
+                if !voice.is_active() {
+                    continue;
                 }
-                // Update the fade counter in the state
-                let new_counter = fade_counter.saturating_sub(sample_count);
-                voice.state = VoiceState::Stealing {
-                    fade_counter: new_counter,
+
+                active_count += 1;
+
+                // Update glide and increment age (at original rate)
+                let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
+                voice.glide.update(delta_time);
+                voice.age = voice.age + samples;
+
+                // Handle stealing fade-out completion
+                if let VoiceState::Stealing { fade_counter, .. } = voice.state
+                    && fade_counter == 0
+                {
+                    voice.reset();
+                    continue;
+                }
+
+                // Clear temp buffers for this voice
+                temp_left.clear();
+                temp_right.clear();
+
+                // Process the voice signal chain at oversampled rate
+                voice.process_audio(&mut temp_left, &mut temp_right, &os_context);
+
+                // Apply stealing fade-out if needed (at oversampled rate)
+                if let VoiceState::Stealing {
+                    fade_counter,
                     fade_total,
-                };
+                } = voice.state
+                {
+                    // Scale fade counters to oversampled domain
+                    let os_fade_counter = fade_counter * os_factor;
+                    let os_fade_total = fade_total * os_factor;
+                    let fade_samples = os_fade_counter.min(os_count);
+                    for i in 0..os_count {
+                        let fade = if i < fade_samples {
+                            (os_fade_counter - i) as f32 / os_fade_total as f32
+                        } else {
+                            0.0
+                        };
+                        temp_left[i] *= fade;
+                        temp_right[i] *= fade;
+                    }
+                    // Update the fade counter (at original rate)
+                    let new_counter = fade_counter.saturating_sub(sample_count);
+                    voice.state = VoiceState::Stealing {
+                        fade_counter: new_counter,
+                        fade_total,
+                    };
+                }
+
+                // Sum into oversampled instrument buffers
+                for i in 0..os_count {
+                    self.os_voice_left[i] += temp_left[i];
+                    self.os_voice_right[i] += temp_right[i];
+                }
             }
 
-            // Sum into instrument buffers
-            for i in 0..sample_count {
-                self.voice_left[i] += temp_left[i];
-                self.voice_right[i] += temp_right[i];
+            // Downsample oversampled buffers into voice_left/voice_right
+            self.downsampler_l.process(
+                &self.os_voice_left.as_slice()[..os_count],
+                &mut self.voice_left.as_mut_slice()[..sample_count],
+                self.oversampling,
+            );
+            self.downsampler_r.process(
+                &self.os_voice_right.as_slice()[..os_count],
+                &mut self.voice_right.as_mut_slice()[..sample_count],
+                self.oversampling,
+            );
+        } else {
+            // === NORMAL PATH (1x) — zero overhead ===
+
+            // Resize temp buffers if needed (no allocation if capacity is sufficient)
+            temp_left.resize(sample_count);
+            temp_right.resize(sample_count);
+
+            // Process each voice and sum into voice_left/voice_right
+            for voice in self.allocator.voices_mut() {
+                if !voice.is_active() {
+                    continue;
+                }
+
+                active_count += 1;
+
+                // Update glide and increment age
+                let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
+                voice.glide.update(delta_time);
+                voice.age = voice.age + samples;
+
+                // Handle stealing fade-out completion
+                if let VoiceState::Stealing { fade_counter, .. } = voice.state
+                    && fade_counter == 0
+                {
+                    voice.reset();
+                    continue;
+                }
+
+                // Clear temp buffers for this voice
+                temp_left.clear();
+                temp_right.clear();
+
+                // Process the voice signal chain
+                voice.process_audio(&mut temp_left, &mut temp_right, context);
+
+                // Apply stealing fade-out if needed
+                if let VoiceState::Stealing {
+                    fade_counter,
+                    fade_total,
+                } = voice.state
+                {
+                    let fade_samples = fade_counter.min(sample_count);
+                    for i in 0..sample_count {
+                        let fade = if i < fade_samples {
+                            (fade_counter - i) as f32 / fade_total as f32
+                        } else {
+                            0.0
+                        };
+                        temp_left[i] *= fade;
+                        temp_right[i] *= fade;
+                    }
+                    // Update the fade counter in the state
+                    let new_counter = fade_counter.saturating_sub(sample_count);
+                    voice.state = VoiceState::Stealing {
+                        fade_counter: new_counter,
+                        fade_total,
+                    };
+                }
+
+                // Sum into instrument buffers
+                for i in 0..sample_count {
+                    self.voice_left[i] += temp_left[i];
+                    self.voice_right[i] += temp_right[i];
+                }
             }
         }
 

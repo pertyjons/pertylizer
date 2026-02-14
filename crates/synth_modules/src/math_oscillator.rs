@@ -1,4 +1,4 @@
-//! Math Oscillator module with 18 different mathematical algorithms.
+//! Math Oscillator module with 19 different mathematical algorithms.
 //!
 //! Features:
 //! - 18 different synthesis algorithms from FM to chaos
@@ -22,7 +22,7 @@ use synth_core::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
 
-/// A math-based oscillator with 18 synthesis algorithms.
+/// A math-based oscillator with 19 synthesis algorithms.
 #[derive(Clone)]
 pub struct MathOscillator {
     // Parameters
@@ -313,6 +313,28 @@ impl MathOscillator {
                 sample
             }
 
+            MathAlgo::Vosim => {
+                // VOSIM: Voice simulation via squared sine pulses
+                // A = formant freq multiplier (1-20x), B = decay per pulse, C = number of pulses
+                let num_pulses = 1 + (c * 5.0) as i32; // 1-6 pulses
+                let formant = 1.0 + a * 19.0; // formant 1x-20x base freq
+                let decay = 0.3 + b * 0.69; // decay 0.3-0.99
+
+                // Each pulse occupies 1/num_pulses of the period
+                let pulse_width = 1.0 / num_pulses as f32;
+                let pulse_index = (t / pulse_width) as i32;
+                let local_t = (t / pulse_width).fract();
+
+                if pulse_index < num_pulses {
+                    // Squared sine pulse with exponential decay
+                    let sin_val = (TAU * local_t * formant).sin();
+                    let envelope = decay.powi(pulse_index);
+                    sin_val * sin_val * envelope
+                } else {
+                    0.0
+                }
+            }
+
             // ================================================================
             // CATEGORY C: Buffer-based
             // ================================================================
@@ -385,7 +407,7 @@ impl Default for MathOscillator {
 impl Describable for MathOscillator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("math_oscillator", "Math Oscillator")
-            .description("Advanced oscillator with 18 mathematical synthesis algorithms")
+            .description("Advanced oscillator with 19 mathematical synthesis algorithms")
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")
             .tag("math")

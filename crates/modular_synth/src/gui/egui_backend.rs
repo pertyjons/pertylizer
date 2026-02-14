@@ -40,7 +40,7 @@ use synth_core::{Describable, ModuleCategory};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::visualizers::{LevelMeter, Oscilloscope};
+use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_modules::effects::{
     BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, Limiter, MidSide,
@@ -1276,6 +1276,10 @@ impl SynthApp {
             PaletteVisualizerType::LevelMeter => {
                 (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
             }
+            PaletteVisualizerType::SpectrumAnalyzer => (
+                SpectrumAnalyzer::new().descriptor(),
+                TypedModuleType::SpectrumAnalyzer,
+            ),
         };
 
         let next_id = self.next_module_id(module_type);
@@ -1298,6 +1302,9 @@ impl SynthApp {
                 synth_engine::commands::VisualizerType::Oscilloscope
             }
             PaletteVisualizerType::LevelMeter => synth_engine::commands::VisualizerType::LevelMeter,
+            PaletteVisualizerType::SpectrumAnalyzer => {
+                synth_engine::commands::VisualizerType::SpectrumAnalyzer
+            }
         };
 
         // Send command to active instrument's effect chain

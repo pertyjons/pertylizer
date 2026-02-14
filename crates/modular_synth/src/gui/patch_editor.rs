@@ -1352,6 +1352,39 @@ fn draw_visualizer_display(
                     .color(theme().colors.text_dim),
             );
         }
+    } else if descriptor.type_id.0 == "spectrum_analyzer" {
+        // Get gain from params by name
+        let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
+
+        // Get magnitude data from visualization buffer
+        let magnitudes = if let Some(buffer) = vis_buffer {
+            let (left, _right) = buffer.read_samples();
+            left
+        } else {
+            // Demo flat spectrum if no buffer connected
+            vec![0.0; 256]
+        };
+
+        // Use available width, with min/max constraints
+        let width = ui.available_width().clamp(120.0, 300.0);
+        let height = (width * 0.5).clamp(60.0, 120.0);
+
+        super::widgets::draw_spectrum_analyzer(
+            ui,
+            &magnitudes,
+            width,
+            height,
+            gain,
+            theme().colors.accent_green,
+        );
+
+        if vis_buffer.is_none() {
+            ui.label(
+                egui::RichText::new("No signal")
+                    .small()
+                    .color(theme().colors.text_dim),
+            );
+        }
     } else if descriptor.type_id.0 == "level_meter" {
         // Get levels from visualization buffer if available
         let (peak_l, peak_r, rms_l, rms_r) = if let Some(buffer) = vis_buffer {
@@ -1981,6 +2014,7 @@ pub use synth_engine::commands::EffectType;
 pub enum PaletteVisualizerType {
     Oscilloscope,
     LevelMeter,
+    SpectrumAnalyzer,
 }
 
 /// Result from ModulePalette - either a category or a specific effect type.
@@ -2153,6 +2187,12 @@ impl ModulePalette {
                     if ui.button("📊 Level Meter").clicked() {
                         selected = Some(PaletteSelection::Visualizer(
                             PaletteVisualizerType::LevelMeter,
+                        ));
+                        ui.close();
+                    }
+                    if ui.button("📊 Spectrum").clicked() {
+                        selected = Some(PaletteSelection::Visualizer(
+                            PaletteVisualizerType::SpectrumAnalyzer,
                         ));
                         ui.close();
                     }

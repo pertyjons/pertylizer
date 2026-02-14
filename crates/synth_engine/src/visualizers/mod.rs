@@ -5,9 +5,11 @@
 
 mod level_meter;
 mod oscilloscope;
+mod spectrum_analyzer;
 
 pub use level_meter::LevelMeter;
 pub use oscilloscope::Oscilloscope;
+pub use spectrum_analyzer::SpectrumAnalyzer;
 
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};

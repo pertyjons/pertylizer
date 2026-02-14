@@ -76,14 +76,8 @@ Innan en uppgift anses klar MÅSTE följande passera utan varningar eller fel:
 # Steg 1: Kompilera med alla varningar som fel
 RUSTFLAGS="-D warnings" cargo build
 
-# Steg 2: Clippy med rimliga lints
-cargo clippy --all-targets -- \
-    -D warnings \
-    -D clippy::unwrap_used \
-    -D clippy::expect_used \
-    -W clippy::must_use_candidate \
-    -W clippy::use_self \
-    -W clippy::implicit_clone
+# Steg 2: Clippy med rimliga lints (konfigurerade i Cargo.toml)
+cargo clippy --all-targets
 
 # Steg 3: Kör alla tester
 cargo test

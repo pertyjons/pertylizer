@@ -3,7 +3,7 @@
 ## Projektöversikt
 
 ModularSynth är en modulär ljudsyntes skriven i Rust.
-Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikation).
+Stack: Rust 1.93 (Edition 2024), egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikation).
 
 ---
 
@@ -41,9 +41,9 @@ Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 
 **Beroendekedja (bottom-up):**
 1. `synth_core` - Inga interna beroenden (endast serde, thiserror)
-2. `synth_dsp` - Beror på synth_core
-3. `synth_sequencer` - Beror på synth_core
-4. `synth_modules` - Beror på synth_core, synth_dsp
+2. `synth_dsp` - Beror på `synth_core`
+3. `synth_sequencer` - Beror på `synth_core`
+4. `synth_modules` - Beror på `synth_core`, `synth_dsp`
 5. `synth_engine` - Beror på alla ovan
 6. `modular_synth` - Beror på allt, lägger till cpal, egui, midir
 
@@ -61,7 +61,7 @@ Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 **Ansvar:** Lågnivå DSP-primitiver som återanvänds av moduler.
 **Nyckeltyper:** `DelayLine`, `SvfCoeffs`, `BiquadCoeffs`
 **Funktioner:** `poly_blep()` (band-limited waveform generation)
-**Beroenden:** synth_core
+**Beroenden:** synth_core, realfft
 
 ### synth_sequencer
 **Ansvar:** Sekvensering med pattern och song.
@@ -73,13 +73,13 @@ Stack: Rust 1.93+, egui (GUI), cpal (audio I/O), ringbuf (lock-free kommunikatio
 **Moduler:** `Oscillator`, `Filter`, `Envelope`, `Lfo`, `Amplifier`
 **Effekter:** `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Eq`, `Phaser`, `Flanger`
 **Fysisk modellering:** `BodyResonance`, `MechanicalNoise`, `KeyboardPanner`
-**Beroenden:** synth_core, synth_dsp
+**Beroenden:** synth_core, synth_dsp, fastrand
 
 ### synth_engine
 **Ansvar:** Ljudmotor med voice allocation, graf och sequencer-körning.
 **Nyckeltyper:** `SynthEngine`, `Voice`, `VoiceAllocator`, `ModuleGraph`, `Instrument`
 **Kommunikation:** `EngineCommand`, `EngineEvent`, `CommandSender`, `EngineHandle`
-**Beroenden:** synth_core, synth_dsp, synth_modules, synth_sequencer
+**Beroenden:** synth_core, synth_dsp, synth_modules, synth_sequencer, ringbuf, parking_lot
 
 ### modular_synth
 **Ansvar:** Huvudapplikation med GUI och I/O.
@@ -167,7 +167,7 @@ Innehåller en `ModuleGraph` för flexibel signalkedja.
 **Tick:** Minsta tidsenheten i sequencern. 960 ticks = 1 quarter note (PPQN).
 
 **Newtype Pattern:** Alla domänvärden wrappas i typsäkra typer istället för råa primitiver.
-Se `synth_core::types` för `Hertz`, `Gain`, `NormalizedValue`, etc.
+Se `synth_core::audio::types` för `Hertz`, `Gain`, `NormalizedValue`, etc.
 
 ---
 
@@ -195,13 +195,13 @@ för att undvika deallokering på audio thread (`DroppedModule`, `DroppedItem`).
 ### Lägga till ny modul-typ
 
 1. Definiera modulen i `synth_modules/src/` (implementera `PolyModule` trait)
-2. Lägg till `ModuleType`-variant i `synth_core/src/params/module_type.rs`
+2. Lägg till `ModuleType`-variant i `synth_core/src/params/mod.rs`
 3. Lägg till params-enum i `synth_core/src/params/` (t.ex. `NewModuleParam`)
 4. Exponera via `synth_modules/src/lib.rs`
 5. Lägg till factory i `synth_engine` för att skapa modulinstanser
 6. Lägg till GUI-panel i `modular_synth/src/gui/panels/`
 
-**Berörda filer:** module_type.rs, params/*.rs, synth_modules/src/*.rs, graph.rs
+**Berörda filer:** `params/mod.rs`, `params/*.rs`, `synth_modules/src/*.rs`, `graph.rs`
 
 ### Lägga till ny effekt
 
@@ -210,7 +210,7 @@ för att undvika deallokering på audio thread (`DroppedModule`, `DroppedItem`).
 3. Lägg till i `EffectChain::add_effect()` factory
 4. Exponera via `synth_modules/src/lib.rs`
 
-**Berörda filer:** effects/*.rs, commands.rs, effect_chain.rs
+**Berörda filer:** `effects/*.rs`, `commands.rs`, `effect_chain.rs`
 
 ---
 
@@ -221,10 +221,10 @@ modular-synth/
 ├── crates/
 │   ├── synth_core/        # Kärntyper och traits
 │   │   └── src/
-│   │       ├── types/     # Newtypes (Hertz, Gain, etc.)
-│   │       ├── params/    # Parameter-enums per modul
-│   │       ├── audio/     # AudioProcessor, AudioBackend
-│   │       └── module_traits.rs
+│   │       ├── audio/     # AudioProcessor, backends, och newtypes (types.rs)
+│   │       ├── params/    # Parameter-enums per modul (i mod.rs)
+│   │       ├── module_traits.rs
+│   │       └── lib.rs
 │   ├── synth_dsp/         # DSP-primitiver
 │   │   └── src/
 │   │       ├── oscillators.rs  # PolyBLEP
@@ -280,9 +280,13 @@ modular-synth/
 | Crate | Syfte |
 |-------|-------|
 | cpal | Plattformsoberoende audio I/O |
-| egui/eframe | Immediate-mode GUI |
+| egui/eframe | Immediate-mode GUI (med `egui_extras`, `egui-file-dialog`) |
 | ringbuf | Lock-free ring buffers |
 | parking_lot | Snabbare mutex för icke-kritiska paths |
 | midir | MIDI I/O |
 | serde/serde_json | Serialisering för patch-filer |
 | thiserror | Ergonomisk error-hantering |
+| fastrand | Snabba, deterministiska slumptal |
+| arrayvec | Heap-fria fixed-size collections |
+| realfft | FFT-beräkningar för spektrala effekter |
+| dirs | Hantering av systemkataloger (t.ex. för patchar) |

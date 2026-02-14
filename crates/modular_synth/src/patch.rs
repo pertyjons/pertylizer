@@ -97,6 +97,7 @@ pub enum PatchModuleType {
     // Visualizers
     Oscilloscope,
     LevelMeter,
+    SpectrumAnalyzer,
     // Modulation
     ModMatrix,
     // Modulation / Utility
@@ -142,6 +143,7 @@ impl PatchModuleType {
             Self::MidSide => "mid_side",
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
+            Self::SpectrumAnalyzer => "spectrum_analyzer",
             Self::ModMatrix => "mod_matrix",
             // Modulation / Utility
             Self::RingMod => "ring_mod",
@@ -186,6 +188,7 @@ impl PatchModuleType {
             Self::MidSide => "mds",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
+            Self::SpectrumAnalyzer => "spa",
             Self::ModMatrix => "mmx",
             // Modulation / Utility
             Self::RingMod => "rng",
@@ -233,7 +236,10 @@ impl PatchModuleType {
     /// Returns true if this module is a visualizer (display only, no audio processing).
     #[must_use]
     pub const fn is_visualizer(&self) -> bool {
-        matches!(self, Self::Oscilloscope | Self::LevelMeter)
+        matches!(
+            self,
+            Self::Oscilloscope | Self::LevelMeter | Self::SpectrumAnalyzer
+        )
     }
 
     /// Returns true if this module doesn't need port connections in the UI.

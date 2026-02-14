@@ -1,4 +1,4 @@
-# Master TODO - Modular Synth (v0.121.0)
+# Master TODO - Modular Synth (v0.122.0)
 
 ## Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
 *Mål: Göra klart påbörjad arkitektur och fixa de mest irriterande begränsningarna för användaren.*
@@ -31,7 +31,7 @@
     * [ ] Högerklick på parameter -> "Learn MIDI CC". Nödvändigt för hårdvarukontroll.
 10. **Visualiseringar: Spectrum Analyzer (FFT)** (Från nuvarande P4)
     * [x] ~~FFT-infrastruktur (FftProcessor, StftProcessor, PartitionedConvolver)~~ *(0.121.0: synth_dsp::spectral)*
-    * [ ] Bygg visuell spectrum analyzer med FFT-infrastrukturen.
+    * [x] ~~Bygg visuell spectrum analyzer med FFT-infrastrukturen.~~ *(0.122.0: 2048-punkt FFT, logaritmisk frekvensaxel)*
 
 ---
 
@@ -39,7 +39,7 @@
 *Mål: Förvandla synten till en professionell miljö.*
 
 11. **Oversampling** (Nytt - Ljudkvalitet)
-    * [ ] Implementera 2x/4x oversampling för att minska aliasing i distortion och FM.
+    * [x] ~~Implementera 2x/4x oversampling för att minska aliasing i distortion och FM.~~ *(0.122.0: Per-instrument 2x/4x med half-band FIR)*
 12. **Undo / Redo** (Nytt - UX)
     * [ ] Implementera Command-historik för `PatchEditor`. Kritiskt när man bygger komplexa patchar.
 13. **Sequencer GUI & Transport** (Från nuvarande P5)
@@ -85,7 +85,7 @@
     * [ ] Implementera ett "kompileringssteg" som omvandlar `ModuleGraph` (HashMap) till en linjär lista av operationer (`Vec<Op>`) och en platt minnesbuffert.
     * [ ] Mål: Eliminera alla hash-uppslagningar och pointer-jumps i ljudtråden för maximal cache-lokalitet och prestanda.
 23. **Oversampling**
-    * [ ] Stöd för 2x/4x oversampling internt i rösterna för minskad aliasing.
+    * [x] ~~Stöd för 2x/4x oversampling internt i rösterna för minskad aliasing.~~ *(0.122.0)*
 
 ### Analys av förändringen
 Denna nya lista prioriterar **användbarhet** (Inspelning, Browser, MIDI Learn) högre än ren teknik (Sequencer GUI, Avancerade Visualiseringar).

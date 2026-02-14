@@ -18,7 +18,7 @@ use synth_core::{Describable, ModuleCategory, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
-use synth_engine::visualizers::{LevelMeter, Oscilloscope};
+use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineHandle, ModuleId};
 use synth_modules::effects::{Chorus, Delay, Distortion, MidSide, Reverb, Waveshaper};
 use synth_modules::{
@@ -496,6 +496,22 @@ fn load_module(
                 buffer,
             });
         }
+        PatchModuleType::SpectrumAnalyzer => {
+            let descriptor = SpectrumAnalyzer::new().descriptor();
+            patch_editor.add_module_at(module_id, descriptor, position);
+
+            // Create shared visualization buffer
+            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+            handle.add_visualization_buffer(module_id, buffer.clone());
+
+            // Visualizers are per-instrument - add to this instrument's effect chain
+            handle.send(EngineCommand::AddVisualizer {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                buffer,
+            });
+        }
         PatchModuleType::ModMatrix => {
             let m = synth_modules::ModMatrix::new();
             let descriptor = m.descriptor();
@@ -960,6 +976,7 @@ pub fn create_patch_from_rack(
                 ModuleCategory::Visualizer => match descriptor.type_id.0.as_str() {
                     "oscilloscope" => PatchModuleType::Oscilloscope,
                     "level_meter" => PatchModuleType::LevelMeter,
+                    "spectrum_analyzer" => PatchModuleType::SpectrumAnalyzer,
                     _ => continue,
                 },
                 _ => continue,

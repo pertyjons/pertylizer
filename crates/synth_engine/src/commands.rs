@@ -521,6 +521,7 @@ pub enum EngineCommand {
 pub enum VisualizerType {
     Oscilloscope,
     LevelMeter,
+    SpectrumAnalyzer,
 }
 
 /// Type of effect module.
@@ -618,6 +619,8 @@ pub enum InstrumentParam {
     Transpose(Semitones),
     /// MIDI learn state machine.
     LearnState(LearnState),
+    /// Oversampling factor (Off/2x/4x).
+    OversamplingFactor(synth_dsp::OversamplingFactor),
 }
 
 /// Events sent from the audio engine to the UI.

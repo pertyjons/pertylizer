@@ -10,6 +10,7 @@ mod knob;
 mod meter;
 mod port;
 mod scope;
+mod spectrum;
 mod tooltip;
 mod waveform;
 
@@ -26,5 +27,6 @@ pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
 pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::draw_oscilloscope;
+pub use spectrum::draw_spectrum_analyzer;
 pub use tooltip::{draw_tooltip_above, draw_tooltip_right_of, draw_value_tooltip};
 pub use waveform::{WaveformSelector, WaveformType};

@@ -28,6 +28,7 @@ mod oscillators;
 mod phase_vocoder;
 mod physical;
 mod ring_mod;
+mod spectrum_analyzer;
 mod sub_osc;
 mod waveshaper;
 mod wavetable;
@@ -59,6 +60,7 @@ pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
 pub use ring_mod::RingModParam;
+pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
 pub use wavetable::{WavetableParam, WavetableSelect};
@@ -93,6 +95,7 @@ pub enum ModuleType {
     // Visualizers
     Oscilloscope,
     LevelMeter,
+    SpectrumAnalyzer,
     // Modulation
     ModMatrix,
     // Modulation / Utility
@@ -193,7 +196,10 @@ impl ModuleType {
     /// Visualizers capture audio data for display but don't modify the signal.
     #[inline]
     pub fn is_visualizer(&self) -> bool {
-        matches!(self, Self::Oscilloscope | Self::LevelMeter)
+        matches!(
+            self,
+            Self::Oscilloscope | Self::LevelMeter | Self::SpectrumAnalyzer
+        )
     }
 
     /// Check if this module type is global (not a voice module).
@@ -233,6 +239,7 @@ impl ModuleType {
             Self::Waveshaper => "Waveshaper",
             Self::Oscilloscope => "Oscilloscope",
             Self::LevelMeter => "Level Meter",
+            Self::SpectrumAnalyzer => "Spectrum Analyzer",
             Self::ModMatrix => "Mod Matrix",
             // Modulation / Utility
             Self::RingMod => "Ring Mod",
@@ -282,6 +289,7 @@ impl ModuleType {
             Self::Waveshaper => "wsh",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
+            Self::SpectrumAnalyzer => "spa",
             Self::ModMatrix => "mmx",
             // Modulation / Utility
             Self::RingMod => "rng",
@@ -331,6 +339,7 @@ impl ModuleType {
             "wsh" => Some(Self::Waveshaper),
             "scp" => Some(Self::Oscilloscope),
             "mtr" => Some(Self::LevelMeter),
+            "spa" => Some(Self::SpectrumAnalyzer),
             "mmx" => Some(Self::ModMatrix),
             // Modulation / Utility
             "rng" => Some(Self::RingMod),
@@ -395,6 +404,7 @@ pub enum Param {
     Waveshaper(WaveshaperParam),
     Oscilloscope(OscilloscopeParam),
     LevelMeter(LevelMeterParam),
+    SpectrumAnalyzer(SpectrumAnalyzerParam),
     ModMatrix(ModMatrixParam),
     // Modulation / Utility
     RingMod(RingModParam),
@@ -454,6 +464,7 @@ impl Param {
             (Self::Waveshaper(a), Self::Waveshaper(b)) => a.same_kind(b),
             (Self::Oscilloscope(a), Self::Oscilloscope(b)) => a.same_kind(b),
             (Self::LevelMeter(a), Self::LevelMeter(b)) => a.same_kind(b),
+            (Self::SpectrumAnalyzer(a), Self::SpectrumAnalyzer(b)) => a.same_kind(b),
             (Self::ModMatrix(a), Self::ModMatrix(b)) => a.same_kind(b),
             // Modulation / Utility
             (Self::RingMod(a), Self::RingMod(b)) => a.same_kind(b),
@@ -503,6 +514,7 @@ impl Param {
             Self::Waveshaper(_) => ModuleType::Waveshaper,
             Self::Oscilloscope(_) => ModuleType::Oscilloscope,
             Self::LevelMeter(_) => ModuleType::LevelMeter,
+            Self::SpectrumAnalyzer(_) => ModuleType::SpectrumAnalyzer,
             Self::ModMatrix(_) => ModuleType::ModMatrix,
             // Modulation / Utility
             Self::RingMod(_) => ModuleType::RingMod,
@@ -551,6 +563,7 @@ impl Param {
             Self::Waveshaper(p) => p.name(),
             Self::Oscilloscope(p) => p.name(),
             Self::LevelMeter(p) => p.name(),
+            Self::SpectrumAnalyzer(p) => p.name(),
             Self::ModMatrix(p) => p.name(),
             // Modulation / Utility
             Self::RingMod(p) => p.name(),
@@ -599,6 +612,7 @@ impl Param {
             Self::Waveshaper(p) => p.as_f32(),
             Self::Oscilloscope(p) => p.as_f32(),
             Self::LevelMeter(p) => p.as_f32(),
+            Self::SpectrumAnalyzer(p) => p.as_f32(),
             Self::ModMatrix(p) => p.as_f32(),
             // Modulation / Utility
             Self::RingMod(p) => p.as_f32(),
@@ -647,6 +661,7 @@ impl Param {
             Self::Waveshaper(p) => Self::Waveshaper(p.with_f32(value)),
             Self::Oscilloscope(p) => Self::Oscilloscope(p.with_f32(value)),
             Self::LevelMeter(p) => Self::LevelMeter(p.with_f32(value)),
+            Self::SpectrumAnalyzer(p) => Self::SpectrumAnalyzer(p.with_f32(value)),
             Self::ModMatrix(p) => Self::ModMatrix(p.with_f32(value)),
             // Modulation / Utility
             Self::RingMod(p) => Self::RingMod(p.with_f32(value)),

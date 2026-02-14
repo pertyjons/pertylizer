@@ -1,5 +1,28 @@
 # Version History
 
+## [0.122.0] - 2026-02-14
+### Added - Vosim, Spectrum Analyzer, Oversampling
+
+**Vosim (MathOscillator):**
+- Ny `Vosim` algoritm i MathOscillator — klassisk röstsyntes via kvadrerade sinuspulser.
+- 3 parametrar: Formant (1x-20x basfrekvens), Decay (0.3-0.99), Pulser (1-6 st).
+- Ger vokalliknande ljud, perfekt för pads och experimentella texturer.
+
+**Spectrum Analyzer (Visualizer):**
+- Ny visualizer-modul som visar frekvensspektrum via FFT (2048-punkt).
+- Logaritmisk frekvensaxel (20Hz-20kHz) med dB-skala.
+- Hann-fönster, mono (L+R)/2 analys, Gain-parameter för vertikal skalning.
+- Grid-linjer vid 100Hz, 1kHz, 10kHz + etiketter.
+- Full patch save/load-stöd.
+
+**Oversampling (2x/4x):**
+- Per-instrument oversampling för minskad aliasing från oscillatorer och waveshapers.
+- Ny `OversamplingFactor` (Off/2x/4x) i instrument rack UI.
+- 11-tap half-band FIR anti-aliasing filter (~60dB stopband rejection).
+- 4x använder kaskaderade 2x-steg (4x → 2x → 1x).
+- Pre-allokerade buffertar — noll overhead vid Off (1x), inga heap-allokeringar.
+- Röster processas vid högre sample rate, effektkedjan kör vid originalrate.
+
 ## [0.121.0] - 2026-02-14
 ### Added - Polyfon Aftertouch, Granulär Syntes, Convolution Reverb, Phase Vocoder & FFT-infrastruktur
 

@@ -17,6 +17,7 @@
 pub mod delay;
 pub mod filters;
 pub mod oscillators;
+pub mod oversampling;
 pub mod spectral;
 
 pub use delay::{DelayLine, InterpolatedDelayLine};
@@ -24,6 +25,7 @@ pub use filters::{
     AcidFilter, BiquadCoeffs, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType,
 };
 pub use oscillators::{poly_blep, poly_blep_integrated};
+pub use oversampling::{Downsampler, OversamplingFactor};
 pub use spectral::{FftProcessor, PartitionedConvolver, StftProcessor, WindowType, fill_window};
 
 // Re-export Complex for use by downstream crates (e.g. phase vocoder)

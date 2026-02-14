@@ -45,6 +45,8 @@ pub struct InstrumentUiState {
     pub transpose: Semitones,
     /// MIDI learn state for key range assignment.
     pub learn_state: LearnState,
+    /// Oversampling factor (Off/2x/4x).
+    pub oversampling: synth_dsp::OversamplingFactor,
 }
 
 impl Default for InstrumentUiState {
@@ -62,6 +64,7 @@ impl Default for InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
+            oversampling: synth_dsp::OversamplingFactor::default(),
         }
     }
 }
@@ -82,6 +85,7 @@ impl InstrumentUiState {
             key_range: KeyRange::FULL,
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
+            oversampling: synth_dsp::OversamplingFactor::default(),
         }
     }
 
@@ -527,6 +531,41 @@ pub fn show_instrument_rack(
                                         param: InstrumentParam::Transpose(new_transpose),
                                     });
                                 }
+
+                                ui.add_space(8.0);
+
+                                // Oversampling selector
+                                ui.label(
+                                    RichText::new("OS:")
+                                        .color(theme().colors.text_dim)
+                                        .size(t.fonts.size_small),
+                                );
+
+                                let current_os = instruments[idx].oversampling;
+                                egui::ComboBox::from_id_salt(format!("os_{idx}"))
+                                    .selected_text(current_os.name())
+                                    .width(40.0)
+                                    .show_ui(ui, |ui| {
+                                        for factor in synth_dsp::OversamplingFactor::ALL {
+                                            if ui
+                                                .selectable_label(
+                                                    current_os == factor,
+                                                    factor.name(),
+                                                )
+                                                .clicked()
+                                            {
+                                                instruments[idx].oversampling = factor;
+                                                handle.send(
+                                                    EngineCommand::SetInstrumentParameter {
+                                                        instrument_id,
+                                                        param: InstrumentParam::OversamplingFactor(
+                                                            factor,
+                                                        ),
+                                                    },
+                                                );
+                                            }
+                                        }
+                                    });
                             });
                         });
 

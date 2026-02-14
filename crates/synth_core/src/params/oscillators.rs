@@ -97,10 +97,11 @@ pub enum MathAlgo {
     Pulsar,
     Shepard,
     FeedbackFM,
+    Vosim,
 }
 
 impl MathAlgo {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::SineFM,
         Self::TanChaos,
         Self::SuperSaw,
@@ -119,6 +120,7 @@ impl MathAlgo {
         Self::Pulsar,
         Self::Shepard,
         Self::FeedbackFM,
+        Self::Vosim,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -141,6 +143,7 @@ impl MathAlgo {
             Self::Pulsar => "Pulsar",
             Self::Shepard => "Shepard",
             Self::FeedbackFM => "Feedback FM",
+            Self::Vosim => "VOSIM",
         }
     }
 
@@ -164,6 +167,7 @@ impl MathAlgo {
             Self::Pulsar => "pulsar",
             Self::Shepard => "shepard",
             Self::FeedbackFM => "feedback_fm",
+            Self::Vosim => "vosim",
         }
     }
 
@@ -187,6 +191,7 @@ impl MathAlgo {
             "pulsar" => Some(Self::Pulsar),
             "shepard" => Some(Self::Shepard),
             "feedback_fm" => Some(Self::FeedbackFM),
+            "vosim" => Some(Self::Vosim),
             _ => None,
         }
     }

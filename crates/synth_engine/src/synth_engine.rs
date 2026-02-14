@@ -19,7 +19,7 @@ use crate::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::metering::MeteringSystem;
 use crate::sequencer_engine::SequencerEngine;
 use crate::state::EngineState;
-use crate::visualizers::{LevelMeter, Oscilloscope, VisualizationBuffer};
+use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
     AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, Bpm,
@@ -925,6 +925,7 @@ impl SynthEngine {
             InstrumentParam::KeyRange(range) => instrument.set_key_range(range),
             InstrumentParam::Transpose(semitones) => instrument.set_transpose(semitones),
             InstrumentParam::LearnState(state) => instrument.set_learn_state(state),
+            InstrumentParam::OversamplingFactor(factor) => instrument.set_oversampling(factor),
         }
     }
 
@@ -1299,6 +1300,7 @@ impl SynthEngine {
         let visualizer: Box<dyn AudioEffect> = match visualizer_type {
             VisualizerType::Oscilloscope => Box::new(Oscilloscope::new()),
             VisualizerType::LevelMeter => Box::new(LevelMeter::new()),
+            VisualizerType::SpectrumAnalyzer => Box::new(SpectrumAnalyzer::new()),
         };
 
         match instrument_id {
