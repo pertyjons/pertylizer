@@ -1,6 +1,6 @@
-# 📋 Master TODO - Modular Synth (v0.34+)
+# Master TODO - Modular Synth (v0.121.0)
 
-## 🔴 Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
+## Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
 *Mål: Göra klart påbörjad arkitektur och fixa de mest irriterande begränsningarna för användaren.*
 
 1.  **Stereo Routing & Mixning** (Från nuvarande P1)
@@ -16,7 +16,7 @@
 
 ---
 
-## 🟠 Fas 2: Kreativ Expansion (Medellång sikt)
+## Fas 2: Kreativ Expansion (Medellång sikt)
 *Mål: Göra synten rolig och musikalisk att använda.*
 
 6.  **Sampling & Audio Assets** (Från nuvarande P3)
@@ -25,15 +25,17 @@
     * [ ] Byt ut fil-dialogen mot en inbyggd browser med tag-filtrering (Bass, Pad, FX).
 8.  **Makro-system & Mod Matrix** (Nytt - Ljuddesign)
     * [x] ~~Mod Matrix: 8-slot modulationsrouting med 10 källor och 11 destinationer per röst~~ *(0.107.0)*
+    * [x] ~~Polyfon Aftertouch som ModSource~~ *(0.121.0)*
     * [ ] Skapa 4 globala Makro-rattar som kan styra flera parametrar. Detta ersätter behovet av komplex kabeldragning för "Performance"-rattar.
 9.  **Dynamic MIDI Learn** (Nytt - UX)
     * [ ] Högerklick på parameter -> "Learn MIDI CC". Nödvändigt för hårdvarukontroll.
 10. **Visualiseringar: Spectrum Analyzer (FFT)** (Från nuvarande P4)
-    * [ ] Implementera FFT för att se frekvensinnehåll. Det får synten att kännas "levande".
+    * [x] ~~FFT-infrastruktur (FftProcessor, StftProcessor, PartitionedConvolver)~~ *(0.121.0: synth_dsp::spectral)*
+    * [ ] Bygg visuell spectrum analyzer med FFT-infrastrukturen.
 
 ---
 
-## 🟡 Fas 3: Workstation & Ljudkvalitet (Lång sikt)
+## Fas 3: Workstation & Ljudkvalitet (Lång sikt)
 *Mål: Förvandla synten till en professionell miljö.*
 
 11. **Oversampling** (Nytt - Ljudkvalitet)
@@ -51,7 +53,7 @@
 
 ---
 
-## 🔵 Fas 4: "Nice to Have" / Nischade Features
+## Fas 4: "Nice to Have" / Nischade Features
 *Mål: Specialfunktioner för specifika användare.*
 
 16. **Live Performance View** (Nytt)
@@ -65,7 +67,7 @@
 20. **Avancerade Visualiseringar** (Från nuvarande P4)
     * [ ] Vectorscope, Tuner, 3D-vyer.
 
-## ⚡ Fas 5: Prestanda & Optimering (Ny sektion)
+## Fas 5: Prestanda & Optimering (Ny sektion)
 21. **Cargo Workspace Refactoring**
     * [x] ~~Dela upp monolitisk crate i 6 separata crates~~ *(0.52.0)*
     * [x] ~~synth_core: Types, traits, audio abstractions~~
