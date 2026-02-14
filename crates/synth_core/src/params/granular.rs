@@ -1,0 +1,189 @@
+//! Granular synthesis parameter types.
+
+use serde::{Deserialize, Serialize};
+
+use crate::types::{Gain, Milliseconds, NormalizedValue};
+
+/// Grain window envelope shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GrainWindow {
+    #[default]
+    Hann,
+    Gaussian,
+    Trapezoid,
+}
+
+impl GrainWindow {
+    pub const ALL: [Self; 3] = [Self::Hann, Self::Gaussian, Self::Trapezoid];
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hann => "Hann",
+            Self::Gaussian => "Gaussian",
+            Self::Trapezoid => "Trapezoid",
+        }
+    }
+
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Hann => "hann",
+            Self::Gaussian => "gaussian",
+            Self::Trapezoid => "trapezoid",
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(idx: usize) -> Self {
+        Self::ALL.get(idx).copied().unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|w| *w == self).unwrap_or(0)
+    }
+}
+
+/// Grain source waveform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GrainSource {
+    #[default]
+    Saw,
+    Sine,
+    Square,
+    Triangle,
+    Noise,
+}
+
+impl GrainSource {
+    pub const ALL: [Self; 5] = [
+        Self::Saw,
+        Self::Sine,
+        Self::Square,
+        Self::Triangle,
+        Self::Noise,
+    ];
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Saw => "Saw",
+            Self::Sine => "Sine",
+            Self::Square => "Square",
+            Self::Triangle => "Triangle",
+            Self::Noise => "Noise",
+        }
+    }
+
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Saw => "saw",
+            Self::Sine => "sine",
+            Self::Square => "square",
+            Self::Triangle => "triangle",
+            Self::Noise => "noise",
+        }
+    }
+
+    #[must_use]
+    pub fn from_index(idx: usize) -> Self {
+        Self::ALL.get(idx).copied().unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
+    }
+}
+
+/// Granular oscillator parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum GranularParam {
+    /// Grain size in milliseconds (5-500ms).
+    GrainSize(Milliseconds),
+    /// Grain density (0=sparse, 1=dense).
+    Density(NormalizedValue),
+    /// Playback position in source buffer (0-1).
+    Position(NormalizedValue),
+    /// Position randomization spread (0=fixed, 1=full range).
+    PositionSpread(NormalizedValue),
+    /// Pitch randomization spread in semitones (mapped 0-1 => 0-24 semitones).
+    PitchSpread(NormalizedValue),
+    /// Stereo pan spread (0=center, 1=full width).
+    PanSpread(NormalizedValue),
+    /// Freeze playback position (grains loop at current position).
+    Freeze(bool),
+    /// Grain window envelope shape.
+    Window(GrainWindow),
+    /// Source waveform.
+    Source(GrainSource),
+    /// Output level.
+    Level(Gain),
+}
+
+impl GranularParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::GrainSize(_) => "Grain Size",
+            Self::Density(_) => "Density",
+            Self::Position(_) => "Position",
+            Self::PositionSpread(_) => "Pos Spread",
+            Self::PitchSpread(_) => "Pitch Spread",
+            Self::PanSpread(_) => "Pan Spread",
+            Self::Freeze(_) => "Freeze",
+            Self::Window(_) => "Window",
+            Self::Source(_) => "Source",
+            Self::Level(_) => "Level",
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::GrainSize(ms) => ms.as_f32(),
+            Self::Density(v)
+            | Self::Position(v)
+            | Self::PositionSpread(v)
+            | Self::PitchSpread(v)
+            | Self::PanSpread(v) => v.as_f32(),
+            Self::Freeze(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Window(w) => w.index() as f32,
+            Self::Source(s) => s.index() as f32,
+            Self::Level(g) => g.as_f32(),
+        }
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::GrainSize(_) => Self::GrainSize(Milliseconds::new(value)),
+            Self::Density(_) => Self::Density(NormalizedValue::new(value)),
+            Self::Position(_) => Self::Position(NormalizedValue::new(value)),
+            Self::PositionSpread(_) => Self::PositionSpread(NormalizedValue::new(value)),
+            Self::PitchSpread(_) => Self::PitchSpread(NormalizedValue::new(value)),
+            Self::PanSpread(_) => Self::PanSpread(NormalizedValue::new(value)),
+            Self::Freeze(_) => Self::Freeze(value > 0.5),
+            Self::Window(_) => Self::Window(GrainWindow::from_index(value as usize)),
+            Self::Source(_) => Self::Source(GrainSource::from_index(value as usize)),
+            Self::Level(_) => Self::Level(Gain::new(value)),
+        }
+    }
+}
+
+impl Default for GranularParam {
+    fn default() -> Self {
+        Self::Level(Gain::UNITY)
+    }
+}

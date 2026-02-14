@@ -1,5 +1,39 @@
 # Version History
 
+## [0.121.0] - 2026-02-14
+### Added - Polyfon Aftertouch, Granulär Syntes, Convolution Reverb, Phase Vocoder & FFT-infrastruktur
+
+**Polyfon Aftertouch:**
+- Ny `PolyAftertouch` modulationskälla i mod matrix (per-ton tryck).
+- Separat från kanal-aftertouch — varje röst har eget aftertouch-värde.
+
+**FFT-infrastruktur (synth_dsp):**
+- Ny `spectral`-modul med `realfft`-baserade verktyg.
+- `FftProcessor`: Pre-allokerad real FFT wrapper med forward/inverse.
+- `StftProcessor`: Overlap-add STFT med ring buffer och spectral callback.
+- `PartitionedConvolver`: Uniform partitioned convolution för långa impulse responses.
+- `WindowType`: Hann, Hamming, Blackman-Harris fönsterfunktioner.
+
+**Granulär Syntes (GranularOsc):**
+- Ny PolyModule med 32 simultana grains (fixed-array, ingen heap i process).
+- 5 källvågformer: Saw, Sine, Square, Triangle, Noise.
+- 3 fönstertyper: Hann, Gaussian, Trapezoid.
+- Parametrar: GrainSize, Density, Position, PositionSpread, PitchSpread, PanSpread.
+- Freeze-mode för att låsa grain-position.
+- RT-säker xorshift32 PRNG.
+
+**Convolution Reverb (Convolver):**
+- Ny AudioEffect med partitioned FFT-convolution (stereo).
+- 4 matematiskt genererade impulse responses: Plate, Room, Spring, Hall.
+- Pre-delay (0-200ms), Decay Trim, Brightness (one-pole LP) och Mix.
+- Automatisk IR-rebuild vid parameterändringar.
+
+**Phase Vocoder:**
+- Ny AudioEffect med STFT-baserad pitch shifting (stereo).
+- Pitch shift: -24 till +24 halvtoner med fas-ackumulering.
+- Spectral freeze-mode (håller nuvarande spektrum).
+- Konfigurerbar FFT-storlek: 512, 1024, 2048, 4096.
+
 ## [0.120.0] - 2026-02-14
 ### Added - Cross-Modulation, FDN Reverb, Sidechain & Microtonal Tuning
 

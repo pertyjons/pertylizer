@@ -725,6 +725,25 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::GranularOsc => {
+            let m = synth_modules::GranularOsc::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
         PatchModuleType::BbdDelay => {
             let e = synth_modules::BbdDelay::new();
             let descriptor = e.descriptor();
@@ -758,6 +777,44 @@ fn load_module(
                 &descriptor,
                 &module_state.parameters,
                 Some(EffectType::Limiter),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::Convolver => {
+            let e = synth_modules::effects::Convolver::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Convolver),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::PhaseVocoder => {
+            let e = synth_modules::effects::PhaseVocoder::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::PhaseVocoder),
                 patch_editor,
                 handle,
                 instrument_id,

@@ -264,8 +264,10 @@ pub struct Voice {
     pub pitch_bend: BipolarValue,
     /// Mod wheel amount (0.0 to 1.0, type-safe).
     pub mod_wheel: NormalizedValue,
-    /// Aftertouch amount (0.0 to 1.0, type-safe).
+    /// Channel aftertouch amount (0.0 to 1.0, type-safe).
     pub aftertouch: NormalizedValue,
+    /// Per-note polyphonic aftertouch (0.0 to 1.0, type-safe).
+    pub poly_aftertouch: NormalizedValue,
 
     /// Expression settings (pitch bend range, velocity sensitivity, etc.).
     pub expression: ExpressionSettings,
@@ -307,6 +309,7 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
+            poly_aftertouch: NormalizedValue::MIN,
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
             steal_fade_samples: 128,
@@ -336,6 +339,7 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
+            poly_aftertouch: NormalizedValue::MIN,
             expression: ExpressionSettings::default(),
             graph,
             steal_fade_samples: 128,
@@ -651,18 +655,20 @@ impl Voice {
         }
 
         // Build source values array matching ModSource::ALL indices
-        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber, Aftertouch, ModWheel, PitchBend]
-        let source_values: [f32; 10] = [
-            0.0,            // None
-            lfo_values[0],  // Lfo(0)
-            lfo_values[1],  // Lfo(1)
-            env_values[0],  // Envelope(0)
-            env_values[1],  // Envelope(1)
-            velocity_val,   // Velocity
-            note_val,       // NoteNumber
-            aftertouch_val, // Aftertouch
-            mod_wheel_val,  // ModWheel
-            pitch_bend_val, // PitchBend
+        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber, Aftertouch, ModWheel, PitchBend, PolyAftertouch]
+        let poly_aftertouch_val = self.poly_aftertouch.as_f32();
+        let source_values: [f32; 11] = [
+            0.0,                 // None
+            lfo_values[0],       // Lfo(0)
+            lfo_values[1],       // Lfo(1)
+            env_values[0],       // Envelope(0)
+            env_values[1],       // Envelope(1)
+            velocity_val,        // Velocity
+            note_val,            // NoteNumber
+            aftertouch_val,      // Aftertouch
+            mod_wheel_val,       // ModWheel
+            pitch_bend_val,      // PitchBend
+            poly_aftertouch_val, // PolyAftertouch
         ];
 
         // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config
@@ -761,6 +767,7 @@ impl Voice {
             pitch_bend: BipolarValue::CENTER,
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
+            poly_aftertouch: NormalizedValue::MIN,
             expression: self.expression,
             graph: cloned_graph,
             steal_fade_samples: self.steal_fade_samples,

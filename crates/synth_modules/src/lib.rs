@@ -24,6 +24,7 @@ pub mod envelope;
 pub mod envelope_follower;
 pub mod euclidean;
 pub mod filter;
+pub mod granular_osc;
 pub mod lfo;
 pub mod math_oscillator;
 pub mod mod_matrix;
@@ -53,6 +54,7 @@ pub use envelope::{Envelope, EnvelopePositionBuffer, EnvelopeStage};
 pub use envelope_follower::EnvelopeFollower;
 pub use euclidean::Euclidean;
 pub use filter::{Filter, LadderFilter};
+pub use granular_osc::GranularOsc;
 pub use lfo::Lfo;
 pub use math_oscillator::MathOscillator;
 pub use mod_matrix::ModMatrix;
@@ -73,8 +75,8 @@ pub use mechanical_noise::MechanicalNoise;
 
 // Effects exports
 pub use effects::{
-    BbdDelay, Chorus, Compressor, Delay, Distortion, DistortionType, Eq, Flanger, Limiter, MidSide,
-    Phaser, Reverb, Waveshaper,
+    BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, DistortionType, Eq, Flanger,
+    Limiter, MidSide, PhaseVocoder, Phaser, Reverb, Waveshaper,
 };
 
 // Re-export param types from synth_core for convenience

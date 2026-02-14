@@ -115,6 +115,10 @@ pub enum PatchModuleType {
     Euclidean,
     TuringMachine,
     RandomGates,
+    // Granular / Spectral (v0.121.0)
+    GranularOsc,
+    Convolver,
+    PhaseVocoder,
 }
 
 impl PatchModuleType {
@@ -155,6 +159,9 @@ impl PatchModuleType {
             Self::Euclidean => "euclidean",
             Self::TuringMachine => "turing_machine",
             Self::RandomGates => "random_gates",
+            Self::GranularOsc => "granular_osc",
+            Self::Convolver => "convolver",
+            Self::PhaseVocoder => "phase_vocoder",
         }
     }
 
@@ -196,6 +203,9 @@ impl PatchModuleType {
             Self::Euclidean => "euc",
             Self::TuringMachine => "tur",
             Self::RandomGates => "rgn",
+            Self::GranularOsc => "grn",
+            Self::Convolver => "cnv",
+            Self::PhaseVocoder => "pvc",
         }
     }
 
@@ -215,6 +225,8 @@ impl PatchModuleType {
                 | Self::MidSide
                 | Self::BbdDelay
                 | Self::Limiter
+                | Self::Convolver
+                | Self::PhaseVocoder
         )
     }
 

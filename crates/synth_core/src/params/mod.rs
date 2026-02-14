@@ -12,17 +12,20 @@
 //! - Comparison: `same_kind()` to compare param types ignoring values
 
 mod additive;
+mod convolver;
 mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
 mod generative;
+mod granular;
 mod lfo;
 mod mod_matrix;
 mod modules;
 mod mseg;
 mod noise;
 mod oscillators;
+mod phase_vocoder;
 mod physical;
 mod ring_mod;
 mod sub_osc;
@@ -33,6 +36,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export all parameter types
 pub use additive::AdditiveParam;
+pub use convolver::{ConvolverParam, ImpulseResponse};
 pub use effects::{
     BbdDelayParam, ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode,
     DistortionParam, EqParam, FlangerParam, LimiterParam, MidSideParam, PhaserParam, ReverbParam,
@@ -41,6 +45,7 @@ pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
 pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
+pub use granular::{GrainSource, GrainWindow, GranularParam};
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
@@ -49,6 +54,7 @@ pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam
 pub use mseg::MsegParam;
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
+pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
@@ -107,6 +113,11 @@ pub enum ModuleType {
     KeyboardPanner,
     BodyResonance,
     MechanicalNoise,
+    // Granular
+    GranularOsc,
+    // Spectral effects
+    Convolver,
+    PhaseVocoder,
 }
 
 impl ModuleType {
@@ -147,6 +158,8 @@ impl ModuleType {
                 | Self::KeyboardPanner
                 | Self::BodyResonance
                 | Self::MechanicalNoise
+                // Granular
+                | Self::GranularOsc
         )
     }
 
@@ -170,6 +183,8 @@ impl ModuleType {
                 | Self::BbdDelay
                 | Self::MidSide
                 | Self::Limiter
+                | Self::Convolver
+                | Self::PhaseVocoder
         )
     }
 
@@ -237,6 +252,9 @@ impl ModuleType {
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
             Self::MechanicalNoise => "Mechanical Noise",
+            Self::GranularOsc => "Granular",
+            Self::Convolver => "Convolver",
+            Self::PhaseVocoder => "Phase Vocoder",
         }
     }
 
@@ -283,6 +301,9 @@ impl ModuleType {
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
             Self::MechanicalNoise => "mec",
+            Self::GranularOsc => "grn",
+            Self::Convolver => "cnv",
+            Self::PhaseVocoder => "pvc",
         }
     }
 
@@ -329,6 +350,9 @@ impl ModuleType {
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
             "mec" => Some(Self::MechanicalNoise),
+            "grn" => Some(Self::GranularOsc),
+            "cnv" => Some(Self::Convolver),
+            "pvc" => Some(Self::PhaseVocoder),
             _ => None,
         }
     }
@@ -390,6 +414,11 @@ pub enum Param {
     KeyboardPanner(KeyboardPannerParam),
     BodyResonance(BodyResonanceParam),
     MechanicalNoise(MechanicalNoiseParam),
+    // Granular
+    GranularOsc(GranularParam),
+    // Spectral effects
+    Convolver(ConvolverParam),
+    PhaseVocoder(PhaseVocoderParam),
 }
 
 impl Param {
@@ -444,6 +473,9 @@ impl Param {
             (Self::KeyboardPanner(a), Self::KeyboardPanner(b)) => a.same_kind(b),
             (Self::BodyResonance(a), Self::BodyResonance(b)) => a.same_kind(b),
             (Self::MechanicalNoise(a), Self::MechanicalNoise(b)) => a.same_kind(b),
+            (Self::GranularOsc(a), Self::GranularOsc(b)) => a.same_kind(b),
+            (Self::Convolver(a), Self::Convolver(b)) => a.same_kind(b),
+            (Self::PhaseVocoder(a), Self::PhaseVocoder(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -490,6 +522,9 @@ impl Param {
             Self::KeyboardPanner(_) => ModuleType::KeyboardPanner,
             Self::BodyResonance(_) => ModuleType::BodyResonance,
             Self::MechanicalNoise(_) => ModuleType::MechanicalNoise,
+            Self::GranularOsc(_) => ModuleType::GranularOsc,
+            Self::Convolver(_) => ModuleType::Convolver,
+            Self::PhaseVocoder(_) => ModuleType::PhaseVocoder,
         }
     }
 
@@ -535,6 +570,9 @@ impl Param {
             Self::KeyboardPanner(p) => p.name(),
             Self::BodyResonance(p) => p.name(),
             Self::MechanicalNoise(p) => p.name(),
+            Self::GranularOsc(p) => p.name(),
+            Self::Convolver(p) => p.name(),
+            Self::PhaseVocoder(p) => p.name(),
         }
     }
 
@@ -580,6 +618,9 @@ impl Param {
             Self::KeyboardPanner(p) => p.as_f32(),
             Self::BodyResonance(p) => p.as_f32(),
             Self::MechanicalNoise(p) => p.as_f32(),
+            Self::GranularOsc(p) => p.as_f32(),
+            Self::Convolver(p) => p.as_f32(),
+            Self::PhaseVocoder(p) => p.as_f32(),
         }
     }
 
@@ -625,6 +666,9 @@ impl Param {
             Self::KeyboardPanner(p) => Self::KeyboardPanner(p.with_f32(value)),
             Self::BodyResonance(p) => Self::BodyResonance(p.with_f32(value)),
             Self::MechanicalNoise(p) => Self::MechanicalNoise(p.with_f32(value)),
+            Self::GranularOsc(p) => Self::GranularOsc(p.with_f32(value)),
+            Self::Convolver(p) => Self::Convolver(p.with_f32(value)),
+            Self::PhaseVocoder(p) => Self::PhaseVocoder(p.with_f32(value)),
         }
     }
 }

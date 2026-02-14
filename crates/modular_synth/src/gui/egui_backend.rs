@@ -43,8 +43,8 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_modules::effects::{
-    BbdDelay, Chorus, Compressor, Delay, Distortion, Eq, Flanger, Limiter, MidSide, Phaser, Reverb,
-    Waveshaper,
+    BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, Limiter, MidSide,
+    PhaseVocoder, Phaser, Reverb, Waveshaper,
 };
 use synth_modules::{
     Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
@@ -580,6 +580,9 @@ impl eframe::App for SynthApp {
                             }
                             PaletteSelection::RandomGates => {
                                 self.add_random_gates_module();
+                            }
+                            PaletteSelection::GranularOsc => {
+                                self.add_granular_osc_module();
                             }
                         }
                     }
@@ -1152,6 +1155,24 @@ impl SynthApp {
         });
     }
 
+    fn add_granular_osc_module(&mut self) {
+        let m = synth_modules::GranularOsc::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::GranularOsc);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
     fn add_effect_module(&mut self, effect_type: EffectType) {
         // Create effect in GUI thread (real-time safe allocation)
         let (effect, descriptor, module_type): (
@@ -1218,6 +1239,16 @@ impl SynthApp {
                 let e = Limiter::new();
                 let d = e.descriptor();
                 (Box::new(e), d, TypedModuleType::Limiter)
+            }
+            EffectType::Convolver => {
+                let e = Convolver::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::Convolver)
+            }
+            EffectType::PhaseVocoder => {
+                let e = PhaseVocoder::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::PhaseVocoder)
             }
         };
 
@@ -1318,6 +1349,10 @@ impl SynthApp {
                 EffectType::MidSide => (Box::new(MidSide::new()), TypedModuleType::MidSide),
                 EffectType::BbdDelay => (Box::new(BbdDelay::new()), TypedModuleType::BbdDelay),
                 EffectType::Limiter => (Box::new(Limiter::new()), TypedModuleType::Limiter),
+                EffectType::Convolver => (Box::new(Convolver::new()), TypedModuleType::Convolver),
+                EffectType::PhaseVocoder => {
+                    (Box::new(PhaseVocoder::new()), TypedModuleType::PhaseVocoder)
+                }
             };
 
         let next_id = self.next_module_id(module_type);
@@ -3325,6 +3360,212 @@ fn draw_effect_params(
                             Param::Limiter(synth_core::LimiterParam::Mix(NormalizedValue::new(
                                 val,
                             ))),
+                        ));
+                    }
+                }
+            }
+            MasterEffectParams::Convolver {
+                ir_type: _,
+                pre_delay,
+                decay_trim,
+                brightness,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::Convolver {
+                    ir_type: _it,
+                    pre_delay: pd,
+                    decay_trim: dt,
+                    brightness: br,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Pre-Delay
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Pre-Delay")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}ms", pre_delay))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *pre_delay;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=200.0).show_value(false))
+                        .changed()
+                    {
+                        *pd = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Convolver(synth_core::ConvolverParam::PreDelay(
+                                Milliseconds::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Decay
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Decay")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", decay_trim * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *decay_trim;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.1..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *dt = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Convolver(synth_core::ConvolverParam::DecayTrim(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Brightness
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Bright")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", brightness * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *brightness;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *br = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Convolver(synth_core::ConvolverParam::Brightness(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Convolver(synth_core::ConvolverParam::Mix(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+                }
+            }
+            MasterEffectParams::PhaseVocoder {
+                pitch_shift,
+                freeze: _,
+                fft_size: _,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::PhaseVocoder {
+                    pitch_shift: ps,
+                    freeze: _fr,
+                    fft_size: _fs,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Pitch Shift
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Pitch")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:+.1}st", pitch_shift))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *pitch_shift;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -24.0..=24.0).show_value(false))
+                        .changed()
+                    {
+                        *ps = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::PhaseVocoder(synth_core::PhaseVocoderParam::PitchShift(
+                                synth_core::Semitones(val),
+                            )),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::PhaseVocoder(synth_core::PhaseVocoderParam::Mix(
+                                NormalizedValue::new(val),
+                            )),
                         ));
                     }
                 }

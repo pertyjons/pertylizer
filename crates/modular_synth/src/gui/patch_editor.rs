@@ -2008,6 +2008,7 @@ pub enum PaletteSelection {
     Euclidean,
     TuringMachine,
     RandomGates,
+    GranularOsc,
 }
 
 impl ModulePalette {
@@ -2046,6 +2047,10 @@ impl ModulePalette {
                     }
                     if ui.button("🎶 Additive").clicked() {
                         selected = Some(PaletteSelection::AdditiveOsc);
+                        ui.close();
+                    }
+                    if ui.button("🌾 Granular").clicked() {
+                        selected = Some(PaletteSelection::GranularOsc);
                         ui.close();
                     }
                 },
@@ -2121,6 +2126,15 @@ impl ModulePalette {
                 }
                 if ui.button("↔ Mid/Side").clicked() {
                     selected = Some(PaletteSelection::Effect(EffectType::MidSide));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("🏛 Convolver").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Convolver));
+                    ui.close();
+                }
+                if ui.button("🔬 Phase Vocoder").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::PhaseVocoder));
                     ui.close();
                 }
             });

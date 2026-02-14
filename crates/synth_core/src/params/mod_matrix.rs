@@ -122,10 +122,12 @@ pub enum ModSource {
     ModWheel,
     /// Pitch bend (-1 to +1).
     PitchBend,
+    /// Per-note polyphonic aftertouch (0-1).
+    PolyAftertouch,
 }
 
 impl ModSource {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::None,
         Self::Lfo(0),
         Self::Lfo(1),
@@ -136,6 +138,7 @@ impl ModSource {
         Self::Aftertouch,
         Self::ModWheel,
         Self::PitchBend,
+        Self::PolyAftertouch,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -152,6 +155,7 @@ impl ModSource {
             Self::Aftertouch => "Aftertouch",
             Self::ModWheel => "Mod Wheel",
             Self::PitchBend => "Pitch Bend",
+            Self::PolyAftertouch => "Poly AT",
         }
     }
 
@@ -169,6 +173,7 @@ impl ModSource {
             Self::Aftertouch => "aftertouch",
             Self::ModWheel => "mod_wheel",
             Self::PitchBend => "pitch_bend",
+            Self::PolyAftertouch => "poly_aftertouch",
         }
     }
 

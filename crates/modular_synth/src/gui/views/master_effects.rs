@@ -81,6 +81,19 @@ pub enum MasterEffectParams {
         release: f32,    // ms: 10 to 500
         mix: f32,        // 0-1
     },
+    Convolver {
+        ir_type: usize,  // 0=Plate, 1=Room, 2=Spring, 3=Hall
+        pre_delay: f32,  // ms: 0 to 200
+        decay_trim: f32, // 0.1 to 1.0
+        brightness: f32, // 0-1
+        mix: f32,        // 0-1
+    },
+    PhaseVocoder {
+        pitch_shift: f32, // semitones: -24 to 24
+        freeze: bool,
+        fft_size: usize, // 0=512, 1=1024, 2=2048, 3=4096
+        mix: f32,        // 0-1
+    },
 }
 
 impl MasterEffectParams {
@@ -160,6 +173,19 @@ impl MasterEffectParams {
                 release: 100.0,
                 mix: 1.0,
             },
+            EffectType::Convolver => Self::Convolver {
+                ir_type: 0,
+                pre_delay: 0.0,
+                decay_trim: 1.0,
+                brightness: 0.8,
+                mix: 0.3,
+            },
+            EffectType::PhaseVocoder => Self::PhaseVocoder {
+                pitch_shift: 0.0,
+                freeze: false,
+                fft_size: 1,
+                mix: 1.0,
+            },
         }
     }
 }
@@ -208,6 +234,8 @@ impl MasterEffectUiState {
             EffectType::MidSide => "Mid/Side",
             EffectType::BbdDelay => "BBD Delay",
             EffectType::Limiter => "Limiter",
+            EffectType::Convolver => "Convolver",
+            EffectType::PhaseVocoder => "Phase Vocoder",
         }
     }
 }

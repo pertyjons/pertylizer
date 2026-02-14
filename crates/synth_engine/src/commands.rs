@@ -539,6 +539,8 @@ pub enum EffectType {
     BbdDelay,
     MidSide,
     Limiter,
+    Convolver,
+    PhaseVocoder,
 }
 
 impl EffectType {
@@ -558,6 +560,8 @@ impl EffectType {
             MT::BbdDelay => Some(Self::BbdDelay),
             MT::MidSide => Some(Self::MidSide),
             MT::Limiter => Some(Self::Limiter),
+            MT::Convolver => Some(Self::Convolver),
+            MT::PhaseVocoder => Some(Self::PhaseVocoder),
             _ => None,
         }
     }
@@ -580,6 +584,8 @@ impl EffectType {
             Self::BbdDelay => MT::BbdDelay,
             Self::MidSide => MT::MidSide,
             Self::Limiter => MT::Limiter,
+            Self::Convolver => MT::Convolver,
+            Self::PhaseVocoder => MT::PhaseVocoder,
         }
     }
 }

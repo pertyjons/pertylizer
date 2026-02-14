@@ -1115,7 +1115,7 @@ impl SynthEngine {
                     .voices_mut()
                     .iter_mut()
                     .filter(|voice| voice.note() == Some(note))
-                    .for_each(|voice| voice.aftertouch = value)
+                    .for_each(|voice| voice.poly_aftertouch = value)
             });
     }
 
