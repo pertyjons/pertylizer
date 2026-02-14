@@ -20,6 +20,7 @@
 pub mod audio;
 pub mod module_traits;
 pub mod params;
+pub mod tuning;
 pub mod types;
 
 // Re-export all types at crate root for convenience

@@ -59,9 +59,9 @@
 17. **Plugin-stöd (CLAP/VST3)** (Nytt)
     * [ ] Wrappa motorn med `nih-plug` för att köra inuti en DAW.
 18. **Microtuning / Scala-filer** (Nytt)
-    * [ ] Stöd för .scl filer för icke-västerländska skalor.
+    * [x] ~~Stöd för .scl filer för icke-västerländska skalor.~~ *(0.120.0: TuningTable med 5 presets + Scala-parser)*
 19. **M/S Processing** (Från nuvarande Övrigt)
-    * [ ] Mid/Side-läge på EQ och kompressor.
+    * [x] ~~Mid/Side-läge på EQ och kompressor.~~ *(0.119.0: MidSide-effekt med width, mid/side gain)*
 20. **Avancerade Visualiseringar** (Från nuvarande P4)
     * [ ] Vectorscope, Tuner, 3D-vyer.
 

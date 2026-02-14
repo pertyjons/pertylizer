@@ -5,9 +5,9 @@ use synth_core::{
     PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{CompressorParam, ModuleType, Param};
-use synth_core::{Decibels, Milliseconds, NormalizedValue, Ratio, SampleRate};
+use synth_core::{Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, SampleRate};
 
-/// Compressor effect with envelope follower.
+/// Compressor effect with envelope follower and optional sidechain.
 pub struct Compressor {
     // Parameters
     threshold: Decibels,
@@ -16,6 +16,15 @@ pub struct Compressor {
     release: Milliseconds,
     makeup: Decibels,
     mix: NormalizedValue,
+
+    // Sidechain
+    sidechain_enabled: bool,
+    sidechain_filter_freq: Hertz,
+    /// One-pole HPF state for sidechain filter.
+    sc_filter_state: f32,
+
+    // Sidechain input buffer (filled externally before process)
+    sidechain_buffer: Vec<f32>,
 
     // Envelope state
     envelope: f32,
@@ -33,9 +42,20 @@ impl Compressor {
             release: Milliseconds::new(100.0),
             makeup: Decibels::new(0.0),
             mix: NormalizedValue::MAX,
+            sidechain_enabled: false,
+            sidechain_filter_freq: Hertz::new(80.0),
+            sc_filter_state: 0.0,
+            sidechain_buffer: Vec::new(),
             envelope: 0.0,
             sample_rate: SampleRate::DVD_QUALITY,
         }
+    }
+
+    /// Set the sidechain input buffer for the next process() call.
+    /// The buffer should be interleaved stereo, same length as the main input.
+    pub fn set_sidechain_input(&mut self, buffer: &[f32]) {
+        self.sidechain_buffer.clear();
+        self.sidechain_buffer.extend_from_slice(buffer);
     }
 
     /// Calculate attack coefficient using type-safe Milliseconds.
@@ -150,6 +170,27 @@ impl Describable for Compressor {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Compressor(CompressorParam::SidechainEnabled(false)),
+                    "Sidechain",
+                )
+                .description("Enable external sidechain input for detection")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Compressor(CompressorParam::SidechainFilter(Hertz::new(80.0))),
+                    "SC Filter",
+                )
+                .description("Sidechain high-pass filter frequency")
+                .range(20.0, 500.0)
+                .default(80.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
+            )
     }
 }
 
@@ -159,6 +200,17 @@ impl AudioEffect for Compressor {
 
         let attack_coeff = self.attack_coeff();
         let release_coeff = self.release_coeff();
+
+        // Sidechain HPF coefficient
+        let sc_hpf_coeff = if self.sidechain_enabled && self.sidechain_filter_freq.as_f32() > 20.0 {
+            let rc = 1.0 / (2.0 * std::f32::consts::PI * self.sidechain_filter_freq.as_f32());
+            let dt = 1.0 / self.sample_rate.as_f32();
+            rc / (rc + dt)
+        } else {
+            0.0 // No filtering
+        };
+
+        let use_sidechain = self.sidechain_enabled && !self.sidechain_buffer.is_empty();
 
         // Process stereo interleaved
         let channels = 2;
@@ -177,9 +229,33 @@ impl AudioEffect for Compressor {
                 in_l
             };
 
-            // Get peak level (stereo linked)
-            let peak = in_l.abs().max(in_r.abs());
-            let peak_db = Decibels::from_linear(peak).as_f32();
+            // Determine detection signal: sidechain or input
+            let detect_peak = if use_sidechain {
+                let sc_l = if idx_l < self.sidechain_buffer.len() {
+                    self.sidechain_buffer[idx_l]
+                } else {
+                    0.0
+                };
+                let sc_r = if idx_r < self.sidechain_buffer.len() {
+                    self.sidechain_buffer[idx_r]
+                } else {
+                    sc_l
+                };
+                let sc_mono = sc_l.abs().max(sc_r.abs());
+
+                // Apply HPF to sidechain signal
+                if sc_hpf_coeff > 0.0 {
+                    let filtered = sc_hpf_coeff * (self.sc_filter_state + sc_mono);
+                    self.sc_filter_state = filtered - sc_mono;
+                    filtered.abs()
+                } else {
+                    sc_mono
+                }
+            } else {
+                in_l.abs().max(in_r.abs())
+            };
+
+            let peak_db = Decibels::from_linear(detect_peak).as_f32();
 
             // Envelope follower with attack/release
             let coeff = if peak_db > self.envelope {
@@ -192,7 +268,7 @@ impl AudioEffect for Compressor {
             // Calculate gain
             let gain = self.compute_gain(self.envelope);
 
-            // Apply compression
+            // Apply compression to the MAIN input (not sidechain)
             let wet_l = in_l * gain;
             let wet_r = in_r * gain;
 
@@ -209,6 +285,8 @@ impl AudioEffect for Compressor {
 
     fn reset(&mut self) {
         self.envelope = 0.0;
+        self.sc_filter_state = 0.0;
+        self.sidechain_buffer.clear();
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {
@@ -240,6 +318,12 @@ impl AudioEffect for Compressor {
                 CompressorParam::Mix(m) => {
                     self.mix = m;
                 }
+                CompressorParam::SidechainEnabled(b) => {
+                    self.sidechain_enabled = b;
+                }
+                CompressorParam::SidechainFilter(hz) => {
+                    self.sidechain_filter_freq = Hertz::new(hz.as_f32().clamp(20.0, 500.0));
+                }
             }
         }
     }
@@ -253,6 +337,14 @@ impl AudioEffect for Compressor {
                 CompressorParam::Release(_) => self.release.as_f32(),
                 CompressorParam::Makeup(_) => self.makeup.as_f32(),
                 CompressorParam::Mix(_) => self.mix.as_f32(),
+                CompressorParam::SidechainEnabled(_) => {
+                    if self.sidechain_enabled {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                CompressorParam::SidechainFilter(_) => self.sidechain_filter_freq.as_f32(),
             })
         } else {
             None
@@ -267,6 +359,8 @@ impl AudioEffect for Compressor {
             Param::Compressor(CompressorParam::Release(self.release)),
             Param::Compressor(CompressorParam::Makeup(self.makeup)),
             Param::Compressor(CompressorParam::Mix(self.mix)),
+            Param::Compressor(CompressorParam::SidechainEnabled(self.sidechain_enabled)),
+            Param::Compressor(CompressorParam::SidechainFilter(self.sidechain_filter_freq)),
         ]
     }
 

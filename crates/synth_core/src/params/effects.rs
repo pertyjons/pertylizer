@@ -197,6 +197,12 @@ pub enum ReverbParam {
     Damping(NormalizedValue),
     Width(NormalizedValue),
     Mix(NormalizedValue),
+    /// Decay time (0.0 = short, 1.0 = long). FDN reverb.
+    Decay(NormalizedValue),
+    /// Diffusion amount (0.0 = sparse, 1.0 = dense). FDN reverb.
+    Diffusion(NormalizedValue),
+    /// Low-cut frequency for reverb tail. FDN reverb.
+    LowCut(Hertz),
 }
 
 impl ReverbParam {
@@ -211,13 +217,22 @@ impl ReverbParam {
             Self::Damping(_) => "Damping",
             Self::Width(_) => "Width",
             Self::Mix(_) => "Mix",
+            Self::Decay(_) => "Decay",
+            Self::Diffusion(_) => "Diffusion",
+            Self::LowCut(_) => "Low Cut",
         }
     }
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::RoomSize(v) | Self::Damping(v) | Self::Width(v) | Self::Mix(v) => v.as_f32(),
+            Self::RoomSize(v)
+            | Self::Damping(v)
+            | Self::Width(v)
+            | Self::Mix(v)
+            | Self::Decay(v)
+            | Self::Diffusion(v) => v.as_f32(),
             Self::PreDelay(t) => t.as_f32(),
+            Self::LowCut(hz) => hz.as_f32(),
         }
     }
 
@@ -228,6 +243,9 @@ impl ReverbParam {
             Self::Damping(_) => Self::Damping(NormalizedValue::new(value)),
             Self::Width(_) => Self::Width(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+            Self::Decay(_) => Self::Decay(NormalizedValue::new(value)),
+            Self::Diffusion(_) => Self::Diffusion(NormalizedValue::new(value)),
+            Self::LowCut(_) => Self::LowCut(Hertz::new(value)),
         }
     }
 }
@@ -478,6 +496,10 @@ pub enum CompressorParam {
     Release(Milliseconds),
     Makeup(Decibels),
     Mix(NormalizedValue),
+    /// Sidechain enabled (use external sidechain input for detection).
+    SidechainEnabled(bool),
+    /// Sidechain high-pass filter frequency (20-500 Hz).
+    SidechainFilter(Hertz),
 }
 
 impl CompressorParam {
@@ -493,6 +515,8 @@ impl CompressorParam {
             Self::Release(_) => "Release",
             Self::Makeup(_) => "Makeup",
             Self::Mix(_) => "Mix",
+            Self::SidechainEnabled(_) => "Sidechain",
+            Self::SidechainFilter(_) => "SC Filter",
         }
     }
 
@@ -502,6 +526,14 @@ impl CompressorParam {
             Self::Ratio(r) => r.as_f32(),
             Self::Attack(ms) | Self::Release(ms) => ms.as_f32(),
             Self::Mix(v) => v.as_f32(),
+            Self::SidechainEnabled(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::SidechainFilter(hz) => hz.as_f32(),
         }
     }
 
@@ -513,6 +545,8 @@ impl CompressorParam {
             Self::Release(_) => Self::Release(Milliseconds::new(value)),
             Self::Makeup(_) => Self::Makeup(Decibels::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+            Self::SidechainEnabled(_) => Self::SidechainEnabled(value > 0.5),
+            Self::SidechainFilter(_) => Self::SidechainFilter(Hertz::new(value)),
         }
     }
 }

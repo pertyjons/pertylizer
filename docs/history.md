@@ -1,5 +1,34 @@
 # Version History
 
+## [0.120.0] - 2026-02-14
+### Added - Cross-Modulation, FDN Reverb, Sidechain & Microtonal Tuning
+
+**Oscillator — Cross-Modulation:**
+- Ny `cross_mod` audio-ingång på varje oscillator för bilateral FM mellan oscillatorer.
+- `CrossModAmount`-parameter (0.0-1.0) styr modulationsdjup.
+- Kombineras med befintlig FM-ingång för komplex frekvensmodulering.
+
+**FDN Reverb (Feedback Delay Network):**
+- Helt ny 8-kanals FDN-implementation ersätter tidigare Schroeder-reverb.
+- Hadamard-mixningsmatris (8×8) för maximal energispridning.
+- Primtalsbaserade delay-tider (2039-3511 samples) skalade med Size-parameter.
+- Per-kanal LFO-modulerade delay-tider (~0.3 Hz) för tätare reverb.
+- Frekvensberoende dämpning: lowpass (Damping) och highpass (LowCut) per kanal.
+- Pre-delay upp till 500ms, Decay- och Diffusion-kontroller.
+- Stereo-output med konfigurerbar Width.
+
+**Compressor — Sidechain:**
+- Ny `SidechainEnabled`-toggle och `SidechainFilter`-parameter (20-500 Hz HPF).
+- `set_sidechain_input()` för extern sidechain-signal som detektionskälla.
+- One-pole highpass-filter på sidechain för att isolera transient-detektion.
+
+**Microtonal Tuning:**
+- Nytt `TuningTable`-system med [Hertz; 128] MIDI note → frekvens-mappning.
+- 5 inbyggda presets: Equal Temperament (12-TET), Just Intonation, Pythagorean, 19-TET, 31-TET.
+- Scala-parser: stöd för .scl (skalfiler) och .kbm (keyboard mapping).
+- `TuningPreset`-enum med `ALL`, `name()`, `id()`, `from_id()`, `to_table()`.
+- Integration i Voice: `set_tuning_table()` ersätter statisk frekvenstabell.
+
 ## [0.119.0] - 2026-02-14
 ### Added - 10 nya ljudtekniker: MSEG, BBD Delay, Additive Synth, Generativa moduler m.m.
 

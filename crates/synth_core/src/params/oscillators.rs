@@ -302,6 +302,8 @@ pub enum OscillatorParam {
     UnisonSpread(NormalizedValue),
     /// Phase randomization on note-on (0.0 = none, 1.0 = full)
     UnisonPhaseRandom(NormalizedValue),
+    /// Cross-modulation amount from another oscillator (0.0 = off, 1.0 = full)
+    CrossModAmount(NormalizedValue),
 }
 
 impl OscillatorParam {
@@ -326,6 +328,7 @@ impl OscillatorParam {
             Self::UnisonDetune(_) => "Uni Detune",
             Self::UnisonSpread(_) => "Uni Spread",
             Self::UnisonPhaseRandom(_) => "Uni Phase",
+            Self::CrossModAmount(_) => "X-Mod",
         }
     }
 
@@ -345,6 +348,7 @@ impl OscillatorParam {
             Self::UnisonDetune(c) => c.as_f32(),
             Self::UnisonSpread(v) => v.as_f32(),
             Self::UnisonPhaseRandom(v) => v.as_f32(),
+            Self::CrossModAmount(v) => v.as_f32(),
         }
     }
 
@@ -367,6 +371,7 @@ impl OscillatorParam {
             Self::UnisonDetune(_) => Self::UnisonDetune(Cents::new(value.clamp(0.0, 100.0))),
             Self::UnisonSpread(_) => Self::UnisonSpread(NormalizedValue::new(value)),
             Self::UnisonPhaseRandom(_) => Self::UnisonPhaseRandom(NormalizedValue::new(value)),
+            Self::CrossModAmount(_) => Self::CrossModAmount(NormalizedValue::new(value)),
         }
     }
 
@@ -409,6 +414,9 @@ impl OscillatorParam {
     }
     pub fn unison_phase_random_default() -> Self {
         Self::UnisonPhaseRandom(NormalizedValue::MAX)
+    }
+    pub fn cross_mod_amount_default() -> Self {
+        Self::CrossModAmount(NormalizedValue::MIN)
     }
 }
 

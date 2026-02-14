@@ -14,9 +14,8 @@
 //! Each voice stores macro controller state (pitch bend, mod wheel) using type-safe
 //! domain types to prevent unit mismatches.
 
-use std::sync::LazyLock;
-
 use crate::graph::ModuleGraph;
+use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, ProcessContext};
 use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
@@ -26,14 +25,6 @@ use synth_core::{ModuleType, OscillatorParam, Param};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
-
-/// Pre-computed MIDI note to frequency lookup table.
-/// Avoids expensive powf() calls during audio processing.
-/// Initialized once on first access.
-static NOTE_FREQ_TABLE: LazyLock<[f32; 128]> = LazyLock::new(|| {
-    // 440.0 * 2^((note - 69) / 12)
-    std::array::from_fn(|i| 440.0 * 2.0f32.powf((i as f32 - 69.0) / 12.0))
-});
 
 /// Voice state with embedded data - "Make Invalid States Unrepresentable".
 ///
@@ -299,6 +290,10 @@ pub struct Voice {
 
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
+
+    /// Tuning table for note-to-frequency conversion.
+    /// Defaults to 12-TET, can be changed for microtonal tuning.
+    tuning_table: TuningTable,
 }
 
 impl Voice {
@@ -320,6 +315,7 @@ impl Voice {
             output_module_id: None,
             mod_matrix_id: None,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
+            tuning_table: TuningTable::default(),
         }
     }
 
@@ -348,6 +344,7 @@ impl Voice {
             output_module_id: output_id,
             mod_matrix_id,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
+            tuning_table: TuningTable::default(),
         }
     }
 
@@ -390,16 +387,26 @@ impl Voice {
         }
     }
 
-    /// Convert MIDI note to frequency (A4 = 440 Hz).
-    /// Uses a pre-computed lookup table to avoid expensive powf() calls.
+    /// Convert MIDI note to frequency using the voice's tuning table.
+    /// Falls back to the pre-computed 12-TET table if tuning is default.
     #[inline]
-    fn note_to_freq(note: MidiNote) -> f32 {
-        NOTE_FREQ_TABLE[note.as_u8() as usize]
+    fn note_to_freq(&self, note: MidiNote) -> f32 {
+        self.tuning_table.note_to_freq(note).as_f32()
+    }
+
+    /// Set the tuning table for microtonal support.
+    pub fn set_tuning_table(&mut self, table: TuningTable) {
+        self.tuning_table = table;
+    }
+
+    /// Get the current tuning table.
+    pub fn tuning_table(&self) -> &TuningTable {
+        &self.tuning_table
     }
 
     /// Trigger note on with type-safe velocity.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
-        let target_freq = Hertz::new(Self::note_to_freq(note));
+        let target_freq = Hertz::new(self.note_to_freq(note));
 
         // Start glide from current position if we have a glide time and were already active
         let was_active = matches!(self.state, VoiceState::Active { .. });
@@ -429,7 +436,7 @@ impl Voice {
     ///
     /// Updates the note in the current state if active.
     pub fn glide_to_note(&mut self, new_note: MidiNote) {
-        let target_freq = Hertz::new(Self::note_to_freq(new_note));
+        let target_freq = Hertz::new(self.note_to_freq(new_note));
 
         // Update glide target
         if self.glide_time.as_f32() > 0.0 {
@@ -762,6 +769,7 @@ impl Voice {
             output_module_id: output_id,
             mod_matrix_id,
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
+            tuning_table: self.tuning_table.clone(),
         }
     }
 
@@ -817,17 +825,29 @@ mod tests {
 
     #[test]
     fn test_note_to_freq() {
+        let voice = Voice::new(0);
+
         // A4 should be 440 Hz
-        let freq = Voice::note_to_freq(MidiNote::A4);
+        let freq = voice.note_to_freq(MidiNote::A4);
         assert!((freq - 440.0).abs() < 0.01);
 
         // A5 should be 880 Hz (one octave up)
-        let freq = Voice::note_to_freq(MidiNote::new(81));
+        let freq = voice.note_to_freq(MidiNote::new(81));
         assert!((freq - 880.0).abs() < 0.01);
 
         // A3 should be 220 Hz (one octave down)
-        let freq = Voice::note_to_freq(MidiNote::new(57));
+        let freq = voice.note_to_freq(MidiNote::new(57));
         assert!((freq - 220.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_microtonal_tuning() {
+        let mut voice = Voice::new(0);
+        voice.set_tuning_table(synth_core::tuning::TuningTable::just_intonation());
+
+        // A4 should still be 440 Hz in just intonation
+        let freq = voice.note_to_freq(MidiNote::A4);
+        assert!((freq - 440.0).abs() < 0.5);
     }
 
     #[test]

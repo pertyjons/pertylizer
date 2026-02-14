@@ -55,6 +55,10 @@ pub struct Oscillator {
     /// Previous sync signal value for edge detection (persists across buffers).
     prev_sync: f32,
 
+    // Cross-modulation
+    /// Cross-modulation amount (0.0 = off, 1.0 = full).
+    cross_mod_amount: NormalizedValue,
+
     // Mod matrix offsets
     /// Pitch offset in semitones (from mod matrix).
     mod_offset_pitch: f32,
@@ -83,6 +87,7 @@ impl Oscillator {
             unison_detune: Cents::new(10.0),
             unison_spread: NormalizedValue::CENTER,
             unison_phase_random: NormalizedValue::MAX,
+            cross_mod_amount: NormalizedValue::MIN,
             unison_detune_ratios: [1.0; MAX_UNISON_VOICES],
             unison_pans: [0.0; MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
@@ -321,6 +326,20 @@ impl Describable for Oscillator {
             )
             .port(PortDescriptor::control_input("pm", "PM").description("Phase modulation input"))
             .port(PortDescriptor::control_input("pwm", "PWM").description("Pulse width modulation"))
+            .port(
+                PortDescriptor::control_input("cross_mod", "X-Mod")
+                    .description("Cross-modulation input from another oscillator"),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Oscillator(OscillatorParam::cross_mod_amount_default()),
+                    "X-Mod",
+                )
+                .description("Cross-modulation amount (0 = off, 1 = full)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
             .port(PortDescriptor::gate_input("sync", "Sync").description("Hard sync input"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
@@ -348,6 +367,7 @@ impl PolyModule for Oscillator {
         // pm = phase mod, pwm = pulse width mod - different concepts
         let pwm_input = inputs.get(PortName::PWM);
         let sync_input = inputs.get(PortName::SYNC);
+        let cross_mod_input = inputs.get(PortName::intern("cross_mod"));
 
         let voice_count = self.unison_voice_count as usize;
         let base_freq = self.actual_frequency();
@@ -357,13 +377,20 @@ impl PolyModule for Oscillator {
                 .map(|f| f[i] * self.fm_amount.as_f32())
                 .unwrap_or(0.0);
 
+            // Cross-modulation: adds to FM signal
+            let cross_mod = cross_mod_input
+                .map(|c| c[i] * self.cross_mod_amount.as_f32())
+                .unwrap_or(0.0);
+
+            let total_fm = fm + cross_mod;
+
             let freq = match self.fm_mode {
                 FmMode::Exponential => {
-                    let freq_mult = (fm * 2.0).exp2();
+                    let freq_mult = (total_fm * 2.0).exp2();
                     Hertz::new(base_freq.as_f32() * freq_mult)
                 }
                 FmMode::Linear => {
-                    Hertz::new((base_freq.as_f32() + fm * base_freq.as_f32() * 4.0).max(1.0))
+                    Hertz::new((base_freq.as_f32() + total_fm * base_freq.as_f32() * 4.0).max(1.0))
                 }
             };
 
@@ -460,6 +487,7 @@ impl PolyModule for Oscillator {
                     self.recalculate_unison_spread();
                 }
                 OscillatorParam::UnisonPhaseRandom(v) => self.unison_phase_random = v,
+                OscillatorParam::CrossModAmount(v) => self.cross_mod_amount = v,
             }
         }
     }
@@ -480,6 +508,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::UnisonDetune(_) => self.unison_detune.as_f32(),
                 OscillatorParam::UnisonSpread(_) => self.unison_spread.as_f32(),
                 OscillatorParam::UnisonPhaseRandom(_) => self.unison_phase_random.as_f32(),
+                OscillatorParam::CrossModAmount(_) => self.cross_mod_amount.as_f32(),
             })
         } else {
             None
@@ -501,6 +530,7 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::UnisonDetune(self.unison_detune)),
             Param::Oscillator(OscillatorParam::UnisonSpread(self.unison_spread)),
             Param::Oscillator(OscillatorParam::UnisonPhaseRandom(self.unison_phase_random)),
+            Param::Oscillator(OscillatorParam::CrossModAmount(self.cross_mod_amount)),
         ]
     }
 

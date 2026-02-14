@@ -1,6 +1,6 @@
 # Implementeringsplan: 60 tekniker och algoritmer för ljudmotorn
 
-> Status: AKTIV | Datum: 2026-02-14 | Basversion: 0.119.0
+> Status: AKTIV | Datum: 2026-02-14 | Basversion: 0.120.0
 
 ## Innehåll
 
@@ -18,11 +18,11 @@
 | Kategori | Implementerad | Delvis | Saknas | Totalt |
 |----------|:---:|:---:|:---:|:---:|
 | Del 1: Ljudgenerering | 11 | 3 | 6 | 20 |
-| Del 2: Effekter | 10 | 1 | 9 | 20 |
-| Del 3: Hemliga ingredienser | 13 | 4 | 3 | 20 |
-| **Totalt** | **34** | **8** | **18** | **60** |
+| Del 2: Effekter | 12 | 0 | 8 | 20 |
+| Del 3: Hemliga ingredienser | 15 | 3 | 2 | 20 |
+| **Totalt** | **38** | **6** | **16** | **60** |
 
-**57% fullt implementerade, 13% delvis, 30% saknas**
+**63% fullt implementerade, 10% delvis, 27% saknas**
 
 ---
 
@@ -62,14 +62,14 @@
 | 23 | **Phase Vocoder** | SAKNAS | Ingen pitch-shifting oberoende av tid |
 | 24 | **Ring Modulation** | KLAR | RingMod-modul med intern carrier (5 vågformer), keyboard tracking, freq ratio, dry/wet mix |
 | 25 | **All-pass Filters** | KLAR | Phaser (kaskadade all-pass) + Schroeder-reverb (2 serie-allpass) |
-| 26 | **FDN (Feedback Delay Network)** | DELVIS | Schroeder-reverb (4 comb + 2 allpass), men inte fullständigt FDN |
+| 26 | **FDN (Feedback Delay Network)** | KLAR | 8-kanals FDN med Hadamard-matris, modulerade delays, damping, low-cut, pre-delay, decay, diffusion |
 | 27 | **Compression** | KLAR | Compressor med threshold, ratio, attack, release, makeup gain |
 | 28 | **Brickwall Limiting** | KLAR | Limiter med look-ahead buffer, true peak detection, konfigurerbart ceiling/release |
 | 29 | **Bitcrushing** | KLAR | Bitcrush i Distortion + Quantize i Waveshaper |
 | 30 | **Hilbert Transform** | SAKNAS | Ingen Hilbert-transform |
 | 31 | **Chorus** | KLAR | Chorus-effekt med LFO-modulerade delays och stereobreddning |
 | 32 | **Flanging** | KLAR | Flanger-effekt med modulerad delay och feedback |
-| 33 | **Sidechaining** | SAKNAS | Ingen sidechain-routing |
+| 33 | **Sidechaining** | KLAR | Sidechain-input på Compressor med HPF-filter (20-500 Hz), extern detektionskälla |
 | 34 | **Auto-correlation** | SAKNAS | Ingen pitch-tracking |
 | 35 | **Spectral Subtraction** | SAKNAS | Ingen spektral brusborttagning |
 | 36 | **Wavelet Transform** | SAKNAS | Ingen wavelet-analys |
@@ -86,9 +86,9 @@
 |---|--------|--------|----------|
 | 41 | **Chaos Generators (Lorenz)** | KLAR | Lorenz-attraktor i Math Oscillator |
 | 42 | **Audio Rate Modulation** | KLAR | FM/PM-ingångar på oscillatorer körs i audio rate |
-| 43 | **Cross-Modulation** | DELVIS | FM-input finns men ingen dedikerad korsmodulering osc 1 <-> 2 |
+| 43 | **Cross-Modulation** | KLAR | cross_mod audio-ingång på oscillatorer med CrossModAmount-parameter, kombineras med FM |
 | 44 | **Probability Gates** | KLAR | RandomGates med density, burst mode, gate length + Euclidean Sequencer + Turing Machine |
-| 45 | **Microtonal Tuning** | SAKNAS | Ingen mikrotonalitet/Scala-stöd |
+| 45 | **Microtonal Tuning** | KLAR | TuningTable med 5 presets (12-TET, JI, Pythagorean, 19-TET, 31-TET), Scala-parser (.scl/.kbm), per-voice tuning |
 | 46 | **Self-Oscillating Filters** | KLAR | Screamer + Acid vid hög resonans |
 | 47 | **Slew Rate Limiting** | KLAR | Glide/portamento implementerat i voice.rs med GlideState + GUI-slider |
 | 48 | **Logic Operators** | KLAR | BitWise-algoritm i Math Oscillator |
@@ -610,7 +610,7 @@ Resterande tekniker med lägre prioritet.
 
 ## Genomförda features (historik)
 
-### Redan implementerade tekniker (23 st helt, 10 st delvis)
+### Redan implementerade tekniker (27 st helt, 6 st delvis)
 
 | Teknik | Implementation | Version |
 |--------|---------------|---------|
@@ -636,6 +636,10 @@ Resterande tekniker med lägre prioritet.
 | Sample & Hold (#50) | S&H-vågform i LFO | Grundversion |
 | Morphing SVF (#52) | Fluid-filtrets morph-parameter | 0.115.0 |
 | Wavefolding (#54) | WaveFolder + Foldback + Fold/SineFold | 0.113.0 |
+| FDN Reverb (#26) | 8-kanals FDN med Hadamard-matris, modulerade delays, damping, low-cut | 0.120.0 |
+| Sidechaining (#33) | Sidechain-input på Compressor med HPF-filter | 0.120.0 |
+| Cross-Modulation (#43) | cross_mod audio-ingång med CrossModAmount-parameter | 0.120.0 |
+| Microtonal Tuning (#45) | TuningTable med 5 presets + Scala-parser | 0.120.0 |
 
 ### Genomförda features från tidigare plan
 
@@ -645,3 +649,6 @@ Resterande tekniker med lägre prioritet.
 | 0.113.0 | Waveshaper-effekt (6 kurvor) | ~250 |
 | 0.114.0 | Intra-voice Unison (1-7 röster, detune, stereo) | ~400 |
 | 0.115.0 | Character Filters (Fluid, Screamer, Acid) | ~410 |
+| 0.116.0 | Ring Modulation, Envelope Follower, Wavetable Syntes | ~950 |
+| 0.119.0 | MSEG, BBD Delay, Additive, Limiter, Mid-Side, Generativa moduler | ~2 780 |
+| 0.120.0 | Cross-Modulation, FDN Reverb, Sidechain, Microtonal Tuning | ~1 100 |
