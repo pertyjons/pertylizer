@@ -1,6 +1,6 @@
 # Implementeringsplan: 60 tekniker och algoritmer för ljudmotorn
 
-> Status: AKTIV | Datum: 2026-02-13 | Basversion: 0.115.0
+> Status: AKTIV | Datum: 2026-02-14 | Basversion: 0.119.0
 
 ## Innehåll
 
@@ -17,12 +17,12 @@
 
 | Kategori | Implementerad | Delvis | Saknas | Totalt |
 |----------|:---:|:---:|:---:|:---:|
-| Del 1: Ljudgenerering | 10 | 4 | 6 | 20 |
-| Del 2: Effekter | 7 | 1 | 12 | 20 |
-| Del 3: Hemliga ingredienser | 10 | 5 | 5 | 20 |
-| **Totalt** | **27** | **10** | **23** | **60** |
+| Del 1: Ljudgenerering | 11 | 3 | 6 | 20 |
+| Del 2: Effekter | 10 | 1 | 9 | 20 |
+| Del 3: Hemliga ingredienser | 13 | 4 | 3 | 20 |
+| **Totalt** | **34** | **8** | **18** | **60** |
 
-**45% fullt implementerade, 17% delvis, 38% saknas**
+**57% fullt implementerade, 13% delvis, 30% saknas**
 
 ---
 
@@ -30,7 +30,7 @@
 
 | # | Teknik | Status | Detaljer |
 |---|--------|--------|----------|
-| 1 | **Additive** | DELVIS | Chebyshev i Math Oscillator genererar harmoniska, men ingen ren additiv syntes med individuella partialtoner |
+| 1 | **Additive** | KLAR | AdditiveOsc med 32 harmoniska, spektral profil (Tilt/OddEven/Brightness), stretch, fas-randomisering |
 | 2 | **Subtractive** | KLAR | Oscillator -> Filter med SVF, 7 filtertyper, 4 karaktärsmodeller (Standard/Fluid/Screamer/Acid) |
 | 3 | **FM (Frequency Modulation)** | KLAR | SineFM + FeedbackFM i Math Oscillator + FM-ingång på huvudoscillatorn |
 | 4 | **PM (Phase Modulation)** | KLAR | PM-modulationsingång på huvudoscillatorn |
@@ -64,7 +64,7 @@
 | 25 | **All-pass Filters** | KLAR | Phaser (kaskadade all-pass) + Schroeder-reverb (2 serie-allpass) |
 | 26 | **FDN (Feedback Delay Network)** | DELVIS | Schroeder-reverb (4 comb + 2 allpass), men inte fullständigt FDN |
 | 27 | **Compression** | KLAR | Compressor med threshold, ratio, attack, release, makeup gain |
-| 28 | **Brickwall Limiting** | SAKNAS | Ingen dedikerad brickwall limiter med look-ahead |
+| 28 | **Brickwall Limiting** | KLAR | Limiter med look-ahead buffer, true peak detection, konfigurerbart ceiling/release |
 | 29 | **Bitcrushing** | KLAR | Bitcrush i Distortion + Quantize i Waveshaper |
 | 30 | **Hilbert Transform** | SAKNAS | Ingen Hilbert-transform |
 | 31 | **Chorus** | KLAR | Chorus-effekt med LFO-modulerade delays och stereobreddning |
@@ -76,7 +76,7 @@
 | 37 | **Adaptive Filtering** | SAKNAS | Inga adaptiva filter |
 | 38 | **Soft Clipping** | KLAR | SoftClip (tanh) i Distortion + Waveshaper, Tube-distortion |
 | 39 | **Envelope Following** | KLAR | EnvelopeFollower-modul med attack/release/sensitivity, one-pole tracking |
-| 40 | **Mid-Side Processing** | SAKNAS | Ingen M/S-bearbetning |
+| 40 | **Mid-Side Processing** | KLAR | MidSide-effekt med width (0-2x), mid/side gain, M/S encoding/decoding |
 
 ---
 
@@ -87,7 +87,7 @@
 | 41 | **Chaos Generators (Lorenz)** | KLAR | Lorenz-attraktor i Math Oscillator |
 | 42 | **Audio Rate Modulation** | KLAR | FM/PM-ingångar på oscillatorer körs i audio rate |
 | 43 | **Cross-Modulation** | DELVIS | FM-input finns men ingen dedikerad korsmodulering osc 1 <-> 2 |
-| 44 | **Probability Gates** | SAKNAS | Ingen sannolikhetsstyrd triggering |
+| 44 | **Probability Gates** | KLAR | RandomGates med density, burst mode, gate length + Euclidean Sequencer + Turing Machine |
 | 45 | **Microtonal Tuning** | SAKNAS | Ingen mikrotonalitet/Scala-stöd |
 | 46 | **Self-Oscillating Filters** | KLAR | Screamer + Acid vid hög resonans |
 | 47 | **Slew Rate Limiting** | KLAR | Glide/portamento implementerat i voice.rs med GlideState + GUI-slider |
@@ -96,9 +96,9 @@
 | 50 | **Sample & Hold** | KLAR | S&H-vågform i LFO |
 | 51 | **Feedback Loops** | DELVIS | FeedbackFM, feedback i delay/reverb, men ingen generell feedback-routing |
 | 52 | **Morphing SVF** | KLAR | Fluid-filtret har morph LP <-> BP <-> HP <-> Notch |
-| 53 | **BBD Emulation** | SAKNAS | Ingen bucket brigade delay-emulering |
+| 53 | **BBD Emulation** | KLAR | BbdDelay med kompander, bandbreddsbegränsning, wow & flutter, clock noise, feedback med mörkning |
 | 54 | **Wavefolding** | KLAR | WaveFolder i Math Osc + Foldback i Distortion + Fold/SineFold i Waveshaper |
-| 55 | **Look-ahead Processing** | SAKNAS | Ingen look-ahead limiter |
+| 55 | **Look-ahead Processing** | KLAR | Limiter med look-ahead ring buffer (1-5ms), true peak detection |
 | 56 | **Polyphonic Aftertouch** | DELVIS | Aftertouch som mod-källa, men oklart om det stöder polyfon aftertouch |
 | 57 | **Round Robin Sampling** | SAKNAS | Ingen sampling-engine med round robin |
 | 58 | **FFM (FM-kedjor)** | DELVIS | FeedbackFM finns, men inte fria FM-kedjor mellan multipla operatörer |

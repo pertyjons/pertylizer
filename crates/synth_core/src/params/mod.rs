@@ -11,13 +11,16 @@
 //! - GUI compatibility: `as_f32()` and `with_f32()` for sliders
 //! - Comparison: `same_kind()` to compare param types ignoring values
 
+mod additive;
 mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
+mod generative;
 mod lfo;
 mod mod_matrix;
 mod modules;
+mod mseg;
 mod noise;
 mod oscillators;
 mod physical;
@@ -29,18 +32,21 @@ mod wavetable;
 use serde::{Deserialize, Serialize};
 
 // Re-export all parameter types
+pub use additive::AdditiveParam;
 pub use effects::{
-    ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode, DistortionParam, EqParam,
-    FlangerParam, PhaserParam, ReverbParam,
+    BbdDelayParam, ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode,
+    DistortionParam, EqParam, FlangerParam, LimiterParam, MidSideParam, PhaserParam, ReverbParam,
 };
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
+pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
 };
 pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
+pub use mseg::MsegParam;
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
 pub use physical::{
@@ -87,6 +93,16 @@ pub enum ModuleType {
     RingMod,
     EnvelopeFollower,
     WavetableOsc,
+    Mseg,
+    AdditiveOsc,
+    // Effects (continued)
+    BbdDelay,
+    MidSide,
+    Limiter,
+    // Generative
+    Euclidean,
+    TuringMachine,
+    RandomGates,
     // Physical modeling
     KeyboardPanner,
     BodyResonance,
@@ -121,6 +137,12 @@ impl ModuleType {
                 | Self::RingMod
                 | Self::EnvelopeFollower
                 | Self::WavetableOsc
+                | Self::Mseg
+                | Self::AdditiveOsc
+                // Generative (per-voice)
+                | Self::Euclidean
+                | Self::TuringMachine
+                | Self::RandomGates
                 // Physical modeling modules (per-voice)
                 | Self::KeyboardPanner
                 | Self::BodyResonance
@@ -145,6 +167,9 @@ impl ModuleType {
                 | Self::Compressor
                 | Self::Eq
                 | Self::Waveshaper
+                | Self::BbdDelay
+                | Self::MidSide
+                | Self::Limiter
         )
     }
 
@@ -198,6 +223,16 @@ impl ModuleType {
             Self::RingMod => "Ring Mod",
             Self::EnvelopeFollower => "Env Follower",
             Self::WavetableOsc => "Wavetable",
+            Self::Mseg => "MSEG",
+            Self::AdditiveOsc => "Additive",
+            // Effects (continued)
+            Self::BbdDelay => "BBD Delay",
+            Self::MidSide => "Mid/Side",
+            Self::Limiter => "Limiter",
+            // Generative
+            Self::Euclidean => "Euclidean",
+            Self::TuringMachine => "Turing Machine",
+            Self::RandomGates => "Random Gates",
             // Physical modeling
             Self::KeyboardPanner => "Keyboard Panner",
             Self::BodyResonance => "Body Resonance",
@@ -234,6 +269,16 @@ impl ModuleType {
             Self::RingMod => "rng",
             Self::EnvelopeFollower => "efl",
             Self::WavetableOsc => "wtb",
+            Self::Mseg => "msg",
+            Self::AdditiveOsc => "add",
+            // Effects (continued)
+            Self::BbdDelay => "bbd",
+            Self::MidSide => "mds",
+            Self::Limiter => "lmt",
+            // Generative
+            Self::Euclidean => "euc",
+            Self::TuringMachine => "tur",
+            Self::RandomGates => "rgt",
             // Physical modeling
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
@@ -270,6 +315,16 @@ impl ModuleType {
             "rng" => Some(Self::RingMod),
             "efl" => Some(Self::EnvelopeFollower),
             "wtb" => Some(Self::WavetableOsc),
+            "msg" => Some(Self::Mseg),
+            "add" => Some(Self::AdditiveOsc),
+            // Effects (continued)
+            "bbd" => Some(Self::BbdDelay),
+            "mds" => Some(Self::MidSide),
+            "lmt" => Some(Self::Limiter),
+            // Generative
+            "euc" => Some(Self::Euclidean),
+            "tur" => Some(Self::TuringMachine),
+            "rgt" => Some(Self::RandomGates),
             // Physical modeling
             "kbp" => Some(Self::KeyboardPanner),
             "bdy" => Some(Self::BodyResonance),
@@ -321,6 +376,16 @@ pub enum Param {
     RingMod(RingModParam),
     EnvelopeFollower(EnvelopeFollowerParam),
     WavetableOsc(WavetableParam),
+    Mseg(MsegParam),
+    AdditiveOsc(AdditiveParam),
+    // Effects (continued)
+    BbdDelay(BbdDelayParam),
+    MidSide(MidSideParam),
+    Limiter(LimiterParam),
+    // Generative
+    Euclidean(EuclideanParam),
+    TuringMachine(TuringMachineParam),
+    RandomGates(RandomGatesParam),
     // Physical modeling
     KeyboardPanner(KeyboardPannerParam),
     BodyResonance(BodyResonanceParam),
@@ -365,6 +430,16 @@ impl Param {
             (Self::RingMod(a), Self::RingMod(b)) => a.same_kind(b),
             (Self::EnvelopeFollower(a), Self::EnvelopeFollower(b)) => a.same_kind(b),
             (Self::WavetableOsc(a), Self::WavetableOsc(b)) => a.same_kind(b),
+            (Self::Mseg(a), Self::Mseg(b)) => a.same_kind(b),
+            (Self::AdditiveOsc(a), Self::AdditiveOsc(b)) => a.same_kind(b),
+            // Effects (continued)
+            (Self::BbdDelay(a), Self::BbdDelay(b)) => a.same_kind(b),
+            (Self::MidSide(a), Self::MidSide(b)) => a.same_kind(b),
+            (Self::Limiter(a), Self::Limiter(b)) => a.same_kind(b),
+            // Generative
+            (Self::Euclidean(a), Self::Euclidean(b)) => a.same_kind(b),
+            (Self::TuringMachine(a), Self::TuringMachine(b)) => a.same_kind(b),
+            (Self::RandomGates(a), Self::RandomGates(b)) => a.same_kind(b),
             // Physical modeling
             (Self::KeyboardPanner(a), Self::KeyboardPanner(b)) => a.same_kind(b),
             (Self::BodyResonance(a), Self::BodyResonance(b)) => a.same_kind(b),
@@ -401,6 +476,16 @@ impl Param {
             Self::RingMod(_) => ModuleType::RingMod,
             Self::EnvelopeFollower(_) => ModuleType::EnvelopeFollower,
             Self::WavetableOsc(_) => ModuleType::WavetableOsc,
+            Self::Mseg(_) => ModuleType::Mseg,
+            Self::AdditiveOsc(_) => ModuleType::AdditiveOsc,
+            // Effects (continued)
+            Self::BbdDelay(_) => ModuleType::BbdDelay,
+            Self::MidSide(_) => ModuleType::MidSide,
+            Self::Limiter(_) => ModuleType::Limiter,
+            // Generative
+            Self::Euclidean(_) => ModuleType::Euclidean,
+            Self::TuringMachine(_) => ModuleType::TuringMachine,
+            Self::RandomGates(_) => ModuleType::RandomGates,
             // Physical modeling
             Self::KeyboardPanner(_) => ModuleType::KeyboardPanner,
             Self::BodyResonance(_) => ModuleType::BodyResonance,
@@ -436,6 +521,16 @@ impl Param {
             Self::RingMod(p) => p.name(),
             Self::EnvelopeFollower(p) => p.name(),
             Self::WavetableOsc(p) => p.name(),
+            Self::Mseg(p) => p.name(),
+            Self::AdditiveOsc(p) => p.name(),
+            // Effects (continued)
+            Self::BbdDelay(p) => p.name(),
+            Self::MidSide(p) => p.name(),
+            Self::Limiter(p) => p.name(),
+            // Generative
+            Self::Euclidean(p) => p.name(),
+            Self::TuringMachine(p) => p.name(),
+            Self::RandomGates(p) => p.name(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.name(),
             Self::BodyResonance(p) => p.name(),
@@ -471,6 +566,16 @@ impl Param {
             Self::RingMod(p) => p.as_f32(),
             Self::EnvelopeFollower(p) => p.as_f32(),
             Self::WavetableOsc(p) => p.as_f32(),
+            Self::Mseg(p) => p.as_f32(),
+            Self::AdditiveOsc(p) => p.as_f32(),
+            // Effects (continued)
+            Self::BbdDelay(p) => p.as_f32(),
+            Self::MidSide(p) => p.as_f32(),
+            Self::Limiter(p) => p.as_f32(),
+            // Generative
+            Self::Euclidean(p) => p.as_f32(),
+            Self::TuringMachine(p) => p.as_f32(),
+            Self::RandomGates(p) => p.as_f32(),
             // Physical modeling
             Self::KeyboardPanner(p) => p.as_f32(),
             Self::BodyResonance(p) => p.as_f32(),
@@ -506,6 +611,16 @@ impl Param {
             Self::RingMod(p) => Self::RingMod(p.with_f32(value)),
             Self::EnvelopeFollower(p) => Self::EnvelopeFollower(p.with_f32(value)),
             Self::WavetableOsc(p) => Self::WavetableOsc(p.with_f32(value)),
+            Self::Mseg(p) => Self::Mseg(p.with_f32(value)),
+            Self::AdditiveOsc(p) => Self::AdditiveOsc(p.with_f32(value)),
+            // Effects (continued)
+            Self::BbdDelay(p) => Self::BbdDelay(p.with_f32(value)),
+            Self::MidSide(p) => Self::MidSide(p.with_f32(value)),
+            Self::Limiter(p) => Self::Limiter(p.with_f32(value)),
+            // Generative
+            Self::Euclidean(p) => Self::Euclidean(p.with_f32(value)),
+            Self::TuringMachine(p) => Self::TuringMachine(p.with_f32(value)),
+            Self::RandomGates(p) => Self::RandomGates(p.with_f32(value)),
             // Physical modeling
             Self::KeyboardPanner(p) => Self::KeyboardPanner(p.with_f32(value)),
             Self::BodyResonance(p) => Self::BodyResonance(p.with_f32(value)),

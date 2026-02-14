@@ -2002,6 +2002,12 @@ pub enum PaletteSelection {
     KeyboardPanner,
     BodyResonance,
     MechanicalNoise,
+    // New modules
+    Mseg,
+    AdditiveOsc,
+    Euclidean,
+    TuringMachine,
+    RandomGates,
 }
 
 impl ModulePalette {
@@ -2036,6 +2042,10 @@ impl ModulePalette {
                     ui.separator();
                     if ui.button("📊 Wavetable").clicked() {
                         selected = Some(PaletteSelection::WavetableOsc);
+                        ui.close();
+                    }
+                    if ui.button("🎶 Additive").clicked() {
+                        selected = Some(PaletteSelection::AdditiveOsc);
                         ui.close();
                     }
                 },
@@ -2101,6 +2111,18 @@ impl ModulePalette {
                     selected = Some(PaletteSelection::Effect(EffectType::Waveshaper));
                     ui.close();
                 }
+                if ui.button("📼 BBD Delay").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::BbdDelay));
+                    ui.close();
+                }
+                if ui.button("🧱 Limiter").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::Limiter));
+                    ui.close();
+                }
+                if ui.button("↔ Mid/Side").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::MidSide));
+                    ui.close();
+                }
             });
 
             // Visualizer submenu
@@ -2134,6 +2156,30 @@ impl ModulePalette {
                     }
                     if ui.button("📈 Env Follower").clicked() {
                         selected = Some(PaletteSelection::EnvelopeFollower);
+                        ui.close();
+                    }
+                    if ui.button("📐 MSEG").clicked() {
+                        selected = Some(PaletteSelection::Mseg);
+                        ui.close();
+                    }
+                },
+            );
+
+            // Generative submenu
+            let gen_color = category_color(ModuleCategory::LFO);
+            ui.menu_button(
+                egui::RichText::new("🎲 Generative").color(gen_color),
+                |ui| {
+                    if ui.button("⊕ Euclidean").clicked() {
+                        selected = Some(PaletteSelection::Euclidean);
+                        ui.close();
+                    }
+                    if ui.button("🔀 Turing Machine").clicked() {
+                        selected = Some(PaletteSelection::TuringMachine);
+                        ui.close();
+                    }
+                    if ui.button("🎲 Random Gates").clicked() {
+                        selected = Some(PaletteSelection::RandomGates);
                         ui.close();
                     }
                 },

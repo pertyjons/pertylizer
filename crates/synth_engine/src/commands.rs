@@ -536,6 +536,9 @@ pub enum EffectType {
     Compressor,
     Eq,
     Waveshaper,
+    BbdDelay,
+    MidSide,
+    Limiter,
 }
 
 impl EffectType {
@@ -552,6 +555,9 @@ impl EffectType {
             MT::Compressor => Some(Self::Compressor),
             MT::Eq => Some(Self::Eq),
             MT::Waveshaper => Some(Self::Waveshaper),
+            MT::BbdDelay => Some(Self::BbdDelay),
+            MT::MidSide => Some(Self::MidSide),
+            MT::Limiter => Some(Self::Limiter),
             _ => None,
         }
     }
@@ -571,6 +577,9 @@ impl EffectType {
             Self::Compressor => MT::Compressor,
             Self::Eq => MT::Eq,
             Self::Waveshaper => MT::Waveshaper,
+            Self::BbdDelay => MT::BbdDelay,
+            Self::MidSide => MT::MidSide,
+            Self::Limiter => MT::Limiter,
         }
     }
 }

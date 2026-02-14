@@ -585,3 +585,172 @@ impl Default for EqParam {
         Self::Mix(NormalizedValue::MAX)
     }
 }
+
+// ============================================================================
+// BBD DELAY PARAMETER ENUM (with typed values)
+// ============================================================================
+
+/// BBD (Bucket Brigade Device) analog delay parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum BbdDelayParam {
+    Time(Seconds),
+    Feedback(NormalizedValue),
+    Tone(NormalizedValue),
+    WowFlutter(NormalizedValue),
+    ClockNoise(NormalizedValue),
+    Mix(NormalizedValue),
+}
+
+impl BbdDelayParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Time(_) => "Time",
+            Self::Feedback(_) => "Feedback",
+            Self::Tone(_) => "Tone",
+            Self::WowFlutter(_) => "Wow/Flutter",
+            Self::ClockNoise(_) => "Clock Noise",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Time(t) => t.as_f32(),
+            Self::Feedback(v)
+            | Self::Tone(v)
+            | Self::WowFlutter(v)
+            | Self::ClockNoise(v)
+            | Self::Mix(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Time(_) => Self::Time(Seconds::new(value)),
+            Self::Feedback(_) => Self::Feedback(NormalizedValue::new(value)),
+            Self::Tone(_) => Self::Tone(NormalizedValue::new(value)),
+            Self::WowFlutter(_) => Self::WowFlutter(NormalizedValue::new(value)),
+            Self::ClockNoise(_) => Self::ClockNoise(NormalizedValue::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for BbdDelayParam {
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::CENTER)
+    }
+}
+
+// ============================================================================
+// MID-SIDE PROCESSING PARAMETER ENUM (with typed values)
+// ============================================================================
+
+/// Mid-Side processing parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum MidSideParam {
+    /// Stereo width (0=mono, 1=normal, 2=extra wide).
+    Width(NormalizedValue),
+    /// Mid channel gain.
+    MidGain(Decibels),
+    /// Side channel gain.
+    SideGain(Decibels),
+    /// Dry/wet mix.
+    Mix(NormalizedValue),
+}
+
+impl MidSideParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Width(_) => "Width",
+            Self::MidGain(_) => "Mid Gain",
+            Self::SideGain(_) => "Side Gain",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Width(v) | Self::Mix(v) => v.as_f32(),
+            Self::MidGain(db) | Self::SideGain(db) => db.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Width(_) => Self::Width(NormalizedValue::new(value)),
+            Self::MidGain(_) => Self::MidGain(Decibels::new(value)),
+            Self::SideGain(_) => Self::SideGain(Decibels::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for MidSideParam {
+    fn default() -> Self {
+        Self::Width(NormalizedValue::CENTER)
+    }
+}
+
+// ============================================================================
+// LIMITER PARAMETER ENUM (with typed values)
+// ============================================================================
+
+/// Brickwall limiter parameter with typed value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LimiterParam {
+    /// Ceiling level.
+    Ceiling(Decibels),
+    /// Look-ahead time.
+    LookAhead(Milliseconds),
+    /// Release time.
+    Release(Milliseconds),
+    /// Dry/wet mix.
+    Mix(NormalizedValue),
+}
+
+impl LimiterParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ceiling(_) => "Ceiling",
+            Self::LookAhead(_) => "Look-Ahead",
+            Self::Release(_) => "Release",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Ceiling(db) => db.as_f32(),
+            Self::LookAhead(ms) | Self::Release(ms) => ms.as_f32(),
+            Self::Mix(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Ceiling(_) => Self::Ceiling(Decibels::new(value)),
+            Self::LookAhead(_) => Self::LookAhead(Milliseconds::new(value)),
+            Self::Release(_) => Self::Release(Milliseconds::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for LimiterParam {
+    fn default() -> Self {
+        Self::Ceiling(Decibels::new(-0.3))
+    }
+}

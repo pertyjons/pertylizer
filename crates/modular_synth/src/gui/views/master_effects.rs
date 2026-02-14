@@ -61,6 +61,26 @@ pub enum MasterEffectParams {
         mix: f32,   // 0-1
         bias: f32,  // -1 to 1
     },
+    MidSide {
+        width: f32,     // 0-1 (maps to 0.0-2.0)
+        mid_gain: f32,  // dB: -12 to 12
+        side_gain: f32, // dB: -12 to 12
+        mix: f32,       // 0-1
+    },
+    BbdDelay {
+        time: f32,        // seconds: 0.01 to 1.0
+        feedback: f32,    // 0-1
+        tone: f32,        // 0-1
+        wow_flutter: f32, // 0-1
+        clock_noise: f32, // 0-1
+        mix: f32,         // 0-1
+    },
+    Limiter {
+        ceiling: f32,    // dB: -12 to 0
+        look_ahead: f32, // ms: 1 to 5
+        release: f32,    // ms: 10 to 500
+        mix: f32,        // 0-1
+    },
 }
 
 impl MasterEffectParams {
@@ -120,6 +140,26 @@ impl MasterEffectParams {
                 mix: 1.0,
                 bias: 0.0,
             },
+            EffectType::MidSide => Self::MidSide {
+                width: 0.5,
+                mid_gain: 0.0,
+                side_gain: 0.0,
+                mix: 1.0,
+            },
+            EffectType::BbdDelay => Self::BbdDelay {
+                time: 0.3,
+                feedback: 0.4,
+                tone: 0.7,
+                wow_flutter: 0.3,
+                clock_noise: 0.1,
+                mix: 0.4,
+            },
+            EffectType::Limiter => Self::Limiter {
+                ceiling: -0.3,
+                look_ahead: 3.0,
+                release: 100.0,
+                mix: 1.0,
+            },
         }
     }
 }
@@ -165,6 +205,9 @@ impl MasterEffectUiState {
             EffectType::Flanger => "Flanger",
             EffectType::Distortion => "Distortion",
             EffectType::Waveshaper => "Waveshaper",
+            EffectType::MidSide => "Mid/Side",
+            EffectType::BbdDelay => "BBD Delay",
+            EffectType::Limiter => "Limiter",
         }
     }
 }

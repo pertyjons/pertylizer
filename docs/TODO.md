@@ -45,7 +45,7 @@
     * [ ] Piano Roll-vy
     * [ ] Record-knapp i transport
 14. **Generativa Moduler** (Nytt - Kreativitet)
-    * [ ] Euclidean Sequencer, Turing Machine, Random Gates.
+    * [x] ~~Euclidean Sequencer, Turing Machine, Random Gates.~~ *(0.119.0)*
 15. **Projekt-filer (.msproject)** (Från nuvarande Övrigt)
     * [ ] Spara hela sessionen (alla instrument + sequencer), inte bara enstaka patchar.
 

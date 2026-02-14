@@ -18,18 +18,23 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::similar_names)]
 
+pub mod additive_osc;
 pub mod amplifier;
 pub mod envelope;
 pub mod envelope_follower;
+pub mod euclidean;
 pub mod filter;
 pub mod lfo;
 pub mod math_oscillator;
 pub mod mod_matrix;
+pub mod mseg;
 pub mod noise;
 pub mod oscillator;
 pub mod output;
+pub mod random_gates;
 pub mod ring_mod;
 pub mod sub_osc;
+pub mod turing_machine;
 pub mod wavetable_data;
 pub mod wavetable_osc;
 
@@ -42,18 +47,23 @@ pub mod mechanical_noise;
 pub mod effects;
 
 // Module exports
+pub use additive_osc::AdditiveOsc;
 pub use amplifier::{Amplifier, Mixer};
 pub use envelope::{Envelope, EnvelopePositionBuffer, EnvelopeStage};
 pub use envelope_follower::EnvelopeFollower;
+pub use euclidean::Euclidean;
 pub use filter::{Filter, LadderFilter};
 pub use lfo::Lfo;
 pub use math_oscillator::MathOscillator;
 pub use mod_matrix::ModMatrix;
+pub use mseg::Mseg;
 pub use noise::NoiseGenerator;
 pub use oscillator::Oscillator;
 pub use output::StereoOutput;
+pub use random_gates::RandomGates;
 pub use ring_mod::RingMod;
 pub use sub_osc::SubOscillator;
+pub use turing_machine::TuringMachine;
 pub use wavetable_osc::WavetableOsc;
 
 // Physical modeling exports
@@ -63,7 +73,8 @@ pub use mechanical_noise::MechanicalNoise;
 
 // Effects exports
 pub use effects::{
-    Chorus, Compressor, Delay, Distortion, DistortionType, Eq, Flanger, Phaser, Reverb, Waveshaper,
+    BbdDelay, Chorus, Compressor, Delay, Distortion, DistortionType, Eq, Flanger, Limiter, MidSide,
+    Phaser, Reverb, Waveshaper,
 };
 
 // Re-export param types from synth_core for convenience

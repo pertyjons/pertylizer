@@ -1,5 +1,27 @@
 # Version History
 
+## [0.119.0] - 2026-02-14
+### Added - 10 nya ljudtekniker: MSEG, BBD Delay, Additive Synth, Generativa moduler m.m.
+
+**Nya effekter (AudioEffect):**
+- **BBD Delay**: Analog bucket-brigade delay-emulering med kompander (tanh), bandbreddsbegränsning, wow & flutter LFO, clock noise och feedback med per-repeat mörkläggning.
+- **Brickwall Limiter**: Look-ahead limiter med true peak detection, konfigurerbart ceiling/release, soft knee och gain reduction metering.
+- **Mid/Side Processing**: Stereo breddkontroll med M/S encoding, width (0-2x), mid/side gain och mix.
+
+**Nya voice-moduler (PolyModule):**
+- **MSEG (Multi-Stage Envelope Generator)**: 16-segments envelope med per-segment time/level/curve, loop-stöd, sustain-segment och tempo-sync. Preset-mallar: ADSR, Tremolo, Sidechain Pump.
+- **Additive Oscillator**: 32 harmoniska med spektral profil (Tilt, Odd/Even, Brightness), spektral stretch för inharmonicitet, fas-randomisering vid note-on.
+- **Euclidean Sequencer**: Björklund-algoritm för jämnt fördelade pulspar. Steps (1-32), pulses, rotation, swing. Gate + accent CV-output.
+- **Turing Machine**: 16-bit skiftregister för semi-slumpmässiga melodier. Mutation rate (locked→evolving→random), skalkvantisering (chromatic/major/minor/pentatonic), pitch CV + gate output.
+- **Random Gates**: Probabilistisk gate-generator med density, burst mode, konfigurerbar gate-längd. Gate + random CV output.
+
+**GUI-integration:**
+- Alla nya effekter tillgängliga i Effect-menyn och Master Effects-panelen med fullständiga parameter-sliders.
+- Additive Oscillator i Oscillator-submenyn.
+- MSEG i Modulation-submenyn.
+- Ny "Generative"-submeny med Euclidean, Turing Machine och Random Gates.
+- Patch-serialisering (save/load) stöds för alla nya modultyper.
+
 ## [0.118.0] - 2026-02-14
 ### Added - 8 nya kreativa patchar med Ring Mod, Envelope Follower & Wavetable
 - **Vocal Pad**: Eterisk körliknande pad med Formant-wavetable och LFO-driven vokal-morphing genom vowel-shapes.

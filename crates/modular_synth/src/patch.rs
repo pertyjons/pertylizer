@@ -93,6 +93,7 @@ pub enum PatchModuleType {
     Distortion,
     Chorus,
     Waveshaper,
+    MidSide,
     // Visualizers
     Oscilloscope,
     LevelMeter,
@@ -106,6 +107,14 @@ pub enum PatchModuleType {
     KeyboardPanner,
     BodyResonance,
     MechanicalNoise,
+    // New modules (v0.119.0)
+    Mseg,
+    AdditiveOsc,
+    BbdDelay,
+    Limiter,
+    Euclidean,
+    TuringMachine,
+    RandomGates,
 }
 
 impl PatchModuleType {
@@ -126,6 +135,7 @@ impl PatchModuleType {
             Self::Distortion => "distortion",
             Self::Chorus => "chorus",
             Self::Waveshaper => "waveshaper",
+            Self::MidSide => "mid_side",
             Self::Oscilloscope => "oscilloscope",
             Self::LevelMeter => "level_meter",
             Self::ModMatrix => "mod_matrix",
@@ -137,6 +147,14 @@ impl PatchModuleType {
             Self::KeyboardPanner => "keyboard_panner",
             Self::BodyResonance => "body_resonance",
             Self::MechanicalNoise => "mechanical_noise",
+            // New modules
+            Self::Mseg => "mseg",
+            Self::AdditiveOsc => "additive_osc",
+            Self::BbdDelay => "bbd_delay",
+            Self::Limiter => "limiter",
+            Self::Euclidean => "euclidean",
+            Self::TuringMachine => "turing_machine",
+            Self::RandomGates => "random_gates",
         }
     }
 
@@ -158,6 +176,7 @@ impl PatchModuleType {
             Self::Distortion => "dst",
             Self::Chorus => "chr",
             Self::Waveshaper => "wsh",
+            Self::MidSide => "mds",
             Self::Oscilloscope => "scp",
             Self::LevelMeter => "mtr",
             Self::ModMatrix => "mmx",
@@ -169,6 +188,14 @@ impl PatchModuleType {
             Self::KeyboardPanner => "kbp",
             Self::BodyResonance => "bdy",
             Self::MechanicalNoise => "mec",
+            // New modules
+            Self::Mseg => "msg",
+            Self::AdditiveOsc => "add",
+            Self::BbdDelay => "bbd",
+            Self::Limiter => "lim",
+            Self::Euclidean => "euc",
+            Self::TuringMachine => "tur",
+            Self::RandomGates => "rgn",
         }
     }
 
@@ -180,7 +207,14 @@ impl PatchModuleType {
     pub const fn is_effect_chain_module(&self) -> bool {
         matches!(
             self,
-            Self::Delay | Self::Reverb | Self::Distortion | Self::Chorus | Self::Waveshaper
+            Self::Delay
+                | Self::Reverb
+                | Self::Distortion
+                | Self::Chorus
+                | Self::Waveshaper
+                | Self::MidSide
+                | Self::BbdDelay
+                | Self::Limiter
         )
     }
 

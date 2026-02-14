@@ -33,8 +33,8 @@ use crate::io::MidiHandler;
 use crate::patch::{Patch, categorized_patches};
 use synth_core::Velocity;
 use synth_core::{
-    ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, Param,
-    PhaserParam, ReverbParam, WaveshaperParam,
+    ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, MidSideParam,
+    Param, PhaserParam, ReverbParam, WaveshaperParam,
 };
 use synth_core::{Describable, ModuleCategory};
 use synth_engine::ModuleType as TypedModuleType;
@@ -43,7 +43,8 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_modules::effects::{
-    Chorus, Compressor, Delay, Distortion, Eq, Flanger, Phaser, Reverb, Waveshaper,
+    BbdDelay, Chorus, Compressor, Delay, Distortion, Eq, Flanger, Limiter, MidSide, Phaser, Reverb,
+    Waveshaper,
 };
 use synth_modules::{
     Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
@@ -564,6 +565,22 @@ impl eframe::App for SynthApp {
                             PaletteSelection::MechanicalNoise => {
                                 self.add_mechanical_noise_module();
                             }
+                            // New modules
+                            PaletteSelection::Mseg => {
+                                self.add_mseg_module();
+                            }
+                            PaletteSelection::AdditiveOsc => {
+                                self.add_additive_osc_module();
+                            }
+                            PaletteSelection::Euclidean => {
+                                self.add_euclidean_module();
+                            }
+                            PaletteSelection::TuringMachine => {
+                                self.add_turing_machine_module();
+                            }
+                            PaletteSelection::RandomGates => {
+                                self.add_random_gates_module();
+                            }
                         }
                     }
 
@@ -1045,6 +1062,96 @@ impl SynthApp {
         });
     }
 
+    fn add_mseg_module(&mut self) {
+        let m = synth_modules::Mseg::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::Mseg);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_additive_osc_module(&mut self) {
+        let m = synth_modules::AdditiveOsc::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::AdditiveOsc);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_euclidean_module(&mut self) {
+        let m = synth_modules::Euclidean::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::Euclidean);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_turing_machine_module(&mut self) {
+        let m = synth_modules::TuringMachine::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::TuringMachine);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_random_gates_module(&mut self) {
+        let m = synth_modules::RandomGates::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::RandomGates);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
     fn add_effect_module(&mut self, effect_type: EffectType) {
         // Create effect in GUI thread (real-time safe allocation)
         let (effect, descriptor, module_type): (
@@ -1096,6 +1203,21 @@ impl SynthApp {
                 let e = Waveshaper::new();
                 let d = e.descriptor();
                 (Box::new(e), d, TypedModuleType::Waveshaper)
+            }
+            EffectType::MidSide => {
+                let e = MidSide::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::MidSide)
+            }
+            EffectType::BbdDelay => {
+                let e = BbdDelay::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::BbdDelay)
+            }
+            EffectType::Limiter => {
+                let e = Limiter::new();
+                let d = e.descriptor();
+                (Box::new(e), d, TypedModuleType::Limiter)
             }
         };
 
@@ -1193,6 +1315,9 @@ impl SynthApp {
                 EffectType::Waveshaper => {
                     (Box::new(Waveshaper::new()), TypedModuleType::Waveshaper)
                 }
+                EffectType::MidSide => (Box::new(MidSide::new()), TypedModuleType::MidSide),
+                EffectType::BbdDelay => (Box::new(BbdDelay::new()), TypedModuleType::BbdDelay),
+                EffectType::Limiter => (Box::new(Limiter::new()), TypedModuleType::Limiter),
             };
 
         let next_id = self.next_module_id(module_type);
@@ -1438,6 +1563,9 @@ impl SynthApp {
                         (EffectType::Flanger, "Flanger"),
                         (EffectType::Distortion, "Distortion"),
                         (EffectType::Waveshaper, "Waveshaper"),
+                        (EffectType::MidSide, "Mid/Side"),
+                        (EffectType::BbdDelay, "BBD Delay"),
+                        (EffectType::Limiter, "Limiter"),
                     ];
 
                     for (effect_type, name) in effect_types {
@@ -2750,6 +2878,453 @@ fn draw_effect_params(
                         param_changes.push((
                             effect_type,
                             Param::Waveshaper(WaveshaperParam::Mix(NormalizedValue::new(val))),
+                        ));
+                    }
+                }
+            }
+
+            MasterEffectParams::MidSide {
+                width,
+                mid_gain,
+                side_gain,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::MidSide {
+                    width: w,
+                    mid_gain: mg,
+                    side_gain: sg,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Width
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Width")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let actual_width = width * 2.0;
+                            ui.label(
+                                RichText::new(format!("{actual_width:.1}"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *width;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *w = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::MidSide(MidSideParam::Width(NormalizedValue::new(val))),
+                        ));
+                    }
+
+                    // Mid Gain
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mid Gain")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{mid_gain:+.1} dB"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mid_gain;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
+                        .changed()
+                    {
+                        *mg = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::MidSide(MidSideParam::MidGain(synth_core::Decibels::new(val))),
+                        ));
+                    }
+
+                    // Side Gain
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Side Gain")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{side_gain:+.1} dB"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *side_gain;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
+                        .changed()
+                    {
+                        *sg = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::MidSide(MidSideParam::SideGain(synth_core::Decibels::new(val))),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::MidSide(MidSideParam::Mix(NormalizedValue::new(val))),
+                        ));
+                    }
+                }
+            }
+
+            MasterEffectParams::BbdDelay {
+                time,
+                feedback,
+                tone,
+                wow_flutter,
+                clock_noise,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::BbdDelay {
+                    time: t,
+                    feedback: fb,
+                    tone: tn,
+                    wow_flutter: wf,
+                    clock_noise: cn,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Time
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Time")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}ms", time * 1000.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *time;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.01..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *t = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::Time(Seconds::new(val))),
+                        ));
+                    }
+
+                    // Feedback
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Feedback")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", feedback * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *feedback;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=0.95).show_value(false))
+                        .changed()
+                    {
+                        *fb = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::Feedback(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Tone
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Tone")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", tone * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *tone;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *tn = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::Tone(NormalizedValue::new(
+                                val,
+                            ))),
+                        ));
+                    }
+
+                    // Wow & Flutter
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("W&F")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", wow_flutter * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *wow_flutter;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *wf = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::WowFlutter(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Clock Noise
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Noise")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", clock_noise * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *clock_noise;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *cn = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::ClockNoise(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::BbdDelay(synth_core::BbdDelayParam::Mix(NormalizedValue::new(
+                                val,
+                            ))),
+                        ));
+                    }
+                }
+            }
+
+            MasterEffectParams::Limiter {
+                ceiling,
+                look_ahead,
+                release,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::Limiter {
+                    ceiling: c,
+                    look_ahead: la,
+                    release: rel,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Ceiling
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Ceiling")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{ceiling:.1} dB"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *ceiling;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -12.0..=0.0).show_value(false))
+                        .changed()
+                    {
+                        *c = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Limiter(synth_core::LimiterParam::Ceiling(Decibels::new(val))),
+                        ));
+                    }
+
+                    // Look-ahead
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Look-ahead")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{look_ahead:.1}ms"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *look_ahead;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 1.0..=5.0).show_value(false))
+                        .changed()
+                    {
+                        *la = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Limiter(synth_core::LimiterParam::LookAhead(Milliseconds::new(
+                                val,
+                            ))),
+                        ));
+                    }
+
+                    // Release
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Release")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{release:.0}ms"))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *release;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 10.0..=500.0).show_value(false))
+                        .changed()
+                    {
+                        *rel = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Limiter(synth_core::LimiterParam::Release(Milliseconds::new(
+                                val,
+                            ))),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::Limiter(synth_core::LimiterParam::Mix(NormalizedValue::new(
+                                val,
+                            ))),
                         ));
                     }
                 }

@@ -20,7 +20,7 @@ use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_engine::visualizers::{LevelMeter, Oscilloscope};
 use synth_engine::{EngineCommand, EngineHandle, ModuleId};
-use synth_modules::effects::{Chorus, Delay, Distortion, Reverb, Waveshaper};
+use synth_modules::effects::{Chorus, Delay, Distortion, MidSide, Reverb, Waveshaper};
 use synth_modules::{
     Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
     StereoOutput, SubOscillator,
@@ -445,6 +445,25 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::MidSide => {
+            let e = MidSide::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::MidSide),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
             patch_editor.add_module_at(module_id, descriptor, position);
@@ -611,6 +630,139 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::Mseg => {
+            let m = synth_modules::Mseg::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::AdditiveOsc => {
+            let m = synth_modules::AdditiveOsc::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::Euclidean => {
+            let m = synth_modules::Euclidean::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::TuringMachine => {
+            let m = synth_modules::TuringMachine::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::RandomGates => {
+            let m = synth_modules::RandomGates::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::BbdDelay => {
+            let e = synth_modules::BbdDelay::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::BbdDelay),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
+        PatchModuleType::Limiter => {
+            let e = synth_modules::Limiter::new();
+            let descriptor = e.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddEffectInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                effect: Box::new(e),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                Some(EffectType::Limiter),
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
     }
 }
 
@@ -708,12 +860,21 @@ pub fn create_patch_from_rack(
                         "noise" => PatchModuleType::Noise,
                         "ring_mod" => PatchModuleType::RingMod,
                         "wavetable_osc" => PatchModuleType::WavetableOsc,
+                        "additive_osc" => PatchModuleType::AdditiveOsc,
                         _ => PatchModuleType::Oscillator,
                     }
                 }
                 ModuleCategory::Filter => PatchModuleType::Filter,
-                ModuleCategory::Envelope => PatchModuleType::Envelope,
-                ModuleCategory::LFO => PatchModuleType::Lfo,
+                ModuleCategory::Envelope => match descriptor.type_id.0.as_str() {
+                    "mseg" => PatchModuleType::Mseg,
+                    _ => PatchModuleType::Envelope,
+                },
+                ModuleCategory::LFO => match descriptor.type_id.0.as_str() {
+                    "euclidean" => PatchModuleType::Euclidean,
+                    "turing_machine" => PatchModuleType::TuringMachine,
+                    "random_gates" => PatchModuleType::RandomGates,
+                    _ => PatchModuleType::Lfo,
+                },
                 ModuleCategory::Amplifier => PatchModuleType::Amplifier,
                 ModuleCategory::Mixer => PatchModuleType::Mixer,
                 ModuleCategory::Output => PatchModuleType::StereoOutput,
@@ -723,6 +884,9 @@ pub fn create_patch_from_rack(
                     "distortion" => PatchModuleType::Distortion,
                     "chorus" => PatchModuleType::Chorus,
                     "waveshaper" => PatchModuleType::Waveshaper,
+                    "mid_side" => PatchModuleType::MidSide,
+                    "bbd_delay" => PatchModuleType::BbdDelay,
+                    "limiter" => PatchModuleType::Limiter,
                     _ => PatchModuleType::Delay, // Fallback for other effects
                 },
                 ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
@@ -792,6 +956,9 @@ pub fn get_effect_type_from_module(
         "compressor" => Some(EffectType::Compressor),
         "eq" => Some(EffectType::Eq),
         "waveshaper" => Some(EffectType::Waveshaper),
+        "mid_side" => Some(EffectType::MidSide),
+        "bbd_delay" => Some(EffectType::BbdDelay),
+        "limiter" => Some(EffectType::Limiter),
         _ => None,
     }
 }

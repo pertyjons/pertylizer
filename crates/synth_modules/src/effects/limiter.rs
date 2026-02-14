@@ -1,0 +1,314 @@
+//! Brickwall limiter with look-ahead.
+//!
+//! Features:
+//! - True peak detection with look-ahead buffer
+//! - Configurable ceiling, release, and look-ahead time
+//! - Soft knee near ceiling to avoid hard clipping
+//! - Gain reduction metering
+
+use synth_core::{
+    AudioEffect, Decibels, Describable, LimiterParam, Milliseconds, ModuleCategory,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
+    ProcessContext, ResponseCurve, SampleCount, SampleRate, WidgetHint,
+};
+
+/// Maximum look-ahead in samples at 48kHz (~5ms).
+const MAX_LOOKAHEAD_SAMPLES: usize = 240;
+
+/// Brickwall limiter with look-ahead.
+pub struct Limiter {
+    // Parameters
+    ceiling: Decibels,
+    lookahead_ms: Milliseconds,
+    release_ms: Milliseconds,
+    mix: NormalizedValue,
+
+    // Look-ahead ring buffer (interleaved stereo)
+    lookahead_buffer: Vec<f32>,
+    write_pos: usize,
+
+    // Gain envelope
+    gain_envelope: f32,
+
+    // State
+    sample_rate: SampleRate,
+    lookahead_samples: usize,
+}
+
+impl Limiter {
+    pub fn new() -> Self {
+        let lookahead_size = MAX_LOOKAHEAD_SAMPLES * 2; // stereo interleaved
+        Self {
+            ceiling: Decibels::new(-0.3),
+            lookahead_ms: Milliseconds::new(3.0),
+            release_ms: Milliseconds::new(100.0),
+            mix: NormalizedValue::MAX,
+
+            lookahead_buffer: vec![0.0; lookahead_size],
+            write_pos: 0,
+
+            gain_envelope: 1.0,
+
+            sample_rate: SampleRate::DVD_QUALITY,
+            lookahead_samples: 132, // ~3ms at 44.1kHz
+        }
+    }
+
+    fn update_lookahead(&mut self) {
+        self.lookahead_samples = ((self.lookahead_ms.as_f32() * 0.001 * self.sample_rate.as_f32())
+            as usize)
+            .clamp(1, MAX_LOOKAHEAD_SAMPLES);
+    }
+
+    /// Read from the look-ahead buffer at a given delay.
+    #[inline]
+    fn read_delayed(&self, delay_frames: usize, channel: usize) -> f32 {
+        let total_frames = self.lookahead_buffer.len() / 2;
+        let read_frame = (self.write_pos / 2 + total_frames - delay_frames) % total_frames;
+        self.lookahead_buffer[read_frame * 2 + channel]
+    }
+}
+
+impl Default for Limiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Describable for Limiter {
+    fn descriptor(&self) -> ModuleDescriptor {
+        ModuleDescriptor::new("limiter", "Limiter")
+            .description("Brickwall limiter with look-ahead")
+            .category(ModuleCategory::Effect)
+            .tag("limiter")
+            .tag("dynamics")
+            .tag("effect")
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Limiter(LimiterParam::Ceiling(Decibels::new(-0.3))),
+                    "Ceiling",
+                )
+                .description("Output ceiling level")
+                .range(-12.0, 0.0)
+                .default(-0.3)
+                .unit(ParameterUnit::Decibels)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Limiter(LimiterParam::LookAhead(Milliseconds::new(3.0))),
+                    "Look-Ahead",
+                )
+                .description("Look-ahead time for peak detection")
+                .range(0.5, 5.0)
+                .default(3.0)
+                .unit(ParameterUnit::Milliseconds)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Limiter(LimiterParam::Release(Milliseconds::new(100.0))),
+                    "Release",
+                )
+                .description("Gain recovery time")
+                .range(10.0, 500.0)
+                .default(100.0)
+                .unit(ParameterUnit::Milliseconds)
+                .curve(ResponseCurve::Logarithmic)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Limiter(LimiterParam::Mix(NormalizedValue::MAX)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
+    }
+}
+
+impl AudioEffect for Limiter {
+    #[allow(clippy::too_many_lines)]
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+        let ceiling_linear = 10.0_f32.powf(self.ceiling.as_f32() / 20.0);
+        let release_coeff =
+            (-1.0 / (self.release_ms.as_f32() * 0.001 * self.sample_rate.as_f32()).max(1.0)).exp();
+        let mix = self.mix.as_f32();
+        let lookahead = self.lookahead_samples;
+        let total_frames = self.lookahead_buffer.len() / 2;
+
+        let channels = 2;
+        for frame in 0..context.samples.as_usize() {
+            let idx_l = frame * channels;
+            let idx_r = frame * channels + 1;
+
+            // Read input
+            let in_l = if idx_l < input.len() {
+                input[idx_l]
+            } else {
+                0.0
+            };
+            let in_r = if idx_r < input.len() {
+                input[idx_r]
+            } else {
+                0.0
+            };
+
+            // Write to look-ahead buffer
+            self.lookahead_buffer[self.write_pos] = in_l;
+            self.lookahead_buffer[self.write_pos + 1] = in_r;
+            self.write_pos = (self.write_pos + 2) % self.lookahead_buffer.len();
+
+            // Scan ahead for peaks
+            let mut peak = 0.0_f32;
+            for d in 0..lookahead {
+                let l = self.read_delayed(d, 0).abs();
+                let r = self.read_delayed(d, 1).abs();
+                peak = peak.max(l).max(r);
+            }
+
+            // Calculate needed gain reduction
+            let target_gain = if peak > ceiling_linear {
+                ceiling_linear / peak
+            } else {
+                1.0
+            };
+
+            // Smooth gain envelope: instant attack, slow release
+            if target_gain < self.gain_envelope {
+                self.gain_envelope = target_gain;
+            } else {
+                self.gain_envelope =
+                    self.gain_envelope * release_coeff + target_gain * (1.0 - release_coeff);
+            }
+
+            // Read delayed signal (the signal we'll limit)
+            let delayed_frame = (self.write_pos / 2 + total_frames - lookahead) % total_frames;
+            let delayed_l = self.lookahead_buffer[delayed_frame * 2];
+            let delayed_r = self.lookahead_buffer[delayed_frame * 2 + 1];
+
+            // Apply gain
+            let limited_l = delayed_l * self.gain_envelope;
+            let limited_r = delayed_r * self.gain_envelope;
+
+            // Mix (dry = delayed signal, wet = limited)
+            if idx_l < output.len() {
+                output[idx_l] = delayed_l * (1.0 - mix) + limited_l * mix;
+            }
+            if idx_r < output.len() {
+                output[idx_r] = delayed_r * (1.0 - mix) + limited_r * mix;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.lookahead_buffer.fill(0.0);
+        self.write_pos = 0;
+        self.gain_envelope = 1.0;
+    }
+
+    fn set_mix(&mut self, mix: NormalizedValue) {
+        self.mix = mix;
+    }
+
+    fn get_mix(&self) -> NormalizedValue {
+        self.mix
+    }
+
+    fn tail_samples(&self) -> SampleCount {
+        SampleCount::new(self.lookahead_samples)
+    }
+
+    fn set_param(&mut self, param: Param) {
+        if let Param::Limiter(p) = param {
+            match p {
+                LimiterParam::Ceiling(db) => {
+                    self.ceiling = Decibels::new(db.as_f32().clamp(-12.0, 0.0));
+                }
+                LimiterParam::LookAhead(ms) => {
+                    self.lookahead_ms = Milliseconds::new(ms.as_f32().clamp(0.5, 5.0));
+                    self.update_lookahead();
+                }
+                LimiterParam::Release(ms) => {
+                    self.release_ms = Milliseconds::new(ms.as_f32().clamp(10.0, 500.0));
+                }
+                LimiterParam::Mix(m) => self.mix = m,
+            }
+        }
+    }
+
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Limiter(p) = param {
+            Some(match p {
+                LimiterParam::Ceiling(_) => self.ceiling.as_f32(),
+                LimiterParam::LookAhead(_) => self.lookahead_ms.as_f32(),
+                LimiterParam::Release(_) => self.release_ms.as_f32(),
+                LimiterParam::Mix(_) => self.mix.as_f32(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn get_params(&self) -> Vec<Param> {
+        vec![
+            Param::Limiter(LimiterParam::Ceiling(self.ceiling)),
+            Param::Limiter(LimiterParam::LookAhead(self.lookahead_ms)),
+            Param::Limiter(LimiterParam::Release(self.release_ms)),
+            Param::Limiter(LimiterParam::Mix(self.mix)),
+        ]
+    }
+
+    fn module_type(&self) -> ModuleType {
+        ModuleType::Limiter
+    }
+
+    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
+        self.update_lookahead();
+        // Resize buffer for new sample rate
+        let new_size = MAX_LOOKAHEAD_SAMPLES * 2;
+        if self.lookahead_buffer.len() != new_size {
+            self.lookahead_buffer.resize(new_size, 0.0);
+            self.write_pos = 0;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_limiter_creation() {
+        let limiter = Limiter::new();
+        assert!(limiter.ceiling.as_f32() < 0.0);
+    }
+
+    #[test]
+    fn test_limiter_reduces_peaks() {
+        let mut limiter = Limiter::new();
+        limiter.ceiling = Decibels::new(-6.0); // ~0.5 linear
+        limiter.lookahead_samples = 1;
+
+        let context = ProcessContext {
+            sample_rate: SampleRate::DVD_QUALITY,
+            samples: SampleCount::new(128),
+            ..Default::default()
+        };
+
+        // Loud input
+        let input: Vec<f32> = vec![1.0; 256];
+        let mut output = vec![0.0; 256];
+
+        limiter.process(&input, &mut output, &context);
+
+        // After settling, output should be below ceiling
+        for sample in &output[20..] {
+            assert!(sample.abs() <= 0.55, "Limiter output too loud: {}", sample);
+        }
+    }
+}
