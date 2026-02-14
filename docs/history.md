@@ -1,5 +1,48 @@
 # Version History
 
+## [0.124.0] - 2026-02-15
+### Added - AWE Fas 1: Parametriskt Rum
+
+**Early Reflections (ISM):**
+- Image Source Method med 6 taps (en per vägg i rektangulärt rum).
+- Fraktionella delays via `InterpolatedDelayLine`, per-tap one-pole LP-damping.
+- Avståndsberoende gain (1/r), pan baserat på speglad källas X-offset.
+- Automatisk geometriuppdatering vid rum-/positionsändringar.
+
+**FDN Late Reverb (geometridrivet):**
+- `FdnCore`-baserad sen reverb med parametrar härledda från rumsgeometri.
+- RT60 via Sabines formel, feedback-gain beräknad från RT60.
+- Delay-tider skalade efter rumsdimensioner, damping från materialabsorption.
+
+**Room Mode Bank (comb-filter):**
+- 3 axiella rumsmoder (längd/bredd/höjd) som parallella comb-filter.
+- Feedbackstyrka och damping beräknade från absorption.
+- Modes amount-kontroll (0–1) för blandning.
+
+**Spatializer (ITD + ILD):**
+- Interaural time difference via två `InterpolatedDelayLine` (max 64 samples).
+- Interaural level difference via equal-power panning.
+- Head shadow one-pole LP per öra, mer dämpning på avskärmade örat.
+
+**AWE-interna LFO:er:**
+- 2 kontroll-rate LFO:er (sine, 0.01–20 Hz) som körs per block.
+- 8 targets: RoomLength, RoomWidth, SourceX/Y, ListenerX/Y, DryWet, FreqWarp.
+- Smooth 5 ms parameter-ramping i DSP-loopen.
+
+**2D Floor Plan GUI:**
+- Top-down planritning med rum-outline, dimensionslabels.
+- Dragbara källa (S) och lyssnare (L) markörer.
+- Material-väljare (6 presets).
+- Sliders: Dry/Wet, Early/Late, Modes, Tail Stretch.
+- LFO 1 & 2: Rate, Amount, Target-väljare.
+
+**Ny params:**
+- `AweLfoTarget` enum och `AweLfoState` struct för LFO-persistence.
+- `AweSnapshot` utökad med `lfo1`/`lfo2` fält.
+- `AweParam` utökad med Lfo1Rate/Amount/Target, Lfo2Rate/Amount/Target.
+- `RoomShape` dimension-accessors: `length()`, `width()`, `height()`.
+- `SPEED_OF_SOUND` som publik konstant i `room.rs`.
+
 ## [0.123.0] - 2026-02-14
 ### Added - AWE (Acoustic World Engine) Fas 0 — Infrastruktur
 

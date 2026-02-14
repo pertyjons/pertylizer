@@ -4,6 +4,49 @@ use serde::{Deserialize, Serialize};
 
 use crate::room::{Material, RoomShape};
 
+/// Target for an AWE-internal LFO modulation.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AweLfoTarget {
+    /// Modulate room length.
+    RoomLength,
+    /// Modulate room width.
+    RoomWidth,
+    /// Modulate source X position.
+    #[default]
+    SourceX,
+    /// Modulate source Y position.
+    SourceY,
+    /// Modulate listener X position.
+    ListenerX,
+    /// Modulate listener Y position.
+    ListenerY,
+    /// Modulate dry/wet mix.
+    DryWet,
+    /// Modulate frequency warp.
+    FreqWarp,
+}
+
+/// State of one AWE-internal LFO for persistence.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AweLfoState {
+    /// LFO rate in Hz (0.01 – 20.0).
+    pub rate: f32,
+    /// Modulation amount (0.0 – 1.0).
+    pub amount: f32,
+    /// Modulation target.
+    pub target: AweLfoTarget,
+}
+
+impl Default for AweLfoState {
+    fn default() -> Self {
+        Self {
+            rate: 0.5,
+            amount: 0.0,
+            target: AweLfoTarget::default(),
+        }
+    }
+}
+
 /// Parameters that can be set on the AWE engine.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AweParam {
@@ -29,6 +72,18 @@ pub enum AweParam {
     TailStretch(f32),
     /// Enable/disable the AWE engine.
     Enabled(bool),
+    /// Set LFO 1 rate in Hz.
+    Lfo1Rate(f32),
+    /// Set LFO 1 amount (0.0–1.0).
+    Lfo1Amount(f32),
+    /// Set LFO 1 target.
+    Lfo1Target(AweLfoTarget),
+    /// Set LFO 2 rate in Hz.
+    Lfo2Rate(f32),
+    /// Set LFO 2 amount (0.0–1.0).
+    Lfo2Amount(f32),
+    /// Set LFO 2 target.
+    Lfo2Target(AweLfoTarget),
 }
 
 /// Snapshot of all numeric AWE parameters for batch-updating.
@@ -50,6 +105,12 @@ pub struct AweSnapshot {
     pub source_pos: [f32; 3],
     /// Listener position.
     pub listener_pos: [f32; 3],
+    /// LFO 1 state.
+    #[serde(default)]
+    pub lfo1: AweLfoState,
+    /// LFO 2 state.
+    #[serde(default)]
+    pub lfo2: AweLfoState,
 }
 
 impl Default for AweSnapshot {
@@ -63,6 +124,11 @@ impl Default for AweSnapshot {
             tail_stretch: 1.0,
             source_pos: [2.0, 2.5, 1.5],
             listener_pos: [6.0, 2.5, 1.5],
+            lfo1: AweLfoState::default(),
+            lfo2: AweLfoState {
+                target: AweLfoTarget::SourceY,
+                ..AweLfoState::default()
+            },
         }
     }
 }

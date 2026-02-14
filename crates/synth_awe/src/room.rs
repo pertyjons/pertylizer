@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Speed of sound in air at room temperature (m/s).
+pub const SPEED_OF_SOUND: f32 = 343.0;
+
 /// Shape of the simulated room.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RoomShape {
@@ -48,13 +51,36 @@ impl RoomShape {
         }
     }
 
+    /// Length of the room (x-axis) in meters.
+    #[must_use]
+    pub fn length(self) -> f32 {
+        match self {
+            Self::Box { length, .. } => length,
+        }
+    }
+
+    /// Width of the room (y-axis) in meters.
+    #[must_use]
+    pub fn width(self) -> f32 {
+        match self {
+            Self::Box { width, .. } => width,
+        }
+    }
+
+    /// Height of the room (z-axis) in meters.
+    #[must_use]
+    pub fn height(self) -> f32 {
+        match self {
+            Self::Box { height, .. } => height,
+        }
+    }
+
     /// Axial room modes (fundamental frequencies for each axis).
     ///
     /// Returns (length_mode, width_mode, height_mode) in Hz.
     /// Formula: f = c / (2 * L), where c = 343 m/s (speed of sound).
     #[must_use]
     pub fn axial_modes(self) -> (f32, f32, f32) {
-        const SPEED_OF_SOUND: f32 = 343.0;
         match self {
             Self::Box {
                 length,

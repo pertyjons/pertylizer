@@ -226,6 +226,7 @@ struct SynthApp {
 
     // AWE state
     awe_enabled: bool,
+    awe_ui: crate::gui::awe_view::AweUiState,
 }
 
 impl SynthApp {
@@ -304,6 +305,7 @@ impl SynthApp {
             master_effects: Vec::new(),
             active_view: AppView::default(),
             awe_enabled: false,
+            awe_ui: crate::gui::awe_view::AweUiState::default(),
         }
     }
 
@@ -828,6 +830,7 @@ impl eframe::App for SynthApp {
                     &mut self.handle,
                     &mut self.awe_enabled,
                     &mut self.active_view,
+                    &mut self.awe_ui,
                 );
             }
         }

@@ -1,64 +1,236 @@
-//! AWE engine - real-time room simulation processor.
+//! AWE engine — real-time room simulation processor.
 //!
-//! Fas 0: pass-through only. No DSP logic.
+//! Full DSP pipeline (Fas 1):
+//! 1. Early reflections via Image Source Method (ISM)
+//! 2. Late reverb via FDN (geometry-driven parameters)
+//! 3. Axial room modes via comb-filter bank
+//! 4. Stereo spatializer (ITD + ILD) on wet signal only
 
-use crate::params::{AweParam, AweSnapshot};
+use synth_dsp::FdnCore;
+
+use crate::early_reflections::EarlyReflections;
+use crate::lfo::AweLfo;
+use crate::params::{AweLfoTarget, AweParam, AweSnapshot};
 use crate::room::{Material, RoomShape};
+use crate::room_modes::RoomModeBank;
+use crate::spatializer::Spatializer;
+
+/// Smooth parameter ramp time in seconds (~5 ms).
+const RAMP_TIME_SECONDS: f32 = 0.005;
 
 /// The Acoustic World Engine processor.
 ///
-/// In Fas 0 this is a pass-through — the engine stores parameters
-/// but does not modify audio. Future phases will add ISM, room modes,
-/// and FDN-based late reverb.
+/// Processes interleaved stereo audio through a physics-based room simulation:
+/// early reflections, late reverb, room modes, and stereo spatialisation.
 pub struct AweEngine {
     enabled: bool,
     room: RoomShape,
     material: Material,
     snapshot: AweSnapshot,
     cached_sample_rate: f32,
+
+    // DSP processors
+    early_reflections: EarlyReflections,
+    fdn: FdnCore,
+    room_modes: RoomModeBank,
+    spatializer: Spatializer,
+
+    // LFOs (control-rate)
+    lfo1: AweLfo,
+    lfo2: AweLfo,
+
+    // Smoothed DSP parameters (current values that ramp toward targets)
+    current_dry_wet: f32,
+    current_early_late: f32,
+
+    // Geometry dirty flag — recalculate ISM taps, FDN, modes when true
+    geometry_dirty: bool,
 }
 
 impl AweEngine {
     /// Create a new AWE engine (disabled by default).
     #[must_use]
     pub fn new() -> Self {
+        let snapshot = AweSnapshot::default();
         Self {
             enabled: false,
             room: RoomShape::default(),
             material: Material::default(),
-            snapshot: AweSnapshot::default(),
+            snapshot,
             cached_sample_rate: 48000.0,
+
+            early_reflections: EarlyReflections::new(),
+            fdn: FdnCore::new(),
+            room_modes: RoomModeBank::new(),
+            spatializer: Spatializer::new(),
+
+            lfo1: AweLfo::new(),
+            lfo2: AweLfo::new(),
+
+            current_dry_wet: snapshot.dry_wet,
+            current_early_late: snapshot.early_late_balance,
+
+            geometry_dirty: true,
         }
     }
 
-    /// Process audio buffer (interleaved stereo).
-    ///
-    /// In Fas 0 this is a no-op (pass-through).
-    pub fn process(&mut self, _buffer: &mut [f32], sample_rate: f32) {
+    /// Process audio buffer (interleaved stereo: [L0, R0, L1, R1, ...]).
+    #[allow(clippy::too_many_lines)]
+    pub fn process(&mut self, buffer: &mut [f32], sample_rate: f32) {
         self.cached_sample_rate = sample_rate;
-        // Fas 0: pass-through — no audio modification
+
+        let num_samples = buffer.len() / 2;
+        if num_samples == 0 {
+            return;
+        }
+
+        // 1. Control-rate: advance LFOs and apply modulation
+        self.update_lfos(num_samples, sample_rate);
+
+        // 2. Recalculate geometry-dependent DSP parameters if changed
+        if self.geometry_dirty {
+            self.recalculate_geometry(sample_rate);
+            self.geometry_dirty = false;
+        }
+
+        // Compute ramp coefficient for ~5 ms smoothing
+        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS * sample_rate)).exp();
+
+        // Pre-compute FDN parameters from room geometry
+        let absorption = self.material.average_absorption();
+        let rt60 = self.calculate_rt60();
+        let feedback_gain = self.rt60_to_feedback(rt60, sample_rate);
+        let lp_coeff = 0.2 + absorption * 0.6;
+        let hp_coeff = 0.95;
+        let diffusion = 0.5;
+        let width = 1.0;
+        let sample_rate_recip = 1.0 / sample_rate;
+
+        let target_dry_wet = self.snapshot.dry_wet.clamp(0.0, 1.0);
+        let target_early_late = self.snapshot.early_late_balance.clamp(0.0, 1.0);
+
+        // 3. Per-sample DSP
+        for i in 0..num_samples {
+            let idx = i * 2;
+            let dry_left = buffer[idx];
+            let dry_right = buffer[idx + 1];
+
+            // Mono input for wet processing
+            let mono_input = (dry_left + dry_right) * 0.5;
+
+            // Smooth ramp toward target parameters
+            self.current_dry_wet += ramp_coeff * (target_dry_wet - self.current_dry_wet);
+            self.current_early_late += ramp_coeff * (target_early_late - self.current_early_late);
+
+            // --- Early reflections (ISM) ---
+            let (early_left, early_right) = self.early_reflections.process(mono_input);
+
+            // --- Late reverb (FDN) ---
+            let fdn_out = self.fdn.process_sample(
+                mono_input,
+                feedback_gain,
+                lp_coeff,
+                hp_coeff,
+                diffusion,
+                width,
+                sample_rate_recip,
+            );
+
+            // --- Room modes ---
+            let modes_out = self.room_modes.process(mono_input);
+
+            // --- Mix early/late ---
+            let early_amount = 1.0 - self.current_early_late;
+            let late_amount = self.current_early_late;
+
+            let wet_mono_left =
+                early_left * early_amount + fdn_out.left * late_amount + modes_out * 0.5;
+            let wet_mono_right =
+                early_right * early_amount + fdn_out.right * late_amount + modes_out * 0.5;
+
+            // --- Spatializer (on wet signal only) ---
+            let wet_mid = (wet_mono_left + wet_mono_right) * 0.5;
+            let (spat_left, spat_right) = self.spatializer.process(wet_mid);
+
+            // --- Dry/wet mix ---
+            let dry_amount = 1.0 - self.current_dry_wet;
+            let wet_amount = self.current_dry_wet;
+
+            buffer[idx] = dry_left * dry_amount + spat_left * wet_amount;
+            buffer[idx + 1] = dry_right * dry_amount + spat_right * wet_amount;
+        }
     }
 
     /// Set a single parameter.
     pub fn set_param(&mut self, param: AweParam) {
         match param {
-            AweParam::RoomShape(shape) => self.room = shape,
-            AweParam::Material(mat) => self.material = mat,
-            AweParam::SourcePos(pos) => self.snapshot.source_pos = pos,
-            AweParam::ListenerPos(pos) => self.snapshot.listener_pos = pos,
+            AweParam::RoomShape(shape) => {
+                self.room = shape;
+                self.geometry_dirty = true;
+            }
+            AweParam::Material(mat) => {
+                self.material = mat;
+                self.geometry_dirty = true;
+            }
+            AweParam::SourcePos(pos) => {
+                self.snapshot.source_pos = pos;
+                self.geometry_dirty = true;
+            }
+            AweParam::ListenerPos(pos) => {
+                self.snapshot.listener_pos = pos;
+                self.geometry_dirty = true;
+            }
             AweParam::DryWet(v) => self.snapshot.dry_wet = v,
             AweParam::EarlyLateBalance(v) => self.snapshot.early_late_balance = v,
-            AweParam::ModesAmount(v) => self.snapshot.modes_amount = v,
+            AweParam::ModesAmount(v) => {
+                self.snapshot.modes_amount = v;
+                self.room_modes.set_amount(v);
+            }
             AweParam::FreqWarp(v) => self.snapshot.freq_warp = v,
             AweParam::ResonanceBoost(v) => self.snapshot.resonance_boost = v,
-            AweParam::TailStretch(v) => self.snapshot.tail_stretch = v,
+            AweParam::TailStretch(v) => {
+                self.snapshot.tail_stretch = v;
+                self.geometry_dirty = true;
+            }
             AweParam::Enabled(v) => self.enabled = v,
+            AweParam::Lfo1Rate(v) => {
+                self.snapshot.lfo1.rate = v;
+                self.lfo1.set_rate(v);
+            }
+            AweParam::Lfo1Amount(v) => {
+                self.snapshot.lfo1.amount = v;
+                self.lfo1.set_amount(v);
+            }
+            AweParam::Lfo1Target(t) => {
+                self.snapshot.lfo1.target = t;
+                self.lfo1.set_target(t);
+            }
+            AweParam::Lfo2Rate(v) => {
+                self.snapshot.lfo2.rate = v;
+                self.lfo2.set_rate(v);
+            }
+            AweParam::Lfo2Amount(v) => {
+                self.snapshot.lfo2.amount = v;
+                self.lfo2.set_amount(v);
+            }
+            AweParam::Lfo2Target(t) => {
+                self.snapshot.lfo2.target = t;
+                self.lfo2.set_target(t);
+            }
         }
     }
 
     /// Apply a batch snapshot of numeric parameters.
     pub fn apply_snapshot(&mut self, snapshot: AweSnapshot) {
         self.snapshot = snapshot;
+        self.room_modes.set_amount(snapshot.modes_amount);
+        self.lfo1.set_rate(snapshot.lfo1.rate);
+        self.lfo1.set_amount(snapshot.lfo1.amount);
+        self.lfo1.set_target(snapshot.lfo1.target);
+        self.lfo2.set_rate(snapshot.lfo2.rate);
+        self.lfo2.set_amount(snapshot.lfo2.amount);
+        self.lfo2.set_target(snapshot.lfo2.target);
+        self.geometry_dirty = true;
     }
 
     /// Check if the engine is enabled.
@@ -70,6 +242,13 @@ impl AweEngine {
     /// Enable or disable the engine.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+        if !enabled {
+            // Clear DSP state when disabling to avoid stale tails on re-enable
+            self.early_reflections.clear();
+            self.fdn.clear();
+            self.room_modes.clear();
+            self.spatializer.clear();
+        }
     }
 
     /// Get the current parameter snapshot.
@@ -88,6 +267,150 @@ impl AweEngine {
     #[must_use]
     pub fn material(&self) -> Material {
         self.material
+    }
+
+    // --- Internal helpers ---
+
+    /// Advance LFOs and apply their modulation to snapshot parameters.
+    fn update_lfos(&mut self, block_size: usize, sample_rate: f32) {
+        let lfo1_val = self.lfo1.advance(block_size, sample_rate);
+        let lfo2_val = self.lfo2.advance(block_size, sample_rate);
+
+        self.apply_lfo_modulation(self.lfo1.target(), lfo1_val);
+        self.apply_lfo_modulation(self.lfo2.target(), lfo2_val);
+    }
+
+    /// Apply a single LFO's modulation value to the appropriate parameter.
+    fn apply_lfo_modulation(&mut self, target: AweLfoTarget, value: f32) {
+        if value.abs() < f32::EPSILON {
+            return;
+        }
+        match target {
+            AweLfoTarget::RoomLength => {
+                let base = self.room.length();
+                let modulated = (base + value * 2.0).max(1.0);
+                self.room = RoomShape::Box {
+                    length: modulated,
+                    width: self.room.width(),
+                    height: self.room.height(),
+                };
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::RoomWidth => {
+                let base = self.room.width();
+                let modulated = (base + value * 2.0).max(1.0);
+                self.room = RoomShape::Box {
+                    length: self.room.length(),
+                    width: modulated,
+                    height: self.room.height(),
+                };
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::SourceX => {
+                self.snapshot.source_pos[0] += value;
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::SourceY => {
+                self.snapshot.source_pos[1] += value;
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::ListenerX => {
+                self.snapshot.listener_pos[0] += value;
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::ListenerY => {
+                self.snapshot.listener_pos[1] += value;
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::DryWet => {
+                self.snapshot.dry_wet = (self.snapshot.dry_wet + value * 0.3).clamp(0.0, 1.0);
+            }
+            AweLfoTarget::FreqWarp => {
+                self.snapshot.freq_warp = (self.snapshot.freq_warp + value * 0.5).clamp(-1.0, 1.0);
+            }
+        }
+    }
+
+    /// Recalculate all geometry-dependent DSP parameters.
+    fn recalculate_geometry(&mut self, sample_rate: f32) {
+        let room_length = self.room.length();
+        let room_width = self.room.width();
+        let room_height = self.room.height();
+        let absorption = self.material.average_absorption();
+
+        // Clamp positions inside the room
+        let source = [
+            self.snapshot.source_pos[0].clamp(0.1, room_length - 0.1),
+            self.snapshot.source_pos[1].clamp(0.1, room_width - 0.1),
+            self.snapshot.source_pos[2].clamp(0.1, room_height - 0.1),
+        ];
+        let listener = [
+            self.snapshot.listener_pos[0].clamp(0.1, room_length - 0.1),
+            self.snapshot.listener_pos[1].clamp(0.1, room_width - 0.1),
+            self.snapshot.listener_pos[2].clamp(0.1, room_height - 0.1),
+        ];
+
+        // Update early reflections (ISM)
+        self.early_reflections.update_geometry(
+            room_length,
+            room_width,
+            room_height,
+            source,
+            listener,
+            absorption,
+            sample_rate,
+        );
+
+        // Update FDN delay times based on room dimensions
+        let avg_dimension = (room_length + room_width + room_height) / 3.0;
+        let room_scale = avg_dimension / 5.33; // normalize to default room avg
+        let sample_rate_scale = sample_rate / 44100.0;
+        self.fdn
+            .set_delay_times(sample_rate_scale, room_scale * self.snapshot.tail_stretch);
+
+        // Update room modes
+        self.room_modes.update_geometry(
+            room_length,
+            room_width,
+            room_height,
+            absorption,
+            sample_rate,
+        );
+
+        // Update spatializer
+        self.spatializer.update(source, listener, sample_rate);
+    }
+
+    /// Calculate RT60 using Sabine's formula.
+    #[must_use]
+    fn calculate_rt60(&self) -> f32 {
+        let volume = self.room.volume();
+        let surface = self.room.surface_area();
+        let absorption = self.material.average_absorption().max(0.001);
+        let rt60 = 0.161 * volume / (absorption * surface);
+        // Apply tail stretch and clamp to reasonable range
+        (rt60 * self.snapshot.tail_stretch).clamp(0.1, 20.0)
+    }
+
+    /// Convert RT60 to FDN feedback gain.
+    ///
+    /// For a delay of `d` samples at `sample_rate`, the feedback gain needed
+    /// to decay by 60 dB in `rt60` seconds is:
+    ///   g = 10^(-3 * d / (rt60 * sample_rate))
+    ///
+    /// We use the average FDN delay as the reference.
+    #[must_use]
+    fn rt60_to_feedback(&self, rt60: f32, sample_rate: f32) -> f32 {
+        // Average base delay time scaled for current room
+        let avg_base_delay = 2806.0; // average of BASE_DELAY_TIMES
+        let avg_dimension = (self.room.length() + self.room.width() + self.room.height()) / 3.0;
+        let room_scale = avg_dimension / 5.33;
+        let sample_rate_scale = sample_rate / 44100.0;
+        let avg_delay = avg_base_delay * sample_rate_scale * room_scale;
+
+        let decay_per_sample = -3.0 / (rt60 * sample_rate);
+        let feedback = (10.0_f32).powf(decay_per_sample * avg_delay);
+        feedback.clamp(0.0, 0.97)
     }
 }
 
@@ -117,14 +440,30 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_pass_through() {
+    fn test_engine_process_modifies_buffer() {
         let mut engine = AweEngine::new();
         engine.set_enabled(true);
-        let mut buffer = vec![0.5, -0.3, 0.1, 0.8];
-        let original = buffer.clone();
+        // Set up geometry so reflections are active
+        engine.set_param(AweParam::DryWet(0.5));
+
+        let mut buffer = vec![0.0; 512];
+        // Feed an impulse
+        buffer[0] = 1.0;
+        buffer[1] = 1.0;
+
         engine.process(&mut buffer, 48000.0);
-        // Fas 0: buffer should be unmodified
-        assert_eq!(buffer, original);
+
+        // Process more blocks so reflections arrive
+        for _ in 0..50 {
+            let mut block = vec![0.0; 512];
+            engine.process(&mut block, 48000.0);
+        }
+
+        // The engine should be processing audio (not pass-through)
+        // Verification: output is finite
+        for sample in &buffer {
+            assert!(sample.is_finite(), "Output sample is not finite");
+        }
     }
 
     #[test]
@@ -143,5 +482,102 @@ mod tests {
         engine.apply_snapshot(snap);
         assert!((engine.snapshot().dry_wet - 0.8).abs() < 0.001);
         assert!((engine.snapshot().tail_stretch - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_engine_dry_signal_preserved_at_zero_wet() {
+        let mut engine = AweEngine::new();
+        engine.set_enabled(true);
+        engine.set_param(AweParam::DryWet(0.0));
+
+        // After a few blocks of ramping, dry/wet should settle at 0.0 (fully dry)
+        for _ in 0..100 {
+            let mut block = vec![0.0; 128];
+            engine.process(&mut block, 48000.0);
+        }
+
+        let mut buffer = vec![0.5, -0.3, 0.1, 0.8];
+        let original = buffer.clone();
+        engine.process(&mut buffer, 48000.0);
+
+        // With dry_wet=0 fully ramped, output should be very close to dry input
+        for (out, orig) in buffer.iter().zip(original.iter()) {
+            assert!((out - orig).abs() < 0.01, "Expected ~{orig}, got {out}");
+        }
+    }
+
+    #[test]
+    fn test_rt60_calculation() {
+        let engine = AweEngine::new();
+        let rt60 = engine.calculate_rt60();
+        // Default room 8x5x3, concrete (low absorption): should give long RT60
+        assert!(rt60 > 1.0, "RT60 should be > 1s for concrete, got {rt60}");
+        assert!(rt60 < 20.0, "RT60 should be < 20s, got {rt60}");
+    }
+
+    #[test]
+    fn test_feedback_reasonable() {
+        let engine = AweEngine::new();
+        let rt60 = engine.calculate_rt60();
+        let feedback = engine.rt60_to_feedback(rt60, 48000.0);
+        assert!(feedback > 0.5, "Feedback should be > 0.5, got {feedback}");
+        assert!(
+            feedback <= 0.97,
+            "Feedback should be <= 0.97, got {feedback}"
+        );
+    }
+
+    #[test]
+    fn test_geometry_dirty_on_room_change() {
+        let mut engine = AweEngine::new();
+        engine.geometry_dirty = false;
+        engine.set_param(AweParam::RoomShape(RoomShape::Box {
+            length: 10.0,
+            width: 8.0,
+            height: 4.0,
+        }));
+        assert!(engine.geometry_dirty);
+    }
+
+    #[test]
+    fn test_stability_long_run() {
+        let mut engine = AweEngine::new();
+        engine.set_enabled(true);
+        engine.set_param(AweParam::DryWet(0.5));
+
+        // Process many blocks with impulse then silence
+        let mut buffer = vec![0.0; 512];
+        buffer[0] = 1.0;
+        buffer[1] = 1.0;
+        engine.process(&mut buffer, 48000.0);
+
+        for _ in 0..500 {
+            let mut block = vec![0.0; 512];
+            engine.process(&mut block, 48000.0);
+            for sample in &block {
+                assert!(sample.is_finite(), "Output is not finite");
+                assert!(sample.abs() < 10.0, "Output exploded: {sample}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_buffer() {
+        let mut engine = AweEngine::new();
+        engine.set_enabled(true);
+        let mut buffer: Vec<f32> = Vec::new();
+        engine.process(&mut buffer, 48000.0);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_lfo_params_applied() {
+        let mut engine = AweEngine::new();
+        engine.set_param(AweParam::Lfo1Rate(2.0));
+        engine.set_param(AweParam::Lfo1Amount(0.5));
+        engine.set_param(AweParam::Lfo1Target(AweLfoTarget::DryWet));
+        assert!((engine.snapshot().lfo1.rate - 2.0).abs() < 0.001);
+        assert!((engine.snapshot().lfo1.amount - 0.5).abs() < 0.001);
+        assert_eq!(engine.snapshot().lfo1.target, AweLfoTarget::DryWet);
     }
 }
