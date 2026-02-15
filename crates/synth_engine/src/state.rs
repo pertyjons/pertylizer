@@ -6,6 +6,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
+use crate::visualizers::VisualizationBuffer;
+
 /// Atomic float for thread-safe parameter sharing.
 #[derive(Debug)]
 pub struct AtomicF32 {
@@ -260,6 +262,8 @@ pub struct EngineState {
     /// When set (not NO_FOCUSED_INSTRUMENT), keyboard input goes only to this instrument.
     /// When NO_FOCUSED_INSTRUMENT, traditional MIDI channel routing is used.
     pub focused_instrument: AtomicU32,
+    /// Master output waveform buffer for oscilloscope display.
+    pub master_scope: VisualizationBuffer,
 }
 
 impl EngineState {
@@ -272,6 +276,7 @@ impl EngineState {
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
+            master_scope: VisualizationBuffer::new(4096),
         })
     }
 
@@ -303,6 +308,7 @@ impl Default for EngineState {
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
+            master_scope: VisualizationBuffer::new(4096),
         }
     }
 }

@@ -1719,6 +1719,9 @@ impl AudioProcessor for SynthEngine {
             }
         }
 
+        // Write final output to master scope for oscilloscope display
+        self.state.master_scope.write_interleaved(output);
+
         // Update meters
         self.update_meters(output);
 

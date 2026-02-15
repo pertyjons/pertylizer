@@ -1,5 +1,22 @@
 # Version History
 
+## [0.129.0] - 2026-02-15
+### Added - AWE-indikator & Oscilloskop vid piano
+
+**AWE-indikator i toolbar:**
+- Knappen visar grön prick (●) när AWE-effekten är aktiv, dämpad/grå när av.
+- Fungerar fortfarande som vy-växlare (AWE/Rack).
+
+**Master-output oscilloskop:**
+- Vänster och höger kanal visas som oscilloskop bredvid pianot i bottenpanelen.
+- Tar automatiskt det utrymme som blir över om pianot inte fyller hela bredden.
+- Döljs om skärmen är för smal (< 120px kvar).
+- Cyan färg för vänster kanal, grön för höger.
+
+**VisualizationBuffer i EngineState:**
+- Ny `master_scope` buffer i `EngineState` för master-output waveform-data.
+- `SynthEngine` skriver final output (efter master volume) till buffern varje callback.
+
 ## [0.128.0] - 2026-02-15
 ### Added - AWE: Nya material, fler presets, diffusion & LFO-stabilitet
 

@@ -28,6 +28,7 @@ use crate::gui::patch_editor::{
 };
 use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
+use crate::gui::widgets::draw_oscilloscope;
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
 use crate::patch::{Patch, categorized_patches};
@@ -518,12 +519,20 @@ impl eframe::App for SynthApp {
                     );
                     ui.separator();
 
-                    // AWE view toggle
-                    let view_label = match self.active_view {
-                        AppView::Rack => "AWE",
-                        AppView::AcousticWorld => "Rack",
+                    // AWE view toggle with on/off indicator
+                    let awe_indicator_color = if self.awe_enabled {
+                        theme().colors.meter_green
+                    } else {
+                        theme().colors.text_dim
                     };
-                    if ui.button(view_label).clicked() {
+                    let view_label = match self.active_view {
+                        AppView::Rack => "● AWE",
+                        AppView::AcousticWorld => "● Rack",
+                    };
+                    if ui
+                        .button(RichText::new(view_label).color(awe_indicator_color))
+                        .clicked()
+                    {
                         self.active_view = match self.active_view {
                             AppView::Rack => AppView::AcousticWorld,
                             AppView::AcousticWorld => AppView::Rack,
@@ -1682,18 +1691,64 @@ impl SynthApp {
         // in the main update loop. This ensures the GUI reflects what the engine is actually
         // playing, regardless of input source (MIDI, sequencer, or GUI).
 
-        // Show the 88-key piano keyboard
-        let event = self.keyboard.show(ui);
+        // Layout: [Left Scope] [Piano Keyboard] [Right Scope]
+        // Scopes use remaining space if piano doesn't fill the width
+        let available_width = ui.available_width();
+        let piano_width = 52.0 * 24.0; // 52 white keys × 24px
+        let remaining = available_width - piano_width;
+        let min_scope_width = 60.0;
+        let show_scopes = remaining > min_scope_width * 2.0;
 
-        // Handle note events from mouse interaction - send to active instrument's channel
-        if let Some(note) = event.note_on {
-            self.handle
-                .note_on_channel(note, Velocity::new(0.8), active_channel);
-        }
-        for note in event.note_off {
-            self.handle.note_off_channel(note, active_channel);
-            // Note release will be reflected via NoteReleased event from engine
-        }
+        let (samples_l, samples_r) = if show_scopes {
+            self.handle.state.master_scope.read_samples()
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let keyboard_height = 120.0; // keyboard header + keys
+
+        ui.horizontal(|ui| {
+            // Left oscilloscope (L channel)
+            if show_scopes {
+                let scope_width = remaining / 2.0;
+                draw_oscilloscope(
+                    ui,
+                    &samples_l,
+                    scope_width,
+                    keyboard_height,
+                    1.0,
+                    theme().colors.accent_cyan,
+                );
+            }
+
+            // Piano keyboard in the middle
+            let piano_max = available_width.min(piano_width + 10.0);
+            ui.allocate_ui(Vec2::new(piano_max, keyboard_height), |ui| {
+                let event = self.keyboard.show(ui);
+
+                // Handle note events from mouse interaction
+                if let Some(note) = event.note_on {
+                    self.handle
+                        .note_on_channel(note, Velocity::new(0.8), active_channel);
+                }
+                for note in event.note_off {
+                    self.handle.note_off_channel(note, active_channel);
+                }
+            });
+
+            // Right oscilloscope (R channel)
+            if show_scopes {
+                let scope_width = remaining / 2.0;
+                draw_oscilloscope(
+                    ui,
+                    &samples_r,
+                    scope_width,
+                    keyboard_height,
+                    1.0,
+                    theme().colors.meter_green,
+                );
+            }
+        });
     }
 
     fn process_keyboard_input(&mut self, ctx: &egui::Context) {
