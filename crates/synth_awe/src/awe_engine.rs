@@ -165,11 +165,12 @@ impl AweEngine {
 
         // HF damping: driven by high-frequency absorption
         // Metal (0.02): lp~0.15 → bright tail. Carpet (0.85): lp~0.85 → very dark tail.
-        let lp_coeff = (0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3);
+        let lp_coeff =
+            ((0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
 
         // LF damping: driven by low-frequency absorption
         // Metal (0.01): hp~0.997 → full bass. Glass (0.18): hp~0.89 → thinner bass.
-        let hp_coeff = (0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05;
+        let hp_coeff = ((0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
 
         // Resonance boost: adds energy to feedback (with safety clamp)
         let resonance_boost = self.snapshot.resonance_boost;
@@ -572,8 +573,9 @@ impl AweEngine {
         let abs_low_eff = (abs_low * ABSORPTION_AMPLIFICATION).min(1.0);
         let rt60 = self.calculate_rt60();
         let freq_warp = self.snapshot.freq_warp;
-        let lp_coeff = (0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3);
-        let hp_coeff = (0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05;
+        let lp_coeff =
+            ((0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
+        let hp_coeff = ((0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
         let resonance_boost = self.snapshot.resonance_boost;
         let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
             + resonance_boost.as_f32() * 0.15)
