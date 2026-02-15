@@ -1,5 +1,36 @@
 # Version History
 
+## [0.130.0] - 2026-02-15
+### Changed - AWE-vy: Förbättrad grafisk representation
+
+**Formspecifik rumskontur i planritningen:**
+- Box: rektangel (som tidigare)
+- Cylinder: rektangel med rundade kortsidor
+- L-Shape: L-formad polygon
+- Sphere: cirkel
+- Dome: cirkel med streckad undre halva (halvsfär)
+- Tube: rektangel med streckade öppna kortsidor
+
+**Reflektionsvägar:**
+- Första ordningens reflektioner visas som streckade linjer (källa → vägg → lyssnare)
+- Box: 4 reflektioner (alla väggar), Tube: 2 reflektioner (lång­sidorna)
+- Beräknas med spegelkällemetoden
+
+**Info-ruta i planritningen:**
+- Visar avstånd (S→L), RT60 (Sabines formel), och rumsvolym
+- Halvtransparent bakgrund för läsbarhet
+
+**Förbättrade markörer:**
+- Större cirklar (14px) med outline-ring
+- Pil från källa till lyssnare (triangelformat pilhuvud)
+- Hover-text "Källa" / "Lyssnare" vid markörerna
+
+**Förenklad kontrollpanel:**
+- LFO-sektioner ihopfällbara (stängda som default) via CollapsingHeader
+- "Impossible" omdöpt till "Effekter" med undertext "Effekter bortom fysiken"
+- Undertext "Balans mellan torr/våt signal" under Mix-rubriken
+- Tooltips på alla parametrar: Dry/Wet, Early/Late, Modes, Tail, Freq Warp, Resonance, Portal, Diffusion
+
 ## [0.129.0] - 2026-02-15
 ### Added - AWE-indikator, Oscilloskop vid piano & AWE newtype-migrering
 

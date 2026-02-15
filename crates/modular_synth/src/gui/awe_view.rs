@@ -619,7 +619,53 @@ pub fn draw_awe_view(
     });
 }
 
+/// Draw a dashed line between two points.
+fn draw_dashed_line(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    stroke: egui::Stroke,
+    dash_len: f32,
+    gap_len: f32,
+) {
+    let diff = to - from;
+    let total_len = diff.length();
+    if total_len < 0.1 {
+        return;
+    }
+    let dir = diff / total_len;
+    let mut dist = 0.0;
+    while dist < total_len {
+        let seg_start = from + dir * dist;
+        let seg_end_dist = (dist + dash_len).min(total_len);
+        let seg_end = from + dir * seg_end_dist;
+        painter.line_segment([seg_start, seg_end], stroke);
+        dist += dash_len + gap_len;
+    }
+}
+
+/// Draw an arrowhead (filled triangle) at `tip` pointing in direction `dir`.
+fn draw_arrowhead(
+    painter: &egui::Painter,
+    tip: egui::Pos2,
+    dir: egui::Vec2,
+    size: f32,
+    color: egui::Color32,
+) {
+    let norm_dir = dir.normalized();
+    let perp = egui::vec2(-norm_dir.y, norm_dir.x);
+    let base = tip - norm_dir * size;
+    let left = base + perp * size * 0.5;
+    let right = base - perp * size * 0.5;
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, left, right],
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
 /// Draw the 2D floor plan of the room.
+#[allow(clippy::too_many_lines)]
 fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let available = ui.available_size();
     let (response, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
@@ -671,60 +717,410 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         (rx, ry)
     };
 
-    // Draw room walls
-    painter.rect_stroke(
-        room_screen_rect,
-        0.0,
-        egui::Stroke::new(2.0, wall_color),
-        egui::StrokeKind::Outside,
-    );
-
-    // Dimension labels
+    // --- Draw room walls (shape-specific contour) ---
+    let wall_stroke = egui::Stroke::new(2.0, wall_color);
     let dim_label_color = t.colors.text_dim;
-    painter.text(
-        egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
-        egui::Align2::CENTER_TOP,
-        format!("{:.1}m", room_w),
-        egui::FontId::proportional(12.0),
-        dim_label_color,
-    );
-    painter.text(
-        egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
-        egui::Align2::RIGHT_CENTER,
-        format!("{:.1}m", room_h),
-        egui::FontId::proportional(12.0),
-        dim_label_color,
-    );
 
-    // Draw source marker
+    match state.shape_kind {
+        RoomShapeKind::Box => {
+            // Simple rectangle
+            painter.rect_stroke(
+                room_screen_rect,
+                0.0,
+                wall_stroke,
+                egui::StrokeKind::Outside,
+            );
+            // Dimension labels
+            painter.text(
+                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.1}m", room_w),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+            painter.text(
+                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{:.1}m", room_h),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+        }
+        RoomShapeKind::Cylinder => {
+            // Rectangle with rounded short sides (rounding = half the width)
+            let rounding = room_screen_h * 0.5;
+            painter.rect_stroke(
+                room_screen_rect,
+                rounding,
+                wall_stroke,
+                egui::StrokeKind::Outside,
+            );
+            painter.text(
+                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.1}m", state.cyl_length),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+            painter.text(
+                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                format!("r={:.1}m", state.cyl_radius),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+        }
+        RoomShapeKind::LShape => {
+            // L-shaped polygon: rect_A (full width_a, length_a) + rect_B extending
+            // Layout: A is bottom-left, B extends to the right from A's top
+            let la = state.l_length_a;
+            let wa = state.l_width_a;
+            let lb = state.l_length_b;
+            let wb = state.l_width_b;
+            // L-shape polygon points (in room coords, counter-clockwise):
+            // (0,0) -> (la,0) -> (la,wb) -> (wa,wb) -> (wa,wa+lb-wb.min(wa)) ...
+            // Simpler: A is bottom, B is right extension at top
+            // Points: bottom-left, bottom-right(la,0), (la,wb), (wa,wb), (wa,wa_height), (0,wa_height)
+            // where wa_height = max(wa, wb+lb) for the full L
+            // Actually let's use a simple L: A along x-axis, B along y from top of A
+            let total_w = wa.max(wb);
+            let total_h = la + lb;
+            // We already have room_w, room_h from effective_length/width but let's use the polygon
+            let pts_room: [(f32, f32); 6] = [
+                (0.0, 0.0),
+                (wa, 0.0),
+                (wa, la),
+                (wb, la),
+                (wb, total_h),
+                (0.0, total_h),
+            ];
+            // Scale these to screen using effective dimensions
+            let l_scale_x = room_screen_w / total_w.max(0.5);
+            let l_scale_y = room_screen_h / total_h.max(0.5);
+            let l_scale = l_scale_x.min(l_scale_y);
+            let l_origin_x = room_screen_rect.center().x - total_w * l_scale * 0.5;
+            let l_origin_y = room_screen_rect.center().y - total_h * l_scale * 0.5;
+            let screen_pts: Vec<egui::Pos2> = pts_room
+                .iter()
+                .map(|(rx, ry)| {
+                    egui::pos2(
+                        l_origin_x + rx * l_scale,
+                        l_origin_y + (total_h - ry) * l_scale,
+                    )
+                })
+                .collect();
+            painter.add(egui::Shape::closed_line(screen_pts, wall_stroke));
+            painter.text(
+                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("A:{:.0}x{:.0} B:{:.0}x{:.0}", la, wa, lb, wb),
+                egui::FontId::proportional(11.0),
+                dim_label_color,
+            );
+        }
+        RoomShapeKind::Sphere => {
+            // Circle
+            let radius = room_screen_w.min(room_screen_h) * 0.5;
+            let center = room_screen_rect.center();
+            painter.circle_stroke(center, radius, wall_stroke);
+            painter.text(
+                egui::pos2(center.x, center.y + radius + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("r={:.1}m", state.sphere_radius),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+        }
+        RoomShapeKind::Dome => {
+            // Circle, with dashed lower half to indicate half-sphere
+            let radius = room_screen_w.min(room_screen_h) * 0.5;
+            let center = room_screen_rect.center();
+            // Upper half: solid arc (approximate with line segments)
+            let n_segs = 32;
+            for i in 0..n_segs {
+                let a0 = std::f32::consts::PI + std::f32::consts::PI * (i as f32 / n_segs as f32);
+                let a1 =
+                    std::f32::consts::PI + std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
+                let p0 = egui::pos2(center.x + radius * a0.cos(), center.y + radius * a0.sin());
+                let p1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
+                painter.line_segment([p0, p1], wall_stroke);
+            }
+            // Lower half: dashed arc
+            let dash_stroke = egui::Stroke::new(1.5, wall_color);
+            for i in 0..n_segs {
+                let a0 = std::f32::consts::PI * (i as f32 / n_segs as f32);
+                let a1 = std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
+                let p0 = egui::pos2(center.x + radius * a0.cos(), center.y + radius * a0.sin());
+                let p1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
+                if i % 2 == 0 {
+                    painter.line_segment([p0, p1], dash_stroke);
+                }
+            }
+            painter.text(
+                egui::pos2(center.x, center.y + radius + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("r={:.1}m", state.dome_radius),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+        }
+        RoomShapeKind::Tube => {
+            // Rectangle with dashed short sides (open ends)
+            let dash_stroke = egui::Stroke::new(1.5, wall_color);
+            // Top and bottom walls: solid
+            painter.line_segment(
+                [room_screen_rect.left_top(), room_screen_rect.right_top()],
+                wall_stroke,
+            );
+            painter.line_segment(
+                [
+                    room_screen_rect.left_bottom(),
+                    room_screen_rect.right_bottom(),
+                ],
+                wall_stroke,
+            );
+            // Left and right ends: dashed (open)
+            draw_dashed_line(
+                &painter,
+                room_screen_rect.left_top(),
+                room_screen_rect.left_bottom(),
+                dash_stroke,
+                6.0,
+                4.0,
+            );
+            draw_dashed_line(
+                &painter,
+                room_screen_rect.right_top(),
+                room_screen_rect.right_bottom(),
+                dash_stroke,
+                6.0,
+                4.0,
+            );
+            painter.text(
+                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.1}m", state.tube_length),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+            painter.text(
+                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                format!("r={:.1}m", state.tube_radius),
+                egui::FontId::proportional(12.0),
+                dim_label_color,
+            );
+        }
+    }
+
+    // --- Reflection paths (first-order, Box and Tube only) ---
+    let reflection_color = egui::Color32::from_rgba_premultiplied(
+        wall_color.r() / 2,
+        wall_color.g() / 2,
+        wall_color.b() / 2,
+        100,
+    );
+    let reflection_stroke = egui::Stroke::new(1.0, reflection_color);
+    let (sx, sy) = (state.source_x, state.source_y);
+    let (lx, ly) = (state.listener_x, state.listener_y);
+
+    match state.shape_kind {
+        RoomShapeKind::Box => {
+            // 4 first-order reflections via mirror sources
+            let mirrors: [(f32, f32, bool, f32); 4] = [
+                (-sx, sy, true, 0.0),                   // left wall (x=0), mirror x
+                (2.0 * room_w - sx, sy, true, room_w),  // right wall (x=L)
+                (sx, -sy, false, 0.0),                  // bottom wall (y=0), mirror y
+                (sx, 2.0 * room_h - sy, false, room_h), // top wall (y=W)
+            ];
+            for (mx, my, is_vertical, wall_coord) in mirrors {
+                // Reflection point = intersection of mirror->listener with wall
+                let refl = if is_vertical {
+                    // x = wall_coord, interpolate y
+                    let dx = lx - mx;
+                    if dx.abs() < 1e-6 {
+                        continue;
+                    }
+                    let t_param = (wall_coord - mx) / dx;
+                    let ry = my + t_param * (ly - my);
+                    (wall_coord, ry)
+                } else {
+                    // y = wall_coord, interpolate x
+                    let dy = ly - my;
+                    if dy.abs() < 1e-6 {
+                        continue;
+                    }
+                    let t_param = (wall_coord - my) / dy;
+                    let rx = mx + t_param * (lx - mx);
+                    (rx, wall_coord)
+                };
+                // Only draw if reflection point is within the wall
+                if refl.0 >= 0.0 && refl.0 <= room_w && refl.1 >= 0.0 && refl.1 <= room_h {
+                    let refl_screen = room_to_screen(refl.0, refl.1);
+                    let src_screen = room_to_screen(sx, sy);
+                    let lis_screen = room_to_screen(lx, ly);
+                    draw_dashed_line(
+                        &painter,
+                        src_screen,
+                        refl_screen,
+                        reflection_stroke,
+                        4.0,
+                        3.0,
+                    );
+                    draw_dashed_line(
+                        &painter,
+                        refl_screen,
+                        lis_screen,
+                        reflection_stroke,
+                        4.0,
+                        3.0,
+                    );
+                }
+            }
+        }
+        RoomShapeKind::Tube => {
+            // 2 reflections: top and bottom walls only (ends are open)
+            let mirrors: [(f32, f32, f32); 2] = [
+                (sx, -sy, 0.0),                  // bottom wall (y=0)
+                (sx, 2.0 * room_h - sy, room_h), // top wall (y=W)
+            ];
+            for (mx, my, wall_y) in mirrors {
+                let dy = ly - my;
+                if dy.abs() < 1e-6 {
+                    continue;
+                }
+                let t_param = (wall_y - my) / dy;
+                let rx = mx + t_param * (lx - mx);
+                if rx >= 0.0 && rx <= room_w {
+                    let refl_screen = room_to_screen(rx, wall_y);
+                    let src_screen = room_to_screen(sx, sy);
+                    let lis_screen = room_to_screen(lx, ly);
+                    draw_dashed_line(
+                        &painter,
+                        src_screen,
+                        refl_screen,
+                        reflection_stroke,
+                        4.0,
+                        3.0,
+                    );
+                    draw_dashed_line(
+                        &painter,
+                        refl_screen,
+                        lis_screen,
+                        reflection_stroke,
+                        4.0,
+                        3.0,
+                    );
+                }
+            }
+        }
+        _ => {} // No reflection lines for curved/complex shapes
+    }
+
+    // --- Source marker (larger, with outline ring and tooltip) ---
     let source_pos = room_to_screen(state.source_x, state.source_y);
-    let source_radius = 10.0;
-    painter.circle_filled(source_pos, source_radius, source_color);
+    let marker_radius = 14.0;
+    painter.circle_filled(source_pos, marker_radius, source_color);
+    painter.circle_stroke(
+        source_pos,
+        marker_radius + 2.0,
+        egui::Stroke::new(1.5, source_color),
+    );
     painter.text(
-        egui::pos2(source_pos.x, source_pos.y - source_radius - 4.0),
+        egui::pos2(source_pos.x, source_pos.y - marker_radius - 6.0),
         egui::Align2::CENTER_BOTTOM,
         "S",
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(13.0),
         source_color,
     );
+    // Tooltip for source marker (painted near marker on hover)
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+    if let Some(pp) = pointer_pos
+        && source_pos.distance(pp) < marker_radius + 4.0
+    {
+        painter.text(
+            egui::pos2(source_pos.x, source_pos.y + marker_radius + 6.0),
+            egui::Align2::CENTER_TOP,
+            "Källa",
+            egui::FontId::proportional(11.0),
+            source_color,
+        );
+    }
 
-    // Draw listener marker
+    // --- Listener marker (larger, with outline ring and tooltip) ---
     let listener_pos = room_to_screen(state.listener_x, state.listener_y);
-    let listener_radius = 10.0;
-    painter.circle_filled(listener_pos, listener_radius, listener_color);
+    painter.circle_filled(listener_pos, marker_radius, listener_color);
+    painter.circle_stroke(
+        listener_pos,
+        marker_radius + 2.0,
+        egui::Stroke::new(1.5, listener_color),
+    );
     painter.text(
-        egui::pos2(listener_pos.x, listener_pos.y - listener_radius - 4.0),
+        egui::pos2(listener_pos.x, listener_pos.y - marker_radius - 6.0),
         egui::Align2::CENTER_BOTTOM,
         "L",
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(13.0),
         listener_color,
     );
+    // Tooltip for listener marker (painted near marker on hover)
+    if let Some(pp) = pointer_pos
+        && listener_pos.distance(pp) < marker_radius + 4.0
+    {
+        painter.text(
+            egui::pos2(listener_pos.x, listener_pos.y + marker_radius + 6.0),
+            egui::Align2::CENTER_TOP,
+            "Lyssnare",
+            egui::FontId::proportional(11.0),
+            listener_color,
+        );
+    }
 
-    // Draw dashed line between source and listener
-    let line_color = egui::Color32::from_rgba_premultiplied(100, 100, 100, 128);
-    painter.line_segment(
-        [source_pos, listener_pos],
-        egui::Stroke::new(1.0, line_color),
+    // --- Arrow from source to listener (with arrowhead at listener) ---
+    let arrow_color = egui::Color32::from_rgba_premultiplied(140, 140, 140, 180);
+    let dir = listener_pos - source_pos;
+    let dir_len = dir.length();
+    if dir_len > 1.0 {
+        // Draw line from source edge to just before listener edge
+        let norm_dir = dir / dir_len;
+        let line_start = source_pos + norm_dir * marker_radius;
+        let arrow_tip = listener_pos - norm_dir * (marker_radius + 2.0);
+        let line_end = listener_pos - norm_dir * (marker_radius + 10.0);
+        painter.line_segment([line_start, line_end], egui::Stroke::new(1.5, arrow_color));
+        draw_arrowhead(&painter, arrow_tip, dir, 10.0, arrow_color);
+    }
+
+    // --- Info box (distance, RT60, volume) ---
+    let room_shape = state.current_room_shape();
+    let material = state.current_material();
+    let volume = room_shape.volume().as_f32();
+    let surface_area = room_shape.surface_area().as_f32();
+    let avg_absorption = material.average_absorption().as_f32();
+    let distance = ((lx - sx).powi(2) + (ly - sy).powi(2)).sqrt();
+
+    // RT60 via Sabine's formula: 0.161 * V / (a * S) * tail_stretch
+    let rt60 = if avg_absorption * surface_area > 0.001 {
+        0.161 * volume / (avg_absorption * surface_area) * state.tail_stretch
+    } else {
+        0.0
+    };
+
+    let info_text =
+        format!("Avstånd: {distance:.1} m\nRT60: {rt60:.1} s\nVolym: {volume:.0} m\u{00B3}",);
+    let info_pos = egui::pos2(room_screen_rect.min.x + 6.0, room_screen_rect.min.y + 6.0);
+    let info_font = egui::FontId::proportional(11.0);
+    let info_color = t.colors.text_dim;
+    // Draw background rect for readability
+    let info_galley = painter.layout_no_wrap(info_text.clone(), info_font.clone(), info_color);
+    let info_rect = egui::Rect::from_min_size(info_pos, info_galley.size() + egui::vec2(8.0, 4.0));
+    painter.rect_filled(
+        info_rect,
+        3.0,
+        egui::Color32::from_rgba_premultiplied(bg_color.r(), bg_color.g(), bg_color.b(), 200),
+    );
+    painter.galley(
+        egui::pos2(info_pos.x + 4.0, info_pos.y + 2.0),
+        info_galley,
+        info_color,
     );
 
     // Draw per-voice mapping pattern (dim dots showing where notes would go)
@@ -753,9 +1149,9 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     {
         let dist_source = source_pos.distance(pos);
         let dist_listener = listener_pos.distance(pos);
-        if dist_source < 20.0 && dist_source < dist_listener {
+        if dist_source < 24.0 && dist_source < dist_listener {
             state.dragging_source = true;
-        } else if dist_listener < 20.0 {
+        } else if dist_listener < 24.0 {
             state.dragging_listener = true;
         }
     }
@@ -1024,6 +1420,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Diffusion:");
         if ui
             .add(egui::Slider::new(&mut state.material_diffusion, 0.0..=1.0))
+            .on_hover_text("Hur mycket väggarna sprider ljudet (slät vs ojämn yta)")
             .changed()
         {
             state.selected_preset = None;
@@ -1045,12 +1442,18 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .color(t.colors.accent_cyan)
             .size(16.0),
     );
+    ui.label(
+        egui::RichText::new("Balans mellan torr/våt signal")
+            .size(10.0)
+            .color(t.colors.text_dim),
+    );
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
         ui.label("Dry/Wet:");
         if ui
             .add(egui::Slider::new(&mut state.dry_wet, 0.0..=1.0))
+            .on_hover_text("Balans mellan originalsignal (dry) och rumseffekt (wet)")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1063,6 +1466,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Early/Late:");
         if ui
             .add(egui::Slider::new(&mut state.early_late, 0.0..=1.0))
+            .on_hover_text("Balans mellan tidiga reflektioner och efterklang")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1075,6 +1479,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Modes:");
         if ui
             .add(egui::Slider::new(&mut state.modes_amount, 0.0..=1.0))
+            .on_hover_text("Stående vågor i rummet \u{2014} rumsresonanser")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1087,6 +1492,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Tail:");
         if ui
             .add(egui::Slider::new(&mut state.tail_stretch, 0.5..=4.0).suffix("x"))
+            .on_hover_text("Förlänger eller förkortar efterklangens svans")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1097,11 +1503,16 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     ui.separator();
 
-    // --- Impossible Parameters ---
+    // --- Effekter (formerly "Impossible") ---
     ui.heading(
-        egui::RichText::new("Impossible")
+        egui::RichText::new("Effekter")
             .color(t.colors.accent_orange)
             .size(16.0),
+    );
+    ui.label(
+        egui::RichText::new("Effekter bortom fysiken")
+            .size(10.0)
+            .color(t.colors.text_dim),
     );
     ui.add_space(4.0);
 
@@ -1109,6 +1520,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Freq Warp:");
         if ui
             .add(egui::Slider::new(&mut state.freq_warp, -1.0..=1.0))
+            .on_hover_text("Förskjuter rumsresonansernas frekvenser (ej fysiskt realistiskt)")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1121,6 +1533,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Resonance:");
         if ui
             .add(egui::Slider::new(&mut state.resonance_boost, 0.0..=1.0))
+            .on_hover_text("Förstärker rumsresonansernas intensitet")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1133,6 +1546,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Portal:");
         if ui
             .add(egui::Slider::new(&mut state.portal_amount, 0.0..=1.0))
+            .on_hover_text("Simulerar ljud som läcker in från angränsande rum")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -1148,22 +1562,10 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     ui.separator();
 
-    // --- LFO 1 ---
+    // --- LFO sections (collapsible, default closed) ---
     draw_lfo_section(ui, handle, "LFO 1", &mut state.lfo1, 1);
-
-    ui.separator();
-
-    // --- LFO 2 ---
     draw_lfo_section(ui, handle, "LFO 2", &mut state.lfo2, 2);
-
-    ui.separator();
-
-    // --- LFO 3 ---
     draw_lfo_section(ui, handle, "LFO 3", &mut state.lfo3, 3);
-
-    ui.separator();
-
-    // --- LFO 4 ---
     draw_lfo_section(ui, handle, "LFO 4", &mut state.lfo4, 4);
 }
 
@@ -1235,7 +1637,7 @@ fn draw_spatial_section(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mu
     }
 }
 
-/// Draw a single LFO section.
+/// Draw a single LFO section as a collapsible header.
 ///
 /// `lfo_index` is 1-based (1, 2, 3, or 4).
 fn draw_lfo_section(
@@ -1246,77 +1648,80 @@ fn draw_lfo_section(
     lfo_index: u8,
 ) {
     let t = theme();
-    ui.heading(
+    egui::CollapsingHeader::new(
         egui::RichText::new(label)
             .color(t.colors.accent_purple)
             .size(14.0),
-    );
-    ui.add_space(2.0);
+    )
+    .default_open(false)
+    .show(ui, |ui| {
+        ui.add_space(2.0);
 
-    ui.horizontal(|ui| {
-        ui.label("Rate:");
-        let mut rate_f = lfo_state.rate.as_f32();
-        if ui
-            .add(
-                egui::Slider::new(&mut rate_f, 0.01..=20.0)
-                    .suffix(" Hz")
-                    .logarithmic(true),
-            )
-            .changed()
-        {
-            lfo_state.rate = Hertz::new(rate_f);
-            let param = match lfo_index {
-                1 => AweParam::Lfo1Rate(lfo_state.rate),
-                2 => AweParam::Lfo2Rate(lfo_state.rate),
-                3 => AweParam::Lfo3Rate(lfo_state.rate),
-                _ => AweParam::Lfo4Rate(lfo_state.rate),
-            };
-            handle.send(EngineCommand::SetAweParameter { param });
-        }
-    });
-
-    ui.horizontal(|ui| {
-        ui.label("Amount:");
-        let mut amount_f = lfo_state.amount.as_f32();
-        if ui
-            .add(egui::Slider::new(&mut amount_f, 0.0..=1.0))
-            .changed()
-        {
-            lfo_state.amount = NormalizedValue::new(amount_f);
-            let param = match lfo_index {
-                1 => AweParam::Lfo1Amount(lfo_state.amount),
-                2 => AweParam::Lfo2Amount(lfo_state.amount),
-                3 => AweParam::Lfo3Amount(lfo_state.amount),
-                _ => AweParam::Lfo4Amount(lfo_state.amount),
-            };
-            handle.send(EngineCommand::SetAweParameter { param });
-        }
-    });
-
-    let mut target_idx = lfo_target_to_index(lfo_state.target);
-    let prev_target = target_idx;
-    let combo_label = match lfo_index {
-        1 => "Target 1",
-        2 => "Target 2",
-        3 => "Target 3",
-        _ => "Target 4",
-    };
-    egui::ComboBox::from_label(combo_label)
-        .selected_text(LFO_TARGET_NAMES[target_idx])
-        .show_ui(ui, |ui| {
-            for (i, name) in LFO_TARGET_NAMES.iter().enumerate() {
-                ui.selectable_value(&mut target_idx, i, *name);
+        ui.horizontal(|ui| {
+            ui.label("Rate:");
+            let mut rate_f = lfo_state.rate.as_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut rate_f, 0.01..=20.0)
+                        .suffix(" Hz")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                lfo_state.rate = Hertz::new(rate_f);
+                let param = match lfo_index {
+                    1 => AweParam::Lfo1Rate(lfo_state.rate),
+                    2 => AweParam::Lfo2Rate(lfo_state.rate),
+                    3 => AweParam::Lfo3Rate(lfo_state.rate),
+                    _ => AweParam::Lfo4Rate(lfo_state.rate),
+                };
+                handle.send(EngineCommand::SetAweParameter { param });
             }
         });
 
-    if target_idx != prev_target {
-        lfo_state.target = lfo_target_from_index(target_idx);
-        let param = match lfo_index {
-            1 => AweParam::Lfo1Target(lfo_state.target),
-            2 => AweParam::Lfo2Target(lfo_state.target),
-            3 => AweParam::Lfo3Target(lfo_state.target),
-            _ => AweParam::Lfo4Target(lfo_state.target),
+        ui.horizontal(|ui| {
+            ui.label("Amount:");
+            let mut amount_f = lfo_state.amount.as_f32();
+            if ui
+                .add(egui::Slider::new(&mut amount_f, 0.0..=1.0))
+                .changed()
+            {
+                lfo_state.amount = NormalizedValue::new(amount_f);
+                let param = match lfo_index {
+                    1 => AweParam::Lfo1Amount(lfo_state.amount),
+                    2 => AweParam::Lfo2Amount(lfo_state.amount),
+                    3 => AweParam::Lfo3Amount(lfo_state.amount),
+                    _ => AweParam::Lfo4Amount(lfo_state.amount),
+                };
+                handle.send(EngineCommand::SetAweParameter { param });
+            }
+        });
+
+        let mut target_idx = lfo_target_to_index(lfo_state.target);
+        let prev_target = target_idx;
+        let combo_label = match lfo_index {
+            1 => "Target 1",
+            2 => "Target 2",
+            3 => "Target 3",
+            _ => "Target 4",
         };
-        handle.send(EngineCommand::SetAweParameter { param });
-    }
+        egui::ComboBox::from_label(combo_label)
+            .selected_text(LFO_TARGET_NAMES[target_idx])
+            .show_ui(ui, |ui| {
+                for (i, name) in LFO_TARGET_NAMES.iter().enumerate() {
+                    ui.selectable_value(&mut target_idx, i, *name);
+                }
+            });
+
+        if target_idx != prev_target {
+            lfo_state.target = lfo_target_from_index(target_idx);
+            let param = match lfo_index {
+                1 => AweParam::Lfo1Target(lfo_state.target),
+                2 => AweParam::Lfo2Target(lfo_state.target),
+                3 => AweParam::Lfo3Target(lfo_state.target),
+                _ => AweParam::Lfo4Target(lfo_state.target),
+            };
+            handle.send(EngineCommand::SetAweParameter { param });
+        }
+    });
 }
