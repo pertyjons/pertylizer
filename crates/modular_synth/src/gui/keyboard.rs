@@ -118,12 +118,10 @@ impl PianoKeyboard {
         (base_note, end_note)
     }
 
-    /// Draw the piano keyboard and handle interaction
-    /// Returns events that occurred (note on/off, octave changes)
-    pub fn show(&mut self, ui: &mut egui::Ui) -> KeyboardEvent {
-        let mut event = KeyboardEvent::default();
-
-        // Header with controls
+    /// Draw the keyboard header (KEYBOARD label, octave controls, Center button).
+    /// Returns octave change event.
+    pub fn show_header(&mut self, ui: &mut egui::Ui) -> i32 {
+        let mut octave_change = 0;
         ui.horizontal(|ui| {
             ui.label(RichText::new("KEYBOARD").color(theme().colors.text_dim));
             ui.separator();
@@ -135,11 +133,11 @@ impl PianoKeyboard {
             );
             if ui.small_button("-").clicked() && self.octave_offset > -2 {
                 self.octave_offset -= 1;
-                event.octave_change = -1;
+                octave_change = -1;
             }
             if ui.small_button("+").clicked() && self.octave_offset < 4 {
                 self.octave_offset += 1;
-                event.octave_change = 1;
+                octave_change = 1;
             }
 
             ui.separator();
@@ -151,12 +149,16 @@ impl PianoKeyboard {
                 .clicked()
             {
                 let (start, _) = self.get_highlight_range();
-                // Use a reasonable key width for centering (actual width calculated below)
                 self.scroll_offset = Self::key_x_position(start, 24.0) - 50.0;
             }
         });
+        octave_change
+    }
 
-        ui.add_space(4.0);
+    /// Draw the piano keys (without header) and handle interaction.
+    /// Returns events that occurred (note on/off).
+    pub fn show_keys(&mut self, ui: &mut egui::Ui) -> KeyboardEvent {
+        let mut event = KeyboardEvent::default();
 
         // Piano keyboard with horizontal scrolling
         let available = ui.available_size();

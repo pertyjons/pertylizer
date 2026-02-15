@@ -1660,8 +1660,8 @@ impl SynthApp {
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannel::CH1;
 
+        // Header row: PANIC, Playing instrument, KEYBOARD label, Octave, Center
         ui.horizontal(|ui| {
-            // Panic button (moved here since keyboard handles its own header)
             if ui
                 .add(egui::Button::new(
                     RichText::new("PANIC").color(theme().colors.accent_red),
@@ -1670,10 +1670,8 @@ impl SynthApp {
             {
                 self.handle.send(EngineCommand::AllNotesOff);
                 self.pressed_keys.clear();
-                // Keyboard will be cleared by AllNotesReleased event from engine
             }
 
-            // Show active instrument indicator
             let active_name = self
                 .instruments
                 .iter()
@@ -1685,14 +1683,12 @@ impl SynthApp {
                 RichText::new(format!("Playing: {}", active_name))
                     .color(theme().colors.accent_orange),
             );
+
+            ui.separator();
+            self.keyboard.show_header(ui);
         });
 
-        // Note: Keyboard visual state is now driven by engine events (NoteTriggered/NoteReleased)
-        // in the main update loop. This ensures the GUI reflects what the engine is actually
-        // playing, regardless of input source (MIDI, sequencer, or GUI).
-
-        // Layout: [Left Scope] [Piano Keyboard] [Right Scope]
-        // Scopes use remaining space if piano doesn't fill the width
+        // Layout: [Left Scope] [Piano Keys] [Right Scope]
         let available_width = ui.available_width();
         let piano_width = 52.0 * 24.0; // 52 white keys × 24px
         let remaining = available_width - piano_width;
@@ -1705,28 +1701,25 @@ impl SynthApp {
             (Vec::new(), Vec::new())
         };
 
-        let keyboard_height = 120.0; // keyboard header + keys
+        let keys_height = 110.0;
 
         ui.horizontal(|ui| {
-            // Left oscilloscope (L channel)
             if show_scopes {
                 let scope_width = remaining / 2.0;
                 draw_oscilloscope(
                     ui,
                     &samples_l,
                     scope_width,
-                    keyboard_height,
+                    keys_height,
                     1.0,
                     theme().colors.accent_cyan,
                 );
             }
 
-            // Piano keyboard in the middle
             let piano_max = available_width.min(piano_width + 10.0);
-            ui.allocate_ui(Vec2::new(piano_max, keyboard_height), |ui| {
-                let event = self.keyboard.show(ui);
+            ui.allocate_ui(Vec2::new(piano_max, keys_height), |ui| {
+                let event = self.keyboard.show_keys(ui);
 
-                // Handle note events from mouse interaction
                 if let Some(note) = event.note_on {
                     self.handle
                         .note_on_channel(note, Velocity::new(0.8), active_channel);
@@ -1736,14 +1729,13 @@ impl SynthApp {
                 }
             });
 
-            // Right oscilloscope (R channel)
             if show_scopes {
                 let scope_width = remaining / 2.0;
                 draw_oscilloscope(
                     ui,
                     &samples_r,
                     scope_width,
-                    keyboard_height,
+                    keys_height,
                     1.0,
                     theme().colors.meter_green,
                 );
