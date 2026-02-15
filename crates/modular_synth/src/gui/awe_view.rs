@@ -150,7 +150,7 @@ impl Default for AweUiState {
 
 impl AweUiState {
     /// Build a `RoomShape` from the current UI state.
-    fn current_room_shape(&self) -> RoomShape {
+    pub fn current_room_shape(&self) -> RoomShape {
         match self.shape_kind {
             RoomShapeKind::Box => RoomShape::Box {
                 length: self.room_length,
@@ -180,6 +180,100 @@ impl AweUiState {
     fn effective_width(&self) -> f32 {
         self.current_room_shape().width()
     }
+
+    /// Build a full serializable `AweState` from the current UI state.
+    #[must_use]
+    pub fn to_awe_state(&self, enabled: bool) -> synth_awe::AweState {
+        synth_awe::AweState {
+            enabled,
+            room: self.current_room_shape(),
+            material: material_from_index(self.material_idx),
+            spatial_enabled: self.spatial_enabled,
+            note_mapping: mapping_from_index(self.note_mapping_idx),
+            snapshot: synth_awe::AweSnapshot {
+                dry_wet: self.dry_wet,
+                early_late_balance: self.early_late,
+                modes_amount: self.modes_amount,
+                freq_warp: self.freq_warp,
+                resonance_boost: self.resonance_boost,
+                tail_stretch: self.tail_stretch,
+                portal_amount: self.portal_amount,
+                source_pos: [self.source_x, self.source_y, self.room_height * 0.5],
+                listener_pos: [self.listener_x, self.listener_y, self.room_height * 0.5],
+                spatial_enabled: self.spatial_enabled,
+                note_mapping: mapping_from_index(self.note_mapping_idx),
+                lfo1: self.lfo1,
+                lfo2: self.lfo2,
+                lfo3: self.lfo3,
+                lfo4: self.lfo4,
+            },
+        }
+    }
+
+    /// Restore UI state from a loaded `AweState`.
+    pub fn restore_from(&mut self, state: &synth_awe::AweState) {
+        // Room shape
+        match state.room {
+            RoomShape::Box {
+                length,
+                width,
+                height,
+            } => {
+                self.shape_kind = RoomShapeKind::Box;
+                self.room_length = length;
+                self.room_width = width;
+                self.room_height = height;
+            }
+            RoomShape::Cylinder { radius, length } => {
+                self.shape_kind = RoomShapeKind::Cylinder;
+                self.cyl_radius = radius;
+                self.cyl_length = length;
+            }
+            RoomShape::LShape {
+                length_a,
+                width_a,
+                length_b,
+                width_b,
+                height,
+            } => {
+                self.shape_kind = RoomShapeKind::LShape;
+                self.l_length_a = length_a;
+                self.l_width_a = width_a;
+                self.l_length_b = length_b;
+                self.l_width_b = width_b;
+                self.l_height = height;
+            }
+        }
+
+        // Material
+        self.material_idx = material_to_index(state.material);
+
+        // Spatial
+        self.spatial_enabled = state.spatial_enabled;
+        self.note_mapping_idx = mapping_to_index(state.note_mapping);
+
+        // Snapshot params
+        let snap = &state.snapshot;
+        self.dry_wet = snap.dry_wet;
+        self.early_late = snap.early_late_balance;
+        self.modes_amount = snap.modes_amount;
+        self.freq_warp = snap.freq_warp;
+        self.resonance_boost = snap.resonance_boost;
+        self.tail_stretch = snap.tail_stretch;
+        self.portal_amount = snap.portal_amount;
+
+        // Positions
+        self.source_x = snap.source_pos[0];
+        self.source_y = snap.source_pos[1];
+        self.listener_x = snap.listener_pos[0];
+        self.listener_y = snap.listener_pos[1];
+
+        // LFOs
+        self.lfo1 = snap.lfo1;
+        self.lfo2 = snap.lfo2;
+        self.lfo3 = snap.lfo3;
+        self.lfo4 = snap.lfo4;
+    }
 }
 
 const MATERIAL_NAMES: [&str; 6] = ["Concrete", "Wood", "Glass", "Metal", "Fabric", "Tile"];
@@ -194,6 +288,22 @@ fn material_from_index(idx: usize) -> Material {
         5 => Material::TILE,
         _ => Material::CONCRETE,
     }
+}
+
+fn material_to_index(mat: Material) -> usize {
+    // Match by absorption_mid as a simple discriminant
+    const MATERIALS: [Material; 6] = [
+        Material::CONCRETE,
+        Material::WOOD,
+        Material::GLASS,
+        Material::METAL,
+        Material::FABRIC,
+        Material::TILE,
+    ];
+    MATERIALS
+        .iter()
+        .position(|m| (m.absorption_mid - mat.absorption_mid).abs() < 0.001)
+        .unwrap_or(0)
 }
 
 const LFO_TARGET_NAMES: [&str; 13] = [

@@ -126,10 +126,16 @@ pub fn load_patch(
         patch.settings.glide_time,
     )));
 
-    // Load AWE state if present
+    // Load full AWE state if present
     if let Some(awe) = &patch.settings.awe {
         handle.send_blocking(EngineCommand::SetAweEnabled {
             enabled: awe.enabled,
+        });
+        handle.send_blocking(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::RoomShape(awe.room),
+        });
+        handle.send_blocking(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::Material(awe.material),
         });
         handle.send_blocking(EngineCommand::SetAweState {
             snapshot: awe.to_snapshot(),
@@ -927,7 +933,6 @@ pub fn apply_module_parameters(
 }
 
 /// Create a patch from current rack state.
-#[allow(clippy::too_many_arguments)]
 pub fn create_patch_from_rack(
     patch_name: &str,
     patch_editor: &PatchEditor,
@@ -935,8 +940,7 @@ pub fn create_patch_from_rack(
     handle: &EngineHandle,
     glide_time: f32,
     awe_enabled: bool,
-    awe_spatial_enabled: bool,
-    awe_note_mapping: synth_awe::NotePositionMapping,
+    awe_ui: &crate::gui::awe_view::AweUiState,
 ) -> Option<Patch> {
     let mut patch = Patch::new(patch_name);
     patch.author = Some("User".to_string());
@@ -1029,14 +1033,9 @@ pub fn create_patch_from_rack(
     patch.settings.master_volume = handle.master_volume();
     patch.settings.glide_time = glide_time;
 
-    // Save AWE state
+    // Save full AWE state
     if awe_enabled {
-        patch.settings.awe = Some(synth_awe::AweState {
-            enabled: true,
-            spatial_enabled: awe_spatial_enabled,
-            note_mapping: awe_note_mapping,
-            ..Default::default()
-        });
+        patch.settings.awe = Some(awe_ui.to_awe_state(true));
     }
 
     Some(patch)

@@ -1804,6 +1804,15 @@ impl SynthApp {
             &mut self.glide_time,
             active_id,
         );
+
+        // Restore AWE UI state from loaded patch
+        if let Some(awe) = &patch.settings.awe {
+            self.awe_enabled = awe.enabled;
+            self.awe_ui.restore_from(awe);
+        } else {
+            self.awe_enabled = false;
+            self.awe_ui = crate::gui::awe_view::AweUiState::default();
+        }
     }
 
     /// Reset the active instrument to a new empty patch.
@@ -1875,8 +1884,7 @@ impl SynthApp {
             &self.handle,
             self.glide_time,
             self.awe_enabled,
-            self.awe_ui.spatial_enabled,
-            crate::gui::awe_view::mapping_from_index(self.awe_ui.note_mapping_idx),
+            &self.awe_ui,
         )
     }
 }
