@@ -1,0 +1,334 @@
+//! AWE-specific newtypes for domain values.
+
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+
+use serde::{Deserialize, Serialize};
+
+/// Length in meters.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct Meters(pub f32);
+
+impl Meters {
+    /// Create a new length.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Zero meters.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Clamp to a range.
+    #[inline]
+    pub fn clamp(self, min: Self, max: Self) -> Self {
+        Self(self.0.clamp(min.0, max.0))
+    }
+
+    /// Max with another value.
+    #[inline]
+    pub fn max(self, other: Self) -> Self {
+        Self(self.0.max(other.0))
+    }
+
+    /// Min with another value.
+    #[inline]
+    pub fn min(self, other: Self) -> Self {
+        Self(self.0.min(other.0))
+    }
+}
+
+impl From<f32> for Meters {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Meters> for f32 {
+    fn from(value: Meters) -> Self {
+        value.0
+    }
+}
+
+impl Add for Meters {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for Meters {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Mul<f32> for Meters {
+    type Output = Self;
+
+    #[inline]
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs)
+    }
+}
+
+impl Div<f32> for Meters {
+    type Output = Self;
+
+    #[inline]
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs)
+    }
+}
+
+impl AddAssign for Meters {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl SubAssign for Meters {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl MulAssign<f32> for Meters {
+    #[inline]
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
+    }
+}
+
+impl DivAssign<f32> for Meters {
+    #[inline]
+    fn div_assign(&mut self, rhs: f32) {
+        self.0 /= rhs;
+    }
+}
+
+/// Area in square meters.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct SquareMeters(pub f32);
+
+impl SquareMeters {
+    /// Create a new area.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+/// Volume in cubic meters.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct CubicMeters(pub f32);
+
+impl CubicMeters {
+    /// Create a new volume.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+/// Speed in meters per second.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct MetersPerSecond(pub f32);
+
+impl MetersPerSecond {
+    /// Create a new speed.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+/// Fractional sample offset (for interpolated delays).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct SampleOffset(pub f32);
+
+impl SampleOffset {
+    /// Create a new offset.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+/// Tail stretch factor for late reverb (dimensionless).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct StretchFactor(pub f32);
+
+impl StretchFactor {
+    /// Minimum allowed stretch factor.
+    pub const MIN: Self = Self(0.5);
+    /// Maximum allowed stretch factor.
+    pub const MAX: Self = Self(4.0);
+
+    /// Create a new stretch factor with clamping.
+    #[inline]
+    pub fn new(value: f32) -> Self {
+        Self(value.clamp(Self::MIN.0, Self::MAX.0))
+    }
+
+    /// Create without clamping.
+    #[inline]
+    pub const fn new_unchecked(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl From<f32> for StretchFactor {
+    fn from(value: f32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl Default for StretchFactor {
+    fn default() -> Self {
+        Self::new(1.0)
+    }
+}
+
+/// 3D position in meters.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct Position3(pub [Meters; 3]);
+
+impl Position3 {
+    /// Create a new position.
+    #[inline]
+    pub const fn new(x: Meters, y: Meters, z: Meters) -> Self {
+        Self([x, y, z])
+    }
+
+    /// X component.
+    #[inline]
+    pub const fn x(self) -> Meters {
+        self.0[0]
+    }
+
+    /// Y component.
+    #[inline]
+    pub const fn y(self) -> Meters {
+        self.0[1]
+    }
+
+    /// Z component.
+    #[inline]
+    pub const fn z(self) -> Meters {
+        self.0[2]
+    }
+
+    /// Convert to raw f32 array.
+    #[inline]
+    pub fn as_f32(self) -> [f32; 3] {
+        [self.0[0].as_f32(), self.0[1].as_f32(), self.0[2].as_f32()]
+    }
+}
+
+impl Default for Position3 {
+    fn default() -> Self {
+        Self([Meters::ZERO; 3])
+    }
+}
+
+impl From<[Meters; 3]> for Position3 {
+    fn from(value: [Meters; 3]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<[f32; 3]> for Position3 {
+    fn from(value: [f32; 3]) -> Self {
+        Self([
+            Meters::new(value[0]),
+            Meters::new(value[1]),
+            Meters::new(value[2]),
+        ])
+    }
+}
+
+impl From<Position3> for [Meters; 3] {
+    fn from(value: Position3) -> Self {
+        value.0
+    }
+}
+
+impl std::ops::Index<usize> for Position3 {
+    type Output = Meters;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Position3 {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}

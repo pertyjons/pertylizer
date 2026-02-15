@@ -13,7 +13,10 @@ use crate::gui::app::state::AppView;
 use crate::gui::theme::theme;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::presets::awe_presets;
-use synth_awe::{AweParam, AwePreset, Material, NotePositionMapping, RoomShape};
+use synth_awe::{
+    AweParam, AwePreset, Material, Meters, NotePositionMapping, RoomShape, StretchFactor,
+};
+use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue};
 use synth_engine::{EngineCommand, EngineHandle};
 
 /// Room shape kind for the UI selector.
@@ -119,19 +122,19 @@ impl Default for AweUiState {
             dome_radius: 6.0,
             tube_radius: 1.5,
             tube_length: 30.0,
-            source_x: snap.source_pos[0],
-            source_y: snap.source_pos[1],
-            listener_x: snap.listener_pos[0],
-            listener_y: snap.listener_pos[1],
+            source_x: snap.source_pos.x().as_f32(),
+            source_y: snap.source_pos.y().as_f32(),
+            listener_x: snap.listener_pos.x().as_f32(),
+            listener_y: snap.listener_pos.y().as_f32(),
             material_idx: 0,
-            material_diffusion: default_material.diffusion,
-            dry_wet: snap.dry_wet,
-            early_late: snap.early_late_balance,
-            modes_amount: snap.modes_amount,
-            tail_stretch: snap.tail_stretch,
-            freq_warp: snap.freq_warp,
-            resonance_boost: snap.resonance_boost,
-            portal_amount: snap.portal_amount,
+            material_diffusion: default_material.diffusion.as_f32(),
+            dry_wet: snap.dry_wet.as_f32(),
+            early_late: snap.early_late_balance.as_f32(),
+            modes_amount: snap.modes_amount.as_f32(),
+            tail_stretch: snap.tail_stretch.as_f32(),
+            freq_warp: snap.freq_warp.as_f32(),
+            resonance_boost: snap.resonance_boost.as_f32(),
+            portal_amount: snap.portal_amount.as_f32(),
             lfo1: snap.lfo1,
             lfo2: snap.lfo2,
             lfo3: snap.lfo3,
@@ -150,30 +153,30 @@ impl AweUiState {
     pub fn current_room_shape(&self) -> RoomShape {
         match self.shape_kind {
             RoomShapeKind::Box => RoomShape::Box {
-                length: self.room_length,
-                width: self.room_width,
-                height: self.room_height,
+                length: Meters::new(self.room_length),
+                width: Meters::new(self.room_width),
+                height: Meters::new(self.room_height),
             },
             RoomShapeKind::Cylinder => RoomShape::Cylinder {
-                radius: self.cyl_radius,
-                length: self.cyl_length,
+                radius: Meters::new(self.cyl_radius),
+                length: Meters::new(self.cyl_length),
             },
             RoomShapeKind::LShape => RoomShape::LShape {
-                length_a: self.l_length_a,
-                width_a: self.l_width_a,
-                length_b: self.l_length_b,
-                width_b: self.l_width_b,
-                height: self.l_height,
+                length_a: Meters::new(self.l_length_a),
+                width_a: Meters::new(self.l_width_a),
+                length_b: Meters::new(self.l_length_b),
+                width_b: Meters::new(self.l_width_b),
+                height: Meters::new(self.l_height),
             },
             RoomShapeKind::Sphere => RoomShape::Sphere {
-                radius: self.sphere_radius,
+                radius: Meters::new(self.sphere_radius),
             },
             RoomShapeKind::Dome => RoomShape::Dome {
-                radius: self.dome_radius,
+                radius: Meters::new(self.dome_radius),
             },
             RoomShapeKind::Tube => RoomShape::Tube {
-                radius: self.tube_radius,
-                length: self.tube_length,
+                radius: Meters::new(self.tube_radius),
+                length: Meters::new(self.tube_length),
             },
         }
     }
@@ -181,25 +184,25 @@ impl AweUiState {
     /// Build a `Material` from the current UI state.
     pub fn current_material(&self) -> Material {
         let mut material = material_from_index(self.material_idx);
-        material.diffusion = self.material_diffusion.clamp(0.0, 1.0);
+        material.diffusion = NormalizedValue::new(self.material_diffusion);
         material
     }
 
     /// Effective room length for floor plan display.
     fn effective_length(&self) -> f32 {
-        self.current_room_shape().length()
+        self.current_room_shape().length().as_f32()
     }
 
     /// Effective room width for floor plan display.
     fn effective_width(&self) -> f32 {
-        self.current_room_shape().width()
+        self.current_room_shape().width().as_f32()
     }
 
     /// Build a full serializable `AweState` from the current UI state.
     #[must_use]
     pub fn to_awe_state(&self, enabled: bool) -> synth_awe::AweState {
         let room = self.current_room_shape();
-        let half_height = room.height() * 0.5;
+        let half_height = room.height().as_f32() * 0.5;
         synth_awe::AweState {
             enabled,
             room,
@@ -207,15 +210,15 @@ impl AweUiState {
             spatial_enabled: self.spatial_enabled,
             note_mapping: mapping_from_index(self.note_mapping_idx),
             snapshot: synth_awe::AweSnapshot {
-                dry_wet: self.dry_wet,
-                early_late_balance: self.early_late,
-                modes_amount: self.modes_amount,
-                freq_warp: self.freq_warp,
-                resonance_boost: self.resonance_boost,
-                tail_stretch: self.tail_stretch,
-                portal_amount: self.portal_amount,
-                source_pos: [self.source_x, self.source_y, half_height],
-                listener_pos: [self.listener_x, self.listener_y, half_height],
+                dry_wet: NormalizedValue::new(self.dry_wet),
+                early_late_balance: NormalizedValue::new(self.early_late),
+                modes_amount: NormalizedValue::new(self.modes_amount),
+                freq_warp: BipolarValue::new(self.freq_warp),
+                resonance_boost: NormalizedValue::new(self.resonance_boost),
+                tail_stretch: StretchFactor::new(self.tail_stretch),
+                portal_amount: NormalizedValue::new(self.portal_amount),
+                source_pos: [self.source_x, self.source_y, half_height].into(),
+                listener_pos: [self.listener_x, self.listener_y, half_height].into(),
                 spatial_enabled: self.spatial_enabled,
                 note_mapping: mapping_from_index(self.note_mapping_idx),
                 lfo1: self.lfo1,
@@ -236,14 +239,14 @@ impl AweUiState {
                 height,
             } => {
                 self.shape_kind = RoomShapeKind::Box;
-                self.room_length = length;
-                self.room_width = width;
-                self.room_height = height;
+                self.room_length = length.as_f32();
+                self.room_width = width.as_f32();
+                self.room_height = height.as_f32();
             }
             RoomShape::Cylinder { radius, length } => {
                 self.shape_kind = RoomShapeKind::Cylinder;
-                self.cyl_radius = radius;
-                self.cyl_length = length;
+                self.cyl_radius = radius.as_f32();
+                self.cyl_length = length.as_f32();
             }
             RoomShape::LShape {
                 length_a,
@@ -253,30 +256,30 @@ impl AweUiState {
                 height,
             } => {
                 self.shape_kind = RoomShapeKind::LShape;
-                self.l_length_a = length_a;
-                self.l_width_a = width_a;
-                self.l_length_b = length_b;
-                self.l_width_b = width_b;
-                self.l_height = height;
+                self.l_length_a = length_a.as_f32();
+                self.l_width_a = width_a.as_f32();
+                self.l_length_b = length_b.as_f32();
+                self.l_width_b = width_b.as_f32();
+                self.l_height = height.as_f32();
             }
             RoomShape::Sphere { radius } => {
                 self.shape_kind = RoomShapeKind::Sphere;
-                self.sphere_radius = radius;
+                self.sphere_radius = radius.as_f32();
             }
             RoomShape::Dome { radius } => {
                 self.shape_kind = RoomShapeKind::Dome;
-                self.dome_radius = radius;
+                self.dome_radius = radius.as_f32();
             }
             RoomShape::Tube { radius, length } => {
                 self.shape_kind = RoomShapeKind::Tube;
-                self.tube_radius = radius;
-                self.tube_length = length;
+                self.tube_radius = radius.as_f32();
+                self.tube_length = length.as_f32();
             }
         }
 
         // Material
         self.material_idx = material_to_index(state.material);
-        self.material_diffusion = state.material.diffusion;
+        self.material_diffusion = state.material.diffusion.as_f32();
 
         // Spatial
         self.spatial_enabled = state.spatial_enabled;
@@ -284,19 +287,19 @@ impl AweUiState {
 
         // Snapshot params
         let snap = &state.snapshot;
-        self.dry_wet = snap.dry_wet;
-        self.early_late = snap.early_late_balance;
-        self.modes_amount = snap.modes_amount;
-        self.freq_warp = snap.freq_warp;
-        self.resonance_boost = snap.resonance_boost;
-        self.tail_stretch = snap.tail_stretch;
-        self.portal_amount = snap.portal_amount;
+        self.dry_wet = snap.dry_wet.as_f32();
+        self.early_late = snap.early_late_balance.as_f32();
+        self.modes_amount = snap.modes_amount.as_f32();
+        self.freq_warp = snap.freq_warp.as_f32();
+        self.resonance_boost = snap.resonance_boost.as_f32();
+        self.tail_stretch = snap.tail_stretch.as_f32();
+        self.portal_amount = snap.portal_amount.as_f32();
 
         // Positions
-        self.source_x = snap.source_pos[0];
-        self.source_y = snap.source_pos[1];
-        self.listener_x = snap.listener_pos[0];
-        self.listener_y = snap.listener_pos[1];
+        self.source_x = snap.source_pos.x().as_f32();
+        self.source_y = snap.source_pos.y().as_f32();
+        self.listener_x = snap.listener_pos.x().as_f32();
+        self.listener_y = snap.listener_pos.y().as_f32();
 
         // LFOs
         self.lfo1 = snap.lfo1;
@@ -353,10 +356,10 @@ fn material_to_index(mat: Material) -> usize {
     let mut best_idx = 0;
     let mut best_score = f32::MAX;
     for (idx, m) in MATERIALS.iter().enumerate() {
-        let score = (m.absorption_low - mat.absorption_low).abs()
-            + (m.absorption_mid - mat.absorption_mid).abs()
-            + (m.absorption_high - mat.absorption_high).abs()
-            + (m.diffusion - mat.diffusion).abs() * 0.25;
+        let score = (m.absorption_low.as_f32() - mat.absorption_low.as_f32()).abs()
+            + (m.absorption_mid.as_f32() - mat.absorption_mid.as_f32()).abs()
+            + (m.absorption_high.as_f32() - mat.absorption_high.as_f32()).abs()
+            + (m.diffusion.as_f32() - mat.diffusion.as_f32()).abs() * 0.25;
         if score < best_score {
             best_score = score;
             best_idx = idx;
@@ -729,11 +732,16 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     if state.spatial_enabled && mapping != NotePositionMapping::Off {
         let dot_color = egui::Color32::from_rgba_premultiplied(180, 120, 255, 60);
         // Show positions for C notes across the range
-        for octave in 1..=7 {
-            let note = octave * 12; // C1=12, C2=24, ...C7=84
+        for octave in 1..=7u8 {
+            let note = MidiNote::new(octave * 12); // C1=12, C2=24, ...C7=84
             let eff_height = state.current_room_shape().height();
-            let pos = mapping.position_for_note(note, room_w, room_h, eff_height);
-            let screen_pos = room_to_screen(pos[0], pos[1]);
+            let pos = mapping.position_for_note(
+                note,
+                Meters::new(room_w),
+                Meters::new(room_h),
+                eff_height,
+            );
+            let screen_pos = room_to_screen(pos.x().as_f32(), pos.y().as_f32());
             painter.circle_filled(screen_pos, 4.0, dot_color);
         }
     }
@@ -759,18 +767,18 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         let rx = rx.clamp(0.1, room_w - 0.1);
         let ry = ry.clamp(0.1, room_h - 0.1);
 
-        let half_h = state.current_room_shape().height() * 0.5;
+        let half_h = state.current_room_shape().height().as_f32() * 0.5;
         if state.dragging_source {
             state.source_x = rx;
             state.source_y = ry;
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::SourcePos([rx, ry, half_h]),
+                param: AweParam::SourcePos([rx, ry, half_h].into()),
             });
         } else if state.dragging_listener {
             state.listener_x = rx;
             state.listener_y = ry;
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::ListenerPos([rx, ry, half_h]),
+                param: AweParam::ListenerPos([rx, ry, half_h].into()),
             });
         }
     }
@@ -1006,7 +1014,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     if state.material_idx != prev_material {
         state.selected_preset = None;
         let base = material_from_index(state.material_idx);
-        state.material_diffusion = base.diffusion;
+        state.material_diffusion = base.diffusion.as_f32();
         handle.send(EngineCommand::SetAweParameter {
             param: AweParam::Material(state.current_material()),
         });
@@ -1046,7 +1054,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::DryWet(state.dry_wet),
+                param: AweParam::DryWet(NormalizedValue::new(state.dry_wet)),
             });
         }
     });
@@ -1058,7 +1066,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::EarlyLateBalance(state.early_late),
+                param: AweParam::EarlyLateBalance(NormalizedValue::new(state.early_late)),
             });
         }
     });
@@ -1070,7 +1078,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::ModesAmount(state.modes_amount),
+                param: AweParam::ModesAmount(NormalizedValue::new(state.modes_amount)),
             });
         }
     });
@@ -1082,7 +1090,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::TailStretch(state.tail_stretch),
+                param: AweParam::TailStretch(StretchFactor::new(state.tail_stretch)),
             });
         }
     });
@@ -1104,7 +1112,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::FreqWarp(state.freq_warp),
+                param: AweParam::FreqWarp(BipolarValue::new(state.freq_warp)),
             });
         }
     });
@@ -1116,7 +1124,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::ResonanceBoost(state.resonance_boost),
+                param: AweParam::ResonanceBoost(NormalizedValue::new(state.resonance_boost)),
             });
         }
     });
@@ -1128,7 +1136,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::PortalAmount(state.portal_amount),
+                param: AweParam::PortalAmount(NormalizedValue::new(state.portal_amount)),
             });
         }
     });
@@ -1247,14 +1255,16 @@ fn draw_lfo_section(
 
     ui.horizontal(|ui| {
         ui.label("Rate:");
+        let mut rate_f = lfo_state.rate.as_f32();
         if ui
             .add(
-                egui::Slider::new(&mut lfo_state.rate, 0.01..=20.0)
+                egui::Slider::new(&mut rate_f, 0.01..=20.0)
                     .suffix(" Hz")
                     .logarithmic(true),
             )
             .changed()
         {
+            lfo_state.rate = Hertz::new(rate_f);
             let param = match lfo_index {
                 1 => AweParam::Lfo1Rate(lfo_state.rate),
                 2 => AweParam::Lfo2Rate(lfo_state.rate),
@@ -1267,10 +1277,12 @@ fn draw_lfo_section(
 
     ui.horizontal(|ui| {
         ui.label("Amount:");
+        let mut amount_f = lfo_state.amount.as_f32();
         if ui
-            .add(egui::Slider::new(&mut lfo_state.amount, 0.0..=1.0))
+            .add(egui::Slider::new(&mut amount_f, 0.0..=1.0))
             .changed()
         {
+            lfo_state.amount = NormalizedValue::new(amount_f);
             let param = match lfo_index {
                 1 => AweParam::Lfo1Amount(lfo_state.amount),
                 2 => AweParam::Lfo2Amount(lfo_state.amount),

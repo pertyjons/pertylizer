@@ -1,7 +1,7 @@
 # Version History
 
 ## [0.129.0] - 2026-02-15
-### Added - AWE-indikator & Oscilloskop vid piano
+### Added - AWE-indikator, Oscilloskop vid piano & AWE newtype-migrering
 
 **AWE-indikator i toolbar:**
 - Knappen visar grön prick (●) när AWE-effekten är aktiv, dämpad/grå när av.
@@ -16,6 +16,36 @@
 **VisualizationBuffer i EngineState:**
 - Ny `master_scope` buffer i `EngineState` för master-output waveform-data.
 - `SynthEngine` skriver final output (efter master volume) till buffern varje callback.
+
+### Changed - synth_awe: Komplett newtype-migrering
+
+**Ny `types`-modul** med 7 AWE-lokala newtypes:
+- `Meters`, `SquareMeters`, `CubicMeters` — rumdimensioner och ytor/volymer.
+- `MetersPerSecond` — ljudhastighet.
+- `SampleOffset` — fraktionell sample-position för interpolerade delay-lines.
+- `StretchFactor` — tail stretch (0.5–4.0, clampat).
+- `Position3` — 3D-position `[Meters; 3]` med `x()/y()/z()` accessors.
+
+**Migrering från råa primitiver till typade domänvärden** i hela craten:
+- `f32` → `Meters` (alla rumsdimensioner i `RoomShape`, `EarlyReflections`, `RoomModeBank`, `SpatialContext`, `Spatializer`).
+- `f32` → `NormalizedValue` (absorption, diffusion, dry/wet, portal amount, LFO amount m.fl.).
+- `f32` → `Gain` (feedback, tap gains).
+- `f32` → `FilterState` (one-pole filter states).
+- `f32` → `SampleOffset` (delay tap positioner).
+- `f32` → `SampleRate`, `Seconds`, `Hertz`, `BipolarValue` (alla publika API:er).
+- `f32` → `StretchFactor` (tail stretch parameter).
+- `[f32; 3]` → `Position3` (käll-/lyssnarpositioner).
+- `usize` → `SampleCount` (delay-buffertstorlekar, block sizes).
+- `u8` → `MidiNote` (per-röst spatialisering).
+
+**DSP-förbättringar (utan beteendeändringar):**
+- One-pole filter: manuell beräkning ersatt med `FilterState::one_pole()`.
+- Gain-applicering: manuell multiplikation ersatt med `Gain::apply()`.
+- Hot-path-optimering: filter-state och mix-parametrar hissade till lokala variabler före per-sample-loop.
+- Magiska siffror ersatta med namngivna konstanter (`PORTAL_MAX_DELAY`, `PORTAL_MAX_DELAY_SAMPLES`).
+
+**Alla 36 presets** uppdaterade med `.into()`-konvertering.
+**GUI (awe_view.rs)** uppdaterad med `.as_f32()`-extraktion och newtype-wrapping vid gränssnittet mot sliders.
 
 ## [0.128.0] - 2026-02-15
 ### Added - AWE: Nya material, fler presets, diffusion & LFO-stabilitet

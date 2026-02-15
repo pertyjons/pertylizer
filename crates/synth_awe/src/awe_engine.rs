@@ -6,6 +6,9 @@
 //! 3. Axial room modes via comb-filter bank
 //! 4. Stereo spatializer (ITD + ILD) on wet signal only
 
+use synth_core::{
+    BipolarValue, FilterState, Gain, NormalizedValue, SampleCount, SampleRate, Seconds,
+};
 use synth_dsp::{FdnCore, InterpolatedDelayLine};
 
 use crate::early_reflections::EarlyReflections;
@@ -15,9 +18,16 @@ use crate::room::{Material, RoomShape};
 use crate::room_modes::RoomModeBank;
 use crate::spatial_voice::{NotePositionMapping, SpatialVoiceBank, SpatialVoicePool};
 use crate::spatializer::Spatializer;
+use crate::types::{Meters, Position3, SampleOffset, StretchFactor};
 
 /// Smooth parameter ramp time in seconds (~5 ms).
-const RAMP_TIME_SECONDS: f32 = 0.005;
+const RAMP_TIME_SECONDS: Seconds = Seconds::new(0.005);
+
+/// Portal delay line max length in samples.
+const PORTAL_MAX_DELAY: SampleCount = SampleCount::new(28_800);
+
+/// Portal max delay for interpolation in samples.
+const PORTAL_MAX_DELAY_SAMPLES: SampleOffset = SampleOffset::new(28_000.0);
 
 /// The Acoustic World Engine processor.
 ///
@@ -28,7 +38,7 @@ pub struct AweEngine {
     room: RoomShape,
     material: Material,
     snapshot: AweSnapshot,
-    cached_sample_rate: f32,
+    cached_sample_rate: SampleRate,
 
     // Base values before LFO modulation (set by user/presets, never by LFOs)
     base_room: RoomShape,
@@ -49,13 +59,13 @@ pub struct AweEngine {
     // Acoustic portal — extra delay feedback path simulating adjoining room
     portal_delay_left: InterpolatedDelayLine,
     portal_delay_right: InterpolatedDelayLine,
-    portal_feedback_state_l: f32,
-    portal_feedback_state_r: f32,
+    portal_feedback_state_l: FilterState,
+    portal_feedback_state_r: FilterState,
 
     // Smoothed DSP parameters (current values that ramp toward targets)
-    current_dry_wet: f32,
-    current_early_late: f32,
-    current_portal: f32,
+    current_dry_wet: NormalizedValue,
+    current_early_late: NormalizedValue,
+    current_portal: NormalizedValue,
 
     // Geometry dirty flag — recalculate ISM taps, FDN, modes when true
     geometry_dirty: bool,
@@ -77,7 +87,7 @@ impl AweEngine {
             room,
             material: Material::default(),
             snapshot,
-            cached_sample_rate: 48000.0,
+            cached_sample_rate: SampleRate::new(48000.0),
 
             base_room: room,
             base_snapshot: snapshot,
@@ -93,10 +103,10 @@ impl AweEngine {
             lfo4: AweLfo::new(),
 
             // Portal delay lines: max ~300ms @ 96kHz = 28800 samples
-            portal_delay_left: InterpolatedDelayLine::new(28_800),
-            portal_delay_right: InterpolatedDelayLine::new(28_800),
-            portal_feedback_state_l: 0.0,
-            portal_feedback_state_r: 0.0,
+            portal_delay_left: InterpolatedDelayLine::new(PORTAL_MAX_DELAY.as_usize()),
+            portal_delay_right: InterpolatedDelayLine::new(PORTAL_MAX_DELAY.as_usize()),
+            portal_feedback_state_l: FilterState::ZERO,
+            portal_feedback_state_r: FilterState::ZERO,
 
             current_dry_wet: snapshot.dry_wet,
             current_early_late: snapshot.early_late_balance,
@@ -112,16 +122,17 @@ impl AweEngine {
 
     /// Process audio buffer (interleaved stereo: [L0, R0, L1, R1, ...]).
     #[allow(clippy::too_many_lines)]
-    pub fn process(&mut self, buffer: &mut [f32], sample_rate: f32) {
+    pub fn process(&mut self, buffer: &mut [f32], sample_rate: SampleRate) {
         self.cached_sample_rate = sample_rate;
 
         let num_samples = buffer.len() / 2;
+        let block_size = SampleCount::new(num_samples);
         if num_samples == 0 {
             return;
         }
 
         // 1. Control-rate: advance LFOs and apply modulation
-        self.update_lfos(num_samples, sample_rate);
+        self.update_lfos(block_size, sample_rate);
 
         // 2. Recalculate geometry-dependent DSP parameters if changed
         if self.geometry_dirty {
@@ -130,34 +141,43 @@ impl AweEngine {
         }
 
         // Compute ramp coefficient for ~5 ms smoothing
-        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS * sample_rate)).exp();
+        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
 
         // Pre-compute FDN parameters from room geometry
         let absorption = self.material.average_absorption();
-        let material_diffusion = self.material.diffusion.clamp(0.0, 1.0);
+        let material_diffusion = self.material.diffusion;
         let rt60 = self.calculate_rt60();
 
         // Freq warp: bass hears bigger room (more LP damping = bass reverberates more)
-        let freq_warp = self.snapshot.freq_warp.clamp(-1.0, 1.0);
-        let lp_coeff = (0.2 + absorption * 0.6) * (1.0 - freq_warp * 0.3);
+        let freq_warp = self.snapshot.freq_warp;
+        let lp_coeff = (0.2 + absorption.as_f32() * 0.6) * (1.0 - freq_warp.as_f32() * 0.3);
 
         // Resonance boost: adds energy to feedback (with safety clamp)
-        let resonance_boost = self.snapshot.resonance_boost.clamp(0.0, 1.0);
-        let feedback_gain =
-            (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
+        let resonance_boost = self.snapshot.resonance_boost;
+        let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
+            + resonance_boost.as_f32() * 0.15)
+            .min(0.97);
         let hp_coeff = 0.95;
-        let diffusion = (0.35 + material_diffusion * 0.55).clamp(0.1, 1.0);
+        let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
-        let sample_rate_recip = 1.0 / sample_rate;
+        let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
-        let target_dry_wet = self.snapshot.dry_wet.clamp(0.0, 1.0);
-        let target_early_late = self.snapshot.early_late_balance.clamp(0.0, 1.0);
-        let target_portal = self.snapshot.portal_amount.clamp(0.0, 1.0);
+        let target_dry_wet = self.snapshot.dry_wet.as_f32();
+        let target_early_late = self.snapshot.early_late_balance.as_f32();
+        let target_portal = self.snapshot.portal_amount.as_f32();
 
         // Portal delay time: ~200ms scaled by room size
-        let portal_delay_samples = (0.2 * sample_rate).clamp(1.0, 28_000.0);
-        let portal_feedback = 0.4; // Fixed feedback for adjoining room simulation
-        let portal_damping = 0.6; // LP damping for muffled portal sound
+        let portal_delay_samples = SampleOffset::new(
+            (0.2 * sample_rate.as_f32()).clamp(1.0, PORTAL_MAX_DELAY_SAMPLES.as_f32()),
+        );
+        let portal_feedback = Gain::new(0.4); // Fixed feedback for adjoining room simulation
+        let portal_damping = NormalizedValue::new(0.6); // LP damping for muffled portal sound
+
+        let mut current_dry_wet = self.current_dry_wet.as_f32();
+        let mut current_early_late = self.current_early_late.as_f32();
+        let mut current_portal = self.current_portal.as_f32();
+        let mut portal_feedback_state_l = self.portal_feedback_state_l;
+        let mut portal_feedback_state_r = self.portal_feedback_state_r;
 
         // 3. Per-sample DSP
         for i in 0..num_samples {
@@ -169,9 +189,9 @@ impl AweEngine {
             let mono_input = (dry_left + dry_right) * 0.5;
 
             // Smooth ramp toward target parameters
-            self.current_dry_wet += ramp_coeff * (target_dry_wet - self.current_dry_wet);
-            self.current_early_late += ramp_coeff * (target_early_late - self.current_early_late);
-            self.current_portal += ramp_coeff * (target_portal - self.current_portal);
+            current_dry_wet += ramp_coeff * (target_dry_wet - current_dry_wet);
+            current_early_late += ramp_coeff * (target_early_late - current_early_late);
+            current_portal += ramp_coeff * (target_portal - current_portal);
 
             // --- Early reflections (ISM) ---
             let (early_left, early_right) = self.early_reflections.process(mono_input);
@@ -191,8 +211,8 @@ impl AweEngine {
             let modes_out = self.room_modes.process(mono_input);
 
             // --- Mix early/late ---
-            let early_amount = 1.0 - self.current_early_late;
-            let late_amount = self.current_early_late;
+            let early_amount = 1.0 - current_early_late;
+            let late_amount = current_early_late;
 
             let wet_mono_left =
                 early_left * early_amount + fdn_out.left * late_amount + modes_out * 0.5;
@@ -204,32 +224,31 @@ impl AweEngine {
             let (spat_left, spat_right) = self.spatializer.process(wet_mid);
 
             // --- Acoustic portal (delayed feedback from adjoining virtual room) ---
-            let (spat_left, spat_right) = if self.current_portal > 0.001 {
+            let (spat_left, spat_right) = if current_portal > 0.001 {
                 // Read delayed signal from portal
                 let portal_l = self
                     .portal_delay_left
-                    .read_interpolated(portal_delay_samples);
+                    .read_interpolated(portal_delay_samples.as_f32());
                 let portal_r = self
                     .portal_delay_right
-                    .read_interpolated(portal_delay_samples);
+                    .read_interpolated(portal_delay_samples.as_f32());
 
                 // One-pole LP for muffled portal sound
-                self.portal_feedback_state_l = portal_damping * self.portal_feedback_state_l
-                    + (1.0 - portal_damping) * portal_l;
-                self.portal_feedback_state_r = portal_damping * self.portal_feedback_state_r
-                    + (1.0 - portal_damping) * portal_r;
+                let filtered_l =
+                    portal_feedback_state_l.one_pole(portal_l, portal_damping.as_f32());
+                let filtered_r =
+                    portal_feedback_state_r.one_pole(portal_r, portal_damping.as_f32());
 
                 // Write current wet + feedback back into portal delay
                 self.portal_delay_left
-                    .write(spat_left + self.portal_feedback_state_l * portal_feedback);
+                    .write(spat_left + portal_feedback.apply(filtered_l));
                 self.portal_delay_right
-                    .write(spat_right + self.portal_feedback_state_r * portal_feedback);
+                    .write(spat_right + portal_feedback.apply(filtered_r));
 
                 // Mix portal into output
-                let amt = self.current_portal;
                 (
-                    spat_left + self.portal_feedback_state_l * amt,
-                    spat_right + self.portal_feedback_state_r * amt,
+                    spat_left + filtered_l * current_portal,
+                    spat_right + filtered_r * current_portal,
                 )
             } else {
                 // Portal off — still write silence to keep delay line advancing
@@ -239,12 +258,18 @@ impl AweEngine {
             };
 
             // --- Dry/wet mix ---
-            let dry_amount = 1.0 - self.current_dry_wet;
-            let wet_amount = self.current_dry_wet;
+            let dry_amount = 1.0 - current_dry_wet;
+            let wet_amount = current_dry_wet;
 
             buffer[idx] = dry_left * dry_amount + spat_left * wet_amount;
             buffer[idx + 1] = dry_right * dry_amount + spat_right * wet_amount;
         }
+
+        self.current_dry_wet = NormalizedValue::new(current_dry_wet);
+        self.current_early_late = NormalizedValue::new(current_early_late);
+        self.current_portal = NormalizedValue::new(current_portal);
+        self.portal_feedback_state_l = portal_feedback_state_l;
+        self.portal_feedback_state_r = portal_feedback_state_r;
     }
 
     /// Set a single parameter.
@@ -401,8 +426,8 @@ impl AweEngine {
             self.spatializer.clear();
             self.portal_delay_left.clear();
             self.portal_delay_right.clear();
-            self.portal_feedback_state_l = 0.0;
-            self.portal_feedback_state_r = 0.0;
+            self.portal_feedback_state_l = FilterState::ZERO;
+            self.portal_feedback_state_r = FilterState::ZERO;
             self.voice_pool.clear();
         }
     }
@@ -454,11 +479,12 @@ impl AweEngine {
         &mut self,
         buffer: &mut [f32],
         bank: &SpatialVoiceBank,
-        sample_rate: f32,
+        sample_rate: SampleRate,
     ) {
         self.cached_sample_rate = sample_rate;
 
         let num_samples = buffer.len() / 2;
+        let block_size = SampleCount::new(num_samples);
         if num_samples == 0 {
             return;
         }
@@ -466,7 +492,7 @@ impl AweEngine {
         let active = bank.active_count();
 
         // 1. Control-rate: advance LFOs
-        self.update_lfos(num_samples, sample_rate);
+        self.update_lfos(block_size, sample_rate);
 
         // 2. Recalculate global geometry if dirty
         if self.geometry_dirty {
@@ -479,12 +505,22 @@ impl AweEngine {
         let room_width = self.room.width();
         let room_height = self.room.height();
         let absorption = self.material.average_absorption();
-        let diffusion = self.material.diffusion.clamp(0.0, 1.0);
-        let listener = [
-            self.snapshot.listener_pos[0].clamp(0.1, room_length - 0.1),
-            self.snapshot.listener_pos[1].clamp(0.1, room_width - 0.1),
-            self.snapshot.listener_pos[2].clamp(0.1, room_height - 0.1),
-        ];
+        let diffusion = self.material.diffusion;
+        let min_pos = Meters::new(0.1);
+        let listener = Position3::new(
+            self.snapshot
+                .listener_pos
+                .x()
+                .clamp(min_pos, room_length - min_pos),
+            self.snapshot
+                .listener_pos
+                .y()
+                .clamp(min_pos, room_width - min_pos),
+            self.snapshot
+                .listener_pos
+                .z()
+                .clamp(min_pos, room_height - min_pos),
+        );
 
         // Deactivate unused slots
         for i in active..self.voice_pool.slots.len() {
@@ -509,28 +545,37 @@ impl AweEngine {
         }
 
         // 4. Compute ramp coefficient
-        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS * sample_rate)).exp();
+        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
 
         // Pre-compute FDN parameters
         let rt60 = self.calculate_rt60();
-        let freq_warp = self.snapshot.freq_warp.clamp(-1.0, 1.0);
-        let lp_coeff = (0.2 + absorption * 0.6) * (1.0 - freq_warp * 0.3);
-        let resonance_boost = self.snapshot.resonance_boost.clamp(0.0, 1.0);
-        let feedback_gain =
-            (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
+        let freq_warp = self.snapshot.freq_warp;
+        let lp_coeff = (0.2 + absorption.as_f32() * 0.6) * (1.0 - freq_warp.as_f32() * 0.3);
+        let resonance_boost = self.snapshot.resonance_boost;
+        let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
+            + resonance_boost.as_f32() * 0.15)
+            .min(0.97);
         let hp_coeff = 0.95;
-        let material_diffusion = self.material.diffusion.clamp(0.0, 1.0);
-        let diffusion = (0.35 + material_diffusion * 0.55).clamp(0.1, 1.0);
+        let material_diffusion = self.material.diffusion;
+        let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
-        let sample_rate_recip = 1.0 / sample_rate;
+        let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
-        let target_dry_wet = self.snapshot.dry_wet.clamp(0.0, 1.0);
-        let target_early_late = self.snapshot.early_late_balance.clamp(0.0, 1.0);
-        let target_portal = self.snapshot.portal_amount.clamp(0.0, 1.0);
+        let target_dry_wet = self.snapshot.dry_wet.as_f32();
+        let target_early_late = self.snapshot.early_late_balance.as_f32();
+        let target_portal = self.snapshot.portal_amount.as_f32();
 
-        let portal_delay_samples = (0.2 * sample_rate).clamp(1.0, 28_000.0);
-        let portal_feedback = 0.4;
-        let portal_damping = 0.6;
+        let portal_delay_samples = SampleOffset::new(
+            (0.2 * sample_rate.as_f32()).clamp(1.0, PORTAL_MAX_DELAY_SAMPLES.as_f32()),
+        );
+        let portal_feedback = Gain::new(0.4);
+        let portal_damping = NormalizedValue::new(0.6);
+
+        let mut current_dry_wet = self.current_dry_wet.as_f32();
+        let mut current_early_late = self.current_early_late.as_f32();
+        let mut current_portal = self.current_portal.as_f32();
+        let mut portal_feedback_state_l = self.portal_feedback_state_l;
+        let mut portal_feedback_state_r = self.portal_feedback_state_r;
 
         // 5. Per-sample loop
         for i in 0..num_samples {
@@ -539,9 +584,9 @@ impl AweEngine {
             let dry_right = buffer[idx + 1];
 
             // Smooth ramp
-            self.current_dry_wet += ramp_coeff * (target_dry_wet - self.current_dry_wet);
-            self.current_early_late += ramp_coeff * (target_early_late - self.current_early_late);
-            self.current_portal += ramp_coeff * (target_portal - self.current_portal);
+            current_dry_wet += ramp_coeff * (target_dry_wet - current_dry_wet);
+            current_early_late += ramp_coeff * (target_early_late - current_early_late);
+            current_portal += ramp_coeff * (target_portal - current_portal);
 
             let mut total_early_l = 0.0_f32;
             let mut total_early_r = 0.0_f32;
@@ -552,7 +597,7 @@ impl AweEngine {
             // Per active voice: process through per-voice early reflections + spatializer
             for v in 0..active {
                 let info = bank.info(v);
-                let mono = if i < info.sample_count {
+                let mono = if i < info.sample_count.as_usize() {
                     bank.buffer(v)[i]
                 } else {
                     0.0
@@ -581,8 +626,8 @@ impl AweEngine {
             let modes_out = self.room_modes.process(global_mono);
 
             // Mix early/late
-            let early_amount = 1.0 - self.current_early_late;
-            let late_amount = self.current_early_late;
+            let early_amount = 1.0 - current_early_late;
+            let late_amount = current_early_late;
 
             // Use per-voice spatialized dry instead of global spatializer
             let wet_left =
@@ -595,28 +640,27 @@ impl AweEngine {
             let spat_right = wet_right + total_spat_r * 0.1;
 
             // Portal
-            let (spat_left, spat_right) = if self.current_portal > 0.001 {
+            let (spat_left, spat_right) = if current_portal > 0.001 {
                 let portal_l = self
                     .portal_delay_left
-                    .read_interpolated(portal_delay_samples);
+                    .read_interpolated(portal_delay_samples.as_f32());
                 let portal_r = self
                     .portal_delay_right
-                    .read_interpolated(portal_delay_samples);
+                    .read_interpolated(portal_delay_samples.as_f32());
 
-                self.portal_feedback_state_l = portal_damping * self.portal_feedback_state_l
-                    + (1.0 - portal_damping) * portal_l;
-                self.portal_feedback_state_r = portal_damping * self.portal_feedback_state_r
-                    + (1.0 - portal_damping) * portal_r;
+                let filtered_l =
+                    portal_feedback_state_l.one_pole(portal_l, portal_damping.as_f32());
+                let filtered_r =
+                    portal_feedback_state_r.one_pole(portal_r, portal_damping.as_f32());
 
                 self.portal_delay_left
-                    .write(spat_left + self.portal_feedback_state_l * portal_feedback);
+                    .write(spat_left + portal_feedback.apply(filtered_l));
                 self.portal_delay_right
-                    .write(spat_right + self.portal_feedback_state_r * portal_feedback);
+                    .write(spat_right + portal_feedback.apply(filtered_r));
 
-                let amt = self.current_portal;
                 (
-                    spat_left + self.portal_feedback_state_l * amt,
-                    spat_right + self.portal_feedback_state_r * amt,
+                    spat_left + filtered_l * current_portal,
+                    spat_right + filtered_r * current_portal,
                 )
             } else {
                 self.portal_delay_left.write(0.0);
@@ -625,12 +669,18 @@ impl AweEngine {
             };
 
             // Dry/wet mix
-            let dry_amount = 1.0 - self.current_dry_wet;
-            let wet_amount = self.current_dry_wet;
+            let dry_amount = 1.0 - current_dry_wet;
+            let wet_amount = current_dry_wet;
 
             buffer[idx] = dry_left * dry_amount + spat_left * wet_amount;
             buffer[idx + 1] = dry_right * dry_amount + spat_right * wet_amount;
         }
+
+        self.current_dry_wet = NormalizedValue::new(current_dry_wet);
+        self.current_early_late = NormalizedValue::new(current_early_late);
+        self.current_portal = NormalizedValue::new(current_portal);
+        self.portal_feedback_state_l = portal_feedback_state_l;
+        self.portal_feedback_state_r = portal_feedback_state_r;
     }
 
     // --- Internal helpers ---
@@ -639,16 +689,16 @@ impl AweEngine {
     ///
     /// Restores base values first, then applies all LFO offsets so modulation
     /// oscillates around the user-set values rather than drifting.
-    fn update_lfos(&mut self, block_size: usize, sample_rate: f32) {
+    fn update_lfos(&mut self, block_size: SampleCount, sample_rate: SampleRate) {
         let lfo1_val = self.lfo1.advance(block_size, sample_rate);
         let lfo2_val = self.lfo2.advance(block_size, sample_rate);
         let lfo3_val = self.lfo3.advance(block_size, sample_rate);
         let lfo4_val = self.lfo4.advance(block_size, sample_rate);
 
-        let any_active = lfo1_val.abs() > f32::EPSILON
-            || lfo2_val.abs() > f32::EPSILON
-            || lfo3_val.abs() > f32::EPSILON
-            || lfo4_val.abs() > f32::EPSILON;
+        let any_active = lfo1_val.as_f32().abs() > f32::EPSILON
+            || lfo2_val.as_f32().abs() > f32::EPSILON
+            || lfo3_val.as_f32().abs() > f32::EPSILON
+            || lfo4_val.as_f32().abs() > f32::EPSILON;
 
         if !any_active {
             return;
@@ -674,25 +724,30 @@ impl AweEngine {
     }
 
     /// Apply a single LFO's modulation value to the appropriate parameter.
-    fn apply_lfo_modulation(&mut self, target: AweLfoTarget, value: f32) {
+    fn apply_lfo_modulation(&mut self, target: AweLfoTarget, value: BipolarValue) {
+        let value = value.as_f32();
         if value.abs() < f32::EPSILON {
             return;
         }
         match target {
             AweLfoTarget::RoomLength => {
+                let delta_long = Meters::new(value * 2.0);
+                let delta_short = Meters::new(value);
+                let min_length = Meters::new(1.0);
+                let min_radius = Meters::new(0.5);
                 self.room = match self.room {
                     RoomShape::Box {
                         length,
                         width,
                         height,
                     } => RoomShape::Box {
-                        length: (length + value * 2.0).max(1.0),
+                        length: (length + delta_long).max(min_length),
                         width,
                         height,
                     },
                     RoomShape::Cylinder { radius, length } => RoomShape::Cylinder {
                         radius,
-                        length: (length + value * 2.0).max(1.0),
+                        length: (length + delta_long).max(min_length),
                     },
                     RoomShape::LShape {
                         length_a,
@@ -701,26 +756,30 @@ impl AweEngine {
                         width_b,
                         height,
                     } => RoomShape::LShape {
-                        length_a: (length_a + value).max(1.0),
+                        length_a: (length_a + delta_short).max(min_length),
                         width_a,
-                        length_b: (length_b + value).max(1.0),
+                        length_b: (length_b + delta_short).max(min_length),
                         width_b,
                         height,
                     },
                     RoomShape::Sphere { radius } => RoomShape::Sphere {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                     },
                     RoomShape::Dome { radius } => RoomShape::Dome {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                     },
                     RoomShape::Tube { radius, length } => RoomShape::Tube {
                         radius,
-                        length: (length + value * 2.0).max(1.0),
+                        length: (length + delta_long).max(min_length),
                     },
                 };
                 self.geometry_dirty = true;
             }
             AweLfoTarget::RoomWidth => {
+                let delta_long = Meters::new(value * 2.0);
+                let delta_short = Meters::new(value);
+                let min_length = Meters::new(1.0);
+                let min_radius = Meters::new(0.5);
                 self.room = match self.room {
                     RoomShape::Box {
                         length,
@@ -728,11 +787,11 @@ impl AweEngine {
                         height,
                     } => RoomShape::Box {
                         length,
-                        width: (width + value * 2.0).max(1.0),
+                        width: (width + delta_long).max(min_length),
                         height,
                     },
                     RoomShape::Cylinder { radius, length } => RoomShape::Cylinder {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                         length,
                     },
                     RoomShape::LShape {
@@ -743,89 +802,110 @@ impl AweEngine {
                         height,
                     } => RoomShape::LShape {
                         length_a,
-                        width_a: (width_a + value).max(1.0),
+                        width_a: (width_a + delta_short).max(min_length),
                         length_b,
-                        width_b: (width_b + value).max(1.0),
+                        width_b: (width_b + delta_short).max(min_length),
                         height,
                     },
                     RoomShape::Sphere { radius } => RoomShape::Sphere {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                     },
                     RoomShape::Dome { radius } => RoomShape::Dome {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                     },
                     RoomShape::Tube { radius, length } => RoomShape::Tube {
-                        radius: (radius + value).max(0.5),
+                        radius: (radius + delta_short).max(min_radius),
                         length,
                     },
                 };
                 self.geometry_dirty = true;
             }
             AweLfoTarget::SourceX => {
-                self.snapshot.source_pos[0] += value;
+                self.snapshot.source_pos[0] += Meters::new(value);
                 self.geometry_dirty = true;
             }
             AweLfoTarget::SourceY => {
-                self.snapshot.source_pos[1] += value;
+                self.snapshot.source_pos[1] += Meters::new(value);
                 self.geometry_dirty = true;
             }
             AweLfoTarget::ListenerX => {
-                self.snapshot.listener_pos[0] += value;
+                self.snapshot.listener_pos[0] += Meters::new(value);
                 self.geometry_dirty = true;
             }
             AweLfoTarget::ListenerY => {
-                self.snapshot.listener_pos[1] += value;
+                self.snapshot.listener_pos[1] += Meters::new(value);
                 self.geometry_dirty = true;
             }
             AweLfoTarget::DryWet => {
-                self.snapshot.dry_wet = (self.snapshot.dry_wet + value * 0.3).clamp(0.0, 1.0);
+                self.snapshot.dry_wet =
+                    NormalizedValue::new(self.snapshot.dry_wet.as_f32() + value * 0.3);
             }
             AweLfoTarget::FreqWarp => {
-                self.snapshot.freq_warp = (self.snapshot.freq_warp + value * 0.5).clamp(-1.0, 1.0);
+                self.snapshot.freq_warp =
+                    BipolarValue::new(self.snapshot.freq_warp.as_f32() + value * 0.5);
             }
             AweLfoTarget::EarlyLate => {
                 self.snapshot.early_late_balance =
-                    (self.snapshot.early_late_balance + value * 0.3).clamp(0.0, 1.0);
+                    NormalizedValue::new(self.snapshot.early_late_balance.as_f32() + value * 0.3);
             }
             AweLfoTarget::ModesAmount => {
                 self.snapshot.modes_amount =
-                    (self.snapshot.modes_amount + value * 0.3).clamp(0.0, 1.0);
+                    NormalizedValue::new(self.snapshot.modes_amount.as_f32() + value * 0.3);
                 self.room_modes.set_amount(self.snapshot.modes_amount);
             }
             AweLfoTarget::ResonanceBoost => {
                 self.snapshot.resonance_boost =
-                    (self.snapshot.resonance_boost + value * 0.3).clamp(0.0, 1.0);
+                    NormalizedValue::new(self.snapshot.resonance_boost.as_f32() + value * 0.3);
             }
             AweLfoTarget::TailStretch => {
                 self.snapshot.tail_stretch =
-                    (self.snapshot.tail_stretch + value * 0.5).clamp(0.5, 4.0);
+                    StretchFactor::new(self.snapshot.tail_stretch.as_f32() + value * 0.5);
                 self.geometry_dirty = true;
             }
             AweLfoTarget::PortalAmount => {
                 self.snapshot.portal_amount =
-                    (self.snapshot.portal_amount + value * 0.3).clamp(0.0, 1.0);
+                    NormalizedValue::new(self.snapshot.portal_amount.as_f32() + value * 0.3);
             }
         }
     }
 
     /// Recalculate all geometry-dependent DSP parameters.
-    fn recalculate_geometry(&mut self, sample_rate: f32) {
+    fn recalculate_geometry(&mut self, sample_rate: SampleRate) {
         let room_length = self.room.length();
         let room_width = self.room.width();
         let room_height = self.room.height();
         let absorption = self.material.average_absorption();
 
         // Clamp positions inside the room
-        let source = [
-            self.snapshot.source_pos[0].clamp(0.1, room_length - 0.1),
-            self.snapshot.source_pos[1].clamp(0.1, room_width - 0.1),
-            self.snapshot.source_pos[2].clamp(0.1, room_height - 0.1),
-        ];
-        let listener = [
-            self.snapshot.listener_pos[0].clamp(0.1, room_length - 0.1),
-            self.snapshot.listener_pos[1].clamp(0.1, room_width - 0.1),
-            self.snapshot.listener_pos[2].clamp(0.1, room_height - 0.1),
-        ];
+        let min_pos = Meters::new(0.1);
+        let source = Position3::new(
+            self.snapshot
+                .source_pos
+                .x()
+                .clamp(min_pos, room_length - min_pos),
+            self.snapshot
+                .source_pos
+                .y()
+                .clamp(min_pos, room_width - min_pos),
+            self.snapshot
+                .source_pos
+                .z()
+                .clamp(min_pos, room_height - min_pos),
+        );
+        let listener = Position3::new(
+            self.snapshot
+                .listener_pos
+                .x()
+                .clamp(min_pos, room_length - min_pos),
+            self.snapshot
+                .listener_pos
+                .y()
+                .clamp(min_pos, room_width - min_pos),
+            self.snapshot
+                .listener_pos
+                .z()
+                .clamp(min_pos, room_height - min_pos),
+        );
 
         // Update early reflections (ISM)
         self.early_reflections.update_geometry(
@@ -841,10 +921,12 @@ impl AweEngine {
 
         // Update FDN delay times based on room dimensions
         let avg_dimension = (room_length + room_width + room_height) / 3.0;
-        let room_scale = avg_dimension / 5.33; // normalize to default room avg
-        let sample_rate_scale = sample_rate / 44100.0;
-        self.fdn
-            .set_delay_times(sample_rate_scale, room_scale * self.snapshot.tail_stretch);
+        let room_scale = avg_dimension.as_f32() / 5.33; // normalize to default room avg
+        let sample_rate_scale = sample_rate.as_f32() / 44100.0;
+        self.fdn.set_delay_times(
+            sample_rate_scale,
+            room_scale * self.snapshot.tail_stretch.as_f32(),
+        );
 
         // Update room modes
         self.room_modes.update_geometry(
@@ -861,13 +943,13 @@ impl AweEngine {
 
     /// Calculate RT60 using Sabine's formula.
     #[must_use]
-    fn calculate_rt60(&self) -> f32 {
+    fn calculate_rt60(&self) -> Seconds {
         let volume = self.room.volume();
         let surface = self.room.surface_area();
-        let absorption = self.material.average_absorption().max(0.001);
-        let rt60 = 0.161 * volume / (absorption * surface);
+        let absorption = self.material.average_absorption().as_f32().max(0.001);
+        let rt60 = 0.161 * volume.as_f32() / (absorption * surface.as_f32());
         // Apply tail stretch and clamp to reasonable range
-        (rt60 * self.snapshot.tail_stretch).clamp(0.1, 20.0)
+        Seconds::new((rt60 * self.snapshot.tail_stretch.as_f32()).clamp(0.1, 20.0))
     }
 
     /// Convert RT60 to FDN feedback gain.
@@ -878,17 +960,17 @@ impl AweEngine {
     ///
     /// We use the average FDN delay as the reference.
     #[must_use]
-    fn rt60_to_feedback(&self, rt60: f32, sample_rate: f32) -> f32 {
+    fn rt60_to_feedback(&self, rt60: Seconds, sample_rate: SampleRate) -> Gain {
         // Average base delay time scaled for current room
         let avg_base_delay = 2806.0; // average of BASE_DELAY_TIMES
         let avg_dimension = (self.room.length() + self.room.width() + self.room.height()) / 3.0;
-        let room_scale = avg_dimension / 5.33;
-        let sample_rate_scale = sample_rate / 44100.0;
+        let room_scale = avg_dimension.as_f32() / 5.33;
+        let sample_rate_scale = sample_rate.as_f32() / 44100.0;
         let avg_delay = avg_base_delay * sample_rate_scale * room_scale;
 
-        let decay_per_sample = -3.0 / (rt60 * sample_rate);
+        let decay_per_sample = -3.0 / (rt60.as_f32() * sample_rate.as_f32());
         let feedback = (10.0_f32).powf(decay_per_sample * avg_delay);
-        feedback.clamp(0.0, 0.97)
+        Gain::new(feedback.clamp(0.0, 0.97))
     }
 }
 

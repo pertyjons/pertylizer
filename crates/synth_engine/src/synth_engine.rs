@@ -1680,15 +1680,15 @@ impl AudioProcessor for SynthEngine {
 
         // Process AWE (room simulation) after master effects
         if self.awe_engine.enabled() {
+            let sr = SampleRate::new(self.sample_rate);
             if self.awe_engine.spatial_enabled() && self.spatial_voice_bank.active_count() > 0 {
                 self.awe_engine.process_spatial(
                     self.mix_buffer.as_mut_slice(),
                     &self.spatial_voice_bank,
-                    self.sample_rate,
+                    sr,
                 );
             } else {
-                self.awe_engine
-                    .process(self.mix_buffer.as_mut_slice(), self.sample_rate);
+                self.awe_engine.process(self.mix_buffer.as_mut_slice(), sr);
             }
         }
 

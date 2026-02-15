@@ -4,53 +4,57 @@
 //! Each wall produces one mirror source; the delay and gain of each tap
 //! are derived from the distance between the listener and the mirror source.
 
+use synth_core::{
+    BipolarValue, FilterState, Gain, NormalizedValue, SampleCount, SampleRate, Seconds,
+};
 use synth_dsp::InterpolatedDelayLine;
 
 use crate::room::SPEED_OF_SOUND;
+use crate::types::{Meters, Position3, SampleOffset};
 
 /// Number of first-order reflection taps (one per wall face).
 const MAX_EARLY_TAPS: usize = 6;
 
 /// Maximum delay in seconds for ISM calculations.
 /// Covers rooms up to ~170 m diagonal (mirror source at ~340 m / 343 m/s ≈ 1 s).
-const MAX_DELAY_SECONDS: f32 = 1.0;
+const MAX_DELAY_SECONDS: Seconds = Seconds::new(1.0);
 
 /// Maximum delay line size in samples (1.0 s at 96 kHz).
-const MAX_DELAY_SAMPLES: usize = 96_000;
+const MAX_DELAY_SAMPLES: SampleCount = SampleCount::new(96_000);
 
 /// Maximum per-tap jitter in seconds for diffusion.
-const MAX_JITTER_SECONDS: f32 = 0.003;
+const MAX_JITTER_SECONDS: Seconds = Seconds::from_millis(3.0);
 
 /// Deterministic jitter pattern per tap (scaled by diffusion).
 const JITTER_PATTERN: [f32; MAX_EARLY_TAPS] = [-0.9, 0.7, -0.4, 1.0, -0.6, 0.3];
 
 /// Minimum distance (meters) to prevent infinite gain when source
 /// and listener collapse to the same position as a mirror.
-const MIN_DISTANCE: f32 = 0.1;
+const MIN_DISTANCE: Meters = Meters::new(0.1);
 
 /// A single early reflection tap with per-wall delay, stereo gain,
 /// and a one-pole lowpass for frequency-dependent absorption.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EarlyTap {
     /// Fractional delay in samples for this reflection.
-    delay_samples: f32,
+    delay_samples: SampleOffset,
     /// Left channel gain (includes distance attenuation, absorption, and pan).
-    gain_left: f32,
+    gain_left: Gain,
     /// Right channel gain.
-    gain_right: f32,
+    gain_right: Gain,
     /// One-pole lowpass coefficient for high-frequency damping (0..1).
-    damping_coeff: f32,
+    damping_coeff: NormalizedValue,
     /// Filter state for the one-pole lowpass.
-    filter_state: f32,
+    filter_state: FilterState,
 }
 
 impl EarlyTap {
     const SILENT: Self = Self {
-        delay_samples: 1.0,
-        gain_left: 0.0,
-        gain_right: 0.0,
-        damping_coeff: 0.3,
-        filter_state: 0.0,
+        delay_samples: SampleOffset::new(1.0),
+        gain_left: Gain::MUTE,
+        gain_right: Gain::MUTE,
+        damping_coeff: NormalizedValue::new_unchecked(0.3),
+        filter_state: FilterState::ZERO,
     };
 }
 
@@ -76,7 +80,7 @@ impl EarlyReflections {
     pub fn new() -> Self {
         Self {
             taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
-            delay_line: InterpolatedDelayLine::new(MAX_DELAY_SAMPLES),
+            delay_line: InterpolatedDelayLine::new(MAX_DELAY_SAMPLES.as_usize()),
         }
     }
 
@@ -84,10 +88,10 @@ impl EarlyReflections {
     ///
     /// Use this for per-voice instances where the default 14400 samples
     /// may be too large or too small.
-    pub fn with_max_delay(max_samples: usize) -> Self {
+    pub fn with_max_delay(max_samples: SampleCount) -> Self {
         Self {
             taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
-            delay_line: InterpolatedDelayLine::new(max_samples),
+            delay_line: InterpolatedDelayLine::new(max_samples.as_usize()),
         }
     }
 
@@ -109,17 +113,17 @@ impl EarlyReflections {
     #[allow(clippy::too_many_arguments)]
     pub fn update_geometry(
         &mut self,
-        room_length: f32,
-        room_width: f32,
-        room_height: f32,
-        source_pos: [f32; 3],
-        listener_pos: [f32; 3],
-        absorption: f32,
-        diffusion: f32,
-        sample_rate: f32,
+        room_length: Meters,
+        room_width: Meters,
+        room_height: Meters,
+        source_pos: Position3,
+        listener_pos: Position3,
+        absorption: NormalizedValue,
+        diffusion: NormalizedValue,
+        sample_rate: SampleRate,
     ) {
-        let [sx, sy, sz] = source_pos;
-        let [lx, ly, lz] = listener_pos;
+        let [sx, sy, sz] = source_pos.as_f32();
+        let [lx, ly, lz] = listener_pos.as_f32();
 
         // Mirror source positions for each of the six walls.
         //
@@ -130,46 +134,50 @@ impl EarlyReflections {
         // Wall -y (y = 0): mirror_y = -sy
         // Wall +z (z = H): mirror_z = 2H - sz
         // Wall -z (z = 0): mirror_z = -sz
+        let room_length_f = room_length.as_f32();
+        let room_width_f = room_width.as_f32();
+        let room_height_f = room_height.as_f32();
         let mirrors: [[f32; 3]; MAX_EARLY_TAPS] = [
-            [2.0 * room_length - sx, sy, sz], // +x wall
-            [-sx, sy, sz],                    // -x wall
-            [sx, 2.0 * room_width - sy, sz],  // +y wall
-            [sx, -sy, sz],                    // -y wall
-            [sx, sy, 2.0 * room_height - sz], // +z wall
-            [sx, sy, -sz],                    // -z wall
+            [2.0 * room_length_f - sx, sy, sz], // +x wall
+            [-sx, sy, sz],                      // -x wall
+            [sx, 2.0 * room_width_f - sy, sz],  // +y wall
+            [sx, -sy, sz],                      // -y wall
+            [sx, sy, 2.0 * room_height_f - sz], // +z wall
+            [sx, sy, -sz],                      // -z wall
         ];
 
-        let max_delay = MAX_DELAY_SECONDS * sample_rate;
-        let reflection_coeff = 1.0 - absorption.clamp(0.0, 0.99);
-        let damping = 0.3 + absorption.clamp(0.0, 1.0) * 0.5;
-        let diffusion = diffusion.clamp(0.0, 1.0);
-        let jitter_max = MAX_JITTER_SECONDS * sample_rate;
+        let max_delay = SampleOffset::new(MAX_DELAY_SECONDS.as_f32() * sample_rate.as_f32());
+        let reflection_coeff = NormalizedValue::new(1.0 - absorption.as_f32().clamp(0.0, 0.99));
+        let damping = NormalizedValue::new(0.3 + absorption.as_f32() * 0.5);
+        let diffusion = NormalizedValue::new(diffusion.as_f32());
+        let jitter_max = SampleOffset::new(MAX_JITTER_SECONDS.as_f32() * sample_rate.as_f32());
 
         for i in 0..MAX_EARLY_TAPS {
             let [mx, my, mz] = mirrors[i];
             let dx = lx - mx;
             let dy = ly - my;
             let dz = lz - mz;
-            let distance = (dx * dx + dy * dy + dz * dz).sqrt().max(MIN_DISTANCE);
+            let distance = Meters::new((dx * dx + dy * dy + dz * dz).sqrt()).max(MIN_DISTANCE);
 
-            let jitter = JITTER_PATTERN[i] * diffusion * jitter_max;
-            let delay = (distance / SPEED_OF_SOUND) * sample_rate + jitter;
-            let delay_clamped = delay.clamp(1.0, max_delay);
+            let jitter = JITTER_PATTERN[i] * diffusion.as_f32() * jitter_max.as_f32();
+            let delay =
+                (distance.as_f32() / SPEED_OF_SOUND.as_f32()) * sample_rate.as_f32() + jitter;
+            let delay_clamped = delay.clamp(1.0, max_delay.as_f32());
 
-            let total_gain = (1.0 / distance) * reflection_coeff;
+            let total_gain = (1.0 / distance.as_f32()) * reflection_coeff.as_f32();
 
             // Pan based on X-axis offset between mirror source and listener.
-            let mut pan = if room_length > 0.0 {
-                ((mx - lx) / room_length).clamp(-1.0, 1.0)
+            let mut pan = if room_length_f > 0.0 {
+                BipolarValue::new((mx - lx) / room_length_f)
             } else {
-                0.0
+                BipolarValue::CENTER
             };
             // Diffusion reduces directional cues.
-            pan *= 1.0 - diffusion * 0.6;
+            pan = BipolarValue::new(pan.as_f32() * (1.0 - diffusion.as_f32() * 0.6));
 
-            self.taps[i].delay_samples = delay_clamped;
-            self.taps[i].gain_left = (1.0 - pan) * 0.5 * total_gain;
-            self.taps[i].gain_right = (1.0 + pan) * 0.5 * total_gain;
+            self.taps[i].delay_samples = SampleOffset::new(delay_clamped);
+            self.taps[i].gain_left = Gain::new((1.0 - pan.as_f32()) * 0.5 * total_gain);
+            self.taps[i].gain_right = Gain::new((1.0 + pan.as_f32()) * 0.5 * total_gain);
             self.taps[i].damping_coeff = damping;
             // Preserve filter_state across geometry updates for smooth transitions.
         }
@@ -189,14 +197,15 @@ impl EarlyReflections {
         let mut right = 0.0_f32;
 
         for tap in &mut self.taps {
-            let raw = self.delay_line.read_interpolated(tap.delay_samples);
+            let raw = self
+                .delay_line
+                .read_interpolated(tap.delay_samples.as_f32());
 
             // One-pole lowpass: y[n] = (1 - c) * x[n] + c * y[n-1]
-            let filtered = (1.0 - tap.damping_coeff) * raw + tap.damping_coeff * tap.filter_state;
-            tap.filter_state = filtered;
+            let filtered = tap.filter_state.one_pole(raw, tap.damping_coeff.as_f32());
 
-            left += filtered * tap.gain_left;
-            right += filtered * tap.gain_right;
+            left += tap.gain_left.apply(filtered);
+            right += tap.gain_right.apply(filtered);
         }
 
         (left, right)
@@ -206,7 +215,7 @@ impl EarlyReflections {
     pub fn clear(&mut self) {
         self.delay_line.clear();
         for tap in &mut self.taps {
-            tap.filter_state = 0.0;
+            tap.filter_state.reset();
         }
     }
 }
@@ -221,6 +230,10 @@ impl Default for EarlyReflections {
 mod tests {
     use super::*;
 
+    fn pos(x: f32, y: f32, z: f32) -> Position3 {
+        Position3::new(Meters::new(x), Meters::new(y), Meters::new(z))
+    }
+
     #[test]
     fn test_new_produces_silence() {
         let mut er = EarlyReflections::new();
@@ -232,17 +245,17 @@ mod tests {
     #[test]
     fn test_impulse_response_nonzero() {
         let mut er = EarlyReflections::new();
-        let sample_rate = 48000.0;
+        let sample_rate = SampleRate::new(48000.0);
 
         // Room 8x5x3 m, source at center, listener offset.
         er.update_geometry(
-            8.0,
-            5.0,
-            3.0,
-            [4.0, 2.5, 1.5],
-            [2.0, 2.5, 1.5],
-            0.2,
-            0.0,
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            pos(4.0, 2.5, 1.5),
+            pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.2),
+            NormalizedValue::new(0.0),
             sample_rate,
         );
 
@@ -265,17 +278,17 @@ mod tests {
     #[test]
     fn test_symmetric_source_produces_equal_pan() {
         let mut er = EarlyReflections::new();
-        let sample_rate = 48000.0;
+        let sample_rate = SampleRate::new(48000.0);
 
         // Source and listener both on the x-axis centerline.
         er.update_geometry(
-            10.0,
-            6.0,
-            3.0,
-            [5.0, 3.0, 1.5],
-            [5.0, 3.0, 1.5],
-            0.1,
-            0.0,
+            Meters::new(10.0),
+            Meters::new(6.0),
+            Meters::new(3.0),
+            pos(5.0, 3.0, 1.5),
+            pos(5.0, 3.0, 1.5),
+            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.0),
             sample_rate,
         );
 
@@ -287,11 +300,11 @@ mod tests {
 
         // Gains should be symmetric: left of +x == right of -x.
         assert!(
-            (tap_plus_x.gain_left - tap_minus_x.gain_right).abs() < 1e-5,
+            (tap_plus_x.gain_left.as_f32() - tap_minus_x.gain_right.as_f32()).abs() < 1e-5,
             "Expected symmetric panning for +x/-x taps"
         );
         assert!(
-            (tap_plus_x.gain_right - tap_minus_x.gain_left).abs() < 1e-5,
+            (tap_plus_x.gain_right.as_f32() - tap_minus_x.gain_left.as_f32()).abs() < 1e-5,
             "Expected symmetric panning for +x/-x taps"
         );
     }
@@ -300,14 +313,14 @@ mod tests {
     fn test_clear_resets_state() {
         let mut er = EarlyReflections::new();
         er.update_geometry(
-            8.0,
-            5.0,
-            3.0,
-            [4.0, 2.5, 1.5],
-            [2.0, 2.5, 1.5],
-            0.2,
-            0.0,
-            48000.0,
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            pos(4.0, 2.5, 1.5),
+            pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.2),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
 
         // Feed some signal.
@@ -329,24 +342,24 @@ mod tests {
         let mut er_high = EarlyReflections::new();
 
         er_low.update_geometry(
-            8.0,
-            5.0,
-            3.0,
-            [4.0, 2.5, 1.5],
-            [2.0, 2.5, 1.5],
-            0.1,
-            0.0,
-            48000.0,
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            pos(4.0, 2.5, 1.5),
+            pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
         er_high.update_geometry(
-            8.0,
-            5.0,
-            3.0,
-            [4.0, 2.5, 1.5],
-            [2.0, 2.5, 1.5],
-            0.9,
-            0.0,
-            48000.0,
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            pos(4.0, 2.5, 1.5),
+            pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.9),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
 
         // Higher absorption should yield higher damping coefficient.
@@ -360,25 +373,25 @@ mod tests {
 
         // Listener near the +x wall.
         er_near.update_geometry(
-            10.0,
-            6.0,
-            3.0,
-            [5.0, 3.0, 1.5],
-            [9.0, 3.0, 1.5],
-            0.2,
-            0.0,
-            48000.0,
+            Meters::new(10.0),
+            Meters::new(6.0),
+            Meters::new(3.0),
+            pos(5.0, 3.0, 1.5),
+            pos(9.0, 3.0, 1.5),
+            NormalizedValue::new(0.2),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
         // Listener far from the +x wall.
         er_far.update_geometry(
-            10.0,
-            6.0,
-            3.0,
-            [5.0, 3.0, 1.5],
-            [1.0, 3.0, 1.5],
-            0.2,
-            0.0,
-            48000.0,
+            Meters::new(10.0),
+            Meters::new(6.0),
+            Meters::new(3.0),
+            pos(5.0, 3.0, 1.5),
+            pos(1.0, 3.0, 1.5),
+            NormalizedValue::new(0.2),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
 
         // The +x wall reflection (tap 0) should have shorter delay when
@@ -409,24 +422,24 @@ mod tests {
         // Source directly at a wall corner — mirror is very close to listener.
         // This should not produce infinite gain.
         er.update_geometry(
-            2.0,
-            2.0,
-            2.0,
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0],
-            0.0,
-            0.0,
-            48000.0,
+            Meters::new(2.0),
+            Meters::new(2.0),
+            Meters::new(2.0),
+            pos(0.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            NormalizedValue::new(0.0),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
         );
 
         for tap in &er.taps {
             assert!(
-                tap.gain_left.is_finite(),
+                tap.gain_left.as_f32().is_finite(),
                 "Left gain must be finite, got {}",
                 tap.gain_left
             );
             assert!(
-                tap.gain_right.is_finite(),
+                tap.gain_right.as_f32().is_finite(),
                 "Right gain must be finite, got {}",
                 tap.gain_right
             );

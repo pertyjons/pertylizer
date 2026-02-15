@@ -948,10 +948,10 @@ impl Instrument {
                     && let Some(note) = voice.note()
                 {
                     spatial_bank.write_voice(
-                        note.0,
+                        note,
                         temp_left.as_slice(),
                         temp_right.as_slice(),
-                        sample_count.min(temp_left.len()),
+                        SampleCount::new(sample_count.min(temp_left.len())),
                     );
                 }
 
@@ -1037,20 +1037,21 @@ impl Instrument {
                     && let Some(note) = voice.note()
                 {
                     spatial_bank.write_voice(
-                        note.0,
+                        note,
                         temp_left.as_slice(),
                         temp_right.as_slice(),
-                        sample_count,
+                        SampleCount::new(sample_count),
                     );
                     let pan = ctx.mapping.pan_for_note(
-                        note.0,
+                        note,
                         ctx.room_length,
                         ctx.room_width,
                         ctx.room_height,
                         ctx.listener_x,
                     );
-                    let gain_l = ((1.0 - pan) * 0.5).sqrt();
-                    let gain_r = ((1.0 + pan) * 0.5).sqrt();
+                    let pan_f = pan.as_f32();
+                    let gain_l = ((1.0 - pan_f) * 0.5).sqrt();
+                    let gain_r = ((1.0 + pan_f) * 0.5).sqrt();
                     for i in 0..sample_count {
                         temp_left[i] *= gain_l;
                         temp_right[i] *= gain_r;

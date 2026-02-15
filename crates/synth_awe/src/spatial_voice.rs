@@ -5,17 +5,20 @@
 
 use serde::{Deserialize, Serialize};
 
+use synth_core::{BipolarValue, MidiNote, NormalizedValue, SampleCount, SampleRate};
+
 use crate::early_reflections::EarlyReflections;
 use crate::spatializer::Spatializer;
+use crate::types::{Meters, Position3};
 
 /// Maximum number of simultaneous spatial voice slots.
 pub const MAX_SPATIAL_VOICES: usize = 16;
 
 /// Pre-allocated mono buffer size per voice (samples).
-const VOICE_BUFFER_SIZE: usize = 4096;
+const VOICE_BUFFER_SIZE: SampleCount = SampleCount::new(4096);
 
 /// Delay line size for per-voice early reflections (16K samples, ~170ms at 96kHz).
-const PER_VOICE_MAX_DELAY: usize = 16_384;
+const PER_VOICE_MAX_DELAY: SampleCount = SampleCount::new(16_384);
 
 /// How MIDI notes map to positions in the room.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,34 +36,52 @@ pub enum NotePositionMapping {
 
 impl NotePositionMapping {
     /// Compute a room position for a given MIDI note.
-    #[must_use]
     pub fn position_for_note(
         self,
-        note: u8,
-        room_length: f32,
-        room_width: f32,
-        room_height: f32,
-    ) -> [f32; 3] {
-        let t = note as f32 / 127.0;
+        note: MidiNote,
+        room_length: Meters,
+        room_width: Meters,
+        room_height: Meters,
+    ) -> Position3 {
+        let t = note.as_u8() as f32 / 127.0;
         let margin = 0.3;
+        let room_length_f = room_length.as_f32();
+        let room_width_f = room_width.as_f32();
+        let room_height_f = room_height.as_f32();
         match self {
-            Self::Off => [room_length * 0.5, room_width * 0.5, room_height * 0.5],
+            Self::Off => Position3::new(
+                Meters::new(room_length_f * 0.5),
+                Meters::new(room_width_f * 0.5),
+                Meters::new(room_height_f * 0.5),
+            ),
             Self::LinearX => {
-                let x = margin + t * (room_length - 2.0 * margin);
-                [x, room_width * 0.5, room_height * 0.5]
+                let x = margin + t * (room_length_f - 2.0 * margin);
+                Position3::new(
+                    Meters::new(x),
+                    Meters::new(room_width_f * 0.5),
+                    Meters::new(room_height_f * 0.5),
+                )
             }
             Self::LinearY => {
-                let y = margin + t * (room_width - 2.0 * margin);
-                [room_length * 0.5, y, room_height * 0.5]
+                let y = margin + t * (room_width_f - 2.0 * margin);
+                Position3::new(
+                    Meters::new(room_length_f * 0.5),
+                    Meters::new(y),
+                    Meters::new(room_height_f * 0.5),
+                )
             }
             Self::Circular => {
                 let angle = t * std::f32::consts::TAU;
-                let cx = room_length * 0.5;
-                let cy = room_width * 0.5;
-                let radius = (room_length.min(room_width) * 0.5 - margin).max(0.1);
+                let cx = room_length_f * 0.5;
+                let cy = room_width_f * 0.5;
+                let radius = (room_length_f.min(room_width_f) * 0.5 - margin).max(0.1);
                 let x = cx + radius * angle.cos();
                 let y = cy + radius * angle.sin();
-                [x, y, room_height * 0.5]
+                Position3::new(
+                    Meters::new(x),
+                    Meters::new(y),
+                    Meters::new(room_height_f * 0.5),
+                )
             }
         }
     }
@@ -71,21 +92,21 @@ impl NotePositionMapping {
     #[must_use]
     pub fn pan_for_note(
         self,
-        note: u8,
-        room_length: f32,
-        room_width: f32,
-        room_height: f32,
-        listener_x: f32,
-    ) -> f32 {
+        note: MidiNote,
+        room_length: Meters,
+        room_width: Meters,
+        room_height: Meters,
+        listener_x: Meters,
+    ) -> BipolarValue {
         if self == Self::Off {
-            return 0.0;
+            return BipolarValue::CENTER;
         }
         let pos = self.position_for_note(note, room_length, room_width, room_height);
-        let dx = pos[0] - listener_x;
-        if room_length > 0.0 {
-            (dx / (room_length * 0.5)).clamp(-1.0, 1.0)
+        let dx = pos.x().as_f32() - listener_x.as_f32();
+        if room_length.as_f32() > 0.0 {
+            BipolarValue::new(dx / (room_length.as_f32() * 0.5))
         } else {
-            0.0
+            BipolarValue::CENTER
         }
     }
 }
@@ -96,24 +117,34 @@ pub struct SpatialContext {
     /// How notes map to positions.
     pub mapping: NotePositionMapping,
     /// Room length (X axis) in meters.
-    pub room_length: f32,
+    pub room_length: Meters,
     /// Room width (Y axis) in meters.
-    pub room_width: f32,
+    pub room_width: Meters,
     /// Room height (Z axis) in meters.
-    pub room_height: f32,
+    pub room_height: Meters,
     /// Listener X position for dry panning.
-    pub listener_x: f32,
+    pub listener_x: Meters,
 }
 
 /// Info about a single active spatial voice slot.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct SpatialVoiceInfo {
     /// Whether this slot is active.
     pub active: bool,
     /// MIDI note number.
-    pub note: u8,
+    pub note: MidiNote,
     /// Number of valid samples in the buffer.
-    pub sample_count: usize,
+    pub sample_count: SampleCount,
+}
+
+impl Default for SpatialVoiceInfo {
+    fn default() -> Self {
+        Self {
+            active: false,
+            note: MidiNote::MIN,
+            sample_count: SampleCount::ZERO,
+        }
+    }
 }
 
 /// Pre-allocated bank of mono buffers for per-voice audio capture.
@@ -131,7 +162,7 @@ impl SpatialVoiceBank {
     pub fn new() -> Self {
         let mut buffers = Vec::with_capacity(MAX_SPATIAL_VOICES);
         for _ in 0..MAX_SPATIAL_VOICES {
-            buffers.push(vec![0.0; VOICE_BUFFER_SIZE]);
+            buffers.push(vec![0.0; VOICE_BUFFER_SIZE.as_usize()]);
         }
         Self {
             infos: [SpatialVoiceInfo::default(); MAX_SPATIAL_VOICES],
@@ -145,7 +176,7 @@ impl SpatialVoiceBank {
         self.active_count = 0;
         for info in &mut self.infos {
             info.active = false;
-            info.sample_count = 0;
+            info.sample_count = SampleCount::ZERO;
         }
     }
 
@@ -154,10 +185,10 @@ impl SpatialVoiceBank {
     /// Returns the slot index, or `None` if the bank is full.
     pub fn write_voice(
         &mut self,
-        note: u8,
+        note: MidiNote,
         left: &[f32],
         right: &[f32],
-        count: usize,
+        count: SampleCount,
     ) -> Option<usize> {
         if self.active_count >= MAX_SPATIAL_VOICES {
             return None;
@@ -166,7 +197,11 @@ impl SpatialVoiceBank {
         self.active_count += 1;
 
         let buf = &mut self.buffers[idx];
-        let n = count.min(buf.len()).min(left.len()).min(right.len());
+        let n = count
+            .as_usize()
+            .min(buf.len())
+            .min(left.len())
+            .min(right.len());
         for i in 0..n {
             buf[i] = (left[i] + right[i]) * 0.5;
         }
@@ -174,7 +209,7 @@ impl SpatialVoiceBank {
         self.infos[idx] = SpatialVoiceInfo {
             active: true,
             note,
-            sample_count: n,
+            sample_count: SampleCount::new(n),
         };
 
         Some(idx)
@@ -209,8 +244,8 @@ impl Default for SpatialVoiceBank {
 pub(crate) struct SpatialVoiceSlot {
     pub(crate) early_reflections: EarlyReflections,
     pub(crate) spatializer: Spatializer,
-    pub(crate) position: [f32; 3],
-    pub(crate) note: u8,
+    pub(crate) position: Position3,
+    pub(crate) note: MidiNote,
     pub(crate) active: bool,
     pub(crate) geometry_dirty: bool,
 }
@@ -220,8 +255,8 @@ impl SpatialVoiceSlot {
         Self {
             early_reflections: EarlyReflections::with_max_delay(PER_VOICE_MAX_DELAY),
             spatializer: Spatializer::new(),
-            position: [0.0; 3],
-            note: 0,
+            position: Position3::default(),
+            note: MidiNote::MIN,
             active: false,
             geometry_dirty: false,
         }
@@ -255,15 +290,15 @@ impl SpatialVoicePool {
     pub(crate) fn update_slot(
         &mut self,
         idx: usize,
-        note: u8,
+        note: MidiNote,
         mapping: NotePositionMapping,
-        room_length: f32,
-        room_width: f32,
-        room_height: f32,
-        listener_pos: [f32; 3],
-        absorption: f32,
-        diffusion: f32,
-        sample_rate: f32,
+        room_length: Meters,
+        room_width: Meters,
+        room_height: Meters,
+        listener_pos: Position3,
+        absorption: NormalizedValue,
+        diffusion: NormalizedValue,
+        sample_rate: SampleRate,
     ) {
         let slot = &mut self.slots[idx];
         let pos = mapping.position_for_note(note, room_length, room_width, room_height);
@@ -311,31 +346,57 @@ mod tests {
 
     #[test]
     fn test_note_position_off() {
-        let pos = NotePositionMapping::Off.position_for_note(60, 8.0, 5.0, 3.0);
-        assert!((pos[0] - 4.0).abs() < 0.01);
-        assert!((pos[1] - 2.5).abs() < 0.01);
+        let pos = NotePositionMapping::Off.position_for_note(
+            MidiNote::new(60),
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+        );
+        assert!((pos.x().as_f32() - 4.0).abs() < 0.01);
+        assert!((pos.y().as_f32() - 2.5).abs() < 0.01);
     }
 
     #[test]
     fn test_note_position_linear_x() {
-        let pos_low = NotePositionMapping::LinearX.position_for_note(0, 8.0, 5.0, 3.0);
-        let pos_high = NotePositionMapping::LinearX.position_for_note(127, 8.0, 5.0, 3.0);
-        assert!(pos_low[0] < pos_high[0]);
-        assert!(pos_low[0] > 0.0);
-        assert!(pos_high[0] < 8.0);
+        let pos_low = NotePositionMapping::LinearX.position_for_note(
+            MidiNote::new(0),
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+        );
+        let pos_high = NotePositionMapping::LinearX.position_for_note(
+            MidiNote::new(127),
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+        );
+        assert!(pos_low.x().as_f32() < pos_high.x().as_f32());
+        assert!(pos_low.x().as_f32() > 0.0);
+        assert!(pos_high.x().as_f32() < 8.0);
     }
 
     #[test]
     fn test_note_position_circular() {
-        let pos = NotePositionMapping::Circular.position_for_note(0, 8.0, 5.0, 3.0);
+        let pos = NotePositionMapping::Circular.position_for_note(
+            MidiNote::new(0),
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+        );
         // Note 0 should be to the right of center (angle=0 → cos=1)
-        assert!(pos[0] > 4.0);
+        assert!(pos.x().as_f32() > 4.0);
     }
 
     #[test]
     fn test_pan_for_note_off() {
-        let pan = NotePositionMapping::Off.pan_for_note(60, 8.0, 5.0, 3.0, 6.0);
-        assert!((pan).abs() < 0.01);
+        let pan = NotePositionMapping::Off.pan_for_note(
+            MidiNote::new(60),
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            Meters::new(6.0),
+        );
+        assert!(pan.as_f32().abs() < 0.01);
     }
 
     #[test]
@@ -345,12 +406,12 @@ mod tests {
 
         let left = [0.5_f32; 64];
         let right = [0.3_f32; 64];
-        let idx = bank.write_voice(60, &left, &right, 64);
+        let idx = bank.write_voice(MidiNote::new(60), &left, &right, SampleCount::new(64));
         assert_eq!(idx, Some(0));
         assert_eq!(bank.active_count(), 1);
         assert!(bank.info(0).active);
-        assert_eq!(bank.info(0).note, 60);
-        assert_eq!(bank.info(0).sample_count, 64);
+        assert_eq!(bank.info(0).note, MidiNote::new(60));
+        assert_eq!(bank.info(0).sample_count, SampleCount::new(64));
         // Mono should be average of left and right
         assert!((bank.buffer(0)[0] - 0.4).abs() < 0.01);
     }
@@ -362,10 +423,16 @@ mod tests {
 
         let buf = [0.0_f32; 64];
         for i in 0..MAX_SPATIAL_VOICES {
-            assert!(bank.write_voice(i as u8, &buf, &buf, 64).is_some());
+            assert!(
+                bank.write_voice(MidiNote::new(i as u8), &buf, &buf, SampleCount::new(64))
+                    .is_some()
+            );
         }
         // 17th should fail
-        assert!(bank.write_voice(0, &buf, &buf, 64).is_none());
+        assert!(
+            bank.write_voice(MidiNote::new(0), &buf, &buf, SampleCount::new(64))
+                .is_none()
+        );
     }
 
     #[test]
