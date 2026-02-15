@@ -19,6 +19,7 @@ use crate::effect_chain::EffectChain;
 use crate::graph::ModuleGraph;
 use crate::voice::VoiceState;
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
+use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
     SampleCount, SampleRate, Seconds, Semitones, SoloState, Velocity,
@@ -832,7 +833,13 @@ impl Instrument {
     /// # Returns
     /// The number of active voices processed.
     #[allow(clippy::too_many_lines)]
-    pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) -> u32 {
+    pub fn process(
+        &mut self,
+        output: &mut AudioBuffer,
+        context: &ProcessContext,
+        spatial_ctx: Option<&SpatialContext>,
+        spatial_bank: &mut SpatialVoiceBank,
+    ) -> u32 {
         if self.mute_state.is_muted() {
             return 0;
         }
@@ -936,6 +943,18 @@ impl Instrument {
                     };
                 }
 
+                // Per-voice spatial capture (naive decimation from oversampled)
+                if spatial_ctx.is_some()
+                    && let Some(note) = voice.note()
+                {
+                    spatial_bank.write_voice(
+                        note.0,
+                        temp_left.as_slice(),
+                        temp_right.as_slice(),
+                        sample_count.min(temp_left.len()),
+                    );
+                }
+
                 // Sum into oversampled instrument buffers
                 for i in 0..os_count {
                     self.os_voice_left[i] += temp_left[i];
@@ -1011,6 +1030,31 @@ impl Instrument {
                         fade_counter: new_counter,
                         fade_total,
                     };
+                }
+
+                // Per-voice spatial capture + dry panning
+                if let Some(ctx) = spatial_ctx
+                    && let Some(note) = voice.note()
+                {
+                    spatial_bank.write_voice(
+                        note.0,
+                        temp_left.as_slice(),
+                        temp_right.as_slice(),
+                        sample_count,
+                    );
+                    let pan = ctx.mapping.pan_for_note(
+                        note.0,
+                        ctx.room_length,
+                        ctx.room_width,
+                        ctx.room_height,
+                        ctx.listener_x,
+                    );
+                    let gain_l = ((1.0 - pan) * 0.5).sqrt();
+                    let gain_r = ((1.0 + pan) * 0.5).sqrt();
+                    for i in 0..sample_count {
+                        temp_left[i] *= gain_l;
+                        temp_right[i] *= gain_r;
+                    }
                 }
 
                 // Sum into instrument buffers

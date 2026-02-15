@@ -21,7 +21,7 @@ use crate::sequencer_engine::SequencerEngine;
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use synth_awe::AweEngine;
+use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, Bpm,
     EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType, NormalizedValue,
@@ -346,6 +346,8 @@ pub struct SynthEngine {
     // === AWE (Acoustic World Engine) ===
     /// Room simulation engine, processed after master effects.
     awe_engine: AweEngine,
+    /// Per-voice spatial audio bank (written by instruments, read by AWE).
+    spatial_voice_bank: SpatialVoiceBank,
 
     // === Global module graph ===
     /// The global module graph for modular routing.
@@ -426,6 +428,7 @@ impl SynthEngine {
             instruments: vec![Box::new(default_instrument)],
             master_effects: EffectChain::new(),
             awe_engine: AweEngine::new(),
+            spatial_voice_bank: SpatialVoiceBank::new(),
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             sample_rate: 48000.0,
@@ -1511,6 +1514,24 @@ impl SynthEngine {
 
         let mut active_count = 0u32;
 
+        // Prepare spatial context if per-voice spatial is active
+        let spatial_enabled = self.awe_engine.enabled() && self.awe_engine.spatial_enabled();
+        self.spatial_voice_bank.clear();
+
+        let spatial_ctx = if spatial_enabled {
+            let room = self.awe_engine.room();
+            let snap = self.awe_engine.snapshot();
+            Some(SpatialContext {
+                mapping: self.awe_engine.note_mapping(),
+                room_length: room.length(),
+                room_width: room.width(),
+                room_height: room.height(),
+                listener_x: snap.listener_pos[0],
+            })
+        } else {
+            None
+        };
+
         // Check if any instrument is soloed
         let any_soloed = self.instruments.iter().any(|i| i.is_solo());
 
@@ -1522,7 +1543,12 @@ impl SynthEngine {
                 continue;
             }
 
-            active_count += instrument.process(&mut self.mix_buffer, context);
+            active_count += instrument.process(
+                &mut self.mix_buffer,
+                context,
+                spatial_ctx.as_ref(),
+                &mut self.spatial_voice_bank,
+            );
         }
 
         // Update total voice count across all instruments
@@ -1654,8 +1680,16 @@ impl AudioProcessor for SynthEngine {
 
         // Process AWE (room simulation) after master effects
         if self.awe_engine.enabled() {
-            self.awe_engine
-                .process(self.mix_buffer.as_mut_slice(), self.sample_rate);
+            if self.awe_engine.spatial_enabled() && self.spatial_voice_bank.active_count() > 0 {
+                self.awe_engine.process_spatial(
+                    self.mix_buffer.as_mut_slice(),
+                    &self.spatial_voice_bank,
+                    self.sample_rate,
+                );
+            } else {
+                self.awe_engine
+                    .process(self.mix_buffer.as_mut_slice(), self.sample_rate);
+            }
         }
 
         // Process master-level visualizers after AWE (so they show final signal)

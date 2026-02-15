@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::room::{Material, RoomShape};
+use crate::spatial_voice::NotePositionMapping;
 
 /// Target for an AWE-internal LFO modulation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +85,10 @@ pub enum AweParam {
     PortalAmount(f32),
     /// Enable/disable the AWE engine.
     Enabled(bool),
+    /// Enable/disable per-voice spatial processing.
+    SpatialEnabled(bool),
+    /// Set the note-to-position mapping for per-voice spatial.
+    NoteMapping(NotePositionMapping),
     /// Set LFO 1 rate in Hz.
     Lfo1Rate(f32),
     /// Set LFO 1 amount (0.0–1.0).
@@ -132,6 +137,12 @@ pub struct AweSnapshot {
     pub source_pos: [f32; 3],
     /// Listener position.
     pub listener_pos: [f32; 3],
+    /// Whether per-voice spatial is enabled.
+    #[serde(default)]
+    pub spatial_enabled: bool,
+    /// Note-to-position mapping for per-voice spatial.
+    #[serde(default)]
+    pub note_mapping: NotePositionMapping,
     /// LFO 1 state.
     #[serde(default)]
     pub lfo1: AweLfoState,
@@ -158,6 +169,8 @@ impl Default for AweSnapshot {
             portal_amount: 0.0,
             source_pos: [2.0, 2.5, 1.5],
             listener_pos: [6.0, 2.5, 1.5],
+            spatial_enabled: false,
+            note_mapping: NotePositionMapping::Off,
             lfo1: AweLfoState::default(),
             lfo2: AweLfoState {
                 target: AweLfoTarget::SourceY,
@@ -186,6 +199,12 @@ pub struct AweState {
     /// Wall material.
     #[serde(default)]
     pub material: Material,
+    /// Per-voice spatial enabled.
+    #[serde(default)]
+    pub spatial_enabled: bool,
+    /// Note-to-position mapping.
+    #[serde(default)]
+    pub note_mapping: NotePositionMapping,
     /// Numeric parameter snapshot.
     #[serde(default)]
     pub snapshot: AweSnapshot,

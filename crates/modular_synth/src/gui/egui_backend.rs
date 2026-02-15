@@ -1875,6 +1875,8 @@ impl SynthApp {
             &self.handle,
             self.glide_time,
             self.awe_enabled,
+            self.awe_ui.spatial_enabled,
+            crate::gui::awe_view::mapping_from_index(self.awe_ui.note_mapping_idx),
         )
     }
 }

@@ -1,5 +1,37 @@
 # Version History
 
+## [0.126.0] - 2026-02-15
+### Added - AWE Fas 3: Per-röst Spatialisering
+
+**Per-röst rumspositionering:**
+- Varje aktiv röst kan tilldelas en egen position i rummet baserat på MIDI-not.
+- 4 mappningslägen: Off, Linear X, Linear Y, Circular.
+- Individuella tidiga reflektioner (ISM) per röst med egna `EarlyReflections`-instanser.
+- Individuell spatializer (ITD/ILD) per röst.
+- Delad FDN-reverb och rumsmoder matade av summerad mono.
+
+**SpatialVoiceBank & SpatialVoicePool:**
+- Pre-allokerad bank med 16 mono-buffertar (4096 samples var) - ~1.3 MB totalt.
+- Per-röst DSP-pool med 16 slots: `EarlyReflections` (16K delay) + `Spatializer`.
+- `NotePositionMapping` enum med `position_for_note()` och `pan_for_note()`.
+- `SpatialContext` struct för att kommunicera spatial-kontext till instrument.
+
+**Instrument per-röst capture:**
+- `Instrument::process()` tar nu emot `SpatialContext` och `SpatialVoiceBank`.
+- Per-röst mono-capture till spatial bank i både normal och oversampled path.
+- Per-röst dry panning baserat på notens position relativt lyssnaren.
+
+**GUI:**
+- Ny "Spatial"-sektion i AWE-kontrollpanelen med On/Off-toggle och Mapping-väljare.
+- Visualisering av not-positioner som svaga prickar i floor plan.
+
+**Persistence:**
+- `spatial_enabled` och `note_mapping` i AweSnapshot, AweState och patch-format.
+- Bakåtkompatibel deserialisering via `#[serde(default)]`.
+
+**Ny konstruktor:**
+- `EarlyReflections::with_max_delay()` för anpassningsbar delay-storlek.
+
 ## [0.125.0] - 2026-02-15
 ### Added - AWE Fas 2: Avancerad Geometri & Kreativa Features
 

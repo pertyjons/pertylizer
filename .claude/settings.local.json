@@ -105,7 +105,8 @@
       "Bash(rustfmt --check:*)",
       "Bash(RUSTFLAGS=\"-D warnings\" cargo check:*)",
       "Bash(cargo add:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline)"
     ],
     "deny": [],
     "ask": []

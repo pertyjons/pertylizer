@@ -134,6 +134,12 @@ pub fn load_patch(
         handle.send_blocking(EngineCommand::SetAweState {
             snapshot: awe.to_snapshot(),
         });
+        handle.send_blocking(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
+        });
+        handle.send_blocking(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
+        });
     }
 
     // Ensure the target instrument is enabled after loading
@@ -921,6 +927,7 @@ pub fn apply_module_parameters(
 }
 
 /// Create a patch from current rack state.
+#[allow(clippy::too_many_arguments)]
 pub fn create_patch_from_rack(
     patch_name: &str,
     patch_editor: &PatchEditor,
@@ -928,6 +935,8 @@ pub fn create_patch_from_rack(
     handle: &EngineHandle,
     glide_time: f32,
     awe_enabled: bool,
+    awe_spatial_enabled: bool,
+    awe_note_mapping: synth_awe::NotePositionMapping,
 ) -> Option<Patch> {
     let mut patch = Patch::new(patch_name);
     patch.author = Some("User".to_string());
@@ -1020,10 +1029,12 @@ pub fn create_patch_from_rack(
     patch.settings.master_volume = handle.master_volume();
     patch.settings.glide_time = glide_time;
 
-    // Save AWE state (minimal in Fas 0 — just enabled status)
+    // Save AWE state
     if awe_enabled {
         patch.settings.awe = Some(synth_awe::AweState {
             enabled: true,
+            spatial_enabled: awe_spatial_enabled,
+            note_mapping: awe_note_mapping,
             ..Default::default()
         });
     }

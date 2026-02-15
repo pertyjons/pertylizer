@@ -12,7 +12,7 @@ use eframe::egui;
 use crate::gui::app::state::AppView;
 use crate::gui::theme::theme;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
-use synth_awe::{AweParam, Material, RoomShape};
+use synth_awe::{AweParam, Material, NotePositionMapping, RoomShape};
 use synth_engine::{EngineCommand, EngineHandle};
 
 /// Room shape kind for the UI selector.
@@ -69,6 +69,10 @@ pub struct AweUiState {
     pub lfo2: AweLfoState,
     pub lfo3: AweLfoState,
     pub lfo4: AweLfoState,
+
+    // Per-voice spatial
+    pub spatial_enabled: bool,
+    pub note_mapping_idx: usize,
 
     // Drag state
     pub dragging_source: bool,
@@ -136,6 +140,8 @@ impl Default for AweUiState {
             lfo2: snap.lfo2,
             lfo3: snap.lfo3,
             lfo4: snap.lfo4,
+            spatial_enabled: false,
+            note_mapping_idx: 0,
             dragging_source: false,
             dragging_listener: false,
         }
@@ -402,6 +408,19 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         [source_pos, listener_pos],
         egui::Stroke::new(1.0, line_color),
     );
+
+    // Draw per-voice mapping pattern (dim dots showing where notes would go)
+    let mapping = mapping_from_index(state.note_mapping_idx);
+    if state.spatial_enabled && mapping != NotePositionMapping::Off {
+        let dot_color = egui::Color32::from_rgba_premultiplied(180, 120, 255, 60);
+        // Show positions for C notes across the range
+        for octave in 1..=7 {
+            let note = octave * 12; // C1=12, C2=24, ...C7=84
+            let pos = mapping.position_for_note(note, room_w, room_h, state.room_height);
+            let screen_pos = room_to_screen(pos[0], pos[1]);
+            painter.circle_filled(screen_pos, 4.0, dot_color);
+        }
+    }
 
     // Handle dragging
     let pointer = ui.input(|i| i.pointer.hover_pos());
@@ -728,6 +747,11 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     ui.separator();
 
+    // --- Spatial ---
+    draw_spatial_section(ui, handle, state);
+
+    ui.separator();
+
     // --- LFO 1 ---
     draw_lfo_section(ui, handle, "LFO 1", &mut state.lfo1, 1);
 
@@ -745,6 +769,74 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     // --- LFO 4 ---
     draw_lfo_section(ui, handle, "LFO 4", &mut state.lfo4, 4);
+}
+
+const MAPPING_NAMES: [&str; 4] = ["Off", "Linear X", "Linear Y", "Circular"];
+
+pub fn mapping_from_index(idx: usize) -> NotePositionMapping {
+    match idx {
+        0 => NotePositionMapping::Off,
+        1 => NotePositionMapping::LinearX,
+        2 => NotePositionMapping::LinearY,
+        3 => NotePositionMapping::Circular,
+        _ => NotePositionMapping::Off,
+    }
+}
+
+pub fn mapping_to_index(mapping: NotePositionMapping) -> usize {
+    match mapping {
+        NotePositionMapping::Off => 0,
+        NotePositionMapping::LinearX => 1,
+        NotePositionMapping::LinearY => 2,
+        NotePositionMapping::Circular => 3,
+    }
+}
+
+/// Draw the per-voice spatial section.
+fn draw_spatial_section(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
+    let t = theme();
+    ui.heading(
+        egui::RichText::new("Spatial")
+            .color(t.colors.accent_purple)
+            .size(16.0),
+    );
+    ui.add_space(4.0);
+
+    // Toggle
+    let prev_enabled = state.spatial_enabled;
+    ui.horizontal(|ui| {
+        ui.label("Per-voice:");
+        let label = if state.spatial_enabled { "ON" } else { "OFF" };
+        let color = if state.spatial_enabled {
+            t.colors.meter_green
+        } else {
+            t.colors.text_dim
+        };
+        if ui.button(egui::RichText::new(label).color(color)).clicked() {
+            state.spatial_enabled = !state.spatial_enabled;
+        }
+    });
+    if state.spatial_enabled != prev_enabled {
+        handle.send(EngineCommand::SetAweParameter {
+            param: AweParam::SpatialEnabled(state.spatial_enabled),
+        });
+    }
+
+    // Mapping selector
+    let prev_mapping = state.note_mapping_idx;
+    egui::ComboBox::from_label("Mapping")
+        .selected_text(MAPPING_NAMES[state.note_mapping_idx])
+        .show_ui(ui, |ui| {
+            for (i, name) in MAPPING_NAMES.iter().enumerate() {
+                ui.selectable_value(&mut state.note_mapping_idx, i, *name);
+            }
+        });
+
+    if state.note_mapping_idx != prev_mapping {
+        handle.send(EngineCommand::SetAweParameter {
+            param: AweParam::NoteMapping(mapping_from_index(state.note_mapping_idx)),
+        });
+    }
 }
 
 /// Draw a single LFO section.

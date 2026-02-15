@@ -13,6 +13,7 @@ use crate::lfo::AweLfo;
 use crate::params::{AweLfoTarget, AweParam, AweSnapshot};
 use crate::room::{Material, RoomShape};
 use crate::room_modes::RoomModeBank;
+use crate::spatial_voice::{NotePositionMapping, SpatialVoiceBank, SpatialVoicePool};
 use crate::spatializer::Spatializer;
 
 /// Smooth parameter ramp time in seconds (~5 ms).
@@ -54,6 +55,11 @@ pub struct AweEngine {
 
     // Geometry dirty flag — recalculate ISM taps, FDN, modes when true
     geometry_dirty: bool,
+
+    // Per-voice spatial
+    spatial_enabled: bool,
+    note_mapping: NotePositionMapping,
+    voice_pool: SpatialVoicePool,
 }
 
 impl AweEngine {
@@ -89,6 +95,10 @@ impl AweEngine {
             current_portal: snapshot.portal_amount,
 
             geometry_dirty: true,
+
+            spatial_enabled: false,
+            note_mapping: NotePositionMapping::Off,
+            voice_pool: SpatialVoicePool::new(),
         }
     }
 
@@ -261,6 +271,17 @@ impl AweEngine {
             }
             AweParam::PortalAmount(v) => self.snapshot.portal_amount = v,
             AweParam::Enabled(v) => self.enabled = v,
+            AweParam::SpatialEnabled(v) => {
+                self.spatial_enabled = v;
+                self.snapshot.spatial_enabled = v;
+                if !v {
+                    self.voice_pool.clear();
+                }
+            }
+            AweParam::NoteMapping(m) => {
+                self.note_mapping = m;
+                self.snapshot.note_mapping = m;
+            }
             AweParam::Lfo1Rate(v) => {
                 self.snapshot.lfo1.rate = v;
                 self.lfo1.set_rate(v);
@@ -315,6 +336,8 @@ impl AweEngine {
     /// Apply a batch snapshot of numeric parameters.
     pub fn apply_snapshot(&mut self, snapshot: AweSnapshot) {
         self.snapshot = snapshot;
+        self.spatial_enabled = snapshot.spatial_enabled;
+        self.note_mapping = snapshot.note_mapping;
         self.room_modes.set_amount(snapshot.modes_amount);
         self.lfo1.set_rate(snapshot.lfo1.rate);
         self.lfo1.set_amount(snapshot.lfo1.amount);
@@ -350,6 +373,7 @@ impl AweEngine {
             self.portal_delay_right.clear();
             self.portal_feedback_state_l = 0.0;
             self.portal_feedback_state_r = 0.0;
+            self.voice_pool.clear();
         }
     }
 
@@ -369,6 +393,203 @@ impl AweEngine {
     #[must_use]
     pub fn material(&self) -> Material {
         self.material
+    }
+
+    /// Check if per-voice spatial is enabled.
+    #[must_use]
+    pub fn spatial_enabled(&self) -> bool {
+        self.spatial_enabled
+    }
+
+    /// Get the current note-to-position mapping.
+    #[must_use]
+    pub fn note_mapping(&self) -> NotePositionMapping {
+        self.note_mapping
+    }
+
+    /// Process audio with per-voice spatial early reflections and spatialisation.
+    ///
+    /// The `buffer` contains the dry mix (already per-voice panned by Instrument).
+    /// The `bank` contains per-voice mono audio captured by Instrument.
+    #[allow(clippy::too_many_lines)]
+    pub fn process_spatial(
+        &mut self,
+        buffer: &mut [f32],
+        bank: &SpatialVoiceBank,
+        sample_rate: f32,
+    ) {
+        self.cached_sample_rate = sample_rate;
+
+        let num_samples = buffer.len() / 2;
+        if num_samples == 0 {
+            return;
+        }
+
+        let active = bank.active_count();
+
+        // 1. Control-rate: advance LFOs
+        self.update_lfos(num_samples, sample_rate);
+
+        // 2. Recalculate global geometry if dirty
+        if self.geometry_dirty {
+            self.recalculate_geometry(sample_rate);
+            self.geometry_dirty = false;
+        }
+
+        // 3. Sync voice pool with bank: activate slots, update geometry
+        let room_length = self.room.length();
+        let room_width = self.room.width();
+        let room_height = self.room.height();
+        let absorption = self.material.average_absorption();
+        let listener = [
+            self.snapshot.listener_pos[0].clamp(0.1, room_length - 0.1),
+            self.snapshot.listener_pos[1].clamp(0.1, room_width - 0.1),
+            self.snapshot.listener_pos[2].clamp(0.1, room_height - 0.1),
+        ];
+
+        // Deactivate unused slots
+        for i in active..self.voice_pool.slots.len() {
+            self.voice_pool.slots[i].active = false;
+        }
+
+        // Update active slots
+        for i in 0..active {
+            let info = bank.info(i);
+            self.voice_pool.update_slot(
+                i,
+                info.note,
+                self.note_mapping,
+                room_length,
+                room_width,
+                room_height,
+                listener,
+                absorption,
+                sample_rate,
+            );
+        }
+
+        // 4. Compute ramp coefficient
+        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS * sample_rate)).exp();
+
+        // Pre-compute FDN parameters
+        let rt60 = self.calculate_rt60();
+        let freq_warp = self.snapshot.freq_warp.clamp(-1.0, 1.0);
+        let lp_coeff = (0.2 + absorption * 0.6) * (1.0 - freq_warp * 0.3);
+        let resonance_boost = self.snapshot.resonance_boost.clamp(0.0, 1.0);
+        let feedback_gain =
+            (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
+        let hp_coeff = 0.95;
+        let diffusion = 0.5;
+        let width = 1.0;
+        let sample_rate_recip = 1.0 / sample_rate;
+
+        let target_dry_wet = self.snapshot.dry_wet.clamp(0.0, 1.0);
+        let target_early_late = self.snapshot.early_late_balance.clamp(0.0, 1.0);
+        let target_portal = self.snapshot.portal_amount.clamp(0.0, 1.0);
+
+        let portal_delay_samples = (0.2 * sample_rate).clamp(1.0, 28_000.0);
+        let portal_feedback = 0.4;
+        let portal_damping = 0.6;
+
+        // 5. Per-sample loop
+        for i in 0..num_samples {
+            let idx = i * 2;
+            let dry_left = buffer[idx];
+            let dry_right = buffer[idx + 1];
+
+            // Smooth ramp
+            self.current_dry_wet += ramp_coeff * (target_dry_wet - self.current_dry_wet);
+            self.current_early_late += ramp_coeff * (target_early_late - self.current_early_late);
+            self.current_portal += ramp_coeff * (target_portal - self.current_portal);
+
+            let mut total_early_l = 0.0_f32;
+            let mut total_early_r = 0.0_f32;
+            let mut total_spat_l = 0.0_f32;
+            let mut total_spat_r = 0.0_f32;
+            let mut global_mono = 0.0_f32;
+
+            // Per active voice: process through per-voice early reflections + spatializer
+            for v in 0..active {
+                let info = bank.info(v);
+                let mono = if i < info.sample_count {
+                    bank.buffer(v)[i]
+                } else {
+                    0.0
+                };
+                global_mono += mono;
+
+                let (el, er, sl, sr) = self.voice_pool.process_slot(v, mono);
+                total_early_l += el;
+                total_early_r += er;
+                total_spat_l += sl;
+                total_spat_r += sr;
+            }
+
+            // Late reverb (shared FDN, fed by global mono)
+            let fdn_out = self.fdn.process_sample(
+                global_mono,
+                feedback_gain,
+                lp_coeff,
+                hp_coeff,
+                diffusion,
+                width,
+                sample_rate_recip,
+            );
+
+            // Room modes (shared)
+            let modes_out = self.room_modes.process(global_mono);
+
+            // Mix early/late
+            let early_amount = 1.0 - self.current_early_late;
+            let late_amount = self.current_early_late;
+
+            // Use per-voice spatialized dry instead of global spatializer
+            let wet_left =
+                total_early_l * early_amount + fdn_out.left * late_amount + modes_out * 0.5;
+            let wet_right =
+                total_early_r * early_amount + fdn_out.right * late_amount + modes_out * 0.5;
+
+            // Combine with per-voice spatializer output for dry positioning
+            let spat_left = wet_left + total_spat_l * 0.1;
+            let spat_right = wet_right + total_spat_r * 0.1;
+
+            // Portal
+            let (spat_left, spat_right) = if self.current_portal > 0.001 {
+                let portal_l = self
+                    .portal_delay_left
+                    .read_interpolated(portal_delay_samples);
+                let portal_r = self
+                    .portal_delay_right
+                    .read_interpolated(portal_delay_samples);
+
+                self.portal_feedback_state_l = portal_damping * self.portal_feedback_state_l
+                    + (1.0 - portal_damping) * portal_l;
+                self.portal_feedback_state_r = portal_damping * self.portal_feedback_state_r
+                    + (1.0 - portal_damping) * portal_r;
+
+                self.portal_delay_left
+                    .write(spat_left + self.portal_feedback_state_l * portal_feedback);
+                self.portal_delay_right
+                    .write(spat_right + self.portal_feedback_state_r * portal_feedback);
+
+                let amt = self.current_portal;
+                (
+                    spat_left + self.portal_feedback_state_l * amt,
+                    spat_right + self.portal_feedback_state_r * amt,
+                )
+            } else {
+                self.portal_delay_left.write(0.0);
+                self.portal_delay_right.write(0.0);
+                (spat_left, spat_right)
+            };
+
+            // Dry/wet mix
+            let dry_amount = 1.0 - self.current_dry_wet;
+            let wet_amount = self.current_dry_wet;
+
+            buffer[idx] = dry_left * dry_amount + spat_left * wet_amount;
+            buffer[idx + 1] = dry_right * dry_amount + spat_right * wet_amount;
+        }
     }
 
     // --- Internal helpers ---

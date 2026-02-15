@@ -74,6 +74,17 @@ impl EarlyReflections {
         }
     }
 
+    /// Create with a custom maximum delay line size (in samples).
+    ///
+    /// Use this for per-voice instances where the default 14400 samples
+    /// may be too large or too small.
+    pub fn with_max_delay(max_samples: usize) -> Self {
+        Self {
+            taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
+            delay_line: InterpolatedDelayLine::new(max_samples),
+        }
+    }
+
     /// Recalculate tap parameters from room geometry and positions.
     ///
     /// Call this when room dimensions, source/listener positions, or
