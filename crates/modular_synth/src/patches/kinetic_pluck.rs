@@ -46,17 +46,15 @@ pub fn patch_kinetic_pluck() -> Patch {
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::ModMatrix)
             .position(250.0, 300.0)
-            .param_f("grid_size", 1.0) // 2x2
-            // Slot 0: KineticPos -> Filter Cutoff
-            .param_f("slot_1_source", 11.0) // KineticPos index
-            .param_f("slot_1_dest", 3.0) // FilterCutoff(0) index
-            .param_f("slot_1_amount", 0.8)
-            .param_f("slot_1_enabled", 1.0)
-            // Slot 1: KineticPos -> Amp Level
-            .param_f("slot_2_source", 11.0) // KineticPos index
-            .param_f("slot_2_dest", 5.0) // AmpLevel(0) index
-            .param_f("slot_2_amount", 1.0)
-            .param_f("slot_2_enabled", 1.0)
+            .param_choice("grid size", "2x2")
+            // Slot 1: KineticPos -> Filter Cutoff
+            .param_choice("slot 1 source", "kinetic_pos")
+            .param_choice("slot 1 dest", "flt1_cutoff")
+            .param_f("slot 1 amount", 0.8)
+            // Slot 2: KineticPos -> Amp Level
+            .param_choice("slot 2 source", "kinetic_pos")
+            .param_choice("slot 2 dest", "amp_level")
+            .param_f("slot 2 amount", 1.0)
             .build(),
     );
 

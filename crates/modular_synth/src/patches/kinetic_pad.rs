@@ -75,21 +75,19 @@ pub fn patch_kinetic_pad() -> Patch {
             .build(),
     );
 
-    // Mod Matrix (mmx-1)
+    // Mod Matrix (mmx-1) - KineticPos -> FilterCutoff, KineticVel -> Osc2 Pitch
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::ModMatrix)
             .position(450.0, 400.0)
-            .param_f("grid_size", 1.0) // 2x2
-            // Slot 0: KineticPos -> Filter Cutoff
-            .param_f("slot_1_source", 11.0)
-            .param_f("slot_1_dest", 3.0)
-            .param_f("slot_1_amount", 0.5)
-            .param_f("slot_1_enabled", 1.0)
-            // Slot 1: KineticVel -> Osc 2 Pitch (subtle vibrato)
-            .param_f("slot_2_source", 12.0)
-            .param_f("slot_2_dest", 9.0) // OscPitch(1) index
-            .param_f("slot_2_amount", 0.15)
-            .param_f("slot_2_enabled", 1.0)
+            .param_choice("grid size", "2x2")
+            // Slot 1: KineticPos -> Filter Cutoff
+            .param_choice("slot 1 source", "kinetic_pos")
+            .param_choice("slot 1 dest", "flt1_cutoff")
+            .param_f("slot 1 amount", 0.5)
+            // Slot 2: KineticVel -> Osc 2 Pitch (subtle vibrato)
+            .param_choice("slot 2 source", "kinetic_vel")
+            .param_choice("slot 2 dest", "osc2_pitch")
+            .param_f("slot 2 amount", 0.15)
             .build(),
     );
 

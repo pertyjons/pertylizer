@@ -88,11 +88,10 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::ModMatrix)
             .position(450.0, 300.0)
-            .param_choice("grid_size", "1x1")
-            .param_choice("slot_0_source", "velocity")
-            .param_choice("slot_0_destination", "amp1_level")
-            .param_f("slot_0_amount", 0.4)
-            .param_b("slot_0_enabled", true)
+            .param_choice("grid size", "1x1")
+            .param_choice("slot 1 source", "velocity")
+            .param_choice("slot 1 dest", "amp_level")
+            .param_f("slot 1 amount", 0.4)
             .build(),
     );
 

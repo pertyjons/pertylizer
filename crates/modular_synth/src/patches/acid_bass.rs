@@ -86,11 +86,10 @@ Switch filter type to BP for a thinner, more nasal acid sound.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::ModMatrix)
             .position(450.0, 300.0)
-            .param_choice("grid_size", "1x1")
-            .param_choice("slot_0_source", "env2")
-            .param_choice("slot_0_destination", "filter1_cutoff")
-            .param_f("slot_0_amount", 0.9)
-            .param_b("slot_0_enabled", true)
+            .param_choice("grid size", "1x1")
+            .param_choice("slot 1 source", "env2")
+            .param_choice("slot 1 dest", "flt1_cutoff")
+            .param_f("slot 1 amount", 0.9)
             .build(),
     );
 
