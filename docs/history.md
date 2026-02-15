@@ -1,5 +1,21 @@
 # Version History
 
+## [0.134.0] - 2026-02-15
+### Förbättrad — AWE perceptuellt distinkt absorption
+
+**Perceptuella materialvärden:**
+- Alla 15 materials absorptionsvärden uppjusterade från fysikaliskt exakta till perceptuellt distinkta
+- Metall/kakel/betong nu tydligt hårdare; trä/vatten/tyg/matta tydligt mjukare
+- Varje material har en unik klangkaraktär (t.ex. glas: tunt i basen, is: krispig HF-absorption)
+
+**sqrt()-mappning ersätter linjär amplifiering:**
+- Tar bort `ABSORPTION_AMPLIFICATION` (3.0x) från alla tre DSP-filer
+- sqrt()-mappning sprider hårda material bättre utan att saturera mjuka
+- Vidgade LP/HP-koefficient-ranges ger större perceptuella skillnader
+
+**Aggressivare room modes feedback:**
+- Feedback-dämpning ökad från `avg * 0.5` till `avg * 0.8` för tydligare materialskillnad
+
 ## [0.133.0] - 2026-02-15
 ### Fixed - AWE frekvensberoende absorption
 

@@ -287,84 +287,84 @@ pub struct Material {
 }
 
 impl Material {
-    /// Hard concrete walls.
+    /// Hard concrete walls — hårt, mörkt, kallt.
     pub const CONCRETE: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.01),
-        absorption_mid: NormalizedValue::new_unchecked(0.02),
-        absorption_high: NormalizedValue::new_unchecked(0.04),
-        diffusion: NormalizedValue::new_unchecked(0.1),
-    };
-
-    /// Wood paneling.
-    pub const WOOD: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.15),
-        absorption_mid: NormalizedValue::new_unchecked(0.10),
-        absorption_high: NormalizedValue::new_unchecked(0.07),
-        diffusion: NormalizedValue::new_unchecked(0.3),
-    };
-
-    /// Glass windows.
-    pub const GLASS: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.18),
-        absorption_mid: NormalizedValue::new_unchecked(0.06),
-        absorption_high: NormalizedValue::new_unchecked(0.04),
-        diffusion: NormalizedValue::new_unchecked(0.05),
-    };
-
-    /// Metal surface.
-    pub const METAL: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.01),
-        absorption_mid: NormalizedValue::new_unchecked(0.01),
-        absorption_high: NormalizedValue::new_unchecked(0.02),
-        diffusion: NormalizedValue::new_unchecked(0.05),
-    };
-
-    /// Fabric / curtains.
-    pub const FABRIC: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.05),
-        absorption_mid: NormalizedValue::new_unchecked(0.30),
-        absorption_high: NormalizedValue::new_unchecked(0.60),
-        diffusion: NormalizedValue::new_unchecked(0.7),
-    };
-
-    /// Ceramic tile.
-    pub const TILE: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.01),
-        absorption_mid: NormalizedValue::new_unchecked(0.01),
-        absorption_high: NormalizedValue::new_unchecked(0.02),
-        diffusion: NormalizedValue::new_unchecked(0.1),
-    };
-
-    /// Polished marble.
-    pub const MARBLE: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.02),
-        absorption_mid: NormalizedValue::new_unchecked(0.03),
-        absorption_high: NormalizedValue::new_unchecked(0.05),
-        diffusion: NormalizedValue::new_unchecked(0.2),
-    };
-
-    /// Ice / frozen surfaces.
-    pub const ICE: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.02),
-        absorption_mid: NormalizedValue::new_unchecked(0.04),
-        absorption_high: NormalizedValue::new_unchecked(0.08),
+        absorption_mid: NormalizedValue::new_unchecked(0.08),
+        absorption_high: NormalizedValue::new_unchecked(0.15),
         diffusion: NormalizedValue::new_unchecked(0.15),
     };
 
-    /// Thick carpet.
-    pub const CARPET: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.25),
-        absorption_mid: NormalizedValue::new_unchecked(0.55),
-        absorption_high: NormalizedValue::new_unchecked(0.85),
-        diffusion: NormalizedValue::new_unchecked(0.8),
+    /// Wood paneling — varmt, balanserat.
+    pub const WOOD: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.20),
+        absorption_mid: NormalizedValue::new_unchecked(0.18),
+        absorption_high: NormalizedValue::new_unchecked(0.25),
+        diffusion: NormalizedValue::new_unchecked(0.35),
     };
 
-    /// Water-lined chamber.
-    pub const WATER: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.06),
+    /// Glass windows — ljust men tunt i basen.
+    pub const GLASS: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.35),
         absorption_mid: NormalizedValue::new_unchecked(0.12),
-        absorption_high: NormalizedValue::new_unchecked(0.40),
-        diffusion: NormalizedValue::new_unchecked(0.2),
+        absorption_high: NormalizedValue::new_unchecked(0.08),
+        diffusion: NormalizedValue::new_unchecked(0.05),
+    };
+
+    /// Metal surface — ultraljust, ringande.
+    pub const METAL: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.02),
+        absorption_mid: NormalizedValue::new_unchecked(0.03),
+        absorption_high: NormalizedValue::new_unchecked(0.05),
+        diffusion: NormalizedValue::new_unchecked(0.05),
+    };
+
+    /// Fabric / curtains — mycket mörkt.
+    pub const FABRIC: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.10),
+        absorption_mid: NormalizedValue::new_unchecked(0.45),
+        absorption_high: NormalizedValue::new_unchecked(0.75),
+        diffusion: NormalizedValue::new_unchecked(0.75),
+    };
+
+    /// Ceramic tile — hårt, ljust, kliniskt.
+    pub const TILE: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.03),
+        absorption_mid: NormalizedValue::new_unchecked(0.04),
+        absorption_high: NormalizedValue::new_unchecked(0.08),
+        diffusion: NormalizedValue::new_unchecked(0.10),
+    };
+
+    /// Polished marble — varmare hårdyta.
+    pub const MARBLE: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.08),
+        absorption_mid: NormalizedValue::new_unchecked(0.10),
+        absorption_high: NormalizedValue::new_unchecked(0.20),
+        diffusion: NormalizedValue::new_unchecked(0.20),
+    };
+
+    /// Ice / frozen surfaces — krispigt, märkbar HF-absorption.
+    pub const ICE: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.06),
+        absorption_mid: NormalizedValue::new_unchecked(0.15),
+        absorption_high: NormalizedValue::new_unchecked(0.30),
+        diffusion: NormalizedValue::new_unchecked(0.15),
+    };
+
+    /// Thick carpet — dött, absorberar allt.
+    pub const CARPET: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.30),
+        absorption_mid: NormalizedValue::new_unchecked(0.60),
+        absorption_high: NormalizedValue::new_unchecked(0.90),
+        diffusion: NormalizedValue::new_unchecked(0.85),
+    };
+
+    /// Water-lined chamber — mumlande, medium-mörkt.
+    pub const WATER: Self = Self {
+        absorption_low: NormalizedValue::new_unchecked(0.15),
+        absorption_mid: NormalizedValue::new_unchecked(0.30),
+        absorption_high: NormalizedValue::new_unchecked(0.55),
+        diffusion: NormalizedValue::new_unchecked(0.25),
     };
 
     /// Perfectly reflective void.
@@ -377,32 +377,32 @@ impl Material {
 
     /// Prism-like surface with extreme HF absorption and high diffusion.
     pub const PRISM: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.02),
-        absorption_mid: NormalizedValue::new_unchecked(0.08),
-        absorption_high: NormalizedValue::new_unchecked(0.90),
+        absorption_low: NormalizedValue::new_unchecked(0.05),
+        absorption_mid: NormalizedValue::new_unchecked(0.20),
+        absorption_high: NormalizedValue::new_unchecked(0.92),
         diffusion: NormalizedValue::new_unchecked(0.95),
     };
 
     /// Plasma sheen with strong LF damping and bright tail.
     pub const PLASMA: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.30),
-        absorption_mid: NormalizedValue::new_unchecked(0.18),
+        absorption_low: NormalizedValue::new_unchecked(0.40),
+        absorption_mid: NormalizedValue::new_unchecked(0.25),
         absorption_high: NormalizedValue::new_unchecked(0.85),
-        diffusion: NormalizedValue::new_unchecked(0.9),
+        diffusion: NormalizedValue::new_unchecked(0.90),
     };
 
     /// Membrane walls: absorbs lows more than highs (non-physical).
     pub const MEMBRANE: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.75),
-        absorption_mid: NormalizedValue::new_unchecked(0.22),
-        absorption_high: NormalizedValue::new_unchecked(0.05),
-        diffusion: NormalizedValue::new_unchecked(0.4),
+        absorption_low: NormalizedValue::new_unchecked(0.80),
+        absorption_mid: NormalizedValue::new_unchecked(0.30),
+        absorption_high: NormalizedValue::new_unchecked(0.08),
+        diffusion: NormalizedValue::new_unchecked(0.40),
     };
 
     /// Nanogel: ultra-absorbent but highly diffusive.
     pub const NANOGEL: Self = Self {
-        absorption_low: NormalizedValue::new_unchecked(0.05),
-        absorption_mid: NormalizedValue::new_unchecked(0.50),
+        absorption_low: NormalizedValue::new_unchecked(0.10),
+        absorption_mid: NormalizedValue::new_unchecked(0.55),
         absorption_high: NormalizedValue::new_unchecked(0.95),
         diffusion: NormalizedValue::new_unchecked(1.0),
     };

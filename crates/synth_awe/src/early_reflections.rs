@@ -32,13 +32,6 @@ const JITTER_PATTERN: [f32; MAX_EARLY_TAPS] = [-0.9, 0.7, -0.4, 1.0, -0.6, 0.3];
 /// and listener collapse to the same position as a mirror.
 const MIN_DISTANCE: Meters = Meters::new(0.1);
 
-/// Amplification factor for absorption differences.
-///
-/// Raw absorption values for hard materials (0.01–0.08) cluster too closely
-/// to produce audible filter differences. This multiplier spreads them out
-/// for perceptual impact in the per-tap damping filters.
-const ABSORPTION_AMPLIFICATION: f32 = 3.0;
-
 /// A single early reflection tap with per-wall delay, stereo gain,
 /// and frequency-dependent absorption filters (LP for HF, HP for LF).
 #[derive(Debug, Clone, Copy)]
@@ -173,11 +166,11 @@ impl EarlyReflections {
         let diffusion = NormalizedValue::new(diffusion.as_f32());
         let jitter_max = SampleOffset::new(MAX_JITTER_SECONDS.as_f32() * sample_rate.as_f32());
 
-        // Frequency-dependent damping: amplify differences for audibility
-        let abs_high_eff = (absorption_high.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
-        let abs_low_eff = (absorption_low.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
-        let lp_damping = NormalizedValue::new(0.2 + abs_high_eff * 0.6);
-        let hp_damping = NormalizedValue::new(0.997 - abs_low_eff * 0.15);
+        // Frequency-dependent damping: sqrt() mapping for perceptual spread
+        let abs_high_eff = absorption_high.as_f32().sqrt();
+        let abs_low_eff = absorption_low.as_f32().sqrt();
+        let lp_damping = NormalizedValue::new((0.15 + abs_high_eff * 0.75).clamp(0.0, 0.999));
+        let hp_damping = NormalizedValue::new((0.997 - abs_low_eff * 0.40).clamp(0.0, 0.999));
 
         for i in 0..MAX_EARLY_TAPS {
             let [mx, my, mz] = mirrors[i];

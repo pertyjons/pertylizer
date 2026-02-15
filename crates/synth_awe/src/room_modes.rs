@@ -19,12 +19,6 @@ const NUM_MODES: usize = 3;
 /// We pre-allocate 48000 to cover large-room presets with headroom.
 const MAX_DELAY_SAMPLES: SampleCount = SampleCount::new(48_000);
 
-/// Amplification factor for absorption differences.
-///
-/// Same as in early_reflections — amplifies small physical differences
-/// between hard materials into audible filter parameter differences.
-const ABSORPTION_AMPLIFICATION: f32 = 3.0;
-
 /// A single comb filter for one axial room mode.
 ///
 /// The feedback path includes frequency-dependent damping:
@@ -77,15 +71,15 @@ impl CombFilter {
         let max_delay = self.delay_line.len().saturating_sub(1);
         self.delay_samples = SampleCount::new(raw_delay.clamp(1, max_delay));
 
-        // Feedback from average of low/high bands
+        // Feedback from average of low/high bands — more aggressive for distinct materials
         let avg = (absorption_low.as_f32() + absorption_high.as_f32()) * 0.5;
-        self.feedback = Gain::new(0.85 * (1.0 - avg * 0.5));
+        self.feedback = Gain::new((0.85 * (1.0 - avg * 0.8)).max(0.1));
 
-        // Frequency-dependent damping with amplification
-        let abs_high_eff = (absorption_high.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
-        let abs_low_eff = (absorption_low.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
-        self.lp_coeff = NormalizedValue::new(0.2 + abs_high_eff * 0.5);
-        self.hp_coeff = NormalizedValue::new(0.997 - abs_low_eff * 0.12);
+        // Frequency-dependent damping: sqrt() mapping for perceptual spread
+        let abs_high_eff = absorption_high.as_f32().sqrt();
+        let abs_low_eff = absorption_low.as_f32().sqrt();
+        self.lp_coeff = NormalizedValue::new((0.15 + abs_high_eff * 0.70).clamp(0.0, 0.999));
+        self.hp_coeff = NormalizedValue::new((0.997 - abs_low_eff * 0.35).clamp(0.0, 0.999));
     }
 
     /// Process a single sample through the comb filter.
@@ -276,8 +270,8 @@ mod tests {
         assert!(fb_no_absorption > fb_full_absorption);
         // Zero absorption: 0.85 * (1.0 - 0.0) = 0.85
         assert!((fb_no_absorption - 0.85).abs() < f32::EPSILON);
-        // Full absorption: 0.85 * (1.0 - 0.5) = 0.425
-        assert!((fb_full_absorption - 0.425).abs() < f32::EPSILON);
+        // Full absorption: (0.85 * (1.0 - 0.8)).max(0.1) = 0.17
+        assert!((fb_full_absorption - 0.17).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -306,8 +300,8 @@ mod tests {
 
         // More HF absorption should give higher LP coefficient (more damping)
         assert!(lp_full_hf_absorption > lp_no_absorption);
-        // Zero absorption: 0.2 + 0.0 * 0.5 = 0.2
-        assert!((lp_no_absorption - 0.2).abs() < f32::EPSILON);
+        // Zero absorption: 0.15 + 0.0 * 0.70 = 0.15
+        assert!((lp_no_absorption - 0.15).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -23,13 +23,6 @@ use crate::types::{Meters, Position3, SampleOffset, StretchFactor};
 /// Smooth parameter ramp time in seconds (~5 ms).
 const RAMP_TIME_SECONDS: Seconds = Seconds::new(0.005);
 
-/// Amplification factor for frequency-dependent absorption differences.
-///
-/// Raw absorption values for hard materials (0.01–0.08) cluster too closely
-/// to produce audible filter differences in the FDN feedback loop. This
-/// multiplier spreads them out for perceptual impact.
-const ABSORPTION_AMPLIFICATION: f32 = 3.0;
-
 /// Portal delay line max length in samples.
 const PORTAL_MAX_DELAY: SampleCount = SampleCount::new(28_800);
 
@@ -156,21 +149,21 @@ impl AweEngine {
         let material_diffusion = self.material.diffusion;
         let rt60 = self.calculate_rt60();
 
-        // Amplify differences between materials for audible impact
-        let abs_high_eff = (abs_high * ABSORPTION_AMPLIFICATION).min(1.0);
-        let abs_low_eff = (abs_low * ABSORPTION_AMPLIFICATION).min(1.0);
+        // sqrt() mapping spreads hard materials while preserving soft material range
+        let abs_high_eff = abs_high.sqrt();
+        let abs_low_eff = abs_low.sqrt();
 
         // Freq warp: positive = bass decays faster (brighter), negative = HF decays faster (darker)
         let freq_warp = self.snapshot.freq_warp;
 
         // HF damping: driven by high-frequency absorption
-        // Metal (0.02): lp~0.15 → bright tail. Carpet (0.85): lp~0.85 → very dark tail.
+        // Metal (0.05): lp~0.33 → bright tail. Carpet (0.90): lp~0.91 → very dark tail.
         let lp_coeff =
-            ((0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
+            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
 
         // LF damping: driven by low-frequency absorption
-        // Metal (0.01): hp~0.997 → full bass. Glass (0.18): hp~0.89 → thinner bass.
-        let hp_coeff = ((0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
+        // Metal (0.02): hp~0.93 → full bass. Glass (0.35): hp~0.73 → thinner bass.
+        let hp_coeff = ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
 
         // Resonance boost: adds energy to feedback (with safety clamp)
         let resonance_boost = self.snapshot.resonance_boost;
@@ -569,13 +562,13 @@ impl AweEngine {
         // Pre-compute FDN parameters from per-band material absorption
         let abs_low = self.material.absorption_low.as_f32();
         let abs_high = self.material.absorption_high.as_f32();
-        let abs_high_eff = (abs_high * ABSORPTION_AMPLIFICATION).min(1.0);
-        let abs_low_eff = (abs_low * ABSORPTION_AMPLIFICATION).min(1.0);
+        let abs_high_eff = abs_high.sqrt();
+        let abs_low_eff = abs_low.sqrt();
         let rt60 = self.calculate_rt60();
         let freq_warp = self.snapshot.freq_warp;
         let lp_coeff =
-            ((0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
-        let hp_coeff = ((0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
+            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
+        let hp_coeff = ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
         let resonance_boost = self.snapshot.resonance_boost;
         let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
             + resonance_boost.as_f32() * 0.15)
