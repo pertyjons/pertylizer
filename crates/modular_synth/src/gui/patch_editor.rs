@@ -133,11 +133,11 @@ impl PatchEditor {
     /// Add a module to the rack.
     pub fn add_module(&mut self, id: ModuleId, descriptor: ModuleDescriptor) {
         let position = self.next_module_pos;
-        self.next_module_pos.x += 160.0; // Kompaktare avstånd
+        self.next_module_pos.x += 200.0; // module_min_width (180) + gap (20)
         // Wrap to next row based on typical screen width
-        if self.next_module_pos.x > 1200.0 {
+        if self.next_module_pos.x > 1400.0 {
             self.next_module_pos.x = 50.0;
-            self.next_module_pos.y += 200.0; // Kompaktare radavstånd
+            self.next_module_pos.y += 250.0; // Generous row spacing for varying heights
         }
 
         // Initialize parameter values from defaults

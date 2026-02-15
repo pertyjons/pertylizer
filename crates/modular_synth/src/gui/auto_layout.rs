@@ -76,10 +76,10 @@ pub fn calculate_layout(
         return result;
     }
 
-    // Constants - kompakta storlekar efter widget-uppdateringar
+    // Constants
     const MIN_MODULE_WIDTH: f32 = 180.0;
-    const MIN_MODULE_HEIGHT: f32 = 100.0;
-    const GAP: f32 = 8.0;
+    const MIN_MODULE_HEIGHT: f32 = 120.0;
+    const GAP: f32 = 20.0;
 
     // Separate modules into categories
     let mut connected_main: Vec<&ModuleInfo> = Vec::new();
@@ -191,7 +191,28 @@ pub fn calculate_layout(
 
     // Calculate total rows needed
     let main_rows = max_modules_per_column.max(1);
-    let modulation_rows = if has_modulation { 1 } else { 0 };
+    // Modulation modules now stack vertically per-column, count the max stack
+    let modulation_rows = if has_modulation {
+        // Pre-compute max modulation modules targeting any single column
+        let mut mod_count_by_col: HashMap<usize, usize> = HashMap::new();
+        for mod_module in &connected_modulation {
+            let target_col = outgoing
+                .get(&mod_module.id)
+                .and_then(|targets| {
+                    targets
+                        .iter()
+                        .filter(|t| !modulation_ids.contains(t))
+                        .filter_map(|t| depth.get(t))
+                        .min()
+                        .copied()
+                })
+                .unwrap_or(0);
+            *mod_count_by_col.entry(target_col).or_insert(0) += 1;
+        }
+        mod_count_by_col.values().max().copied().unwrap_or(1)
+    } else {
+        0
+    };
     let global_rows = global_modules.len();
     let disconnected_rows = disconnected.len();
 
@@ -214,10 +235,11 @@ pub fn calculate_layout(
     let available_width = available_rect.width();
     let available_height = available_rect.height();
 
-    // Width calculation: fit all columns
+    // Width calculation: fit all columns, but cap at reasonable max
+    const MAX_MODULE_WIDTH: f32 = 350.0;
     let total_gap_x = GAP * (total_columns + 1) as f32;
     let module_width = ((available_width - total_gap_x) / total_columns as f32)
-        .max(MIN_MODULE_WIDTH)
+        .clamp(MIN_MODULE_WIDTH, MAX_MODULE_WIDTH)
         .min(available_width - 2.0 * GAP);
 
     // Height calculation: MUST fit all rows within available height
@@ -296,9 +318,9 @@ pub fn calculate_layout(
 
         for (&col, module_ids) in &mod_by_column {
             for (idx, &module_id) in module_ids.iter().enumerate() {
-                // If multiple modulation in same column, offset horizontally
-                let x = start_x + col as f32 * cell_width + idx as f32 * (module_width * 0.5);
-                let y = mod_base_y;
+                // Stack multiple modulation modules vertically below their target column
+                let x = start_x + col as f32 * cell_width;
+                let y = mod_base_y + idx as f32 * cell_height;
                 result.positions.insert(module_id, clamp_pos(x, y));
             }
         }
