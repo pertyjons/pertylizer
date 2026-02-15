@@ -58,6 +58,17 @@ pub fn patch_kinetic_pluck() -> Patch {
             .build(),
     );
 
+    // Amp Envelope (env-1) - Short pluck shape
+    patch.add_module(
+        ModuleBuilder::new(1, PatchModuleType::Envelope)
+            .position(50.0, 200.0)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.2)
+            .param_f("sustain", 0.0)
+            .param_f("release", 0.1)
+            .build(),
+    );
+
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::Amplifier)
@@ -77,6 +88,7 @@ pub fn patch_kinetic_pluck() -> Patch {
     // Connections
     patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 

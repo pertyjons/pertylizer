@@ -108,8 +108,8 @@ pub fn patch_kinetic_pad() -> Patch {
     );
 
     // Connections
-    patch.add_connection("osc-1", "out", "mix-1", "in_1");
-    patch.add_connection("osc-2", "out", "mix-1", "in_2");
+    patch.add_connection("osc-1", "out", "mix-1", "in1");
+    patch.add_connection("osc-2", "out", "mix-1", "in2");
     patch.add_connection("mix-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
