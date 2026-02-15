@@ -2043,6 +2043,7 @@ pub enum PaletteSelection {
     TuringMachine,
     RandomGates,
     GranularOsc,
+    KineticModulator,
 }
 
 impl ModulePalette {
@@ -2214,6 +2215,10 @@ impl ModulePalette {
                     }
                     if ui.button("📐 MSEG").clicked() {
                         selected = Some(PaletteSelection::Mseg);
+                        ui.close();
+                    }
+                    if ui.button("🏃 Kinetic Mod").clicked() {
+                        selected = Some(PaletteSelection::KineticModulator);
                         ui.close();
                     }
                 },

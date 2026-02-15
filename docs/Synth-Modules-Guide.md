@@ -491,6 +491,67 @@ En LFO (Low Frequency Oscillator) är en oscillator som arbetar på mycket låga
 *   **Depth**: LFO:ns amplitud, eller hur intensiv modulationen är. Kontrollerar det maximala utslag från -1.0 till 1.0.
 *   **Offset**: En DC-offset som läggs till LFO-signalen. Kan användas för att skifta modulationsområdet.
 ---
+## Kinetic Modulator
+**Kategori:** LFO / Modulation
+
+Kinetic Modulator är en gate-triggad modulationskälla baserad på Penner easing-kurvor. Till skillnad från en ADSR (fast form), LFO (cyklisk) eller MSEG (komplex editor) erbjuder den en enkel "rörelse-designer" med en ratt per parameter. Modulen triggas av note-on och genererar tre modulationssignaler: **Position** (kurvans värde), **Velocity** (kurvans hastighet/derivata) och **Acceleration** (kurvans andra derivata). Dessa tre signaler exponeras som mod matrix-källor (KineticPos, KineticVel, KineticAcc) och kan routas till valfri destination.
+
+### Schematiskt flödesschema
+```
+ (Note On)───▶┌──────────────┐
+              │   Kinetic    ├─▶ (CV) out [Position]
+ (Duration)──▶│  Modulator   │─▶ ModMatrix: KineticPos
+ (Curve)─────▶│              │─▶ ModMatrix: KineticVel
+ (Overshoot)─▶│  (Easing     │─▶ ModMatrix: KineticAcc
+ (Loop Mode)─▶│   Curves)    │
+              └──────────────┘
+```
+
+### Ingångar (Inputs)
+*   *Inga externa ingångar.* Modulen triggas av note-on-meddelanden.
+
+### Utgångar (Outputs)
+
+| Port | Typ | Beskrivning |
+|---|---|---|
+| `out` | CV | Positionsvärdet från easing-kurvan (0.0 till 1.0 i unipolärt läge, -1.0 till 1.0 i bipolärt). |
+
+Utöver `out`-porten exponeras tre mod matrix-källor:
+
+| Mod Source | Beskrivning |
+|---|---|
+| `KineticPos` | Kurvans position — samma värde som `out`-porten. |
+| `KineticVel` | Kurvans hastighet (1:a derivatan), normaliserad till [-1.0, 1.0]. |
+| `KineticAcc` | Kurvans acceleration (2:a derivatan), normaliserad till [-1.0, 1.0]. |
+
+### Parametrar
+
+*   **Duration**: Kurvans totala tid i sekunder (0.01–10.0s, default 0.5s). Logaritmisk skala — låga värden ger snabba transienter, höga ger långsamma svep.
+*   **Curve**: Väljer easing-kurva. Varje kurva har en unik rörelsekaraktär:
+    *   `Linear`: Rak linje, jämn hastighet.
+    *   `QuadOut`: Mjuk inbromsning (kvadratisk).
+    *   `CubicOut`: Starkare inbromsning (kubisk). **Default.**
+    *   `QuartOut`: Ännu starkare inbromsning (fjärdegrad).
+    *   `QuintOut`: Mycket stark inbromsning (femtegrad).
+    *   `ExpoOut`: Exponentiell inbromsning — snabb start, lång svans.
+    *   `CircOut`: Cirkulär kurva — jämn och naturlig.
+    *   `BackOut`: Överskjuter målet och studsar tillbaka. Kontrolleras av **Overshoot**.
+    *   `ElasticOut`: Fjädrande oscillation runt målet. Kontrolleras av **Overshoot**.
+    *   `BounceOut`: Studsar som en boll mot golvet.
+*   **Overshoot**: Styrka på överskjutning för BackOut och ElasticOut (0.0–1.0, default 0.5). Har ingen effekt på andra kurvor.
+*   **Loop Mode**: Bestämmer vad som händer när kurvan når sitt slut:
+    *   `OneShot`: Kurvan körs en gång och stannar vid slutvärdet.
+    *   `Loop`: Kurvan upprepas från början.
+    *   `PingPong`: Kurvan körs framåt, sedan bakåt, och upprepar.
+*   **Bipolar**: Om aktiverad remappas positionsutgången från [0, 1] till [-1, 1]. Användbart för modulationer som ska svänga runt en mittposition.
+*   **Retrigger**: Om aktiverad (default) återställs kurvan till fas 0 vid varje note-on. Om avaktiverad fortsätter kurvan från sin nuvarande position.
+
+### Användningsexempel
+
+*   **Pluck-ljud**: CubicOut, Duration 0.15s, OneShot. Routa KineticPos → FilterCutoff och KineticPos → AmpLevel. Ger en snabb transient som öppnar filtret och sedan stänger det — klassisk pluck-karaktär.
+*   **Evolving Pad**: ElasticOut, Duration 2.0s, Loop, Bipolar. Routa KineticPos → FilterCutoff och KineticVel → OscPitch för subtil vibrato. Skapar en ständigt föränderlig textur med fjädrande rörelse.
+*   **Perkussiva transienter**: BounceOut, Duration 0.3s, OneShot. Routa KineticAcc → OscPitch. Accelerationssignalen skapar skarpa "clicks" vid varje studs.
+---
 ## MSEG (Multi-Stage Envelope Generator)
 **Kategori:** Envelope
 

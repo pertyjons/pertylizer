@@ -612,6 +612,9 @@ impl eframe::App for SynthApp {
                             PaletteSelection::GranularOsc => {
                                 self.add_granular_osc_module();
                             }
+                            PaletteSelection::KineticModulator => {
+                                self.add_kinetic_modulator_module();
+                            }
                         }
                     }
 
@@ -1198,6 +1201,24 @@ impl SynthApp {
         let module: Box<dyn synth_core::PolyModule> = Box::new(m);
 
         let next_id = self.next_module_id(TypedModuleType::GranularOsc);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_kinetic_modulator_module(&mut self) {
+        let m = synth_modules::KineticModulator::new();
+        let descriptor = m.descriptor();
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+
+        let next_id = self.next_module_id(TypedModuleType::KineticModulator);
         let Some(editor) = self.active_patch_editor() else {
             return;
         };

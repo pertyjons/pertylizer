@@ -23,6 +23,8 @@ mod glitch_pad;
 mod grand_piano;
 mod harmonic_lead;
 mod karplus_guitar;
+mod kinetic_pad;
+mod kinetic_pluck;
 mod metallic_bell;
 mod noise_sweep;
 mod pluck_synth;
@@ -66,6 +68,8 @@ pub use glitch_pad::patch_glitch_pad;
 pub use grand_piano::patch_grand_piano;
 pub use harmonic_lead::patch_harmonic_lead;
 pub use karplus_guitar::patch_karplus_guitar;
+pub use kinetic_pad::patch_kinetic_pad;
+pub use kinetic_pluck::patch_kinetic_pluck;
 pub use metallic_bell::patch_metallic_bell;
 pub use noise_sweep::patch_noise_sweep;
 pub use pluck_synth::patch_pluck_synth;
@@ -174,6 +178,8 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_bytebeat_glitch(),
                 patch_formant_voice(),
                 patch_digital_chime(),
+                patch_kinetic_pluck(),
+                patch_kinetic_pad(),
             ],
         ),
         (

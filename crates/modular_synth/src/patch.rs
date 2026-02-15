@@ -120,6 +120,8 @@ pub enum PatchModuleType {
     GranularOsc,
     Convolver,
     PhaseVocoder,
+    // Kinetic modulation (v0.132.0)
+    KineticModulator,
 }
 
 impl PatchModuleType {
@@ -164,6 +166,7 @@ impl PatchModuleType {
             Self::GranularOsc => "granular_osc",
             Self::Convolver => "convolver",
             Self::PhaseVocoder => "phase_vocoder",
+            Self::KineticModulator => "kinetic_modulator",
         }
     }
 
@@ -209,6 +212,7 @@ impl PatchModuleType {
             Self::GranularOsc => "grn",
             Self::Convolver => "cnv",
             Self::PhaseVocoder => "pvc",
+            Self::KineticModulator => "kin",
         }
     }
 

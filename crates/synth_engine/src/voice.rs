@@ -21,7 +21,7 @@ use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
     Semitones, Velocity,
 };
-use synth_core::{ModuleType, OscillatorParam, Param};
+use synth_core::{KineticParam, ModuleType, OscillatorParam, Param};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -635,9 +635,12 @@ impl Voice {
         let mod_wheel_val = self.mod_wheel.as_f32();
         let pitch_bend_val = self.pitch_bend.as_f32();
 
-        // Read LFO/Envelope outputs from previous block
+        // Read LFO/Envelope/Kinetic outputs from previous block
         let mut lfo_values = [0.0f32; 2];
         let mut env_values = [0.0f32; 2];
+        let mut kinetic_pos = 0.0f32;
+        let mut kinetic_vel = 0.0f32;
+        let mut kinetic_acc = 0.0f32;
         let mut lfo_count = 0u8;
         let mut env_count = 0u8;
         for module_id in self.graph.module_ids().collect::<Vec<_>>() {
@@ -650,14 +653,28 @@ impl Voice {
                     env_values[env_count as usize] = self.graph.get_last_output_value(module_id);
                     env_count += 1;
                 }
+                ModuleType::KineticModulator => {
+                    // Position comes from the "out" port
+                    kinetic_pos = self.graph.get_last_output_value(module_id);
+                    // Velocity and acceleration via get_param with read-only output params
+                    kinetic_vel = self
+                        .graph
+                        .get_param(module_id, &Param::Kinetic(KineticParam::OutputVel(0.0)))
+                        .unwrap_or(0.0);
+                    kinetic_acc = self
+                        .graph
+                        .get_param(module_id, &Param::Kinetic(KineticParam::OutputAcc(0.0)))
+                        .unwrap_or(0.0);
+                }
                 _ => {}
             }
         }
 
         // Build source values array matching ModSource::ALL indices
-        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber, Aftertouch, ModWheel, PitchBend, PolyAftertouch]
+        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber,
+        //   Aftertouch, ModWheel, PitchBend, PolyAftertouch, KineticPos, KineticVel, KineticAcc]
         let poly_aftertouch_val = self.poly_aftertouch.as_f32();
-        let source_values: [f32; 11] = [
+        let source_values: [f32; 14] = [
             0.0,                 // None
             lfo_values[0],       // Lfo(0)
             lfo_values[1],       // Lfo(1)
@@ -669,6 +686,9 @@ impl Voice {
             mod_wheel_val,       // ModWheel
             pitch_bend_val,      // PitchBend
             poly_aftertouch_val, // PolyAftertouch
+            kinetic_pos,         // KineticPos
+            kinetic_vel,         // KineticVel
+            kinetic_acc,         // KineticAcc
         ];
 
         // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config

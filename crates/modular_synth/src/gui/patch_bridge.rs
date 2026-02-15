@@ -858,6 +858,25 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::KineticModulator => {
+            let m = synth_modules::KineticModulator::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
     }
 }
 
@@ -970,6 +989,7 @@ pub fn create_patch_from_rack(
                     "euclidean" => PatchModuleType::Euclidean,
                     "turing_machine" => PatchModuleType::TuringMachine,
                     "random_gates" => PatchModuleType::RandomGates,
+                    "kinetic_modulator" => PatchModuleType::KineticModulator,
                     _ => PatchModuleType::Lfo,
                 },
                 ModuleCategory::Amplifier => PatchModuleType::Amplifier,

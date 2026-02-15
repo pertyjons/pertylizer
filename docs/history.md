@@ -1,5 +1,26 @@
 # Version History
 
+## [0.132.0] - 2026-02-15
+### Added - Kinetic Modulator
+
+**Ny modulationsmodul: Kinetic Modulator**
+- Gate-triggad kontrollmodul som genererar Position/Velocity/Acceleration via Penner easing-kurvor
+- 10 easing-kurvor: Linear, QuadOut, CubicOut, QuartOut, QuintOut, ExpoOut, CircOut, BackOut, ElasticOut, BounceOut
+- Alla kurvor med analytiskt beräknade derivator (velocity och acceleration)
+- Konfigurerbar duration (0.01–10s), overshoot (Back/Elastic), bipolar-läge
+- Loop-lägen: OneShot, Loop, PingPong
+- Retrigger-stöd vid ny note-on
+
+**Mod Matrix: 3 nya modulationskällor**
+- KineticPos — position från easing-kurvan
+- KineticVel — normaliserad hastighet (derivata)
+- KineticAcc — normaliserad acceleration (andra derivatan)
+- ModSource utökad från 11 till 14 varianter
+
+**Nya patches**
+- "Kinetic Pluck" — CubicOut-kurva (150ms) driver filter och amplitud
+- "Kinetic Pad" — ElasticOut-kurva (2s) i loop-läge för evolverande padljud
+
 ## [0.131.0] - 2026-02-15
 ### Changed - Isometrisk 3D AWE-vy med ljudanimationer
 

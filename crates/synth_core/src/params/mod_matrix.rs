@@ -124,10 +124,16 @@ pub enum ModSource {
     PitchBend,
     /// Per-note polyphonic aftertouch (0-1).
     PolyAftertouch,
+    /// Kinetic modulator position output (0-1 or -1 to 1).
+    KineticPos,
+    /// Kinetic modulator velocity output (-1 to 1).
+    KineticVel,
+    /// Kinetic modulator acceleration output (-1 to 1).
+    KineticAcc,
 }
 
 impl ModSource {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::None,
         Self::Lfo(0),
         Self::Lfo(1),
@@ -139,6 +145,9 @@ impl ModSource {
         Self::ModWheel,
         Self::PitchBend,
         Self::PolyAftertouch,
+        Self::KineticPos,
+        Self::KineticVel,
+        Self::KineticAcc,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -156,6 +165,9 @@ impl ModSource {
             Self::ModWheel => "Mod Wheel",
             Self::PitchBend => "Pitch Bend",
             Self::PolyAftertouch => "Poly AT",
+            Self::KineticPos => "Kinetic Pos",
+            Self::KineticVel => "Kinetic Vel",
+            Self::KineticAcc => "Kinetic Acc",
         }
     }
 
@@ -174,6 +186,9 @@ impl ModSource {
             Self::ModWheel => "mod_wheel",
             Self::PitchBend => "pitch_bend",
             Self::PolyAftertouch => "poly_aftertouch",
+            Self::KineticPos => "kinetic_pos",
+            Self::KineticVel => "kinetic_vel",
+            Self::KineticAcc => "kinetic_acc",
         }
     }
 

@@ -19,6 +19,7 @@ mod envelopes;
 mod filters;
 mod generative;
 mod granular;
+mod kinetic;
 mod lfo;
 mod mod_matrix;
 mod modules;
@@ -47,6 +48,10 @@ pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
 pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
 pub use granular::{GrainSource, GrainWindow, GranularParam};
+pub use kinetic::{
+    EasingCurve, KineticLoopMode, KineticParam, easing_acceleration, easing_position,
+    easing_velocity,
+};
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
@@ -121,6 +126,8 @@ pub enum ModuleType {
     // Spectral effects
     Convolver,
     PhaseVocoder,
+    // Kinetic modulation
+    KineticModulator,
 }
 
 impl ModuleType {
@@ -163,6 +170,8 @@ impl ModuleType {
                 | Self::MechanicalNoise
                 // Granular
                 | Self::GranularOsc
+                // Kinetic modulation
+                | Self::KineticModulator
         )
     }
 
@@ -262,6 +271,7 @@ impl ModuleType {
             Self::GranularOsc => "Granular",
             Self::Convolver => "Convolver",
             Self::PhaseVocoder => "Phase Vocoder",
+            Self::KineticModulator => "Kinetic Mod",
         }
     }
 
@@ -312,6 +322,7 @@ impl ModuleType {
             Self::GranularOsc => "grn",
             Self::Convolver => "cnv",
             Self::PhaseVocoder => "pvc",
+            Self::KineticModulator => "kin",
         }
     }
 
@@ -362,6 +373,7 @@ impl ModuleType {
             "grn" => Some(Self::GranularOsc),
             "cnv" => Some(Self::Convolver),
             "pvc" => Some(Self::PhaseVocoder),
+            "kin" => Some(Self::KineticModulator),
             _ => None,
         }
     }
@@ -429,6 +441,8 @@ pub enum Param {
     // Spectral effects
     Convolver(ConvolverParam),
     PhaseVocoder(PhaseVocoderParam),
+    // Kinetic modulation
+    Kinetic(KineticParam),
 }
 
 impl Param {
@@ -487,6 +501,7 @@ impl Param {
             (Self::GranularOsc(a), Self::GranularOsc(b)) => a.same_kind(b),
             (Self::Convolver(a), Self::Convolver(b)) => a.same_kind(b),
             (Self::PhaseVocoder(a), Self::PhaseVocoder(b)) => a.same_kind(b),
+            (Self::Kinetic(a), Self::Kinetic(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -537,6 +552,7 @@ impl Param {
             Self::GranularOsc(_) => ModuleType::GranularOsc,
             Self::Convolver(_) => ModuleType::Convolver,
             Self::PhaseVocoder(_) => ModuleType::PhaseVocoder,
+            Self::Kinetic(_) => ModuleType::KineticModulator,
         }
     }
 
@@ -586,6 +602,7 @@ impl Param {
             Self::GranularOsc(p) => p.name(),
             Self::Convolver(p) => p.name(),
             Self::PhaseVocoder(p) => p.name(),
+            Self::Kinetic(p) => p.name(),
         }
     }
 
@@ -635,6 +652,7 @@ impl Param {
             Self::GranularOsc(p) => p.as_f32(),
             Self::Convolver(p) => p.as_f32(),
             Self::PhaseVocoder(p) => p.as_f32(),
+            Self::Kinetic(p) => p.as_f32(),
         }
     }
 
@@ -684,6 +702,7 @@ impl Param {
             Self::GranularOsc(p) => Self::GranularOsc(p.with_f32(value)),
             Self::Convolver(p) => Self::Convolver(p.with_f32(value)),
             Self::PhaseVocoder(p) => Self::PhaseVocoder(p.with_f32(value)),
+            Self::Kinetic(p) => Self::Kinetic(p.with_f32(value)),
         }
     }
 }
