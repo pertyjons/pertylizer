@@ -1,8 +1,10 @@
-//! AWE (Acoustic World Engine) view — 2D floor plan with parameter controls.
+//! AWE (Acoustic World Engine) view — isometric 3D cutaway with parameter controls.
 //!
 //! Displays:
-//! - Room outline as a 2D floor plan (top-down)
-//! - Draggable source and listener markers
+//! - Room as isometric 3D cutaway (back wall, right wall, floor visible)
+//! - Draggable source and listener markers on the floor plane
+//! - Expanding sound rings from source
+//! - Animated reflection paths (marching ants)
 //! - Material selector
 //! - Sliders for dry/wet, early/late, modes amount, tail stretch
 //! - Four LFO sections with rate/amount/target controls
@@ -619,31 +621,6 @@ pub fn draw_awe_view(
     });
 }
 
-/// Draw a dashed line between two points.
-fn draw_dashed_line(
-    painter: &egui::Painter,
-    from: egui::Pos2,
-    to: egui::Pos2,
-    stroke: egui::Stroke,
-    dash_len: f32,
-    gap_len: f32,
-) {
-    let diff = to - from;
-    let total_len = diff.length();
-    if total_len < 0.1 {
-        return;
-    }
-    let dir = diff / total_len;
-    let mut dist = 0.0;
-    while dist < total_len {
-        let seg_start = from + dir * dist;
-        let seg_end_dist = (dist + dash_len).min(total_len);
-        let seg_end = from + dir * seg_end_dist;
-        painter.line_segment([seg_start, seg_end], stroke);
-        dist += dash_len + gap_len;
-    }
-}
-
 /// Draw an arrowhead (filled triangle) at `tip` pointing in direction `dir`.
 fn draw_arrowhead(
     painter: &egui::Painter,
@@ -664,7 +641,245 @@ fn draw_arrowhead(
     ));
 }
 
-/// Draw the 2D floor plan of the room.
+// --- Isometric projection constants and helpers ---
+
+/// cos(30°) for isometric projection.
+const ISO_COS30: f32 = 0.866_025_4;
+/// sin(30°) for isometric projection.
+const ISO_SIN30: f32 = 0.5;
+
+/// Project a 3D room coordinate to 2D screen space (isometric).
+///
+/// - `rx`, `ry`: floor coordinates (room x = length, room y = width)
+/// - `rz`: height coordinate
+/// - `scale`: pixels per meter
+/// - `offset`: screen pixel offset for centering
+fn iso_to_screen(rx: f32, ry: f32, rz: f32, scale: f32, offset: egui::Pos2) -> egui::Pos2 {
+    egui::pos2(
+        (rx - ry) * ISO_COS30 * scale + offset.x,
+        (rx + ry) * ISO_SIN30 * scale - rz * scale + offset.y,
+    )
+}
+
+/// Inverse isometric: screen position → floor coordinates (z=0).
+fn screen_to_floor(sx: f32, sy: f32, scale: f32, offset: egui::Pos2) -> (f32, f32) {
+    let dx = (sx - offset.x) / scale;
+    let dy = (sy - offset.y) / scale;
+    // dx = (rx - ry) * cos30
+    // dy = (rx + ry) * sin30
+    let rx_plus_ry = dy / ISO_SIN30;
+    let rx_minus_ry = dx / ISO_COS30;
+    let rx = (rx_plus_ry + rx_minus_ry) * 0.5;
+    let ry = (rx_plus_ry - rx_minus_ry) * 0.5;
+    (rx, ry)
+}
+
+/// Draw an isometric ellipse (circle projected onto the floor plane).
+///
+/// A circle of radius `r` centered at `(cx, cy, cz)` in room coords,
+/// approximated with `segments` line segments.
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_ellipse(
+    painter: &egui::Painter,
+    cx: f32,
+    cy: f32,
+    cz: f32,
+    r: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    stroke: egui::Stroke,
+    segments: usize,
+) {
+    if segments < 3 {
+        return;
+    }
+    let pts: Vec<egui::Pos2> = (0..segments)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * (i as f32 / segments as f32);
+            let px = cx + r * angle.cos();
+            let py = cy + r * angle.sin();
+            iso_to_screen(px, py, cz, scale, offset)
+        })
+        .collect();
+    painter.add(egui::Shape::closed_line(pts, stroke));
+}
+
+/// Draw a dashed line with animated offset (marching ants).
+fn draw_dashed_line_animated(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    stroke: egui::Stroke,
+    dash_len: f32,
+    gap_len: f32,
+    dash_offset: f32,
+) {
+    let diff = to - from;
+    let total_len = diff.length();
+    if total_len < 0.1 {
+        return;
+    }
+    let dir = diff / total_len;
+    let cycle = dash_len + gap_len;
+    // Start offset modulo cycle length
+    let start = dash_offset.rem_euclid(cycle);
+    let mut dist = -start;
+    while dist < total_len {
+        let seg_start_dist = dist.max(0.0);
+        let seg_end_dist = (dist + dash_len).min(total_len);
+        if seg_end_dist > seg_start_dist {
+            let seg_start = from + dir * seg_start_dist;
+            let seg_end = from + dir * seg_end_dist;
+            painter.line_segment([seg_start, seg_end], stroke);
+        }
+        dist += cycle;
+    }
+}
+
+/// Compute isometric scale and offset to center a room in the draw rect.
+///
+/// Returns `(scale, offset)` where scale is pixels/meter and offset is the
+/// screen position of room origin (0,0,0).
+fn iso_scale_and_offset(
+    room_l: f32,
+    room_w: f32,
+    room_h: f32,
+    draw_rect: egui::Rect,
+) -> (f32, egui::Pos2) {
+    // Isometric bounding box dimensions (in meters, before scaling)
+    let iso_width = (room_l + room_w) * ISO_COS30;
+    let iso_height = (room_l + room_w) * ISO_SIN30 + room_h;
+
+    let scale = (draw_rect.width() / iso_width).min(draw_rect.height() / iso_height) * 0.9;
+
+    // The origin (0,0,0) projects to a specific point. We want the bounding box
+    // centered in draw_rect.
+    // Bounding box corners:
+    //   top-left-ish: iso_to_screen(0, room_w, room_h) — back-left-top
+    //   bottom-right-ish: iso_to_screen(room_l, 0, 0) — front-right-bottom
+    // With offset=0: find min/max screen coords, then shift.
+    let zero = egui::pos2(0.0, 0.0);
+    let corners = [
+        iso_to_screen(0.0, 0.0, 0.0, scale, zero),
+        iso_to_screen(room_l, 0.0, 0.0, scale, zero),
+        iso_to_screen(0.0, room_w, 0.0, scale, zero),
+        iso_to_screen(room_l, room_w, 0.0, scale, zero),
+        iso_to_screen(0.0, 0.0, room_h, scale, zero),
+        iso_to_screen(room_l, 0.0, room_h, scale, zero),
+        iso_to_screen(0.0, room_w, room_h, scale, zero),
+        iso_to_screen(room_l, room_w, room_h, scale, zero),
+    ];
+    let min_x = corners.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+    let max_x = corners.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+    let min_y = corners.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let max_y = corners.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+
+    let bb_center_x = (min_x + max_x) * 0.5;
+    let bb_center_y = (min_y + max_y) * 0.5;
+
+    let offset = egui::pos2(
+        draw_rect.center().x - bb_center_x,
+        draw_rect.center().y - bb_center_y,
+    );
+
+    (scale, offset)
+}
+
+/// Draw expanding sound rings from the source on the floor plane.
+#[allow(clippy::too_many_arguments)]
+fn draw_sound_rings(
+    painter: &egui::Painter,
+    source_x: f32,
+    source_y: f32,
+    time: f64,
+    room_w: f32,
+    room_h: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    color: egui::Color32,
+    shape_kind: RoomShapeKind,
+) {
+    let diag = (room_w * room_w + room_h * room_h).sqrt();
+    let max_radius = diag * 0.8;
+    let ring_interval = 0.5; // seconds between new rings
+    let max_age = 2.5; // seconds until ring fades completely
+    let max_rings = 6;
+    let speed = max_radius / max_age;
+
+    for i in 0..max_rings {
+        let ring_birth = (time / ring_interval).floor() as i64 - i as i64;
+        if ring_birth < 0 {
+            continue;
+        }
+        let birth_time = ring_birth as f64 * ring_interval;
+        let age = (time - birth_time) as f32;
+        if age < 0.0 || age > max_age {
+            continue;
+        }
+        let radius = age * speed;
+        let alpha = ((1.0 - age / max_age) * 80.0) as u8;
+        let ring_color =
+            egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), alpha);
+        let ring_stroke = egui::Stroke::new(1.5, ring_color);
+        draw_iso_ellipse(
+            painter,
+            source_x,
+            source_y,
+            0.0,
+            radius,
+            scale,
+            offset,
+            ring_stroke,
+            48,
+        );
+
+        // Reflection rings for box/tube shapes
+        if matches!(shape_kind, RoomShapeKind::Box | RoomShapeKind::Tube) {
+            let mirror_sources: &[(f32, f32)] = match shape_kind {
+                RoomShapeKind::Box => &[
+                    (-source_x, source_y),
+                    (2.0 * room_w - source_x, source_y),
+                    (source_x, -source_y),
+                    (source_x, 2.0 * room_h - source_y),
+                ],
+                _ => &[(source_x, -source_y), (source_x, 2.0 * room_h - source_y)],
+            };
+            for &(mx, my) in mirror_sources {
+                let dist_to_wall = ((mx - source_x).powi(2) + (my - source_y).powi(2)).sqrt() * 0.5;
+                if radius > dist_to_wall {
+                    let refl_age = age - dist_to_wall / speed;
+                    if refl_age > 0.0 && refl_age < max_age {
+                        let refl_radius = refl_age * speed * 0.7;
+                        let refl_alpha = ((1.0 - refl_age / max_age) * 40.0) as u8;
+                        let refl_color = egui::Color32::from_rgba_premultiplied(
+                            color.r(),
+                            color.g(),
+                            color.b(),
+                            refl_alpha,
+                        );
+                        let refl_stroke = egui::Stroke::new(1.0, refl_color);
+                        // Mirror source is the reflection origin
+                        let reflect_x = (mx + source_x) * 0.5;
+                        let reflect_y = (my + source_y) * 0.5;
+                        draw_iso_ellipse(
+                            painter,
+                            reflect_x,
+                            reflect_y,
+                            0.0,
+                            refl_radius,
+                            scale,
+                            offset,
+                            refl_stroke,
+                            48,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Draw the isometric 3D cutaway view of the room.
 #[allow(clippy::too_many_lines)]
 fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let available = ui.available_size();
@@ -680,240 +895,38 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     // Fill background
     painter.rect_filled(rect, 0.0, bg_color);
 
-    // Calculate room-to-screen transform
-    // Leave margin for labels
+    // Animated time for rings and marching ants
+    let time = ui.input(|i| i.time);
+    ui.ctx().request_repaint();
+
+    // Room dimensions
+    let room_l = state.effective_length().max(0.5);
+    let room_w = state.effective_width().max(0.5);
+    let room_h = state.current_room_shape().height().as_f32().max(0.5);
+
     let margin = 30.0;
     let draw_rect = rect.shrink(margin);
+    let (scale, offset) = iso_scale_and_offset(room_l, room_w, room_h, draw_rect);
 
-    let room_w = state.effective_length().max(0.5);
-    let room_h = state.effective_width().max(0.5);
-
-    let scale_x = draw_rect.width() / room_w;
-    let scale_y = draw_rect.height() / room_h;
-    let scale = scale_x.min(scale_y);
-
-    // Center the room in the draw area
-    let room_screen_w = room_w * scale;
-    let room_screen_h = room_h * scale;
-    let room_origin = egui::pos2(
-        draw_rect.center().x - room_screen_w * 0.5,
-        draw_rect.center().y - room_screen_h * 0.5,
-    );
-
-    let room_screen_rect =
-        egui::Rect::from_min_size(room_origin, egui::vec2(room_screen_w, room_screen_h));
-
-    // Conversion closures
-    let room_to_screen = |rx: f32, ry: f32| -> egui::Pos2 {
-        egui::pos2(
-            room_origin.x + rx * scale,
-            room_origin.y + (room_h - ry) * scale, // flip Y: room Y up, screen Y down
-        )
-    };
-
-    let screen_to_room = |sx: f32, sy: f32| -> (f32, f32) {
-        let rx = (sx - room_origin.x) / scale;
-        let ry = room_h - (sy - room_origin.y) / scale;
-        (rx, ry)
-    };
-
-    // --- Draw room walls (shape-specific contour) ---
-    let wall_stroke = egui::Stroke::new(2.0, wall_color);
     let dim_label_color = t.colors.text_dim;
 
-    match state.shape_kind {
-        RoomShapeKind::Box => {
-            // Simple rectangle
-            painter.rect_stroke(
-                room_screen_rect,
-                0.0,
-                wall_stroke,
-                egui::StrokeKind::Outside,
-            );
-            // Dimension labels
-            painter.text(
-                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("{:.1}m", room_w),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-            painter.text(
-                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                format!("{:.1}m", room_h),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-        }
-        RoomShapeKind::Cylinder => {
-            // Rectangle with rounded short sides (rounding = half the width)
-            let rounding = room_screen_h * 0.5;
-            painter.rect_stroke(
-                room_screen_rect,
-                rounding,
-                wall_stroke,
-                egui::StrokeKind::Outside,
-            );
-            painter.text(
-                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("{:.1}m", state.cyl_length),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-            painter.text(
-                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                format!("r={:.1}m", state.cyl_radius),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-        }
-        RoomShapeKind::LShape => {
-            // L-shaped polygon: rect_A (full width_a, length_a) + rect_B extending
-            // Layout: A is bottom-left, B extends to the right from A's top
-            let la = state.l_length_a;
-            let wa = state.l_width_a;
-            let lb = state.l_length_b;
-            let wb = state.l_width_b;
-            // L-shape polygon points (in room coords, counter-clockwise):
-            // (0,0) -> (la,0) -> (la,wb) -> (wa,wb) -> (wa,wa+lb-wb.min(wa)) ...
-            // Simpler: A is bottom, B is right extension at top
-            // Points: bottom-left, bottom-right(la,0), (la,wb), (wa,wb), (wa,wa_height), (0,wa_height)
-            // where wa_height = max(wa, wb+lb) for the full L
-            // Actually let's use a simple L: A along x-axis, B along y from top of A
-            let total_w = wa.max(wb);
-            let total_h = la + lb;
-            // We already have room_w, room_h from effective_length/width but let's use the polygon
-            let pts_room: [(f32, f32); 6] = [
-                (0.0, 0.0),
-                (wa, 0.0),
-                (wa, la),
-                (wb, la),
-                (wb, total_h),
-                (0.0, total_h),
-            ];
-            // Scale these to screen using effective dimensions
-            let l_scale_x = room_screen_w / total_w.max(0.5);
-            let l_scale_y = room_screen_h / total_h.max(0.5);
-            let l_scale = l_scale_x.min(l_scale_y);
-            let l_origin_x = room_screen_rect.center().x - total_w * l_scale * 0.5;
-            let l_origin_y = room_screen_rect.center().y - total_h * l_scale * 0.5;
-            let screen_pts: Vec<egui::Pos2> = pts_room
-                .iter()
-                .map(|(rx, ry)| {
-                    egui::pos2(
-                        l_origin_x + rx * l_scale,
-                        l_origin_y + (total_h - ry) * l_scale,
-                    )
-                })
-                .collect();
-            painter.add(egui::Shape::closed_line(screen_pts, wall_stroke));
-            painter.text(
-                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("A:{:.0}x{:.0} B:{:.0}x{:.0}", la, wa, lb, wb),
-                egui::FontId::proportional(11.0),
-                dim_label_color,
-            );
-        }
-        RoomShapeKind::Sphere => {
-            // Circle
-            let radius = room_screen_w.min(room_screen_h) * 0.5;
-            let center = room_screen_rect.center();
-            painter.circle_stroke(center, radius, wall_stroke);
-            painter.text(
-                egui::pos2(center.x, center.y + radius + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("r={:.1}m", state.sphere_radius),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-        }
-        RoomShapeKind::Dome => {
-            // Circle, with dashed lower half to indicate half-sphere
-            let radius = room_screen_w.min(room_screen_h) * 0.5;
-            let center = room_screen_rect.center();
-            // Upper half: solid arc (approximate with line segments)
-            let n_segs = 32;
-            for i in 0..n_segs {
-                let a0 = std::f32::consts::PI + std::f32::consts::PI * (i as f32 / n_segs as f32);
-                let a1 =
-                    std::f32::consts::PI + std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
-                let p0 = egui::pos2(center.x + radius * a0.cos(), center.y + radius * a0.sin());
-                let p1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
-                painter.line_segment([p0, p1], wall_stroke);
-            }
-            // Lower half: dashed arc
-            let dash_stroke = egui::Stroke::new(1.5, wall_color);
-            for i in 0..n_segs {
-                let a0 = std::f32::consts::PI * (i as f32 / n_segs as f32);
-                let a1 = std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
-                let p0 = egui::pos2(center.x + radius * a0.cos(), center.y + radius * a0.sin());
-                let p1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
-                if i % 2 == 0 {
-                    painter.line_segment([p0, p1], dash_stroke);
-                }
-            }
-            painter.text(
-                egui::pos2(center.x, center.y + radius + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("r={:.1}m", state.dome_radius),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-        }
-        RoomShapeKind::Tube => {
-            // Rectangle with dashed short sides (open ends)
-            let dash_stroke = egui::Stroke::new(1.5, wall_color);
-            // Top and bottom walls: solid
-            painter.line_segment(
-                [room_screen_rect.left_top(), room_screen_rect.right_top()],
-                wall_stroke,
-            );
-            painter.line_segment(
-                [
-                    room_screen_rect.left_bottom(),
-                    room_screen_rect.right_bottom(),
-                ],
-                wall_stroke,
-            );
-            // Left and right ends: dashed (open)
-            draw_dashed_line(
-                &painter,
-                room_screen_rect.left_top(),
-                room_screen_rect.left_bottom(),
-                dash_stroke,
-                6.0,
-                4.0,
-            );
-            draw_dashed_line(
-                &painter,
-                room_screen_rect.right_top(),
-                room_screen_rect.right_bottom(),
-                dash_stroke,
-                6.0,
-                4.0,
-            );
-            painter.text(
-                egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
-                egui::Align2::CENTER_TOP,
-                format!("{:.1}m", state.tube_length),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-            painter.text(
-                egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                format!("r={:.1}m", state.tube_radius),
-                egui::FontId::proportional(12.0),
-                dim_label_color,
-            );
-        }
-    }
+    // --- Draw room shape (isometric 3D cutaway) ---
+    draw_iso_room(
+        &painter, state, room_l, room_w, room_h, scale, offset, wall_color, bg_color,
+    );
 
-    // --- Reflection paths (first-order, Box and Tube only) ---
+    // --- Dimension labels along visible floor edges ---
+    draw_iso_dimension_labels(
+        &painter,
+        state,
+        room_l,
+        room_w,
+        scale,
+        offset,
+        dim_label_color,
+    );
+
+    // --- Reflection paths (first-order, Box and Tube only) with marching ants ---
     let reflection_color = egui::Color32::from_rgba_premultiplied(
         wall_color.r() / 2,
         wall_color.g() / 2,
@@ -923,20 +936,18 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     let reflection_stroke = egui::Stroke::new(1.0, reflection_color);
     let (sx, sy) = (state.source_x, state.source_y);
     let (lx, ly) = (state.listener_x, state.listener_y);
+    let dash_offset = (time * 30.0) as f32;
 
     match state.shape_kind {
         RoomShapeKind::Box => {
-            // 4 first-order reflections via mirror sources
             let mirrors: [(f32, f32, bool, f32); 4] = [
-                (-sx, sy, true, 0.0),                   // left wall (x=0), mirror x
-                (2.0 * room_w - sx, sy, true, room_w),  // right wall (x=L)
-                (sx, -sy, false, 0.0),                  // bottom wall (y=0), mirror y
-                (sx, 2.0 * room_h - sy, false, room_h), // top wall (y=W)
+                (-sx, sy, true, 0.0),
+                (2.0 * room_l - sx, sy, true, room_l),
+                (sx, -sy, false, 0.0),
+                (sx, 2.0 * room_w - sy, false, room_w),
             ];
             for (mx, my, is_vertical, wall_coord) in mirrors {
-                // Reflection point = intersection of mirror->listener with wall
                 let refl = if is_vertical {
-                    // x = wall_coord, interpolate y
                     let dx = lx - mx;
                     if dx.abs() < 1e-6 {
                         continue;
@@ -945,7 +956,6 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
                     let ry = my + t_param * (ly - my);
                     (wall_coord, ry)
                 } else {
-                    // y = wall_coord, interpolate x
                     let dy = ly - my;
                     if dy.abs() < 1e-6 {
                         continue;
@@ -954,36 +964,34 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
                     let rx = mx + t_param * (lx - mx);
                     (rx, wall_coord)
                 };
-                // Only draw if reflection point is within the wall
-                if refl.0 >= 0.0 && refl.0 <= room_w && refl.1 >= 0.0 && refl.1 <= room_h {
-                    let refl_screen = room_to_screen(refl.0, refl.1);
-                    let src_screen = room_to_screen(sx, sy);
-                    let lis_screen = room_to_screen(lx, ly);
-                    draw_dashed_line(
+                if refl.0 >= 0.0 && refl.0 <= room_l && refl.1 >= 0.0 && refl.1 <= room_w {
+                    let refl_screen = iso_to_screen(refl.0, refl.1, 0.0, scale, offset);
+                    let src_screen = iso_to_screen(sx, sy, 0.0, scale, offset);
+                    let lis_screen = iso_to_screen(lx, ly, 0.0, scale, offset);
+                    let seg1_len = (refl_screen - src_screen).length();
+                    draw_dashed_line_animated(
                         &painter,
                         src_screen,
                         refl_screen,
                         reflection_stroke,
                         4.0,
                         3.0,
+                        dash_offset,
                     );
-                    draw_dashed_line(
+                    draw_dashed_line_animated(
                         &painter,
                         refl_screen,
                         lis_screen,
                         reflection_stroke,
                         4.0,
                         3.0,
+                        dash_offset + seg1_len,
                     );
                 }
             }
         }
         RoomShapeKind::Tube => {
-            // 2 reflections: top and bottom walls only (ends are open)
-            let mirrors: [(f32, f32, f32); 2] = [
-                (sx, -sy, 0.0),                  // bottom wall (y=0)
-                (sx, 2.0 * room_h - sy, room_h), // top wall (y=W)
-            ];
+            let mirrors: [(f32, f32, f32); 2] = [(sx, -sy, 0.0), (sx, 2.0 * room_w - sy, room_w)];
             for (mx, my, wall_y) in mirrors {
                 let dy = ly - my;
                 if dy.abs() < 1e-6 {
@@ -991,34 +999,51 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
                 }
                 let t_param = (wall_y - my) / dy;
                 let rx = mx + t_param * (lx - mx);
-                if rx >= 0.0 && rx <= room_w {
-                    let refl_screen = room_to_screen(rx, wall_y);
-                    let src_screen = room_to_screen(sx, sy);
-                    let lis_screen = room_to_screen(lx, ly);
-                    draw_dashed_line(
+                if rx >= 0.0 && rx <= room_l {
+                    let refl_screen = iso_to_screen(rx, wall_y, 0.0, scale, offset);
+                    let src_screen = iso_to_screen(sx, sy, 0.0, scale, offset);
+                    let lis_screen = iso_to_screen(lx, ly, 0.0, scale, offset);
+                    let seg1_len = (refl_screen - src_screen).length();
+                    draw_dashed_line_animated(
                         &painter,
                         src_screen,
                         refl_screen,
                         reflection_stroke,
                         4.0,
                         3.0,
+                        dash_offset,
                     );
-                    draw_dashed_line(
+                    draw_dashed_line_animated(
                         &painter,
                         refl_screen,
                         lis_screen,
                         reflection_stroke,
                         4.0,
                         3.0,
+                        dash_offset + seg1_len,
                     );
                 }
             }
         }
-        _ => {} // No reflection lines for curved/complex shapes
+        _ => {}
     }
 
-    // --- Source marker (larger, with outline ring and tooltip) ---
-    let source_pos = room_to_screen(state.source_x, state.source_y);
+    // --- Sound rings ---
+    draw_sound_rings(
+        &painter,
+        sx,
+        sy,
+        time,
+        room_l,
+        room_w,
+        scale,
+        offset,
+        source_color,
+        state.shape_kind,
+    );
+
+    // --- Source marker ---
+    let source_pos = iso_to_screen(state.source_x, state.source_y, 0.0, scale, offset);
     let marker_radius = 14.0;
     painter.circle_filled(source_pos, marker_radius, source_color);
     painter.circle_stroke(
@@ -1033,7 +1058,6 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         egui::FontId::proportional(13.0),
         source_color,
     );
-    // Tooltip for source marker (painted near marker on hover)
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
     if let Some(pp) = pointer_pos
         && source_pos.distance(pp) < marker_radius + 4.0
@@ -1047,8 +1071,8 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         );
     }
 
-    // --- Listener marker (larger, with outline ring and tooltip) ---
-    let listener_pos = room_to_screen(state.listener_x, state.listener_y);
+    // --- Listener marker ---
+    let listener_pos = iso_to_screen(state.listener_x, state.listener_y, 0.0, scale, offset);
     painter.circle_filled(listener_pos, marker_radius, listener_color);
     painter.circle_stroke(
         listener_pos,
@@ -1062,7 +1086,6 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         egui::FontId::proportional(13.0),
         listener_color,
     );
-    // Tooltip for listener marker (painted near marker on hover)
     if let Some(pp) = pointer_pos
         && listener_pos.distance(pp) < marker_radius + 4.0
     {
@@ -1075,12 +1098,11 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         );
     }
 
-    // --- Arrow from source to listener (with arrowhead at listener) ---
+    // --- Arrow from source to listener ---
     let arrow_color = egui::Color32::from_rgba_premultiplied(140, 140, 140, 180);
     let dir = listener_pos - source_pos;
     let dir_len = dir.length();
     if dir_len > 1.0 {
-        // Draw line from source edge to just before listener edge
         let norm_dir = dir / dir_len;
         let line_start = source_pos + norm_dir * marker_radius;
         let arrow_tip = listener_pos - norm_dir * (marker_radius + 2.0);
@@ -1089,15 +1111,13 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         draw_arrowhead(&painter, arrow_tip, dir, 10.0, arrow_color);
     }
 
-    // --- Info box (distance, RT60, volume) ---
+    // --- Info box ---
     let room_shape = state.current_room_shape();
     let material = state.current_material();
     let volume = room_shape.volume().as_f32();
     let surface_area = room_shape.surface_area().as_f32();
     let avg_absorption = material.average_absorption().as_f32();
     let distance = ((lx - sx).powi(2) + (ly - sy).powi(2)).sqrt();
-
-    // RT60 via Sabine's formula: 0.161 * V / (a * S) * tail_stretch
     let rt60 = if avg_absorption * surface_area > 0.001 {
         0.161 * volume / (avg_absorption * surface_area) * state.tail_stretch
     } else {
@@ -1105,11 +1125,10 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     };
 
     let info_text =
-        format!("Avstånd: {distance:.1} m\nRT60: {rt60:.1} s\nVolym: {volume:.0} m\u{00B3}",);
-    let info_pos = egui::pos2(room_screen_rect.min.x + 6.0, room_screen_rect.min.y + 6.0);
+        format!("Avstånd: {distance:.1} m\nRT60: {rt60:.1} s\nVolym: {volume:.0} m\u{00B3}");
+    let info_pos = egui::pos2(draw_rect.min.x + 6.0, draw_rect.min.y + 6.0);
     let info_font = egui::FontId::proportional(11.0);
     let info_color = t.colors.text_dim;
-    // Draw background rect for readability
     let info_galley = painter.layout_no_wrap(info_text.clone(), info_font.clone(), info_color);
     let info_rect = egui::Rect::from_min_size(info_pos, info_galley.size() + egui::vec2(8.0, 4.0));
     painter.rect_filled(
@@ -1123,26 +1142,25 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         info_color,
     );
 
-    // Draw per-voice mapping pattern (dim dots showing where notes would go)
+    // --- Per-voice spatial mapping dots ---
     let mapping = mapping_from_index(state.note_mapping_idx);
     if state.spatial_enabled && mapping != NotePositionMapping::Off {
         let dot_color = egui::Color32::from_rgba_premultiplied(180, 120, 255, 60);
-        // Show positions for C notes across the range
         for octave in 1..=7u8 {
-            let note = MidiNote::new(octave * 12); // C1=12, C2=24, ...C7=84
+            let note = MidiNote::new(octave * 12);
             let eff_height = state.current_room_shape().height();
             let pos = mapping.position_for_note(
                 note,
+                Meters::new(room_l),
                 Meters::new(room_w),
-                Meters::new(room_h),
                 eff_height,
             );
-            let screen_pos = room_to_screen(pos.x().as_f32(), pos.y().as_f32());
+            let screen_pos = iso_to_screen(pos.x().as_f32(), pos.y().as_f32(), 0.0, scale, offset);
             painter.circle_filled(screen_pos, 4.0, dot_color);
         }
     }
 
-    // Handle dragging
+    // --- Handle dragging ---
     let pointer = ui.input(|i| i.pointer.hover_pos());
     if let Some(pos) = pointer
         && response.drag_started()
@@ -1159,9 +1177,9 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     if response.dragged()
         && let Some(pos) = pointer
     {
-        let (rx, ry) = screen_to_room(pos.x, pos.y);
-        let rx = rx.clamp(0.1, room_w - 0.1);
-        let ry = ry.clamp(0.1, room_h - 0.1);
+        let (rx, ry) = screen_to_floor(pos.x, pos.y, scale, offset);
+        let rx = rx.clamp(0.1, room_l - 0.1);
+        let ry = ry.clamp(0.1, room_w - 0.1);
 
         let half_h = state.current_room_shape().height().as_f32() * 0.5;
         if state.dragging_source {
@@ -1182,6 +1200,718 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     if response.drag_stopped() {
         state.dragging_source = false;
         state.dragging_listener = false;
+    }
+}
+
+/// Draw the isometric room geometry (3D cutaway).
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn draw_iso_room(
+    painter: &egui::Painter,
+    state: &AweUiState,
+    room_l: f32,
+    room_w: f32,
+    room_h: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    wall_color: egui::Color32,
+    bg_color: egui::Color32,
+) {
+    let wall_stroke = egui::Stroke::new(2.0, wall_color);
+
+    // Colors for solid shading (cutaway style)
+    let floor_color = egui::Color32::from_rgba_premultiplied(
+        bg_color.r().saturating_add(15),
+        bg_color.g().saturating_add(15),
+        bg_color.b().saturating_add(20),
+        160,
+    );
+    let back_wall_color = egui::Color32::from_rgba_premultiplied(
+        bg_color.r().saturating_add(25),
+        bg_color.g().saturating_add(25),
+        bg_color.b().saturating_add(35),
+        140,
+    );
+    let right_wall_color = egui::Color32::from_rgba_premultiplied(
+        bg_color.r().saturating_add(35),
+        bg_color.g().saturating_add(35),
+        bg_color.b().saturating_add(45),
+        140,
+    );
+
+    match state.shape_kind {
+        RoomShapeKind::Box => {
+            draw_iso_box(
+                painter,
+                room_l,
+                room_w,
+                room_h,
+                scale,
+                offset,
+                floor_color,
+                back_wall_color,
+                right_wall_color,
+                wall_stroke,
+            );
+        }
+        RoomShapeKind::Cylinder => {
+            draw_iso_cylinder(
+                painter,
+                state.cyl_length,
+                state.cyl_radius,
+                scale,
+                offset,
+                floor_color,
+                back_wall_color,
+                wall_stroke,
+                wall_color,
+            );
+        }
+        RoomShapeKind::LShape => {
+            draw_iso_lshape(
+                painter,
+                state,
+                scale,
+                offset,
+                floor_color,
+                back_wall_color,
+                right_wall_color,
+                wall_stroke,
+            );
+        }
+        RoomShapeKind::Sphere => {
+            draw_iso_sphere(
+                painter,
+                state.sphere_radius,
+                scale,
+                offset,
+                back_wall_color,
+                wall_stroke,
+                wall_color,
+            );
+        }
+        RoomShapeKind::Dome => {
+            draw_iso_dome(
+                painter,
+                state.dome_radius,
+                scale,
+                offset,
+                floor_color,
+                back_wall_color,
+                wall_stroke,
+                wall_color,
+            );
+        }
+        RoomShapeKind::Tube => {
+            draw_iso_tube(
+                painter,
+                state.tube_length,
+                state.tube_radius,
+                scale,
+                offset,
+                floor_color,
+                back_wall_color,
+                wall_stroke,
+                wall_color,
+            );
+        }
+    }
+}
+
+/// Draw an isometric box room (cutaway: back wall, right wall, floor).
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_box(
+    painter: &egui::Painter,
+    l: f32,
+    w: f32,
+    h: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    floor_color: egui::Color32,
+    back_wall_color: egui::Color32,
+    right_wall_color: egui::Color32,
+    wall_stroke: egui::Stroke,
+) {
+    // 8 corners
+    let p = |x: f32, y: f32, z: f32| iso_to_screen(x, y, z, scale, offset);
+
+    // Back wall (y=W): (0,W,0), (L,W,0), (L,W,H), (0,W,H)
+    painter.add(egui::Shape::convex_polygon(
+        vec![p(0.0, w, 0.0), p(l, w, 0.0), p(l, w, h), p(0.0, w, h)],
+        back_wall_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Right wall (x=L): (L,0,0), (L,W,0), (L,W,H), (L,0,H)
+    painter.add(egui::Shape::convex_polygon(
+        vec![p(l, 0.0, 0.0), p(l, w, 0.0), p(l, w, h), p(l, 0.0, h)],
+        right_wall_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Floor (z=0): (0,0,0), (L,0,0), (L,W,0), (0,W,0)
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            p(0.0, 0.0, 0.0),
+            p(l, 0.0, 0.0),
+            p(l, w, 0.0),
+            p(0.0, w, 0.0),
+        ],
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Visible edges
+    // Floor front edges
+    painter.line_segment([p(0.0, 0.0, 0.0), p(l, 0.0, 0.0)], wall_stroke);
+    painter.line_segment([p(0.0, 0.0, 0.0), p(0.0, w, 0.0)], wall_stroke);
+    // Floor back edges (along walls)
+    painter.line_segment([p(l, 0.0, 0.0), p(l, w, 0.0)], wall_stroke);
+    painter.line_segment([p(0.0, w, 0.0), p(l, w, 0.0)], wall_stroke);
+    // Vertical edges
+    painter.line_segment([p(l, 0.0, 0.0), p(l, 0.0, h)], wall_stroke);
+    painter.line_segment([p(0.0, w, 0.0), p(0.0, w, h)], wall_stroke);
+    painter.line_segment([p(l, w, 0.0), p(l, w, h)], wall_stroke);
+    // Top edges (ceiling outline)
+    painter.line_segment([p(l, 0.0, h), p(l, w, h)], wall_stroke);
+    painter.line_segment([p(0.0, w, h), p(l, w, h)], wall_stroke);
+}
+
+/// Draw an isometric cylinder room.
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_cylinder(
+    painter: &egui::Painter,
+    length: f32,
+    radius: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    floor_color: egui::Color32,
+    wall_color_fill: egui::Color32,
+    wall_stroke: egui::Stroke,
+    edge_color: egui::Color32,
+) {
+    let diameter = radius * 2.0;
+    // Bounding box approach: length along x, diameter along y, diameter along z
+    // Back half of cylinder (y = radius + r*sin(a) for a in PI..TAU)
+    let n_segs = 32;
+
+    // Draw back wall as polygon band (approximated)
+    // Back cross-section at x=length: semi-ellipse top half
+    let mut back_pts = Vec::with_capacity(n_segs + 2);
+    for i in 0..=n_segs {
+        let angle = std::f32::consts::PI * (i as f32 / n_segs as f32);
+        let cy = radius + radius * angle.cos();
+        let cz = radius * angle.sin();
+        back_pts.push(iso_to_screen(length, cy, cz, scale, offset));
+    }
+    // Close with base
+    back_pts.push(iso_to_screen(length, diameter, 0.0, scale, offset));
+    back_pts.push(iso_to_screen(length, 0.0, 0.0, scale, offset));
+    painter.add(egui::Shape::convex_polygon(
+        back_pts,
+        wall_color_fill,
+        egui::Stroke::NONE,
+    ));
+
+    // Floor: rectangle (0,0,0) to (length,diameter,0)
+    let p = |x: f32, y: f32, z: f32| iso_to_screen(x, y, z, scale, offset);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            p(0.0, 0.0, 0.0),
+            p(length, 0.0, 0.0),
+            p(length, diameter, 0.0),
+            p(0.0, diameter, 0.0),
+        ],
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Front cross-section at x=0: isometric ellipse
+    let ellipse_stroke = egui::Stroke::new(1.5, edge_color);
+    draw_iso_ellipse(
+        painter,
+        0.0,
+        radius,
+        radius,
+        radius,
+        scale,
+        offset,
+        ellipse_stroke,
+        48,
+    );
+
+    // Back cross-section at x=length
+    draw_iso_ellipse(
+        painter,
+        length,
+        radius,
+        radius,
+        radius,
+        scale,
+        offset,
+        ellipse_stroke,
+        48,
+    );
+
+    // Top ridge lines (along length)
+    painter.line_segment(
+        [p(0.0, radius, diameter), p(length, radius, diameter)],
+        wall_stroke,
+    );
+
+    // Bottom edge lines
+    painter.line_segment([p(0.0, 0.0, 0.0), p(length, 0.0, 0.0)], wall_stroke);
+    painter.line_segment(
+        [p(0.0, diameter, 0.0), p(length, diameter, 0.0)],
+        wall_stroke,
+    );
+}
+
+/// Draw an isometric L-shaped room.
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_lshape(
+    painter: &egui::Painter,
+    state: &AweUiState,
+    scale: f32,
+    offset: egui::Pos2,
+    floor_color: egui::Color32,
+    back_wall_color: egui::Color32,
+    right_wall_color: egui::Color32,
+    wall_stroke: egui::Stroke,
+) {
+    let la = state.l_length_a;
+    let wa = state.l_width_a;
+    let lb = state.l_length_b;
+    let wb = state.l_width_b;
+    let h = state.l_height;
+    let total_w = wa.max(wb);
+    let total_h = la + lb;
+    let _ = total_w; // used implicitly by the L-shape geometry
+
+    let p = |x: f32, y: f32, z: f32| iso_to_screen(x, y, z, scale, offset);
+
+    // L-shape floor polygon: 6 points
+    let floor_pts = [
+        p(0.0, 0.0, 0.0),
+        p(wa, 0.0, 0.0),
+        p(wa, la, 0.0),
+        p(wb, la, 0.0),
+        p(wb, total_h, 0.0),
+        p(0.0, total_h, 0.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        vec![floor_pts[0], floor_pts[1], floor_pts[2], floor_pts[5]],
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        vec![floor_pts[2], floor_pts[3], floor_pts[4], floor_pts[5]],
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Back wall sections (y=total_h): from (0,total_h,0) to (wb,total_h,0) to height
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            p(0.0, total_h, 0.0),
+            p(wb, total_h, 0.0),
+            p(wb, total_h, h),
+            p(0.0, total_h, h),
+        ],
+        back_wall_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Right wall of section A (x=wa, y=0 to la)
+    painter.add(egui::Shape::convex_polygon(
+        vec![p(wa, 0.0, 0.0), p(wa, la, 0.0), p(wa, la, h), p(wa, 0.0, h)],
+        right_wall_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Right wall of section B (x=wb, y=la to total_h)
+    if (wb - wa).abs() > 0.01 {
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                p(wb, la, 0.0),
+                p(wb, total_h, 0.0),
+                p(wb, total_h, h),
+                p(wb, la, h),
+            ],
+            right_wall_color,
+            egui::Stroke::NONE,
+        ));
+    }
+
+    // Step wall (horizontal at y=la from x=wb to x=wa, if different)
+    if wa > wb {
+        painter.add(egui::Shape::convex_polygon(
+            vec![p(wb, la, 0.0), p(wa, la, 0.0), p(wa, la, h), p(wb, la, h)],
+            back_wall_color,
+            egui::Stroke::NONE,
+        ));
+    }
+
+    // Floor outline
+    let outline_pts = vec![
+        p(0.0, 0.0, 0.0),
+        p(wa, 0.0, 0.0),
+        p(wa, la, 0.0),
+        p(wb, la, 0.0),
+        p(wb, total_h, 0.0),
+        p(0.0, total_h, 0.0),
+    ];
+    painter.add(egui::Shape::closed_line(outline_pts, wall_stroke));
+
+    // Vertical edges
+    painter.line_segment([p(wa, 0.0, 0.0), p(wa, 0.0, h)], wall_stroke);
+    painter.line_segment([p(0.0, total_h, 0.0), p(0.0, total_h, h)], wall_stroke);
+    painter.line_segment([p(wb, total_h, 0.0), p(wb, total_h, h)], wall_stroke);
+    painter.line_segment([p(wa, la, 0.0), p(wa, la, h)], wall_stroke);
+    if (wb - wa).abs() > 0.01 {
+        painter.line_segment([p(wb, la, 0.0), p(wb, la, h)], wall_stroke);
+    }
+
+    // Top edges
+    painter.line_segment([p(wa, 0.0, h), p(wa, la, h)], wall_stroke);
+    painter.line_segment([p(wa, la, h), p(wb, la, h)], wall_stroke);
+    painter.line_segment([p(wb, la, h), p(wb, total_h, h)], wall_stroke);
+    painter.line_segment([p(0.0, total_h, h), p(wb, total_h, h)], wall_stroke);
+}
+
+/// Draw an isometric sphere.
+fn draw_iso_sphere(
+    painter: &egui::Painter,
+    radius: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    fill_color: egui::Color32,
+    wall_stroke: egui::Stroke,
+    highlight_color: egui::Color32,
+) {
+    let center = iso_to_screen(radius, radius, radius, scale, offset);
+    let screen_radius = radius * scale * 0.7; // approximate screen radius
+
+    // Filled circle
+    painter.circle_filled(center, screen_radius, fill_color);
+
+    // Highlight crescent (upper-left lighter area)
+    let highlight = egui::Color32::from_rgba_premultiplied(
+        highlight_color.r(),
+        highlight_color.g(),
+        highlight_color.b(),
+        30,
+    );
+    let hl_center = egui::pos2(
+        center.x - screen_radius * 0.2,
+        center.y - screen_radius * 0.2,
+    );
+    painter.circle_filled(hl_center, screen_radius * 0.6, highlight);
+
+    // Outline
+    painter.circle_stroke(center, screen_radius, wall_stroke);
+}
+
+/// Draw an isometric dome (half-sphere on a floor).
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_dome(
+    painter: &egui::Painter,
+    radius: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    floor_color: egui::Color32,
+    fill_color: egui::Color32,
+    wall_stroke: egui::Stroke,
+    edge_color: egui::Color32,
+) {
+    let diameter = radius * 2.0;
+
+    // Floor ellipse
+    draw_iso_ellipse(
+        painter,
+        radius,
+        radius,
+        0.0,
+        radius,
+        scale,
+        offset,
+        egui::Stroke::new(1.5, edge_color),
+        48,
+    );
+
+    // Floor fill (approximation: convex polygon from ellipse points)
+    let floor_pts: Vec<egui::Pos2> = (0..48)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * (i as f32 / 48.0);
+            iso_to_screen(
+                radius + radius * angle.cos(),
+                radius + radius * angle.sin(),
+                0.0,
+                scale,
+                offset,
+            )
+        })
+        .collect();
+    painter.add(egui::Shape::convex_polygon(
+        floor_pts,
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Dome surface: draw upper half arc
+    let center = iso_to_screen(radius, radius, 0.0, scale, offset);
+    let screen_radius = radius * scale * 0.7;
+
+    // Upper dome fill
+    let dome_center = iso_to_screen(radius, radius, radius * 0.5, scale, offset);
+    painter.circle_filled(dome_center, screen_radius * 0.8, fill_color);
+
+    // Upper arc (solid)
+    let n_segs = 32;
+    for i in 0..n_segs {
+        let a0 = std::f32::consts::PI + std::f32::consts::PI * (i as f32 / n_segs as f32);
+        let a1 = std::f32::consts::PI + std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
+        let p0 = egui::pos2(
+            center.x + screen_radius * a0.cos(),
+            center.y + screen_radius * a0.sin(),
+        );
+        let p1 = egui::pos2(
+            center.x + screen_radius * a1.cos(),
+            center.y + screen_radius * a1.sin(),
+        );
+        painter.line_segment([p0, p1], wall_stroke);
+    }
+    // Lower arc (dashed)
+    let dash_stroke = egui::Stroke::new(1.5, edge_color);
+    for i in 0..n_segs {
+        let a0 = std::f32::consts::PI * (i as f32 / n_segs as f32);
+        let a1 = std::f32::consts::PI * ((i + 1) as f32 / n_segs as f32);
+        let p0 = egui::pos2(
+            center.x + screen_radius * a0.cos(),
+            center.y + screen_radius * a0.sin(),
+        );
+        let p1 = egui::pos2(
+            center.x + screen_radius * a1.cos(),
+            center.y + screen_radius * a1.sin(),
+        );
+        if i % 2 == 0 {
+            painter.line_segment([p0, p1], dash_stroke);
+        }
+    }
+
+    // Dimension label
+    let label_pos = iso_to_screen(radius, 0.0, 0.0, scale, offset);
+    painter.text(
+        egui::pos2(label_pos.x, label_pos.y + 14.0),
+        egui::Align2::CENTER_TOP,
+        format!("r={:.1}m ({:.1}m dia)", radius, diameter),
+        egui::FontId::proportional(11.0),
+        edge_color,
+    );
+}
+
+/// Draw an isometric tube (open ends, dashed).
+#[allow(clippy::too_many_arguments)]
+fn draw_iso_tube(
+    painter: &egui::Painter,
+    length: f32,
+    radius: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    floor_color: egui::Color32,
+    wall_color_fill: egui::Color32,
+    wall_stroke: egui::Stroke,
+    edge_color: egui::Color32,
+) {
+    let diameter = radius * 2.0;
+    let p = |x: f32, y: f32, z: f32| iso_to_screen(x, y, z, scale, offset);
+
+    // Back wall approximation
+    let n_segs = 32;
+    let mut back_pts = Vec::with_capacity(n_segs + 2);
+    for i in 0..=n_segs {
+        let angle = std::f32::consts::PI * (i as f32 / n_segs as f32);
+        let cy = radius + radius * angle.cos();
+        let cz = radius * angle.sin();
+        back_pts.push(iso_to_screen(length, cy, cz, scale, offset));
+    }
+    back_pts.push(p(length, diameter, 0.0));
+    back_pts.push(p(length, 0.0, 0.0));
+    painter.add(egui::Shape::convex_polygon(
+        back_pts,
+        wall_color_fill,
+        egui::Stroke::NONE,
+    ));
+
+    // Floor
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            p(0.0, 0.0, 0.0),
+            p(length, 0.0, 0.0),
+            p(length, diameter, 0.0),
+            p(0.0, diameter, 0.0),
+        ],
+        floor_color,
+        egui::Stroke::NONE,
+    ));
+
+    // Long walls (solid)
+    painter.line_segment([p(0.0, 0.0, 0.0), p(length, 0.0, 0.0)], wall_stroke);
+    painter.line_segment(
+        [p(0.0, diameter, 0.0), p(length, diameter, 0.0)],
+        wall_stroke,
+    );
+
+    // Top ridge
+    painter.line_segment(
+        [p(0.0, radius, diameter), p(length, radius, diameter)],
+        wall_stroke,
+    );
+
+    // End cross-sections (dashed ellipses)
+    let dash_stroke = egui::Stroke::new(1.5, edge_color);
+    // Front end (x=0) — dashed
+    let front_pts: Vec<egui::Pos2> = (0..48)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * (i as f32 / 48.0);
+            iso_to_screen(
+                0.0,
+                radius + radius * angle.cos(),
+                radius + radius * angle.sin(),
+                scale,
+                offset,
+            )
+        })
+        .collect();
+    for i in 0..48 {
+        if i % 2 == 0 {
+            painter.line_segment([front_pts[i], front_pts[(i + 1) % 48]], dash_stroke);
+        }
+    }
+    // Back end (x=length) — dashed
+    let back_end_pts: Vec<egui::Pos2> = (0..48)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * (i as f32 / 48.0);
+            iso_to_screen(
+                length,
+                radius + radius * angle.cos(),
+                radius + radius * angle.sin(),
+                scale,
+                offset,
+            )
+        })
+        .collect();
+    for i in 0..48 {
+        if i % 2 == 0 {
+            painter.line_segment([back_end_pts[i], back_end_pts[(i + 1) % 48]], dash_stroke);
+        }
+    }
+}
+
+/// Draw dimension labels along the visible isometric floor edges.
+fn draw_iso_dimension_labels(
+    painter: &egui::Painter,
+    state: &AweUiState,
+    room_l: f32,
+    room_w: f32,
+    scale: f32,
+    offset: egui::Pos2,
+    color: egui::Color32,
+) {
+    let font = egui::FontId::proportional(12.0);
+
+    match state.shape_kind {
+        RoomShapeKind::Box => {
+            // Length along front edge (y=0): midpoint of (0,0,0)-(L,0,0)
+            let mid_front = iso_to_screen(room_l * 0.5, 0.0, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(mid_front.x, mid_front.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{room_l:.1}m"),
+                font.clone(),
+                color,
+            );
+            // Width along left edge (x=0): midpoint of (0,0,0)-(0,W,0)
+            let mid_left = iso_to_screen(0.0, room_w * 0.5, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(mid_left.x - 14.0, mid_left.y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{room_w:.1}m"),
+                font.clone(),
+                color,
+            );
+            // Height along front-right vertical: midpoint of (L,0,0)-(L,0,H)
+            let h = state.room_height;
+            let mid_vert = iso_to_screen(room_l, 0.0, h * 0.5, scale, offset);
+            painter.text(
+                egui::pos2(mid_vert.x + 14.0, mid_vert.y),
+                egui::Align2::LEFT_CENTER,
+                format!("{h:.1}m"),
+                font,
+                color,
+            );
+        }
+        RoomShapeKind::Cylinder => {
+            let mid = iso_to_screen(state.cyl_length * 0.5, 0.0, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(mid.x, mid.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.1}m", state.cyl_length),
+                font.clone(),
+                color,
+            );
+            let side = iso_to_screen(0.0, state.cyl_radius, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(side.x - 14.0, side.y),
+                egui::Align2::RIGHT_CENTER,
+                format!("r={:.1}m", state.cyl_radius),
+                font,
+                color,
+            );
+        }
+        RoomShapeKind::LShape => {
+            let mid = iso_to_screen(room_l * 0.25, 0.0, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(mid.x, mid.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!(
+                    "A:{:.0}x{:.0} B:{:.0}x{:.0}",
+                    state.l_length_a, state.l_width_a, state.l_length_b, state.l_width_b
+                ),
+                egui::FontId::proportional(11.0),
+                color,
+            );
+        }
+        RoomShapeKind::Sphere => {
+            let bottom = iso_to_screen(state.sphere_radius, 0.0, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(bottom.x, bottom.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("r={:.1}m", state.sphere_radius),
+                font,
+                color,
+            );
+        }
+        RoomShapeKind::Dome => {
+            // Handled inside draw_iso_dome
+        }
+        RoomShapeKind::Tube => {
+            let mid = iso_to_screen(state.tube_length * 0.5, 0.0, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(mid.x, mid.y + 14.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.1}m", state.tube_length),
+                font.clone(),
+                color,
+            );
+            let side = iso_to_screen(0.0, state.tube_radius, 0.0, scale, offset);
+            painter.text(
+                egui::pos2(side.x - 14.0, side.y),
+                egui::Align2::RIGHT_CENTER,
+                format!("r={:.1}m", state.tube_radius),
+                font,
+                color,
+            );
+        }
     }
 }
 

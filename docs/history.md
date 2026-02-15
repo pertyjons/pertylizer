@@ -1,5 +1,31 @@
 # Version History
 
+## [0.131.0] - 2026-02-15
+### Changed - Isometrisk 3D AWE-vy med ljudanimationer
+
+**Isometrisk 3D-rendering (cutaway-stil):**
+- Ersätter 2D planritning med isometrisk 3D-vy
+- Cutaway-stil: bakvägg, högervägg och golv synliga, framväggar utelämnade
+- Solid skuggning: golv mörkast, väggar ljusare med alpha-transparens
+- Alla 6 rumsformer renderas isometriskt: Box, Cylinder, L-Shape, Sphere, Dome, Tube
+- Dimensionslabels placerade längs isometriska golvkanter
+
+**Expanderande ljudringar:**
+- Animerade ringar expanderar från källan på golvplanet
+- Ny ring var 0.5s, max 6 samtidiga, minskar i opacity med ålder
+- Ringar ritas som isometriska ellipser (48 punkter)
+- Reflektionsringar spawnas från spegelkällor vid väggar (Box/Tube)
+
+**Animerade reflektionslinjer (marching ants):**
+- Streckade reflektionslinjer animeras med löpande offset
+- Strecken flödar kontinuerligt S → vägg → L
+- Ersätter statiska streckade linjer
+
+**Uppdaterad interaktion:**
+- Drag använder invers isometrisk projektion (screen_to_floor)
+- Markörer (S/L) placeras via iso_to_screen på golvplanet
+- Spatial mapping dots projiceras isometriskt
+
 ## [0.130.0] - 2026-02-15
 ### Changed - AWE-vy: Förbättrad grafisk representation
 
