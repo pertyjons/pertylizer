@@ -786,6 +786,9 @@ fn iso_scale_and_offset(
 }
 
 /// Draw expanding sound rings from the source on the floor plane.
+///
+/// Rings are only spawned when `audio_level > 0` and their intensity
+/// is proportional to the audio level at birth time.
 #[allow(clippy::too_many_arguments)]
 fn draw_sound_rings(
     painter: &egui::Painter,
@@ -798,13 +801,23 @@ fn draw_sound_rings(
     offset: egui::Pos2,
     color: egui::Color32,
     shape_kind: RoomShapeKind,
+    audio_level: f32,
 ) {
+    // No rings when silent
+    if audio_level < 0.005 {
+        return;
+    }
+
     let diag = (room_w * room_w + room_h * room_h).sqrt();
     let max_radius = diag * 0.8;
-    let ring_interval = 0.5; // seconds between new rings
-    let max_age = 2.5; // seconds until ring fades completely
+    // Ring interval inversely proportional to level: louder = more frequent rings
+    let ring_interval = 0.3 + 0.4 * (1.0 - audio_level) as f64;
+    let max_age: f32 = 2.5;
     let max_rings = 6;
     let speed = max_radius / max_age;
+
+    // Base opacity scaled by audio level
+    let level_opacity = audio_level.sqrt();
 
     for i in 0..max_rings {
         let ring_birth = (time / ring_interval).floor() as i64 - i as i64;
@@ -817,10 +830,13 @@ fn draw_sound_rings(
             continue;
         }
         let radius = age * speed;
-        let alpha = ((1.0 - age / max_age) * 80.0) as u8;
+        let alpha = ((1.0 - age / max_age) * 100.0 * level_opacity) as u8;
+        if alpha == 0 {
+            continue;
+        }
         let ring_color =
             egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), alpha);
-        let ring_stroke = egui::Stroke::new(1.5, ring_color);
+        let ring_stroke = egui::Stroke::new(1.0 + level_opacity, ring_color);
         draw_iso_ellipse(
             painter,
             source_x,
@@ -850,7 +866,7 @@ fn draw_sound_rings(
                     let refl_age = age - dist_to_wall / speed;
                     if refl_age > 0.0 && refl_age < max_age {
                         let refl_radius = refl_age * speed * 0.7;
-                        let refl_alpha = ((1.0 - refl_age / max_age) * 40.0) as u8;
+                        let refl_alpha = ((1.0 - refl_age / max_age) * 50.0 * level_opacity) as u8;
                         let refl_color = egui::Color32::from_rgba_premultiplied(
                             color.r(),
                             color.g(),
@@ -858,7 +874,6 @@ fn draw_sound_rings(
                             refl_alpha,
                         );
                         let refl_stroke = egui::Stroke::new(1.0, refl_color);
-                        // Mirror source is the reflection origin
                         let reflect_x = (mx + source_x) * 0.5;
                         let reflect_y = (my + source_y) * 0.5;
                         draw_iso_ellipse(
@@ -895,9 +910,16 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     // Fill background
     painter.rect_filled(rect, 0.0, bg_color);
 
+    // Audio level from engine (drives animations)
+    let (peak_l, peak_r) = handle.peak_meters();
+    let audio_level = peak_l.max(peak_r).clamp(0.0, 1.0);
+    let has_audio = audio_level > 0.005;
+
     // Animated time for rings and marching ants
     let time = ui.input(|i| i.time);
-    ui.ctx().request_repaint();
+    if has_audio {
+        ui.ctx().request_repaint();
+    }
 
     // Room dimensions
     let room_l = state.effective_length().max(0.5);
@@ -927,16 +949,28 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     );
 
     // --- Reflection paths (first-order, Box and Tube only) with marching ants ---
+    // Reflection alpha scales with audio level (dim when silent, bright when loud)
+    let refl_base_alpha = if has_audio {
+        (40.0 + 80.0 * audio_level.sqrt()) as u8
+    } else {
+        40 // dim static lines when silent
+    };
     let reflection_color = egui::Color32::from_rgba_premultiplied(
         wall_color.r() / 2,
         wall_color.g() / 2,
         wall_color.b() / 2,
-        100,
+        refl_base_alpha,
     );
     let reflection_stroke = egui::Stroke::new(1.0, reflection_color);
     let (sx, sy) = (state.source_x, state.source_y);
     let (lx, ly) = (state.listener_x, state.listener_y);
-    let dash_offset = (time * 30.0) as f32;
+    // Marching ants speed proportional to audio level (0 when silent)
+    let dash_speed = if has_audio {
+        30.0 + 60.0 * audio_level as f64
+    } else {
+        0.0
+    };
+    let dash_offset = (time * dash_speed) as f32;
 
     match state.shape_kind {
         RoomShapeKind::Box => {
@@ -1028,7 +1062,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         _ => {}
     }
 
-    // --- Sound rings ---
+    // --- Sound rings (driven by audio level) ---
     draw_sound_rings(
         &painter,
         sx,
@@ -1040,6 +1074,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         offset,
         source_color,
         state.shape_kind,
+        audio_level,
     );
 
     // --- Source marker ---
