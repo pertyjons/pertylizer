@@ -13,7 +13,7 @@ use crate::gui::app::state::AppView;
 use crate::gui::theme::theme;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::presets::awe_presets;
-use synth_awe::{AweParam, Material, NotePositionMapping, RoomShape};
+use synth_awe::{AweParam, AwePreset, Material, NotePositionMapping, RoomShape};
 use synth_engine::{EngineCommand, EngineHandle};
 
 /// Room shape kind for the UI selector.
@@ -66,8 +66,11 @@ pub struct AweUiState {
     pub listener_x: f32,
     pub listener_y: f32,
 
-    // Material index (0=Concrete, 1=Wood, 2=Glass, 3=Metal, 4=Fabric, 5=Tile)
+    // Material index (0=Concrete, 1=Wood, 2=Glass, 3=Metal, 4=Fabric, 5=Tile, 6=Marble,
+    // 7=Ice, 8=Carpet, 9=Water, 10=Void, 11=Prism, 12=Plasma, 13=Membrane, 14=Nanogel)
     pub material_idx: usize,
+    /// Material diffusion override (0.0 - 1.0).
+    pub material_diffusion: f32,
 
     // Mix parameters
     pub dry_wet: f32,
@@ -99,6 +102,7 @@ pub struct AweUiState {
 impl Default for AweUiState {
     fn default() -> Self {
         let snap = synth_awe::AweSnapshot::default();
+        let default_material = material_from_index(0);
         Self {
             shape_kind: RoomShapeKind::Box,
             room_length: 8.0,
@@ -120,6 +124,7 @@ impl Default for AweUiState {
             listener_x: snap.listener_pos[0],
             listener_y: snap.listener_pos[1],
             material_idx: 0,
+            material_diffusion: default_material.diffusion,
             dry_wet: snap.dry_wet,
             early_late: snap.early_late_balance,
             modes_amount: snap.modes_amount,
@@ -173,6 +178,13 @@ impl AweUiState {
         }
     }
 
+    /// Build a `Material` from the current UI state.
+    pub fn current_material(&self) -> Material {
+        let mut material = material_from_index(self.material_idx);
+        material.diffusion = self.material_diffusion.clamp(0.0, 1.0);
+        material
+    }
+
     /// Effective room length for floor plan display.
     fn effective_length(&self) -> f32 {
         self.current_room_shape().length()
@@ -191,7 +203,7 @@ impl AweUiState {
         synth_awe::AweState {
             enabled,
             room,
-            material: material_from_index(self.material_idx),
+            material: self.current_material(),
             spatial_enabled: self.spatial_enabled,
             note_mapping: mapping_from_index(self.note_mapping_idx),
             snapshot: synth_awe::AweSnapshot {
@@ -264,6 +276,7 @@ impl AweUiState {
 
         // Material
         self.material_idx = material_to_index(state.material);
+        self.material_diffusion = state.material.diffusion;
 
         // Spatial
         self.spatial_enabled = state.spatial_enabled;
@@ -293,7 +306,10 @@ impl AweUiState {
     }
 }
 
-const MATERIAL_NAMES: [&str; 6] = ["Concrete", "Wood", "Glass", "Metal", "Fabric", "Tile"];
+const MATERIAL_NAMES: [&str; 15] = [
+    "Concrete", "Wood", "Glass", "Metal", "Fabric", "Tile", "Marmor", "Is", "Matta", "Vatten",
+    "Tomrum", "Prisma", "Plasma", "Membran", "Nanogel",
+];
 
 fn material_from_index(idx: usize) -> Material {
     match idx {
@@ -303,24 +319,50 @@ fn material_from_index(idx: usize) -> Material {
         3 => Material::METAL,
         4 => Material::FABRIC,
         5 => Material::TILE,
+        6 => Material::MARBLE,
+        7 => Material::ICE,
+        8 => Material::CARPET,
+        9 => Material::WATER,
+        10 => Material::VOID,
+        11 => Material::PRISM,
+        12 => Material::PLASMA,
+        13 => Material::MEMBRANE,
+        14 => Material::NANOGEL,
         _ => Material::CONCRETE,
     }
 }
 
 fn material_to_index(mat: Material) -> usize {
-    // Match by absorption_mid as a simple discriminant
-    const MATERIALS: [Material; 6] = [
+    const MATERIALS: [Material; 15] = [
         Material::CONCRETE,
         Material::WOOD,
         Material::GLASS,
         Material::METAL,
         Material::FABRIC,
         Material::TILE,
+        Material::MARBLE,
+        Material::ICE,
+        Material::CARPET,
+        Material::WATER,
+        Material::VOID,
+        Material::PRISM,
+        Material::PLASMA,
+        Material::MEMBRANE,
+        Material::NANOGEL,
     ];
-    MATERIALS
-        .iter()
-        .position(|m| (m.absorption_mid - mat.absorption_mid).abs() < 0.001)
-        .unwrap_or(0)
+    let mut best_idx = 0;
+    let mut best_score = f32::MAX;
+    for (idx, m) in MATERIALS.iter().enumerate() {
+        let score = (m.absorption_low - mat.absorption_low).abs()
+            + (m.absorption_mid - mat.absorption_mid).abs()
+            + (m.absorption_high - mat.absorption_high).abs()
+            + (m.diffusion - mat.diffusion).abs() * 0.25;
+        if score < best_score {
+            best_score = score;
+            best_idx = idx;
+        }
+    }
+    best_idx
 }
 
 const LFO_TARGET_NAMES: [&str; 13] = [
@@ -376,6 +418,10 @@ fn lfo_target_to_index(target: AweLfoTarget) -> usize {
     }
 }
 
+fn is_extreme_preset(preset: &AwePreset) -> bool {
+    preset.name.starts_with("EXT:")
+}
+
 /// Draw the AWE view.
 #[allow(clippy::too_many_lines)]
 pub fn draw_awe_view(
@@ -414,6 +460,15 @@ pub fn draw_awe_view(
 
             // Preset selector
             let presets = awe_presets();
+            let mut standard_indices = Vec::new();
+            let mut extreme_indices = Vec::new();
+            for (i, preset) in presets.iter().enumerate() {
+                if is_extreme_preset(preset) {
+                    extreme_indices.push(i);
+                } else {
+                    standard_indices.push(i);
+                }
+            }
             let preset_label = ui_state
                 .selected_preset
                 .and_then(|i| presets.get(i))
@@ -422,14 +477,35 @@ pub fn draw_awe_view(
             egui::ComboBox::from_id_salt("awe_preset")
                 .selected_text(preset_label)
                 .show_ui(ui, |ui| {
-                    for (i, preset) in presets.iter().enumerate() {
-                        let selected = ui_state.selected_preset == Some(i);
-                        if ui
-                            .selectable_label(selected, preset.name)
-                            .on_hover_text(preset.description)
-                            .clicked()
-                        {
-                            new_preset = Some(i);
+                    if !standard_indices.is_empty() {
+                        ui.label("Standard");
+                        for i in &standard_indices {
+                            if let Some(preset) = presets.get(*i) {
+                                let selected = ui_state.selected_preset == Some(*i);
+                                if ui
+                                    .selectable_label(selected, preset.name)
+                                    .on_hover_text(preset.description)
+                                    .clicked()
+                                {
+                                    new_preset = Some(*i);
+                                }
+                            }
+                        }
+                    }
+                    if !extreme_indices.is_empty() {
+                        ui.separator();
+                        ui.label("Extreme");
+                        for i in &extreme_indices {
+                            if let Some(preset) = presets.get(*i) {
+                                let selected = ui_state.selected_preset == Some(*i);
+                                if ui
+                                    .selectable_label(selected, preset.name)
+                                    .on_hover_text(preset.description)
+                                    .clicked()
+                                {
+                                    new_preset = Some(*i);
+                                }
+                            }
                         }
                     }
                 });
@@ -918,6 +994,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     ui.add_space(4.0);
 
     let prev_material = state.material_idx;
+    let prev_diffusion = state.material_diffusion;
     egui::ComboBox::from_label("Wall")
         .selected_text(MATERIAL_NAMES[state.material_idx])
         .show_ui(ui, |ui| {
@@ -927,9 +1004,29 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         });
 
     if state.material_idx != prev_material {
+        state.selected_preset = None;
+        let base = material_from_index(state.material_idx);
+        state.material_diffusion = base.diffusion;
         handle.send(EngineCommand::SetAweParameter {
-            param: AweParam::Material(material_from_index(state.material_idx)),
+            param: AweParam::Material(state.current_material()),
         });
+    }
+
+    ui.horizontal(|ui| {
+        ui.label("Diffusion:");
+        if ui
+            .add(egui::Slider::new(&mut state.material_diffusion, 0.0..=1.0))
+            .changed()
+        {
+            state.selected_preset = None;
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::Material(state.current_material()),
+            });
+        }
+    });
+
+    if state.material_diffusion != prev_diffusion && state.material_idx == prev_material {
+        state.selected_preset = None;
     }
 
     ui.separator();

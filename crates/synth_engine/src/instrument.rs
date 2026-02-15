@@ -1081,6 +1081,9 @@ impl Instrument {
         // Process through effect chain (modifies effect_buffer in place)
         self.effect_chain.process(&mut self.effect_buffer, context);
 
+        // Feed post-effect signal to per-instrument visualizers
+        self.effect_chain.process_visualizers(&self.effect_buffer);
+
         // Get instrument's stereo gain (includes volume and pan)
         let (left_gain, right_gain) = self.stereo_gain();
         let left_gain = left_gain.as_f32();

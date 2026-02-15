@@ -308,6 +308,78 @@ impl Material {
         diffusion: 0.1,
     };
 
+    /// Polished marble.
+    pub const MARBLE: Self = Self {
+        absorption_low: 0.02,
+        absorption_mid: 0.03,
+        absorption_high: 0.05,
+        diffusion: 0.2,
+    };
+
+    /// Ice / frozen surfaces.
+    pub const ICE: Self = Self {
+        absorption_low: 0.02,
+        absorption_mid: 0.04,
+        absorption_high: 0.08,
+        diffusion: 0.15,
+    };
+
+    /// Thick carpet.
+    pub const CARPET: Self = Self {
+        absorption_low: 0.25,
+        absorption_mid: 0.55,
+        absorption_high: 0.85,
+        diffusion: 0.8,
+    };
+
+    /// Water-lined chamber.
+    pub const WATER: Self = Self {
+        absorption_low: 0.06,
+        absorption_mid: 0.12,
+        absorption_high: 0.40,
+        diffusion: 0.2,
+    };
+
+    /// Perfectly reflective void.
+    pub const VOID: Self = Self {
+        absorption_low: 0.0,
+        absorption_mid: 0.0,
+        absorption_high: 0.0,
+        diffusion: 0.0,
+    };
+
+    /// Prism-like surface with extreme HF absorption and high diffusion.
+    pub const PRISM: Self = Self {
+        absorption_low: 0.02,
+        absorption_mid: 0.08,
+        absorption_high: 0.90,
+        diffusion: 0.95,
+    };
+
+    /// Plasma sheen with strong LF damping and bright tail.
+    pub const PLASMA: Self = Self {
+        absorption_low: 0.30,
+        absorption_mid: 0.18,
+        absorption_high: 0.85,
+        diffusion: 0.9,
+    };
+
+    /// Membrane walls: absorbs lows more than highs (non-physical).
+    pub const MEMBRANE: Self = Self {
+        absorption_low: 0.75,
+        absorption_mid: 0.22,
+        absorption_high: 0.05,
+        diffusion: 0.4,
+    };
+
+    /// Nanogel: ultra-absorbent but highly diffusive.
+    pub const NANOGEL: Self = Self {
+        absorption_low: 0.05,
+        absorption_mid: 0.50,
+        absorption_high: 0.95,
+        diffusion: 1.0,
+    };
+
     /// Average absorption across all frequency bands.
     #[must_use]
     pub fn average_absorption(self) -> f32 {

@@ -12,9 +12,9 @@ use synth_dsp::DelayLine;
 const NUM_MODES: usize = 3;
 
 /// Maximum delay line size in samples.
-/// At 96 kHz the lowest mode we'd model is ~20 Hz -> 96000/20 = 4800 samples.
-/// We pre-allocate 5000 to have some headroom.
-const MAX_DELAY_SAMPLES: usize = 5000;
+/// At 96 kHz the lowest mode for a 150 m room is ~2.3 Hz -> 96000/2.3 ≈ 42000.
+/// We pre-allocate 48000 to cover large-room presets with headroom.
+const MAX_DELAY_SAMPLES: usize = 48_000;
 
 /// A single comb filter for one axial room mode.
 ///

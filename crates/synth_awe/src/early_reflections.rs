@@ -12,11 +12,17 @@ use crate::room::SPEED_OF_SOUND;
 const MAX_EARLY_TAPS: usize = 6;
 
 /// Maximum delay in seconds for ISM calculations.
-/// Covers rooms up to roughly 30 m diagonal at 96 kHz.
-const MAX_DELAY_SECONDS: f32 = 0.15;
+/// Covers rooms up to ~170 m diagonal (mirror source at ~340 m / 343 m/s ≈ 1 s).
+const MAX_DELAY_SECONDS: f32 = 1.0;
 
-/// Maximum delay line size in samples (0.15 s at 96 kHz).
-const MAX_DELAY_SAMPLES: usize = 14_400;
+/// Maximum delay line size in samples (1.0 s at 96 kHz).
+const MAX_DELAY_SAMPLES: usize = 96_000;
+
+/// Maximum per-tap jitter in seconds for diffusion.
+const MAX_JITTER_SECONDS: f32 = 0.003;
+
+/// Deterministic jitter pattern per tap (scaled by diffusion).
+const JITTER_PATTERN: [f32; MAX_EARLY_TAPS] = [-0.9, 0.7, -0.4, 1.0, -0.6, 0.3];
 
 /// Minimum distance (meters) to prevent infinite gain when source
 /// and listener collapse to the same position as a mirror.
@@ -98,6 +104,7 @@ impl EarlyReflections {
     /// * `source_pos`  - Sound source position `[x, y, z]` in meters.
     /// * `listener_pos` - Listener position `[x, y, z]` in meters.
     /// * `absorption`  - Average material absorption coefficient (0.0--1.0).
+    /// * `diffusion`   - Material diffusion (0.0--1.0).
     /// * `sample_rate`  - Current sample rate in Hz.
     #[allow(clippy::too_many_arguments)]
     pub fn update_geometry(
@@ -108,6 +115,7 @@ impl EarlyReflections {
         source_pos: [f32; 3],
         listener_pos: [f32; 3],
         absorption: f32,
+        diffusion: f32,
         sample_rate: f32,
     ) {
         let [sx, sy, sz] = source_pos;
@@ -134,6 +142,8 @@ impl EarlyReflections {
         let max_delay = MAX_DELAY_SECONDS * sample_rate;
         let reflection_coeff = 1.0 - absorption.clamp(0.0, 0.99);
         let damping = 0.3 + absorption.clamp(0.0, 1.0) * 0.5;
+        let diffusion = diffusion.clamp(0.0, 1.0);
+        let jitter_max = MAX_JITTER_SECONDS * sample_rate;
 
         for i in 0..MAX_EARLY_TAPS {
             let [mx, my, mz] = mirrors[i];
@@ -142,17 +152,20 @@ impl EarlyReflections {
             let dz = lz - mz;
             let distance = (dx * dx + dy * dy + dz * dz).sqrt().max(MIN_DISTANCE);
 
-            let delay = (distance / SPEED_OF_SOUND) * sample_rate;
+            let jitter = JITTER_PATTERN[i] * diffusion * jitter_max;
+            let delay = (distance / SPEED_OF_SOUND) * sample_rate + jitter;
             let delay_clamped = delay.clamp(1.0, max_delay);
 
             let total_gain = (1.0 / distance) * reflection_coeff;
 
             // Pan based on X-axis offset between mirror source and listener.
-            let pan = if room_length > 0.0 {
+            let mut pan = if room_length > 0.0 {
                 ((mx - lx) / room_length).clamp(-1.0, 1.0)
             } else {
                 0.0
             };
+            // Diffusion reduces directional cues.
+            pan *= 1.0 - diffusion * 0.6;
 
             self.taps[i].delay_samples = delay_clamped;
             self.taps[i].gain_left = (1.0 - pan) * 0.5 * total_gain;
@@ -229,6 +242,7 @@ mod tests {
             [4.0, 2.5, 1.5],
             [2.0, 2.5, 1.5],
             0.2,
+            0.0,
             sample_rate,
         );
 
@@ -261,6 +275,7 @@ mod tests {
             [5.0, 3.0, 1.5],
             [5.0, 3.0, 1.5],
             0.1,
+            0.0,
             sample_rate,
         );
 
@@ -291,6 +306,7 @@ mod tests {
             [4.0, 2.5, 1.5],
             [2.0, 2.5, 1.5],
             0.2,
+            0.0,
             48000.0,
         );
 
@@ -319,6 +335,7 @@ mod tests {
             [4.0, 2.5, 1.5],
             [2.0, 2.5, 1.5],
             0.1,
+            0.0,
             48000.0,
         );
         er_high.update_geometry(
@@ -328,6 +345,7 @@ mod tests {
             [4.0, 2.5, 1.5],
             [2.0, 2.5, 1.5],
             0.9,
+            0.0,
             48000.0,
         );
 
@@ -348,6 +366,7 @@ mod tests {
             [5.0, 3.0, 1.5],
             [9.0, 3.0, 1.5],
             0.2,
+            0.0,
             48000.0,
         );
         // Listener far from the +x wall.
@@ -358,6 +377,7 @@ mod tests {
             [5.0, 3.0, 1.5],
             [1.0, 3.0, 1.5],
             0.2,
+            0.0,
             48000.0,
         );
 
@@ -394,6 +414,7 @@ mod tests {
             2.0,
             [0.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
+            0.0,
             0.0,
             48000.0,
         );

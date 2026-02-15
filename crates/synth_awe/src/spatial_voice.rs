@@ -262,6 +262,7 @@ impl SpatialVoicePool {
         room_height: f32,
         listener_pos: [f32; 3],
         absorption: f32,
+        diffusion: f32,
         sample_rate: f32,
     ) {
         let slot = &mut self.slots[idx];
@@ -277,6 +278,7 @@ impl SpatialVoicePool {
             pos,
             listener_pos,
             absorption,
+            diffusion,
             sample_rate,
         );
 

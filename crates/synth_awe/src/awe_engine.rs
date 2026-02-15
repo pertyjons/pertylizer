@@ -30,6 +30,10 @@ pub struct AweEngine {
     snapshot: AweSnapshot,
     cached_sample_rate: f32,
 
+    // Base values before LFO modulation (set by user/presets, never by LFOs)
+    base_room: RoomShape,
+    base_snapshot: AweSnapshot,
+
     // DSP processors
     early_reflections: EarlyReflections,
     fdn: FdnCore,
@@ -67,12 +71,16 @@ impl AweEngine {
     #[must_use]
     pub fn new() -> Self {
         let snapshot = AweSnapshot::default();
+        let room = RoomShape::default();
         Self {
             enabled: false,
-            room: RoomShape::default(),
+            room,
             material: Material::default(),
             snapshot,
             cached_sample_rate: 48000.0,
+
+            base_room: room,
+            base_snapshot: snapshot,
 
             early_reflections: EarlyReflections::new(),
             fdn: FdnCore::new(),
@@ -126,6 +134,7 @@ impl AweEngine {
 
         // Pre-compute FDN parameters from room geometry
         let absorption = self.material.average_absorption();
+        let material_diffusion = self.material.diffusion.clamp(0.0, 1.0);
         let rt60 = self.calculate_rt60();
 
         // Freq warp: bass hears bigger room (more LP damping = bass reverberates more)
@@ -137,7 +146,7 @@ impl AweEngine {
         let feedback_gain =
             (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
         let hp_coeff = 0.95;
-        let diffusion = 0.5;
+        let diffusion = (0.35 + material_diffusion * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
         let sample_rate_recip = 1.0 / sample_rate;
 
@@ -242,6 +251,7 @@ impl AweEngine {
     pub fn set_param(&mut self, param: AweParam) {
         match param {
             AweParam::RoomShape(shape) => {
+                self.base_room = shape;
                 self.room = shape;
                 self.geometry_dirty = true;
             }
@@ -250,26 +260,45 @@ impl AweEngine {
                 self.geometry_dirty = true;
             }
             AweParam::SourcePos(pos) => {
+                self.base_snapshot.source_pos = pos;
                 self.snapshot.source_pos = pos;
                 self.geometry_dirty = true;
             }
             AweParam::ListenerPos(pos) => {
+                self.base_snapshot.listener_pos = pos;
                 self.snapshot.listener_pos = pos;
                 self.geometry_dirty = true;
             }
-            AweParam::DryWet(v) => self.snapshot.dry_wet = v,
-            AweParam::EarlyLateBalance(v) => self.snapshot.early_late_balance = v,
+            AweParam::DryWet(v) => {
+                self.base_snapshot.dry_wet = v;
+                self.snapshot.dry_wet = v;
+            }
+            AweParam::EarlyLateBalance(v) => {
+                self.base_snapshot.early_late_balance = v;
+                self.snapshot.early_late_balance = v;
+            }
             AweParam::ModesAmount(v) => {
+                self.base_snapshot.modes_amount = v;
                 self.snapshot.modes_amount = v;
                 self.room_modes.set_amount(v);
             }
-            AweParam::FreqWarp(v) => self.snapshot.freq_warp = v,
-            AweParam::ResonanceBoost(v) => self.snapshot.resonance_boost = v,
+            AweParam::FreqWarp(v) => {
+                self.base_snapshot.freq_warp = v;
+                self.snapshot.freq_warp = v;
+            }
+            AweParam::ResonanceBoost(v) => {
+                self.base_snapshot.resonance_boost = v;
+                self.snapshot.resonance_boost = v;
+            }
             AweParam::TailStretch(v) => {
+                self.base_snapshot.tail_stretch = v;
                 self.snapshot.tail_stretch = v;
                 self.geometry_dirty = true;
             }
-            AweParam::PortalAmount(v) => self.snapshot.portal_amount = v,
+            AweParam::PortalAmount(v) => {
+                self.base_snapshot.portal_amount = v;
+                self.snapshot.portal_amount = v;
+            }
             AweParam::Enabled(v) => self.enabled = v,
             AweParam::SpatialEnabled(v) => {
                 self.spatial_enabled = v;
@@ -335,6 +364,7 @@ impl AweEngine {
 
     /// Apply a batch snapshot of numeric parameters.
     pub fn apply_snapshot(&mut self, snapshot: AweSnapshot) {
+        self.base_snapshot = snapshot;
         self.snapshot = snapshot;
         self.spatial_enabled = snapshot.spatial_enabled;
         self.note_mapping = snapshot.note_mapping;
@@ -449,6 +479,7 @@ impl AweEngine {
         let room_width = self.room.width();
         let room_height = self.room.height();
         let absorption = self.material.average_absorption();
+        let diffusion = self.material.diffusion.clamp(0.0, 1.0);
         let listener = [
             self.snapshot.listener_pos[0].clamp(0.1, room_length - 0.1),
             self.snapshot.listener_pos[1].clamp(0.1, room_width - 0.1),
@@ -472,6 +503,7 @@ impl AweEngine {
                 room_height,
                 listener,
                 absorption,
+                diffusion,
                 sample_rate,
             );
         }
@@ -487,7 +519,8 @@ impl AweEngine {
         let feedback_gain =
             (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
         let hp_coeff = 0.95;
-        let diffusion = 0.5;
+        let material_diffusion = self.material.diffusion.clamp(0.0, 1.0);
+        let diffusion = (0.35 + material_diffusion * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
         let sample_rate_recip = 1.0 / sample_rate;
 
@@ -603,12 +636,37 @@ impl AweEngine {
     // --- Internal helpers ---
 
     /// Advance LFOs and apply their modulation to snapshot parameters.
+    ///
+    /// Restores base values first, then applies all LFO offsets so modulation
+    /// oscillates around the user-set values rather than drifting.
     fn update_lfos(&mut self, block_size: usize, sample_rate: f32) {
         let lfo1_val = self.lfo1.advance(block_size, sample_rate);
         let lfo2_val = self.lfo2.advance(block_size, sample_rate);
         let lfo3_val = self.lfo3.advance(block_size, sample_rate);
         let lfo4_val = self.lfo4.advance(block_size, sample_rate);
 
+        let any_active = lfo1_val.abs() > f32::EPSILON
+            || lfo2_val.abs() > f32::EPSILON
+            || lfo3_val.abs() > f32::EPSILON
+            || lfo4_val.abs() > f32::EPSILON;
+
+        if !any_active {
+            return;
+        }
+
+        // Restore base values before applying LFO offsets
+        self.room = self.base_room;
+        self.snapshot.source_pos = self.base_snapshot.source_pos;
+        self.snapshot.listener_pos = self.base_snapshot.listener_pos;
+        self.snapshot.dry_wet = self.base_snapshot.dry_wet;
+        self.snapshot.freq_warp = self.base_snapshot.freq_warp;
+        self.snapshot.early_late_balance = self.base_snapshot.early_late_balance;
+        self.snapshot.modes_amount = self.base_snapshot.modes_amount;
+        self.snapshot.resonance_boost = self.base_snapshot.resonance_boost;
+        self.snapshot.tail_stretch = self.base_snapshot.tail_stretch;
+        self.snapshot.portal_amount = self.base_snapshot.portal_amount;
+
+        // Apply all LFO offsets from the restored base
         self.apply_lfo_modulation(self.lfo1.target(), lfo1_val);
         self.apply_lfo_modulation(self.lfo2.target(), lfo2_val);
         self.apply_lfo_modulation(self.lfo3.target(), lfo3_val);
@@ -777,6 +835,7 @@ impl AweEngine {
             source,
             listener,
             absorption,
+            self.material.diffusion,
             sample_rate,
         );
 

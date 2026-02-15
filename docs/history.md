@@ -1,5 +1,39 @@
 # Version History
 
+## [0.128.0] - 2026-02-15
+### Added - AWE: Nya material, fler presets, diffusion & LFO-stabilitet
+
+**9 nya material:**
+- Marble, Ice, Carpet, Water, Void, Prism, Plasma, Membrane, Nanogel.
+- Kreativa/icke-fysiska material (Void, Prism, Plasma, Membrane, Nanogel) för extrema ljuddesigner.
+
+**36 presets (upp från 14):**
+- 22 nya presets: bl.a. Basaltklyfta, Aurorahall, Gravitationstunnel, Regnrum, Svävande Kör, Spegelplan, Kristallvalv.
+- 6 "EXT:"-presets med extrema material: Singularitet, Plasmastorm, Prismaspiral, Membranhåla, Nanodimma, Antigrav.
+- Befintliga presets finjusterade (realistiskare dimensioner och positioner).
+- Preset-menyn uppdelad i Standard / Extreme-sektioner.
+
+**Materialdiffusion i DSP:**
+- `Material::diffusion` påverkar nu FDN-diffusion (0.35 + diffusion × 0.55).
+- Tidiga reflektioner: per-tap jitter baserat på diffusion samt reducerade riktningscues.
+- Delay-buffert utökad till 1.0 s (stöd för rum upp till ~170 m).
+
+**LFO-stabilitet (base value tracking):**
+- `base_room` och `base_snapshot` sparar användarens inställda värden.
+- LFO:er återställer basvärden före varje modulations-pass — eliminerar drift.
+
+**Buffertförstoringar:**
+- FDN: pre-allokering ×48 (från ×32) för stora rum med tail stretch.
+- Room modes: max delay 48 000 samples (från 5 000).
+
+**GUI:**
+- 15 material i materialväljaren (från 6).
+- Bättre material-matchning med flerbands-jämförelse.
+
+**Övrigt:**
+- `Instrument::process_visualizers()` anropas efter effektkedjan.
+- Borttagen `docs/AWE-Implementation-Review.md`.
+
 ## [0.127.0] - 2026-02-15
 ### Added - AWE: Nya rumsformer + Preset-meny
 

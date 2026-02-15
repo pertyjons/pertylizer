@@ -66,10 +66,10 @@ pub(crate) struct FdnChannel {
 impl FdnChannel {
     fn new(base_delay: usize, lfo_rate: f32) -> Self {
         // Pre-allocate worst-case buffer to prevent heap allocation in resize()
-        // on the audio thread. Factor 32 covers: sample_rate_scale ≈ 2.18 (96 kHz)
-        // × effective room_scale up to ~14.7 (large rooms with tail_stretch).
+        // on the audio thread. Factor 48 covers: sample_rate_scale ≈ 2.18 (96 kHz)
+        // × effective room_scale up to ~22 (large rooms like 150m Tube with tail_stretch 3.5).
         // If exceeded, delay is clamped rather than allocating.
-        let max_size = base_delay * 32 + 16;
+        let max_size = base_delay * 48 + 16;
         Self {
             buffer: vec![0.0; max_size],
             write_index: 0,
