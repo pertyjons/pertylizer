@@ -65,9 +65,11 @@ pub(crate) struct FdnChannel {
 
 impl FdnChannel {
     fn new(base_delay: usize, lfo_rate: f32) -> Self {
-        // Allocate enough for the maximum possible delay (room_size=1.0 at high sample rates)
-        // We use 2x base delay as a safe maximum, plus modulation headroom
-        let max_size = base_delay * 3 + 16;
+        // Pre-allocate worst-case buffer to prevent heap allocation in resize()
+        // on the audio thread. Factor 32 covers: sample_rate_scale ≈ 2.18 (96 kHz)
+        // × effective room_scale up to ~14.7 (large rooms with tail_stretch).
+        // If exceeded, delay is clamped rather than allocating.
+        let max_size = base_delay * 32 + 16;
         Self {
             buffer: vec![0.0; max_size],
             write_index: 0,
@@ -79,13 +81,12 @@ impl FdnChannel {
         }
     }
 
-    /// Resize the delay buffer for a new sample rate.
+    /// Set the delay length, clamping to pre-allocated buffer capacity (RT-safe: no allocation).
     pub(crate) fn resize(&mut self, new_delay: usize) {
-        self.delay_samples = new_delay;
-        let required = new_delay * 3 + 16;
-        if self.buffer.len() < required {
-            self.buffer.resize(required, 0.0);
-        }
+        // Clamp delay to fit within pre-allocated buffer.
+        // Buffer needs delay_samples + MAX_MOD_DEPTH_SAMPLES + 2 for interpolated reads.
+        let max_delay = self.buffer.len().saturating_sub(6);
+        self.delay_samples = new_delay.min(max_delay).max(1);
         // Ensure write_index is valid
         if self.write_index >= self.buffer.len() {
             self.write_index = 0;

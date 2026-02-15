@@ -395,6 +395,14 @@ impl AweEngine {
         self.material
     }
 
+    /// Mark geometry as dirty so DSP parameters are recalculated on next process().
+    ///
+    /// Call this when sample rate changes or other external state invalidates
+    /// the cached geometry-dependent DSP parameters.
+    pub fn mark_geometry_dirty(&mut self) {
+        self.geometry_dirty = true;
+    }
+
     /// Check if per-voice spatial is enabled.
     #[must_use]
     pub fn spatial_enabled(&self) -> bool {
@@ -614,22 +622,64 @@ impl AweEngine {
         }
         match target {
             AweLfoTarget::RoomLength => {
-                let base = self.room.length();
-                let modulated = (base + value * 2.0).max(1.0);
-                self.room = RoomShape::Box {
-                    length: modulated,
-                    width: self.room.width(),
-                    height: self.room.height(),
+                self.room = match self.room {
+                    RoomShape::Box {
+                        length,
+                        width,
+                        height,
+                    } => RoomShape::Box {
+                        length: (length + value * 2.0).max(1.0),
+                        width,
+                        height,
+                    },
+                    RoomShape::Cylinder { radius, length } => RoomShape::Cylinder {
+                        radius,
+                        length: (length + value * 2.0).max(1.0),
+                    },
+                    RoomShape::LShape {
+                        length_a,
+                        width_a,
+                        length_b,
+                        width_b,
+                        height,
+                    } => RoomShape::LShape {
+                        length_a: (length_a + value).max(1.0),
+                        width_a,
+                        length_b: (length_b + value).max(1.0),
+                        width_b,
+                        height,
+                    },
                 };
                 self.geometry_dirty = true;
             }
             AweLfoTarget::RoomWidth => {
-                let base = self.room.width();
-                let modulated = (base + value * 2.0).max(1.0);
-                self.room = RoomShape::Box {
-                    length: self.room.length(),
-                    width: modulated,
-                    height: self.room.height(),
+                self.room = match self.room {
+                    RoomShape::Box {
+                        length,
+                        width,
+                        height,
+                    } => RoomShape::Box {
+                        length,
+                        width: (width + value * 2.0).max(1.0),
+                        height,
+                    },
+                    RoomShape::Cylinder { radius, length } => RoomShape::Cylinder {
+                        radius: (radius + value).max(0.5),
+                        length,
+                    },
+                    RoomShape::LShape {
+                        length_a,
+                        width_a,
+                        length_b,
+                        width_b,
+                        height,
+                    } => RoomShape::LShape {
+                        length_a,
+                        width_a: (width_a + value).max(1.0),
+                        length_b,
+                        width_b: (width_b + value).max(1.0),
+                        height,
+                    },
                 };
                 self.geometry_dirty = true;
             }

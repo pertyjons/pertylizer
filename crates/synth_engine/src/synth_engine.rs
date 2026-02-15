@@ -1748,6 +1748,8 @@ impl AudioProcessor for SynthEngine {
         self.metering.set_sample_rate(self.sample_rate);
         self.sequencer
             .set_sample_rate(synth_core::SampleRate::new(self.sample_rate));
+        // AWE delay lines depend on sample rate — recalculate on next process()
+        self.awe_engine.mark_geometry_dirty();
     }
 
     fn on_stream_stop(&mut self) {
