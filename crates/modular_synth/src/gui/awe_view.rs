@@ -12,6 +12,7 @@ use eframe::egui;
 use crate::gui::app::state::AppView;
 use crate::gui::theme::theme;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
+use synth_awe::presets::awe_presets;
 use synth_awe::{AweParam, Material, NotePositionMapping, RoomShape};
 use synth_engine::{EngineCommand, EngineHandle};
 
@@ -21,9 +22,12 @@ pub enum RoomShapeKind {
     Box,
     Cylinder,
     LShape,
+    Sphere,
+    Dome,
+    Tube,
 }
 
-const SHAPE_NAMES: [&str; 3] = ["Box", "Cylinder", "L-Shape"];
+const SHAPE_NAMES: [&str; 6] = ["Box", "Cylinder", "L-Shape", "Sphere", "Dome", "Tube"];
 
 /// UI state for the AWE view, stored in SynthApp.
 pub struct AweUiState {
@@ -45,6 +49,16 @@ pub struct AweUiState {
     pub l_length_b: f32,
     pub l_width_b: f32,
     pub l_height: f32,
+
+    // Sphere dimensions
+    pub sphere_radius: f32,
+
+    // Dome dimensions
+    pub dome_radius: f32,
+
+    // Tube dimensions
+    pub tube_radius: f32,
+    pub tube_length: f32,
 
     // Positions (x, y only — z is fixed for floor plan)
     pub source_x: f32,
@@ -74,6 +88,9 @@ pub struct AweUiState {
     pub spatial_enabled: bool,
     pub note_mapping_idx: usize,
 
+    // Preset selection (None = custom / manual)
+    pub selected_preset: Option<usize>,
+
     // Drag state
     pub dragging_source: bool,
     pub dragging_listener: bool,
@@ -82,48 +99,22 @@ pub struct AweUiState {
 impl Default for AweUiState {
     fn default() -> Self {
         let snap = synth_awe::AweSnapshot::default();
-        let cyl = RoomShape::DEFAULT_CYLINDER;
-        let l = RoomShape::DEFAULT_LSHAPE;
         Self {
             shape_kind: RoomShapeKind::Box,
             room_length: 8.0,
             room_width: 5.0,
             room_height: 3.0,
-            cyl_radius: if let RoomShape::Cylinder { radius, .. } = cyl {
-                radius
-            } else {
-                1.0
-            },
-            cyl_length: if let RoomShape::Cylinder { length, .. } = cyl {
-                length
-            } else {
-                20.0
-            },
-            l_length_a: if let RoomShape::LShape { length_a, .. } = l {
-                length_a
-            } else {
-                8.0
-            },
-            l_width_a: if let RoomShape::LShape { width_a, .. } = l {
-                width_a
-            } else {
-                5.0
-            },
-            l_length_b: if let RoomShape::LShape { length_b, .. } = l {
-                length_b
-            } else {
-                6.0
-            },
-            l_width_b: if let RoomShape::LShape { width_b, .. } = l {
-                width_b
-            } else {
-                4.0
-            },
-            l_height: if let RoomShape::LShape { height, .. } = l {
-                height
-            } else {
-                3.0
-            },
+            cyl_radius: 1.0,
+            cyl_length: 20.0,
+            l_length_a: 8.0,
+            l_width_a: 5.0,
+            l_length_b: 6.0,
+            l_width_b: 4.0,
+            l_height: 3.0,
+            sphere_radius: 5.0,
+            dome_radius: 6.0,
+            tube_radius: 1.5,
+            tube_length: 30.0,
             source_x: snap.source_pos[0],
             source_y: snap.source_pos[1],
             listener_x: snap.listener_pos[0],
@@ -142,6 +133,7 @@ impl Default for AweUiState {
             lfo4: snap.lfo4,
             spatial_enabled: false,
             note_mapping_idx: 0,
+            selected_preset: None,
             dragging_source: false,
             dragging_listener: false,
         }
@@ -168,6 +160,16 @@ impl AweUiState {
                 width_b: self.l_width_b,
                 height: self.l_height,
             },
+            RoomShapeKind::Sphere => RoomShape::Sphere {
+                radius: self.sphere_radius,
+            },
+            RoomShapeKind::Dome => RoomShape::Dome {
+                radius: self.dome_radius,
+            },
+            RoomShapeKind::Tube => RoomShape::Tube {
+                radius: self.tube_radius,
+                length: self.tube_length,
+            },
         }
     }
 
@@ -184,9 +186,11 @@ impl AweUiState {
     /// Build a full serializable `AweState` from the current UI state.
     #[must_use]
     pub fn to_awe_state(&self, enabled: bool) -> synth_awe::AweState {
+        let room = self.current_room_shape();
+        let half_height = room.height() * 0.5;
         synth_awe::AweState {
             enabled,
-            room: self.current_room_shape(),
+            room,
             material: material_from_index(self.material_idx),
             spatial_enabled: self.spatial_enabled,
             note_mapping: mapping_from_index(self.note_mapping_idx),
@@ -198,8 +202,8 @@ impl AweUiState {
                 resonance_boost: self.resonance_boost,
                 tail_stretch: self.tail_stretch,
                 portal_amount: self.portal_amount,
-                source_pos: [self.source_x, self.source_y, self.room_height * 0.5],
-                listener_pos: [self.listener_x, self.listener_y, self.room_height * 0.5],
+                source_pos: [self.source_x, self.source_y, half_height],
+                listener_pos: [self.listener_x, self.listener_y, half_height],
                 spatial_enabled: self.spatial_enabled,
                 note_mapping: mapping_from_index(self.note_mapping_idx),
                 lfo1: self.lfo1,
@@ -242,6 +246,19 @@ impl AweUiState {
                 self.l_length_b = length_b;
                 self.l_width_b = width_b;
                 self.l_height = height;
+            }
+            RoomShape::Sphere { radius } => {
+                self.shape_kind = RoomShapeKind::Sphere;
+                self.sphere_radius = radius;
+            }
+            RoomShape::Dome { radius } => {
+                self.shape_kind = RoomShapeKind::Dome;
+                self.dome_radius = radius;
+            }
+            RoomShape::Tube { radius, length } => {
+                self.shape_kind = RoomShapeKind::Tube;
+                self.tube_radius = radius;
+                self.tube_length = length;
             }
         }
 
@@ -392,6 +409,118 @@ pub fn draw_awe_view(
                     enabled: *awe_enabled,
                 });
             }
+
+            ui.separator();
+
+            // Preset selector
+            let presets = awe_presets();
+            let preset_label = ui_state
+                .selected_preset
+                .and_then(|i| presets.get(i))
+                .map_or("-- Preset --", |p| p.name);
+            let mut new_preset = ui_state.selected_preset;
+            egui::ComboBox::from_id_salt("awe_preset")
+                .selected_text(preset_label)
+                .show_ui(ui, |ui| {
+                    for (i, preset) in presets.iter().enumerate() {
+                        let selected = ui_state.selected_preset == Some(i);
+                        if ui
+                            .selectable_label(selected, preset.name)
+                            .on_hover_text(preset.description)
+                            .clicked()
+                        {
+                            new_preset = Some(i);
+                        }
+                    }
+                });
+            if new_preset != ui_state.selected_preset
+                && let Some(idx) = new_preset
+                && let Some(preset) = presets.get(idx)
+            {
+                ui_state.selected_preset = Some(idx);
+                ui_state.restore_from(&preset.state);
+                // Send all state to engine
+                *awe_enabled = preset.state.enabled;
+                handle.send(EngineCommand::SetAweEnabled {
+                    enabled: preset.state.enabled,
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::RoomShape(preset.state.room),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Material(preset.state.material),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::DryWet(preset.state.snapshot.dry_wet),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::EarlyLateBalance(preset.state.snapshot.early_late_balance),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::ModesAmount(preset.state.snapshot.modes_amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::FreqWarp(preset.state.snapshot.freq_warp),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::ResonanceBoost(preset.state.snapshot.resonance_boost),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::TailStretch(preset.state.snapshot.tail_stretch),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::PortalAmount(preset.state.snapshot.portal_amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::SourcePos(preset.state.snapshot.source_pos),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::ListenerPos(preset.state.snapshot.listener_pos),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::SpatialEnabled(preset.state.spatial_enabled),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::NoteMapping(preset.state.note_mapping),
+                });
+                // LFOs
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Rate(preset.state.snapshot.lfo1.rate),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Amount(preset.state.snapshot.lfo1.amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Target(preset.state.snapshot.lfo1.target),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Rate(preset.state.snapshot.lfo2.rate),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Amount(preset.state.snapshot.lfo2.amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Target(preset.state.snapshot.lfo2.target),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Rate(preset.state.snapshot.lfo3.rate),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Amount(preset.state.snapshot.lfo3.amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Target(preset.state.snapshot.lfo3.target),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Rate(preset.state.snapshot.lfo4.rate),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Amount(preset.state.snapshot.lfo4.amount),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Target(preset.state.snapshot.lfo4.target),
+                });
+            }
         });
     });
 
@@ -526,7 +655,8 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         // Show positions for C notes across the range
         for octave in 1..=7 {
             let note = octave * 12; // C1=12, C2=24, ...C7=84
-            let pos = mapping.position_for_note(note, room_w, room_h, state.room_height);
+            let eff_height = state.current_room_shape().height();
+            let pos = mapping.position_for_note(note, room_w, room_h, eff_height);
             let screen_pos = room_to_screen(pos[0], pos[1]);
             painter.circle_filled(screen_pos, 4.0, dot_color);
         }
@@ -553,17 +683,18 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         let rx = rx.clamp(0.1, room_w - 0.1);
         let ry = ry.clamp(0.1, room_h - 0.1);
 
+        let half_h = state.current_room_shape().height() * 0.5;
         if state.dragging_source {
             state.source_x = rx;
             state.source_y = ry;
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::SourcePos([rx, ry, state.room_height * 0.5]),
+                param: AweParam::SourcePos([rx, ry, half_h]),
             });
         } else if state.dragging_listener {
             state.listener_x = rx;
             state.listener_y = ry;
             handle.send(EngineCommand::SetAweParameter {
-                param: AweParam::ListenerPos([rx, ry, state.room_height * 0.5]),
+                param: AweParam::ListenerPos([rx, ry, half_h]),
             });
         }
     }
@@ -593,6 +724,9 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         RoomShapeKind::Box => 0,
         RoomShapeKind::Cylinder => 1,
         RoomShapeKind::LShape => 2,
+        RoomShapeKind::Sphere => 3,
+        RoomShapeKind::Dome => 4,
+        RoomShapeKind::Tube => 5,
     };
     let mut new_shape_idx = shape_idx;
     egui::ComboBox::from_label("Shape")
@@ -606,8 +740,12 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         state.shape_kind = match new_shape_idx {
             0 => RoomShapeKind::Box,
             1 => RoomShapeKind::Cylinder,
-            _ => RoomShapeKind::LShape,
+            2 => RoomShapeKind::LShape,
+            3 => RoomShapeKind::Sphere,
+            4 => RoomShapeKind::Dome,
+            _ => RoomShapeKind::Tube,
         };
+        state.selected_preset = None;
     }
 
     let mut room_changed = prev_shape != state.shape_kind;
@@ -710,9 +848,52 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
                 }
             });
         }
+        RoomShapeKind::Sphere => {
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                if ui
+                    .add(egui::Slider::new(&mut state.sphere_radius, 1.0..=20.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+        }
+        RoomShapeKind::Dome => {
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                if ui
+                    .add(egui::Slider::new(&mut state.dome_radius, 1.0..=20.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+        }
+        RoomShapeKind::Tube => {
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                if ui
+                    .add(egui::Slider::new(&mut state.tube_radius, 0.5..=10.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Length:");
+                if ui
+                    .add(egui::Slider::new(&mut state.tube_length, 2.0..=200.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+        }
     }
 
     if room_changed {
+        state.selected_preset = None;
         let shape = state.current_room_shape();
         handle.send(EngineCommand::SetAweParameter {
             param: AweParam::RoomShape(shape),

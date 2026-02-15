@@ -1,5 +1,28 @@
 # Version History
 
+## [0.127.0] - 2026-02-15
+### Added - AWE: Nya rumsformer + Preset-meny
+
+**Nya rumsformer (3 st):**
+- **Sphere**: Sfäriskt rum (alla dimensioner = diameter). Sammanfallande moder ger fokuserad resonans.
+- **Dome**: Halvsfär (höjd = radie, bredd/längd = diameter). Kupol-reflektioner.
+- **Tube**: Öppet rör utan ändlock. Mindre yta ger längre RT60 och flutterekos.
+- Korrekta geometriformler (volym, ytarea, axiella moder) för alla nya former.
+- LFO-modulering av RoomLength/RoomWidth fungerar med alla 6 former.
+
+**AWE Preset-meny (14 presets):**
+- Ny preset-väljare i AWE-toolbaren med hover-beskrivningar.
+- 14 kreativa presets: Katedral, Badrum, Grotta, Pipeline, Konserthall, Sci-Fi Korridor, Dröm, Underjorden, Industrihall, Liten Studio, Rymdstation, Bergseko, Kupol, Portal.
+- Presets demonstrerar alla 6 rumsformer, alla material, och Impossible-parametrar.
+- Val av preset laddar fullständigt AWE-tillstånd (rum, material, mix, LFO:er, spatial).
+- Manuella ändringar nollställer preset-valet.
+
+**GUI:**
+- RoomShapeKind utökad med Sphere, Dome, Tube.
+- Dimensionssliders för alla nya former (radius, length).
+- `restore_from()` och `to_awe_state()` hanterar alla 6 former korrekt.
+- Fixat höjdberäkning för source/listener z-position (använder effektiv rumshöjd).
+
 ## [0.126.0] - 2026-02-15
 ### Added - AWE Fas 3: Per-röst Spatialisering
 

@@ -649,6 +649,16 @@ impl AweEngine {
                         width_b,
                         height,
                     },
+                    RoomShape::Sphere { radius } => RoomShape::Sphere {
+                        radius: (radius + value).max(0.5),
+                    },
+                    RoomShape::Dome { radius } => RoomShape::Dome {
+                        radius: (radius + value).max(0.5),
+                    },
+                    RoomShape::Tube { radius, length } => RoomShape::Tube {
+                        radius,
+                        length: (length + value * 2.0).max(1.0),
+                    },
                 };
                 self.geometry_dirty = true;
             }
@@ -679,6 +689,16 @@ impl AweEngine {
                         length_b,
                         width_b: (width_b + value).max(1.0),
                         height,
+                    },
+                    RoomShape::Sphere { radius } => RoomShape::Sphere {
+                        radius: (radius + value).max(0.5),
+                    },
+                    RoomShape::Dome { radius } => RoomShape::Dome {
+                        radius: (radius + value).max(0.5),
+                    },
+                    RoomShape::Tube { radius, length } => RoomShape::Tube {
+                        radius: (radius + value).max(0.5),
+                        length,
                     },
                 };
                 self.geometry_dirty = true;

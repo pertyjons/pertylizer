@@ -41,6 +41,26 @@ pub enum RoomShape {
         /// Height of both sections (meters).
         height: f32,
     },
+
+    /// Spherical room — all dimensions equal to diameter.
+    Sphere {
+        /// Radius in meters.
+        radius: f32,
+    },
+
+    /// Dome (half-sphere) — height = radius, width/length = diameter.
+    Dome {
+        /// Radius in meters.
+        radius: f32,
+    },
+
+    /// Open tube (no end caps) — cylindrical with no end reflections.
+    Tube {
+        /// Radius in meters.
+        radius: f32,
+        /// Length in meters.
+        length: f32,
+    },
 }
 
 impl RoomShape {
@@ -66,6 +86,18 @@ impl RoomShape {
         height: 3.0,
     };
 
+    /// Default sphere: radius 5m.
+    pub const DEFAULT_SPHERE: Self = Self::Sphere { radius: 5.0 };
+
+    /// Default dome: radius 6m.
+    pub const DEFAULT_DOME: Self = Self::Dome { radius: 6.0 };
+
+    /// Default tube: radius 1.5m, length 30m.
+    pub const DEFAULT_TUBE: Self = Self::Tube {
+        radius: 1.5,
+        length: 30.0,
+    };
+
     /// Volume of the room in cubic meters.
     #[must_use]
     pub fn volume(self) -> f32 {
@@ -83,6 +115,9 @@ impl RoomShape {
                 width_b,
                 height,
             } => (length_a * width_a + length_b * width_b) * height,
+            Self::Sphere { radius } => (4.0 / 3.0) * PI * radius * radius * radius,
+            Self::Dome { radius } => (2.0 / 3.0) * PI * radius * radius * radius,
+            Self::Tube { radius, length } => PI * radius * radius * length,
         }
     }
 
@@ -107,6 +142,9 @@ impl RoomShape {
                 let walls = 2.0 * height * (length_a + width_a + length_b + width_b);
                 floor_ceiling + walls
             }
+            Self::Sphere { radius } => 4.0 * PI * radius * radius,
+            Self::Dome { radius } => 3.0 * PI * radius * radius,
+            Self::Tube { radius, length } => 2.0 * PI * radius * length,
         }
     }
 
@@ -114,10 +152,13 @@ impl RoomShape {
     #[must_use]
     pub fn length(self) -> f32 {
         match self {
-            Self::Box { length, .. } | Self::Cylinder { length, .. } => length,
+            Self::Box { length, .. }
+            | Self::Cylinder { length, .. }
+            | Self::Tube { length, .. } => length,
             Self::LShape {
                 length_a, length_b, ..
             } => length_a + length_b,
+            Self::Sphere { radius } | Self::Dome { radius } => radius * 2.0,
         }
     }
 
@@ -126,10 +167,11 @@ impl RoomShape {
     pub fn width(self) -> f32 {
         match self {
             Self::Box { width, .. } => width,
-            Self::Cylinder { radius, .. } => radius * 2.0,
+            Self::Cylinder { radius, .. } | Self::Tube { radius, .. } => radius * 2.0,
             Self::LShape {
                 width_a, width_b, ..
             } => width_a.max(width_b),
+            Self::Sphere { radius } | Self::Dome { radius } => radius * 2.0,
         }
     }
 
@@ -138,7 +180,9 @@ impl RoomShape {
     pub fn height(self) -> f32 {
         match self {
             Self::Box { height, .. } | Self::LShape { height, .. } => height,
-            Self::Cylinder { radius, .. } => radius * 2.0,
+            Self::Cylinder { radius, .. } | Self::Tube { radius, .. } => radius * 2.0,
+            Self::Sphere { radius } => radius * 2.0,
+            Self::Dome { radius } => radius,
         }
     }
 
@@ -176,6 +220,21 @@ impl RoomShape {
                 SPEED_OF_SOUND / (2.0 * (length_a + length_b)),
                 SPEED_OF_SOUND / (2.0 * width_a.max(width_b)),
                 SPEED_OF_SOUND / (2.0 * height),
+            ),
+            Self::Sphere { radius } => {
+                // All modes coincide at c / (4r)
+                let mode = SPEED_OF_SOUND / (4.0 * radius);
+                (mode, mode, mode)
+            }
+            Self::Dome { radius } => (
+                SPEED_OF_SOUND / (4.0 * radius), // length mode (diameter)
+                SPEED_OF_SOUND / (4.0 * radius), // width mode (diameter)
+                SPEED_OF_SOUND / (2.0 * radius), // height mode (radius)
+            ),
+            Self::Tube { radius, length } => (
+                SPEED_OF_SOUND / length,         // open-open length mode: c/L
+                SPEED_OF_SOUND / (4.0 * radius), // radial mode
+                SPEED_OF_SOUND / (4.0 * radius), // radial mode
             ),
         }
     }
@@ -339,5 +398,92 @@ mod tests {
         let m = Material::CONCRETE;
         let avg = m.average_absorption();
         assert!(avg > 0.0 && avg < 1.0);
+    }
+
+    #[test]
+    fn test_sphere_volume() {
+        let room = RoomShape::DEFAULT_SPHERE;
+        // 4/3 * PI * 5^3 ≈ 523.60
+        assert!((room.volume() - 523.60).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_sphere_surface_area() {
+        let room = RoomShape::DEFAULT_SPHERE;
+        // 4 * PI * 5^2 ≈ 314.16
+        assert!((room.surface_area() - 314.16).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_sphere_dimensions() {
+        let room = RoomShape::DEFAULT_SPHERE;
+        assert!((room.length() - 10.0).abs() < 0.01);
+        assert!((room.width() - 10.0).abs() < 0.01);
+        assert!((room.height() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_sphere_axial_modes() {
+        let room = RoomShape::DEFAULT_SPHERE;
+        let (fl, fw, fh) = room.axial_modes();
+        // All modes = 343 / (4*5) = 17.15
+        assert!((fl - 17.15).abs() < 0.01);
+        assert!((fw - 17.15).abs() < 0.01);
+        assert!((fh - 17.15).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_dome_volume() {
+        let room = RoomShape::DEFAULT_DOME;
+        // 2/3 * PI * 6^3 ≈ 452.39
+        assert!((room.volume() - 452.39).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_dome_surface_area() {
+        let room = RoomShape::DEFAULT_DOME;
+        // 3 * PI * 6^2 ≈ 339.29
+        assert!((room.surface_area() - 339.29).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_dome_dimensions() {
+        let room = RoomShape::DEFAULT_DOME;
+        assert!((room.length() - 12.0).abs() < 0.01);
+        assert!((room.width() - 12.0).abs() < 0.01);
+        assert!((room.height() - 6.0).abs() < 0.01); // height = radius
+    }
+
+    #[test]
+    fn test_tube_volume() {
+        let room = RoomShape::DEFAULT_TUBE;
+        // PI * 1.5^2 * 30 ≈ 212.06
+        assert!((room.volume() - 212.06).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_tube_surface_area() {
+        let room = RoomShape::DEFAULT_TUBE;
+        // 2 * PI * 1.5 * 30 ≈ 282.74 (no end caps)
+        assert!((room.surface_area() - 282.74).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_tube_dimensions() {
+        let room = RoomShape::DEFAULT_TUBE;
+        assert!((room.length() - 30.0).abs() < 0.01);
+        assert!((room.width() - 3.0).abs() < 0.01);
+        assert!((room.height() - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_tube_axial_modes() {
+        let room = RoomShape::DEFAULT_TUBE;
+        let (fl, fw, fh) = room.axial_modes();
+        // length mode: 343 / 30 ≈ 11.43 (open-open)
+        assert!((fl - 11.43).abs() < 0.01);
+        // radial modes: 343 / (4*1.5) ≈ 57.17
+        assert!((fw - 57.17).abs() < 0.01);
+        assert!((fh - 57.17).abs() < 0.01);
     }
 }
