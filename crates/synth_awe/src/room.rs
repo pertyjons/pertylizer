@@ -1,5 +1,7 @@
 //! Room geometry and material definitions for the Acoustic World Engine.
 
+use std::f32::consts::PI;
+
 use serde::{Deserialize, Serialize};
 
 /// Speed of sound in air at room temperature (m/s).
@@ -17,6 +19,28 @@ pub enum RoomShape {
         /// Height in meters (z-axis).
         height: f32,
     },
+
+    /// Cylindrical room (pipeline/tunnel mode).
+    Cylinder {
+        /// Radius in meters.
+        radius: f32,
+        /// Length in meters (along cylinder axis).
+        length: f32,
+    },
+
+    /// L-shaped room (two connected rectangles).
+    LShape {
+        /// First section: length along x-axis (meters).
+        length_a: f32,
+        /// First section: width along y-axis (meters).
+        width_a: f32,
+        /// Second section: length along x-axis (meters).
+        length_b: f32,
+        /// Second section: width along y-axis (meters).
+        width_b: f32,
+        /// Height of both sections (meters).
+        height: f32,
+    },
 }
 
 impl RoomShape {
@@ -24,6 +48,21 @@ impl RoomShape {
     pub const DEFAULT: Self = Self::Box {
         length: 8.0,
         width: 5.0,
+        height: 3.0,
+    };
+
+    /// Default cylinder: radius 1m, length 20m (tunnel).
+    pub const DEFAULT_CYLINDER: Self = Self::Cylinder {
+        radius: 1.0,
+        length: 20.0,
+    };
+
+    /// Default L-shape: two connected rectangles.
+    pub const DEFAULT_LSHAPE: Self = Self::LShape {
+        length_a: 8.0,
+        width_a: 5.0,
+        length_b: 6.0,
+        width_b: 4.0,
         height: 3.0,
     };
 
@@ -36,6 +75,14 @@ impl RoomShape {
                 width,
                 height,
             } => length * width * height,
+            Self::Cylinder { radius, length } => PI * radius * radius * length,
+            Self::LShape {
+                length_a,
+                width_a,
+                length_b,
+                width_b,
+                height,
+            } => (length_a * width_a + length_b * width_b) * height,
         }
     }
 
@@ -48,6 +95,18 @@ impl RoomShape {
                 width,
                 height,
             } => 2.0 * (length * width + length * height + width * height),
+            Self::Cylinder { radius, length } => 2.0 * PI * radius * (radius + length),
+            Self::LShape {
+                length_a,
+                width_a,
+                length_b,
+                width_b,
+                height,
+            } => {
+                let floor_ceiling = 2.0 * (length_a * width_a + length_b * width_b);
+                let walls = 2.0 * height * (length_a + width_a + length_b + width_b);
+                floor_ceiling + walls
+            }
         }
     }
 
@@ -55,7 +114,10 @@ impl RoomShape {
     #[must_use]
     pub fn length(self) -> f32 {
         match self {
-            Self::Box { length, .. } => length,
+            Self::Box { length, .. } | Self::Cylinder { length, .. } => length,
+            Self::LShape {
+                length_a, length_b, ..
+            } => length_a + length_b,
         }
     }
 
@@ -64,6 +126,10 @@ impl RoomShape {
     pub fn width(self) -> f32 {
         match self {
             Self::Box { width, .. } => width,
+            Self::Cylinder { radius, .. } => radius * 2.0,
+            Self::LShape {
+                width_a, width_b, ..
+            } => width_a.max(width_b),
         }
     }
 
@@ -71,7 +137,8 @@ impl RoomShape {
     #[must_use]
     pub fn height(self) -> f32 {
         match self {
-            Self::Box { height, .. } => height,
+            Self::Box { height, .. } | Self::LShape { height, .. } => height,
+            Self::Cylinder { radius, .. } => radius * 2.0,
         }
     }
 
@@ -89,6 +156,25 @@ impl RoomShape {
             } => (
                 SPEED_OF_SOUND / (2.0 * length),
                 SPEED_OF_SOUND / (2.0 * width),
+                SPEED_OF_SOUND / (2.0 * height),
+            ),
+            Self::Cylinder { radius, length } => {
+                let diameter = radius * 2.0;
+                (
+                    SPEED_OF_SOUND / (2.0 * length),
+                    SPEED_OF_SOUND / (2.0 * diameter),
+                    SPEED_OF_SOUND / (2.0 * diameter),
+                )
+            }
+            Self::LShape {
+                length_a,
+                width_a,
+                length_b,
+                width_b,
+                height,
+            } => (
+                SPEED_OF_SOUND / (2.0 * (length_a + length_b)),
+                SPEED_OF_SOUND / (2.0 * width_a.max(width_b)),
                 SPEED_OF_SOUND / (2.0 * height),
             ),
         }
@@ -203,6 +289,49 @@ mod tests {
         assert!((fw - 34.3).abs() < 0.01);
         // 343 / (2*3) ≈ 57.167
         assert!((fh - 57.167).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cylinder_volume() {
+        let room = RoomShape::DEFAULT_CYLINDER;
+        // PI * 1^2 * 20 ≈ 62.83
+        assert!((room.volume() - 62.83).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cylinder_surface_area() {
+        let room = RoomShape::DEFAULT_CYLINDER;
+        // 2 * PI * 1 * (1 + 20) ≈ 131.95
+        assert!((room.surface_area() - 131.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_lshape_volume() {
+        let room = RoomShape::DEFAULT_LSHAPE;
+        // (8*5 + 6*4) * 3 = (40+24) * 3 = 192
+        assert!((room.volume() - 192.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cylinder_axial_modes() {
+        let room = RoomShape::DEFAULT_CYLINDER;
+        let (fl, fw, fh) = room.axial_modes();
+        // length mode: 343 / (2*20) = 8.575
+        assert!((fl - 8.575).abs() < 0.01);
+        // radial modes (diameter = 2): 343 / (2*2) = 85.75
+        assert!((fw - 85.75).abs() < 0.01);
+        assert!((fh - 85.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_lshape_dimensions() {
+        let room = RoomShape::DEFAULT_LSHAPE;
+        // length = 8 + 6 = 14
+        assert!((room.length() - 14.0).abs() < 0.01);
+        // width = max(5, 4) = 5
+        assert!((room.width() - 5.0).abs() < 0.01);
+        // height = 3
+        assert!((room.height() - 3.0).abs() < 0.01);
     }
 
     #[test]

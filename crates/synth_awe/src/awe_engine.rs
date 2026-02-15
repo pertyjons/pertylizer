@@ -6,7 +6,7 @@
 //! 3. Axial room modes via comb-filter bank
 //! 4. Stereo spatializer (ITD + ILD) on wet signal only
 
-use synth_dsp::FdnCore;
+use synth_dsp::{FdnCore, InterpolatedDelayLine};
 
 use crate::early_reflections::EarlyReflections;
 use crate::lfo::AweLfo;
@@ -38,10 +38,19 @@ pub struct AweEngine {
     // LFOs (control-rate)
     lfo1: AweLfo,
     lfo2: AweLfo,
+    lfo3: AweLfo,
+    lfo4: AweLfo,
+
+    // Acoustic portal — extra delay feedback path simulating adjoining room
+    portal_delay_left: InterpolatedDelayLine,
+    portal_delay_right: InterpolatedDelayLine,
+    portal_feedback_state_l: f32,
+    portal_feedback_state_r: f32,
 
     // Smoothed DSP parameters (current values that ramp toward targets)
     current_dry_wet: f32,
     current_early_late: f32,
+    current_portal: f32,
 
     // Geometry dirty flag — recalculate ISM taps, FDN, modes when true
     geometry_dirty: bool,
@@ -66,9 +75,18 @@ impl AweEngine {
 
             lfo1: AweLfo::new(),
             lfo2: AweLfo::new(),
+            lfo3: AweLfo::new(),
+            lfo4: AweLfo::new(),
+
+            // Portal delay lines: max ~300ms @ 96kHz = 28800 samples
+            portal_delay_left: InterpolatedDelayLine::new(28_800),
+            portal_delay_right: InterpolatedDelayLine::new(28_800),
+            portal_feedback_state_l: 0.0,
+            portal_feedback_state_r: 0.0,
 
             current_dry_wet: snapshot.dry_wet,
             current_early_late: snapshot.early_late_balance,
+            current_portal: snapshot.portal_amount,
 
             geometry_dirty: true,
         }
@@ -99,8 +117,15 @@ impl AweEngine {
         // Pre-compute FDN parameters from room geometry
         let absorption = self.material.average_absorption();
         let rt60 = self.calculate_rt60();
-        let feedback_gain = self.rt60_to_feedback(rt60, sample_rate);
-        let lp_coeff = 0.2 + absorption * 0.6;
+
+        // Freq warp: bass hears bigger room (more LP damping = bass reverberates more)
+        let freq_warp = self.snapshot.freq_warp.clamp(-1.0, 1.0);
+        let lp_coeff = (0.2 + absorption * 0.6) * (1.0 - freq_warp * 0.3);
+
+        // Resonance boost: adds energy to feedback (with safety clamp)
+        let resonance_boost = self.snapshot.resonance_boost.clamp(0.0, 1.0);
+        let feedback_gain =
+            (self.rt60_to_feedback(rt60, sample_rate) + resonance_boost * 0.15).min(0.97);
         let hp_coeff = 0.95;
         let diffusion = 0.5;
         let width = 1.0;
@@ -108,6 +133,12 @@ impl AweEngine {
 
         let target_dry_wet = self.snapshot.dry_wet.clamp(0.0, 1.0);
         let target_early_late = self.snapshot.early_late_balance.clamp(0.0, 1.0);
+        let target_portal = self.snapshot.portal_amount.clamp(0.0, 1.0);
+
+        // Portal delay time: ~200ms scaled by room size
+        let portal_delay_samples = (0.2 * sample_rate).clamp(1.0, 28_000.0);
+        let portal_feedback = 0.4; // Fixed feedback for adjoining room simulation
+        let portal_damping = 0.6; // LP damping for muffled portal sound
 
         // 3. Per-sample DSP
         for i in 0..num_samples {
@@ -121,6 +152,7 @@ impl AweEngine {
             // Smooth ramp toward target parameters
             self.current_dry_wet += ramp_coeff * (target_dry_wet - self.current_dry_wet);
             self.current_early_late += ramp_coeff * (target_early_late - self.current_early_late);
+            self.current_portal += ramp_coeff * (target_portal - self.current_portal);
 
             // --- Early reflections (ISM) ---
             let (early_left, early_right) = self.early_reflections.process(mono_input);
@@ -151,6 +183,41 @@ impl AweEngine {
             // --- Spatializer (on wet signal only) ---
             let wet_mid = (wet_mono_left + wet_mono_right) * 0.5;
             let (spat_left, spat_right) = self.spatializer.process(wet_mid);
+
+            // --- Acoustic portal (delayed feedback from adjoining virtual room) ---
+            let (spat_left, spat_right) = if self.current_portal > 0.001 {
+                // Read delayed signal from portal
+                let portal_l = self
+                    .portal_delay_left
+                    .read_interpolated(portal_delay_samples);
+                let portal_r = self
+                    .portal_delay_right
+                    .read_interpolated(portal_delay_samples);
+
+                // One-pole LP for muffled portal sound
+                self.portal_feedback_state_l = portal_damping * self.portal_feedback_state_l
+                    + (1.0 - portal_damping) * portal_l;
+                self.portal_feedback_state_r = portal_damping * self.portal_feedback_state_r
+                    + (1.0 - portal_damping) * portal_r;
+
+                // Write current wet + feedback back into portal delay
+                self.portal_delay_left
+                    .write(spat_left + self.portal_feedback_state_l * portal_feedback);
+                self.portal_delay_right
+                    .write(spat_right + self.portal_feedback_state_r * portal_feedback);
+
+                // Mix portal into output
+                let amt = self.current_portal;
+                (
+                    spat_left + self.portal_feedback_state_l * amt,
+                    spat_right + self.portal_feedback_state_r * amt,
+                )
+            } else {
+                // Portal off — still write silence to keep delay line advancing
+                self.portal_delay_left.write(0.0);
+                self.portal_delay_right.write(0.0);
+                (spat_left, spat_right)
+            };
 
             // --- Dry/wet mix ---
             let dry_amount = 1.0 - self.current_dry_wet;
@@ -192,6 +259,7 @@ impl AweEngine {
                 self.snapshot.tail_stretch = v;
                 self.geometry_dirty = true;
             }
+            AweParam::PortalAmount(v) => self.snapshot.portal_amount = v,
             AweParam::Enabled(v) => self.enabled = v,
             AweParam::Lfo1Rate(v) => {
                 self.snapshot.lfo1.rate = v;
@@ -217,6 +285,30 @@ impl AweEngine {
                 self.snapshot.lfo2.target = t;
                 self.lfo2.set_target(t);
             }
+            AweParam::Lfo3Rate(v) => {
+                self.snapshot.lfo3.rate = v;
+                self.lfo3.set_rate(v);
+            }
+            AweParam::Lfo3Amount(v) => {
+                self.snapshot.lfo3.amount = v;
+                self.lfo3.set_amount(v);
+            }
+            AweParam::Lfo3Target(t) => {
+                self.snapshot.lfo3.target = t;
+                self.lfo3.set_target(t);
+            }
+            AweParam::Lfo4Rate(v) => {
+                self.snapshot.lfo4.rate = v;
+                self.lfo4.set_rate(v);
+            }
+            AweParam::Lfo4Amount(v) => {
+                self.snapshot.lfo4.amount = v;
+                self.lfo4.set_amount(v);
+            }
+            AweParam::Lfo4Target(t) => {
+                self.snapshot.lfo4.target = t;
+                self.lfo4.set_target(t);
+            }
         }
     }
 
@@ -230,6 +322,12 @@ impl AweEngine {
         self.lfo2.set_rate(snapshot.lfo2.rate);
         self.lfo2.set_amount(snapshot.lfo2.amount);
         self.lfo2.set_target(snapshot.lfo2.target);
+        self.lfo3.set_rate(snapshot.lfo3.rate);
+        self.lfo3.set_amount(snapshot.lfo3.amount);
+        self.lfo3.set_target(snapshot.lfo3.target);
+        self.lfo4.set_rate(snapshot.lfo4.rate);
+        self.lfo4.set_amount(snapshot.lfo4.amount);
+        self.lfo4.set_target(snapshot.lfo4.target);
         self.geometry_dirty = true;
     }
 
@@ -248,6 +346,10 @@ impl AweEngine {
             self.fdn.clear();
             self.room_modes.clear();
             self.spatializer.clear();
+            self.portal_delay_left.clear();
+            self.portal_delay_right.clear();
+            self.portal_feedback_state_l = 0.0;
+            self.portal_feedback_state_r = 0.0;
         }
     }
 
@@ -275,9 +377,13 @@ impl AweEngine {
     fn update_lfos(&mut self, block_size: usize, sample_rate: f32) {
         let lfo1_val = self.lfo1.advance(block_size, sample_rate);
         let lfo2_val = self.lfo2.advance(block_size, sample_rate);
+        let lfo3_val = self.lfo3.advance(block_size, sample_rate);
+        let lfo4_val = self.lfo4.advance(block_size, sample_rate);
 
         self.apply_lfo_modulation(self.lfo1.target(), lfo1_val);
         self.apply_lfo_modulation(self.lfo2.target(), lfo2_val);
+        self.apply_lfo_modulation(self.lfo3.target(), lfo3_val);
+        self.apply_lfo_modulation(self.lfo4.target(), lfo4_val);
     }
 
     /// Apply a single LFO's modulation value to the appropriate parameter.
@@ -327,6 +433,28 @@ impl AweEngine {
             }
             AweLfoTarget::FreqWarp => {
                 self.snapshot.freq_warp = (self.snapshot.freq_warp + value * 0.5).clamp(-1.0, 1.0);
+            }
+            AweLfoTarget::EarlyLate => {
+                self.snapshot.early_late_balance =
+                    (self.snapshot.early_late_balance + value * 0.3).clamp(0.0, 1.0);
+            }
+            AweLfoTarget::ModesAmount => {
+                self.snapshot.modes_amount =
+                    (self.snapshot.modes_amount + value * 0.3).clamp(0.0, 1.0);
+                self.room_modes.set_amount(self.snapshot.modes_amount);
+            }
+            AweLfoTarget::ResonanceBoost => {
+                self.snapshot.resonance_boost =
+                    (self.snapshot.resonance_boost + value * 0.3).clamp(0.0, 1.0);
+            }
+            AweLfoTarget::TailStretch => {
+                self.snapshot.tail_stretch =
+                    (self.snapshot.tail_stretch + value * 0.5).clamp(0.5, 4.0);
+                self.geometry_dirty = true;
+            }
+            AweLfoTarget::PortalAmount => {
+                self.snapshot.portal_amount =
+                    (self.snapshot.portal_amount + value * 0.3).clamp(0.0, 1.0);
             }
         }
     }

@@ -1,5 +1,36 @@
 # Version History
 
+## [0.125.0] - 2026-02-15
+### Added - AWE Fas 2: Avancerad Geometri & Kreativa Features
+
+**Nya rumsformer:**
+- Cylinder-rum (pipeline/tunnel mode) med radie och längd.
+- L-format rum (två sammankopplade rektanglar) med individuella dimensioner.
+- Nya `RoomShape`-varianter med volume/surface_area/axial_modes-stöd.
+- `DEFAULT_CYLINDER` (r=1m, L=20m) och `DEFAULT_LSHAPE` (8×5 + 6×4, H=3m) konstanter.
+
+**"Omöjliga rum"-parametrar:**
+- Freq Warp: Modulerar FDN LP-damping — positiv ger mer HF-reverb.
+- Resonance Boost: Adderar energi till FDN-feedback (klampad vid 0.97).
+- GUI-sliders i ny "Impossible"-sektion.
+
+**Akustisk portal:**
+- Extra stereo delay-path med feedback som simulerar angränsande virtuellt rum.
+- One-pole LP-damping för mumlande portalljud.
+- Portal Amount-kontroll (0–1) med smooth ramping.
+- `PortalAmount` som nytt LFO-target.
+
+**4 interna LFO:er (utökat från 2):**
+- LFO 3 & 4 med Rate/Amount/Target-kontroller.
+- 13 modulations-targets (utökat från 8): +EarlyLate, ModesAmount, ResonanceBoost, TailStretch, PortalAmount.
+- Full GUI med 4 LFO-sektioner.
+
+**GUI-förbättringar:**
+- Rumsform-väljare (ComboBox: Box/Cylinder/L-Shape).
+- Dimensionssliders anpassade per rumsform.
+- Floor plan anpassad till effektiva dimensioner oavsett form.
+- Slider-range utökat till 100m för Box (stödjer "The Void"-preset).
+
 ## [0.124.0] - 2026-02-15
 ### Added - AWE Fas 1: Parametriskt Rum
 

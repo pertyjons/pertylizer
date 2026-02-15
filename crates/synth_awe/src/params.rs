@@ -24,6 +24,16 @@ pub enum AweLfoTarget {
     DryWet,
     /// Modulate frequency warp.
     FreqWarp,
+    /// Modulate early/late balance.
+    EarlyLate,
+    /// Modulate modes amount.
+    ModesAmount,
+    /// Modulate resonance boost.
+    ResonanceBoost,
+    /// Modulate tail stretch.
+    TailStretch,
+    /// Modulate portal amount.
+    PortalAmount,
 }
 
 /// State of one AWE-internal LFO for persistence.
@@ -70,6 +80,8 @@ pub enum AweParam {
     ResonanceBoost(f32),
     /// Tail stretch factor (1.0 = natural, >1.0 = longer).
     TailStretch(f32),
+    /// Portal amount (0.0 = off, 1.0 = full portal effect).
+    PortalAmount(f32),
     /// Enable/disable the AWE engine.
     Enabled(bool),
     /// Set LFO 1 rate in Hz.
@@ -84,6 +96,18 @@ pub enum AweParam {
     Lfo2Amount(f32),
     /// Set LFO 2 target.
     Lfo2Target(AweLfoTarget),
+    /// Set LFO 3 rate in Hz.
+    Lfo3Rate(f32),
+    /// Set LFO 3 amount (0.0–1.0).
+    Lfo3Amount(f32),
+    /// Set LFO 3 target.
+    Lfo3Target(AweLfoTarget),
+    /// Set LFO 4 rate in Hz.
+    Lfo4Rate(f32),
+    /// Set LFO 4 amount (0.0–1.0).
+    Lfo4Amount(f32),
+    /// Set LFO 4 target.
+    Lfo4Target(AweLfoTarget),
 }
 
 /// Snapshot of all numeric AWE parameters for batch-updating.
@@ -101,6 +125,9 @@ pub struct AweSnapshot {
     pub resonance_boost: f32,
     /// Tail stretch.
     pub tail_stretch: f32,
+    /// Portal amount (0.0 = off, 1.0 = full).
+    #[serde(default)]
+    pub portal_amount: f32,
     /// Source position.
     pub source_pos: [f32; 3],
     /// Listener position.
@@ -111,6 +138,12 @@ pub struct AweSnapshot {
     /// LFO 2 state.
     #[serde(default)]
     pub lfo2: AweLfoState,
+    /// LFO 3 state.
+    #[serde(default)]
+    pub lfo3: AweLfoState,
+    /// LFO 4 state.
+    #[serde(default)]
+    pub lfo4: AweLfoState,
 }
 
 impl Default for AweSnapshot {
@@ -122,11 +155,20 @@ impl Default for AweSnapshot {
             freq_warp: 0.0,
             resonance_boost: 0.0,
             tail_stretch: 1.0,
+            portal_amount: 0.0,
             source_pos: [2.0, 2.5, 1.5],
             listener_pos: [6.0, 2.5, 1.5],
             lfo1: AweLfoState::default(),
             lfo2: AweLfoState {
                 target: AweLfoTarget::SourceY,
+                ..AweLfoState::default()
+            },
+            lfo3: AweLfoState {
+                target: AweLfoTarget::EarlyLate,
+                ..AweLfoState::default()
+            },
+            lfo4: AweLfoState {
+                target: AweLfoTarget::ModesAmount,
                 ..AweLfoState::default()
             },
         }

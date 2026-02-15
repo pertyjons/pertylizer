@@ -5,7 +5,7 @@
 //! - Draggable source and listener markers
 //! - Material selector
 //! - Sliders for dry/wet, early/late, modes amount, tail stretch
-//! - Two LFO sections with rate/amount/target controls
+//! - Four LFO sections with rate/amount/target controls
 
 use eframe::egui;
 
@@ -15,12 +15,36 @@ use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::{AweParam, Material, RoomShape};
 use synth_engine::{EngineCommand, EngineHandle};
 
+/// Room shape kind for the UI selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoomShapeKind {
+    Box,
+    Cylinder,
+    LShape,
+}
+
+const SHAPE_NAMES: [&str; 3] = ["Box", "Cylinder", "L-Shape"];
+
 /// UI state for the AWE view, stored in SynthApp.
 pub struct AweUiState {
-    // Room dimensions
+    // Room shape kind
+    pub shape_kind: RoomShapeKind,
+
+    // Box dimensions
     pub room_length: f32,
     pub room_width: f32,
     pub room_height: f32,
+
+    // Cylinder dimensions
+    pub cyl_radius: f32,
+    pub cyl_length: f32,
+
+    // L-shape dimensions
+    pub l_length_a: f32,
+    pub l_width_a: f32,
+    pub l_length_b: f32,
+    pub l_width_b: f32,
+    pub l_height: f32,
 
     // Positions (x, y only — z is fixed for floor plan)
     pub source_x: f32,
@@ -36,10 +60,15 @@ pub struct AweUiState {
     pub early_late: f32,
     pub modes_amount: f32,
     pub tail_stretch: f32,
+    pub freq_warp: f32,
+    pub resonance_boost: f32,
+    pub portal_amount: f32,
 
     // LFO states
     pub lfo1: AweLfoState,
     pub lfo2: AweLfoState,
+    pub lfo3: AweLfoState,
+    pub lfo4: AweLfoState,
 
     // Drag state
     pub dragging_source: bool,
@@ -49,10 +78,48 @@ pub struct AweUiState {
 impl Default for AweUiState {
     fn default() -> Self {
         let snap = synth_awe::AweSnapshot::default();
+        let cyl = RoomShape::DEFAULT_CYLINDER;
+        let l = RoomShape::DEFAULT_LSHAPE;
         Self {
+            shape_kind: RoomShapeKind::Box,
             room_length: 8.0,
             room_width: 5.0,
             room_height: 3.0,
+            cyl_radius: if let RoomShape::Cylinder { radius, .. } = cyl {
+                radius
+            } else {
+                1.0
+            },
+            cyl_length: if let RoomShape::Cylinder { length, .. } = cyl {
+                length
+            } else {
+                20.0
+            },
+            l_length_a: if let RoomShape::LShape { length_a, .. } = l {
+                length_a
+            } else {
+                8.0
+            },
+            l_width_a: if let RoomShape::LShape { width_a, .. } = l {
+                width_a
+            } else {
+                5.0
+            },
+            l_length_b: if let RoomShape::LShape { length_b, .. } = l {
+                length_b
+            } else {
+                6.0
+            },
+            l_width_b: if let RoomShape::LShape { width_b, .. } = l {
+                width_b
+            } else {
+                4.0
+            },
+            l_height: if let RoomShape::LShape { height, .. } = l {
+                height
+            } else {
+                3.0
+            },
             source_x: snap.source_pos[0],
             source_y: snap.source_pos[1],
             listener_x: snap.listener_pos[0],
@@ -62,11 +129,50 @@ impl Default for AweUiState {
             early_late: snap.early_late_balance,
             modes_amount: snap.modes_amount,
             tail_stretch: snap.tail_stretch,
+            freq_warp: snap.freq_warp,
+            resonance_boost: snap.resonance_boost,
+            portal_amount: snap.portal_amount,
             lfo1: snap.lfo1,
             lfo2: snap.lfo2,
+            lfo3: snap.lfo3,
+            lfo4: snap.lfo4,
             dragging_source: false,
             dragging_listener: false,
         }
+    }
+}
+
+impl AweUiState {
+    /// Build a `RoomShape` from the current UI state.
+    fn current_room_shape(&self) -> RoomShape {
+        match self.shape_kind {
+            RoomShapeKind::Box => RoomShape::Box {
+                length: self.room_length,
+                width: self.room_width,
+                height: self.room_height,
+            },
+            RoomShapeKind::Cylinder => RoomShape::Cylinder {
+                radius: self.cyl_radius,
+                length: self.cyl_length,
+            },
+            RoomShapeKind::LShape => RoomShape::LShape {
+                length_a: self.l_length_a,
+                width_a: self.l_width_a,
+                length_b: self.l_length_b,
+                width_b: self.l_width_b,
+                height: self.l_height,
+            },
+        }
+    }
+
+    /// Effective room length for floor plan display.
+    fn effective_length(&self) -> f32 {
+        self.current_room_shape().length()
+    }
+
+    /// Effective room width for floor plan display.
+    fn effective_width(&self) -> f32 {
+        self.current_room_shape().width()
     }
 }
 
@@ -84,7 +190,7 @@ fn material_from_index(idx: usize) -> Material {
     }
 }
 
-const LFO_TARGET_NAMES: [&str; 8] = [
+const LFO_TARGET_NAMES: [&str; 13] = [
     "Room Length",
     "Room Width",
     "Source X",
@@ -93,6 +199,11 @@ const LFO_TARGET_NAMES: [&str; 8] = [
     "Listener Y",
     "Dry/Wet",
     "Freq Warp",
+    "Early/Late",
+    "Modes Amount",
+    "Res Boost",
+    "Tail Stretch",
+    "Portal",
 ];
 
 fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
@@ -105,6 +216,11 @@ fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
         5 => AweLfoTarget::ListenerY,
         6 => AweLfoTarget::DryWet,
         7 => AweLfoTarget::FreqWarp,
+        8 => AweLfoTarget::EarlyLate,
+        9 => AweLfoTarget::ModesAmount,
+        10 => AweLfoTarget::ResonanceBoost,
+        11 => AweLfoTarget::TailStretch,
+        12 => AweLfoTarget::PortalAmount,
         _ => AweLfoTarget::SourceX,
     }
 }
@@ -119,6 +235,11 @@ fn lfo_target_to_index(target: AweLfoTarget) -> usize {
         AweLfoTarget::ListenerY => 5,
         AweLfoTarget::DryWet => 6,
         AweLfoTarget::FreqWarp => 7,
+        AweLfoTarget::EarlyLate => 8,
+        AweLfoTarget::ModesAmount => 9,
+        AweLfoTarget::ResonanceBoost => 10,
+        AweLfoTarget::TailStretch => 11,
+        AweLfoTarget::PortalAmount => 12,
     }
 }
 
@@ -194,8 +315,8 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     let margin = 30.0;
     let draw_rect = rect.shrink(margin);
 
-    let room_w = state.room_length.max(0.5);
-    let room_h = state.room_width.max(0.5);
+    let room_w = state.effective_length().max(0.5);
+    let room_h = state.effective_width().max(0.5);
 
     let scale_x = draw_rect.width() / room_w;
     let scale_y = draw_rect.height() / room_h;
@@ -239,14 +360,14 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     painter.text(
         egui::pos2(room_screen_rect.center().x, room_screen_rect.max.y + 14.0),
         egui::Align2::CENTER_TOP,
-        format!("{:.1}m", state.room_length),
+        format!("{:.1}m", room_w),
         egui::FontId::proportional(12.0),
         dim_label_color,
     );
     painter.text(
         egui::pos2(room_screen_rect.min.x - 14.0, room_screen_rect.center().y),
         egui::Align2::RIGHT_CENTER,
-        format!("{:.1}m", state.room_width),
+        format!("{:.1}m", room_h),
         egui::FontId::proportional(12.0),
         dim_label_color,
     );
@@ -300,8 +421,8 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         && let Some(pos) = pointer
     {
         let (rx, ry) = screen_to_room(pos.x, pos.y);
-        let rx = rx.clamp(0.1, state.room_length - 0.1);
-        let ry = ry.clamp(0.1, state.room_width - 0.1);
+        let rx = rx.clamp(0.1, room_w - 0.1);
+        let ry = ry.clamp(0.1, room_h - 0.1);
 
         if state.dragging_source {
             state.source_x = rx;
@@ -329,7 +450,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
 fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let t = theme();
 
-    // --- Room Dimensions ---
+    // --- Room Shape & Dimensions ---
     ui.heading(
         egui::RichText::new("Room")
             .color(t.colors.accent_cyan)
@@ -337,50 +458,143 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     );
     ui.add_space(4.0);
 
-    let mut room_changed = false;
+    // Shape selector
+    let prev_shape = state.shape_kind;
+    let shape_idx = match state.shape_kind {
+        RoomShapeKind::Box => 0,
+        RoomShapeKind::Cylinder => 1,
+        RoomShapeKind::LShape => 2,
+    };
+    let mut new_shape_idx = shape_idx;
+    egui::ComboBox::from_label("Shape")
+        .selected_text(SHAPE_NAMES[shape_idx])
+        .show_ui(ui, |ui| {
+            for (i, name) in SHAPE_NAMES.iter().enumerate() {
+                ui.selectable_value(&mut new_shape_idx, i, *name);
+            }
+        });
+    if new_shape_idx != shape_idx {
+        state.shape_kind = match new_shape_idx {
+            0 => RoomShapeKind::Box,
+            1 => RoomShapeKind::Cylinder,
+            _ => RoomShapeKind::LShape,
+        };
+    }
 
-    ui.horizontal(|ui| {
-        ui.label("Length:");
-        if ui
-            .add(egui::Slider::new(&mut state.room_length, 2.0..=30.0).suffix("m"))
-            .changed()
-        {
-            room_changed = true;
+    let mut room_changed = prev_shape != state.shape_kind;
+
+    // Dimension sliders adapted to shape type
+    match state.shape_kind {
+        RoomShapeKind::Box => {
+            ui.horizontal(|ui| {
+                ui.label("Length:");
+                if ui
+                    .add(egui::Slider::new(&mut state.room_length, 2.0..=100.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Width:");
+                if ui
+                    .add(egui::Slider::new(&mut state.room_width, 2.0..=100.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Height:");
+                if ui
+                    .add(egui::Slider::new(&mut state.room_height, 2.0..=20.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
         }
-    });
-    ui.horizontal(|ui| {
-        ui.label("Width:");
-        if ui
-            .add(egui::Slider::new(&mut state.room_width, 2.0..=20.0).suffix("m"))
-            .changed()
-        {
-            room_changed = true;
+        RoomShapeKind::Cylinder => {
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                if ui
+                    .add(egui::Slider::new(&mut state.cyl_radius, 0.5..=10.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Length:");
+                if ui
+                    .add(egui::Slider::new(&mut state.cyl_length, 2.0..=200.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
         }
-    });
-    ui.horizontal(|ui| {
-        ui.label("Height:");
-        if ui
-            .add(egui::Slider::new(&mut state.room_height, 2.0..=10.0).suffix("m"))
-            .changed()
-        {
-            room_changed = true;
+        RoomShapeKind::LShape => {
+            ui.horizontal(|ui| {
+                ui.label("Len A:");
+                if ui
+                    .add(egui::Slider::new(&mut state.l_length_a, 2.0..=30.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Wid A:");
+                if ui
+                    .add(egui::Slider::new(&mut state.l_width_a, 2.0..=20.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Len B:");
+                if ui
+                    .add(egui::Slider::new(&mut state.l_length_b, 2.0..=30.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Wid B:");
+                if ui
+                    .add(egui::Slider::new(&mut state.l_width_b, 2.0..=20.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Height:");
+                if ui
+                    .add(egui::Slider::new(&mut state.l_height, 2.0..=10.0).suffix("m"))
+                    .changed()
+                {
+                    room_changed = true;
+                }
+            });
         }
-    });
+    }
 
     if room_changed {
-        let shape = RoomShape::Box {
-            length: state.room_length,
-            width: state.room_width,
-            height: state.room_height,
-        };
+        let shape = state.current_room_shape();
         handle.send(EngineCommand::SetAweParameter {
             param: AweParam::RoomShape(shape),
         });
-        // Clamp positions to new room
-        state.source_x = state.source_x.clamp(0.1, state.room_length - 0.1);
-        state.source_y = state.source_y.clamp(0.1, state.room_width - 0.1);
-        state.listener_x = state.listener_x.clamp(0.1, state.room_length - 0.1);
-        state.listener_y = state.listener_y.clamp(0.1, state.room_width - 0.1);
+        // Clamp positions to new effective room dimensions
+        let eff_len = state.effective_length();
+        let eff_wid = state.effective_width();
+        state.source_x = state.source_x.clamp(0.1, eff_len - 0.1);
+        state.source_y = state.source_y.clamp(0.1, eff_wid - 0.1);
+        state.listener_x = state.listener_x.clamp(0.1, eff_len - 0.1);
+        state.listener_y = state.listener_y.clamp(0.1, eff_wid - 0.1);
     }
 
     ui.separator();
@@ -468,22 +682,80 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     ui.separator();
 
+    // --- Impossible Parameters ---
+    ui.heading(
+        egui::RichText::new("Impossible")
+            .color(t.colors.accent_orange)
+            .size(16.0),
+    );
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Freq Warp:");
+        if ui
+            .add(egui::Slider::new(&mut state.freq_warp, -1.0..=1.0))
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::FreqWarp(state.freq_warp),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Resonance:");
+        if ui
+            .add(egui::Slider::new(&mut state.resonance_boost, 0.0..=1.0))
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::ResonanceBoost(state.resonance_boost),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Portal:");
+        if ui
+            .add(egui::Slider::new(&mut state.portal_amount, 0.0..=1.0))
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::PortalAmount(state.portal_amount),
+            });
+        }
+    });
+
+    ui.separator();
+
     // --- LFO 1 ---
-    draw_lfo_section(ui, handle, "LFO 1", &mut state.lfo1, true);
+    draw_lfo_section(ui, handle, "LFO 1", &mut state.lfo1, 1);
 
     ui.separator();
 
     // --- LFO 2 ---
-    draw_lfo_section(ui, handle, "LFO 2", &mut state.lfo2, false);
+    draw_lfo_section(ui, handle, "LFO 2", &mut state.lfo2, 2);
+
+    ui.separator();
+
+    // --- LFO 3 ---
+    draw_lfo_section(ui, handle, "LFO 3", &mut state.lfo3, 3);
+
+    ui.separator();
+
+    // --- LFO 4 ---
+    draw_lfo_section(ui, handle, "LFO 4", &mut state.lfo4, 4);
 }
 
 /// Draw a single LFO section.
+///
+/// `lfo_index` is 1-based (1, 2, 3, or 4).
 fn draw_lfo_section(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
     label: &str,
     lfo_state: &mut AweLfoState,
-    is_lfo1: bool,
+    lfo_index: u8,
 ) {
     let t = theme();
     ui.heading(
@@ -503,10 +775,11 @@ fn draw_lfo_section(
             )
             .changed()
         {
-            let param = if is_lfo1 {
-                AweParam::Lfo1Rate(lfo_state.rate)
-            } else {
-                AweParam::Lfo2Rate(lfo_state.rate)
+            let param = match lfo_index {
+                1 => AweParam::Lfo1Rate(lfo_state.rate),
+                2 => AweParam::Lfo2Rate(lfo_state.rate),
+                3 => AweParam::Lfo3Rate(lfo_state.rate),
+                _ => AweParam::Lfo4Rate(lfo_state.rate),
             };
             handle.send(EngineCommand::SetAweParameter { param });
         }
@@ -518,10 +791,11 @@ fn draw_lfo_section(
             .add(egui::Slider::new(&mut lfo_state.amount, 0.0..=1.0))
             .changed()
         {
-            let param = if is_lfo1 {
-                AweParam::Lfo1Amount(lfo_state.amount)
-            } else {
-                AweParam::Lfo2Amount(lfo_state.amount)
+            let param = match lfo_index {
+                1 => AweParam::Lfo1Amount(lfo_state.amount),
+                2 => AweParam::Lfo2Amount(lfo_state.amount),
+                3 => AweParam::Lfo3Amount(lfo_state.amount),
+                _ => AweParam::Lfo4Amount(lfo_state.amount),
             };
             handle.send(EngineCommand::SetAweParameter { param });
         }
@@ -529,7 +803,13 @@ fn draw_lfo_section(
 
     let mut target_idx = lfo_target_to_index(lfo_state.target);
     let prev_target = target_idx;
-    egui::ComboBox::from_label(if is_lfo1 { "Target 1" } else { "Target 2" })
+    let combo_label = match lfo_index {
+        1 => "Target 1",
+        2 => "Target 2",
+        3 => "Target 3",
+        _ => "Target 4",
+    };
+    egui::ComboBox::from_label(combo_label)
         .selected_text(LFO_TARGET_NAMES[target_idx])
         .show_ui(ui, |ui| {
             for (i, name) in LFO_TARGET_NAMES.iter().enumerate() {
@@ -539,10 +819,11 @@ fn draw_lfo_section(
 
     if target_idx != prev_target {
         lfo_state.target = lfo_target_from_index(target_idx);
-        let param = if is_lfo1 {
-            AweParam::Lfo1Target(lfo_state.target)
-        } else {
-            AweParam::Lfo2Target(lfo_state.target)
+        let param = match lfo_index {
+            1 => AweParam::Lfo1Target(lfo_state.target),
+            2 => AweParam::Lfo2Target(lfo_state.target),
+            3 => AweParam::Lfo3Target(lfo_state.target),
+            _ => AweParam::Lfo4Target(lfo_state.target),
         };
         handle.send(EngineCommand::SetAweParameter { param });
     }
