@@ -32,8 +32,15 @@ const JITTER_PATTERN: [f32; MAX_EARLY_TAPS] = [-0.9, 0.7, -0.4, 1.0, -0.6, 0.3];
 /// and listener collapse to the same position as a mirror.
 const MIN_DISTANCE: Meters = Meters::new(0.1);
 
+/// Amplification factor for absorption differences.
+///
+/// Raw absorption values for hard materials (0.01–0.08) cluster too closely
+/// to produce audible filter differences. This multiplier spreads them out
+/// for perceptual impact in the per-tap damping filters.
+const ABSORPTION_AMPLIFICATION: f32 = 3.0;
+
 /// A single early reflection tap with per-wall delay, stereo gain,
-/// and a one-pole lowpass for frequency-dependent absorption.
+/// and frequency-dependent absorption filters (LP for HF, HP for LF).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EarlyTap {
     /// Fractional delay in samples for this reflection.
@@ -43,9 +50,13 @@ pub(crate) struct EarlyTap {
     /// Right channel gain.
     gain_right: Gain,
     /// One-pole lowpass coefficient for high-frequency damping (0..1).
-    damping_coeff: NormalizedValue,
+    lp_coeff: NormalizedValue,
+    /// One-pole highpass coefficient for low-frequency absorption.
+    hp_coeff: NormalizedValue,
     /// Filter state for the one-pole lowpass.
-    filter_state: FilterState,
+    lp_state: FilterState,
+    /// Filter state for the one-pole highpass.
+    hp_state: FilterState,
 }
 
 impl EarlyTap {
@@ -53,8 +64,10 @@ impl EarlyTap {
         delay_samples: SampleOffset::new(1.0),
         gain_left: Gain::MUTE,
         gain_right: Gain::MUTE,
-        damping_coeff: NormalizedValue::new_unchecked(0.3),
-        filter_state: FilterState::ZERO,
+        lp_coeff: NormalizedValue::new_unchecked(0.3),
+        hp_coeff: NormalizedValue::new_unchecked(0.997),
+        lp_state: FilterState::ZERO,
+        hp_state: FilterState::ZERO,
     };
 }
 
@@ -102,14 +115,16 @@ impl EarlyReflections {
     ///
     /// # Arguments
     ///
-    /// * `room_length` - Room extent along x-axis (meters).
-    /// * `room_width`  - Room extent along y-axis (meters).
-    /// * `room_height` - Room extent along z-axis (meters).
-    /// * `source_pos`  - Sound source position `[x, y, z]` in meters.
-    /// * `listener_pos` - Listener position `[x, y, z]` in meters.
-    /// * `absorption`  - Average material absorption coefficient (0.0--1.0).
-    /// * `diffusion`   - Material diffusion (0.0--1.0).
-    /// * `sample_rate`  - Current sample rate in Hz.
+    /// * `room_length`     - Room extent along x-axis (meters).
+    /// * `room_width`      - Room extent along y-axis (meters).
+    /// * `room_height`     - Room extent along z-axis (meters).
+    /// * `source_pos`      - Sound source position `[x, y, z]` in meters.
+    /// * `listener_pos`    - Listener position `[x, y, z]` in meters.
+    /// * `absorption_low`  - Low-frequency absorption coefficient (0.0--1.0).
+    /// * `absorption_mid`  - Mid-frequency absorption coefficient (0.0--1.0).
+    /// * `absorption_high` - High-frequency absorption coefficient (0.0--1.0).
+    /// * `diffusion`       - Material diffusion (0.0--1.0).
+    /// * `sample_rate`     - Current sample rate in Hz.
     #[allow(clippy::too_many_arguments)]
     pub fn update_geometry(
         &mut self,
@@ -118,7 +133,9 @@ impl EarlyReflections {
         room_height: Meters,
         source_pos: Position3,
         listener_pos: Position3,
-        absorption: NormalizedValue,
+        absorption_low: NormalizedValue,
+        absorption_mid: NormalizedValue,
+        absorption_high: NormalizedValue,
         diffusion: NormalizedValue,
         sample_rate: SampleRate,
     ) {
@@ -146,11 +163,21 @@ impl EarlyReflections {
             [sx, sy, -sz],                      // -z wall
         ];
 
+        // Mid-weighted average for overall reflection energy
+        let weighted_avg = absorption_low.as_f32() * 0.2
+            + absorption_mid.as_f32() * 0.5
+            + absorption_high.as_f32() * 0.3;
+
         let max_delay = SampleOffset::new(MAX_DELAY_SECONDS.as_f32() * sample_rate.as_f32());
-        let reflection_coeff = NormalizedValue::new(1.0 - absorption.as_f32().clamp(0.0, 0.99));
-        let damping = NormalizedValue::new(0.3 + absorption.as_f32() * 0.5);
+        let reflection_coeff = NormalizedValue::new(1.0 - weighted_avg.clamp(0.0, 0.99));
         let diffusion = NormalizedValue::new(diffusion.as_f32());
         let jitter_max = SampleOffset::new(MAX_JITTER_SECONDS.as_f32() * sample_rate.as_f32());
+
+        // Frequency-dependent damping: amplify differences for audibility
+        let abs_high_eff = (absorption_high.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
+        let abs_low_eff = (absorption_low.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
+        let lp_damping = NormalizedValue::new(0.2 + abs_high_eff * 0.6);
+        let hp_damping = NormalizedValue::new(0.997 - abs_low_eff * 0.15);
 
         for i in 0..MAX_EARLY_TAPS {
             let [mx, my, mz] = mirrors[i];
@@ -178,8 +205,9 @@ impl EarlyReflections {
             self.taps[i].delay_samples = SampleOffset::new(delay_clamped);
             self.taps[i].gain_left = Gain::new((1.0 - pan.as_f32()) * 0.5 * total_gain);
             self.taps[i].gain_right = Gain::new((1.0 + pan.as_f32()) * 0.5 * total_gain);
-            self.taps[i].damping_coeff = damping;
-            // Preserve filter_state across geometry updates for smooth transitions.
+            self.taps[i].lp_coeff = lp_damping;
+            self.taps[i].hp_coeff = hp_damping;
+            // Preserve filter states across geometry updates for smooth transitions.
         }
     }
 
@@ -201,8 +229,11 @@ impl EarlyReflections {
                 .delay_line
                 .read_interpolated(tap.delay_samples.as_f32());
 
-            // One-pole lowpass: y[n] = (1 - c) * x[n] + c * y[n-1]
-            let filtered = tap.filter_state.one_pole(raw, tap.damping_coeff.as_f32());
+            // Frequency-dependent absorption:
+            // LP removes high frequencies (material HF absorption)
+            let lp_out = tap.lp_state.one_pole(raw, tap.lp_coeff.as_f32());
+            // HP removes low frequencies (material LF absorption)
+            let filtered = tap.hp_state.one_pole_hp(lp_out, tap.hp_coeff.as_f32());
 
             left += tap.gain_left.apply(filtered);
             right += tap.gain_right.apply(filtered);
@@ -215,7 +246,8 @@ impl EarlyReflections {
     pub fn clear(&mut self) {
         self.delay_line.clear();
         for tap in &mut self.taps {
-            tap.filter_state.reset();
+            tap.lp_state.reset();
+            tap.hp_state.reset();
         }
     }
 }
@@ -254,7 +286,9 @@ mod tests {
             Meters::new(3.0),
             pos(4.0, 2.5, 1.5),
             pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.2),
+            NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
             sample_rate,
         );
@@ -287,7 +321,9 @@ mod tests {
             Meters::new(3.0),
             pos(5.0, 3.0, 1.5),
             pos(5.0, 3.0, 1.5),
+            NormalizedValue::new(0.05),
             NormalizedValue::new(0.1),
+            NormalizedValue::new(0.15),
             NormalizedValue::new(0.0),
             sample_rate,
         );
@@ -318,7 +354,9 @@ mod tests {
             Meters::new(3.0),
             pos(4.0, 2.5, 1.5),
             pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.2),
+            NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
@@ -347,6 +385,8 @@ mod tests {
             Meters::new(3.0),
             pos(4.0, 2.5, 1.5),
             pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.05),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.1),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
@@ -357,13 +397,17 @@ mod tests {
             Meters::new(3.0),
             pos(4.0, 2.5, 1.5),
             pos(2.0, 2.5, 1.5),
+            NormalizedValue::new(0.3),
+            NormalizedValue::new(0.5),
             NormalizedValue::new(0.9),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
 
-        // Higher absorption should yield higher damping coefficient.
-        assert!(er_high.taps[0].damping_coeff > er_low.taps[0].damping_coeff);
+        // Higher HF absorption should yield higher LP damping coefficient.
+        assert!(er_high.taps[0].lp_coeff > er_low.taps[0].lp_coeff);
+        // Higher LF absorption should yield lower HP coefficient (more bass cut).
+        assert!(er_high.taps[0].hp_coeff < er_low.taps[0].hp_coeff);
     }
 
     #[test]
@@ -378,7 +422,9 @@ mod tests {
             Meters::new(3.0),
             pos(5.0, 3.0, 1.5),
             pos(9.0, 3.0, 1.5),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.2),
+            NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
@@ -389,7 +435,9 @@ mod tests {
             Meters::new(3.0),
             pos(5.0, 3.0, 1.5),
             pos(1.0, 3.0, 1.5),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.2),
+            NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
@@ -427,6 +475,8 @@ mod tests {
             Meters::new(2.0),
             pos(0.0, 0.0, 0.0),
             pos(0.0, 0.0, 0.0),
+            NormalizedValue::new(0.0),
+            NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
             SampleRate::new(48000.0),

@@ -1,5 +1,24 @@
 # Version History
 
+## [0.133.0] - 2026-02-15
+### Fixed - AWE frekvensberoende absorption
+
+**Frekvensberoende dämpning genom hela DSP-kedjan:**
+- Ersätter `Material::average_absorption()` (en enda skalär) med per-band absorption (low/mid/high) genom alla DSP-steg
+- Early Reflections: varje tap har nu separata LP- och HP-filter istället för ett enda dämpningsfilter
+- Room Modes: varje combfilter har nu LP + HP i feedback-loopen
+- FDN: `lp_coeff` beräknas från `absorption_high`, `hp_coeff` från `absorption_low`
+- Absorption Amplification-faktor (3.0x) för att sprida små fysikaliska skillnader till hörbara filterskillnader
+- Olika material (betong, metall, glas, trä, tyg) ger nu markant olika klangkaraktär
+
+**Fixar i Spatializer (huvud-skuggning):**
+- Inverterade head shadow-koefficienter: one_pole med coeff 1.0 = full LP (inte pass-through)
+- Nära örat får nu coeff ≈ 0 (pass-through), avlägset öra får högre coeff (mer HF-dämpning)
+
+**Fixar i tester:**
+- Alla awe_engine-tester uppdaterade med korrekta newtype-wrappers (NormalizedValue, SampleRate, Meters, etc.)
+- presets-test fixat med `.as_f32()` konvertering
+
 ## [0.132.0] - 2026-02-15
 ### Added - Kinetic Modulator
 

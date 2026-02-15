@@ -19,15 +19,22 @@ const NUM_MODES: usize = 3;
 /// We pre-allocate 48000 to cover large-room presets with headroom.
 const MAX_DELAY_SAMPLES: SampleCount = SampleCount::new(48_000);
 
+/// Amplification factor for absorption differences.
+///
+/// Same as in early_reflections — amplifies small physical differences
+/// between hard materials into audible filter parameter differences.
+const ABSORPTION_AMPLIFICATION: f32 = 3.0;
+
 /// A single comb filter for one axial room mode.
 ///
-/// The feedback path includes a one-pole low-pass filter that models
-/// high-frequency absorption on each reflection cycle.
+/// The feedback path includes frequency-dependent damping:
+/// a one-pole LP for high-frequency absorption and a one-pole HP
+/// for low-frequency absorption per reflection cycle.
 ///
 /// ```text
 /// input --> (+) --> delay_line --> output
 ///            ^                    |
-///            |   damping_filter   |
+///            |   LP -> HP filter  |
 ///            +--- feedback * -----+
 /// ```
 #[derive(Debug, Clone)]
@@ -35,8 +42,10 @@ pub(crate) struct CombFilter {
     delay_line: DelayLine,
     delay_samples: SampleCount,
     feedback: Gain,
-    damping_coeff: NormalizedValue,
-    damping_state: FilterState,
+    lp_coeff: NormalizedValue,
+    hp_coeff: NormalizedValue,
+    lp_state: FilterState,
+    hp_state: FilterState,
 }
 
 impl CombFilter {
@@ -47,20 +56,36 @@ impl CombFilter {
             delay_line: DelayLine::new(MAX_DELAY_SAMPLES.as_usize()),
             delay_samples: SampleCount::new(1),
             feedback: Gain::MUTE,
-            damping_coeff: NormalizedValue::new(0.3),
-            damping_state: FilterState::ZERO,
+            lp_coeff: NormalizedValue::new(0.3),
+            hp_coeff: NormalizedValue::new(0.997),
+            lp_state: FilterState::ZERO,
+            hp_state: FilterState::ZERO,
         }
     }
 
     /// Update the comb filter parameters for a given room dimension.
-    fn update(&mut self, dimension: Meters, absorption: NormalizedValue, sample_rate: SampleRate) {
+    fn update(
+        &mut self,
+        dimension: Meters,
+        absorption_low: NormalizedValue,
+        absorption_high: NormalizedValue,
+        sample_rate: SampleRate,
+    ) {
         let mode_freq = Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * dimension.as_f32().max(0.001)));
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let raw_delay = (sample_rate.as_f32() / mode_freq.as_f32()) as usize;
         let max_delay = self.delay_line.len().saturating_sub(1);
         self.delay_samples = SampleCount::new(raw_delay.clamp(1, max_delay));
-        self.feedback = Gain::new(0.85 * (1.0 - absorption.as_f32() * 0.5));
-        self.damping_coeff = NormalizedValue::new(0.3 + absorption.as_f32() * 0.4);
+
+        // Feedback from average of low/high bands
+        let avg = (absorption_low.as_f32() + absorption_high.as_f32()) * 0.5;
+        self.feedback = Gain::new(0.85 * (1.0 - avg * 0.5));
+
+        // Frequency-dependent damping with amplification
+        let abs_high_eff = (absorption_high.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
+        let abs_low_eff = (absorption_low.as_f32() * ABSORPTION_AMPLIFICATION).min(1.0);
+        self.lp_coeff = NormalizedValue::new(0.2 + abs_high_eff * 0.5);
+        self.hp_coeff = NormalizedValue::new(0.997 - abs_low_eff * 0.12);
     }
 
     /// Process a single sample through the comb filter.
@@ -68,11 +93,11 @@ impl CombFilter {
     #[must_use]
     fn process(&mut self, input: f32) -> f32 {
         let delayed = self.delay_line.read(self.delay_samples.as_usize());
-        // One-pole low-pass in the feedback path for HF absorption
-        let damped = self
-            .damping_state
-            .one_pole(delayed, self.damping_coeff.as_f32());
-        let feedback_signal = self.feedback.apply(damped);
+        // LP in feedback path: HF absorption (material-dependent)
+        let lp_out = self.lp_state.one_pole(delayed, self.lp_coeff.as_f32());
+        // HP in feedback path: LF absorption (material-dependent)
+        let filtered = self.hp_state.one_pole_hp(lp_out, self.hp_coeff.as_f32());
+        let feedback_signal = self.feedback.apply(filtered);
         self.delay_line.write(input + feedback_signal);
         delayed
     }
@@ -80,7 +105,8 @@ impl CombFilter {
     /// Clear all internal state.
     fn clear(&mut self) {
         self.delay_line.clear();
-        self.damping_state.reset();
+        self.lp_state.reset();
+        self.hp_state.reset();
     }
 }
 
@@ -117,22 +143,24 @@ impl RoomModeBank {
     ///
     /// # Arguments
     ///
-    /// * `room_length` - Length of the room in meters (x-axis).
-    /// * `room_width` - Width of the room in meters (y-axis).
-    /// * `room_height` - Height of the room in meters (z-axis).
-    /// * `absorption` - Average wall absorption coefficient (0.0 to 1.0).
-    /// * `sample_rate` - Current sample rate in Hz.
+    /// * `room_length`     - Length of the room in meters (x-axis).
+    /// * `room_width`      - Width of the room in meters (y-axis).
+    /// * `room_height`     - Height of the room in meters (z-axis).
+    /// * `absorption_low`  - Low-frequency absorption coefficient (0.0 to 1.0).
+    /// * `absorption_high` - High-frequency absorption coefficient (0.0 to 1.0).
+    /// * `sample_rate`     - Current sample rate in Hz.
     pub fn update_geometry(
         &mut self,
         room_length: Meters,
         room_width: Meters,
         room_height: Meters,
-        absorption: NormalizedValue,
+        absorption_low: NormalizedValue,
+        absorption_high: NormalizedValue,
         sample_rate: SampleRate,
     ) {
         let dimensions = [room_length, room_width, room_height];
         for (mode, &dim) in self.modes.iter_mut().zip(dimensions.iter()) {
-            mode.update(dim, absorption, sample_rate);
+            mode.update(dim, absorption_low, absorption_high, sample_rate);
         }
     }
 
@@ -202,7 +230,8 @@ mod tests {
             Meters::new(8.0),
             Meters::new(5.0),
             Meters::new(3.0),
-            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.05),
+            NormalizedValue::new(0.15),
             sample_rate,
         );
 
@@ -228,6 +257,7 @@ mod tests {
             Meters::new(5.0),
             Meters::new(3.0),
             NormalizedValue::new(0.0),
+            NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
         let fb_no_absorption = bank.modes[0].feedback.as_f32();
@@ -236,6 +266,7 @@ mod tests {
             Meters::new(8.0),
             Meters::new(5.0),
             Meters::new(3.0),
+            NormalizedValue::new(1.0),
             NormalizedValue::new(1.0),
             SampleRate::new(48000.0),
         );
@@ -250,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn test_damping_coeff_scales_with_absorption() {
+    fn test_lp_coeff_scales_with_hf_absorption() {
         let mut bank = RoomModeBank::new();
 
         bank.update_geometry(
@@ -258,23 +289,53 @@ mod tests {
             Meters::new(5.0),
             Meters::new(3.0),
             NormalizedValue::new(0.0),
+            NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
-        let damp_no_absorption = bank.modes[0].damping_coeff.as_f32();
+        let lp_no_absorption = bank.modes[0].lp_coeff.as_f32();
+
+        bank.update_geometry(
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            NormalizedValue::new(0.0),
+            NormalizedValue::new(1.0),
+            SampleRate::new(48000.0),
+        );
+        let lp_full_hf_absorption = bank.modes[0].lp_coeff.as_f32();
+
+        // More HF absorption should give higher LP coefficient (more damping)
+        assert!(lp_full_hf_absorption > lp_no_absorption);
+        // Zero absorption: 0.2 + 0.0 * 0.5 = 0.2
+        assert!((lp_no_absorption - 0.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_hp_coeff_scales_with_lf_absorption() {
+        let mut bank = RoomModeBank::new();
+
+        bank.update_geometry(
+            Meters::new(8.0),
+            Meters::new(5.0),
+            Meters::new(3.0),
+            NormalizedValue::new(0.0),
+            NormalizedValue::new(0.0),
+            SampleRate::new(48000.0),
+        );
+        let hp_no_absorption = bank.modes[0].hp_coeff.as_f32();
 
         bank.update_geometry(
             Meters::new(8.0),
             Meters::new(5.0),
             Meters::new(3.0),
             NormalizedValue::new(1.0),
+            NormalizedValue::new(0.0),
             SampleRate::new(48000.0),
         );
-        let damp_full_absorption = bank.modes[0].damping_coeff.as_f32();
+        let hp_full_lf_absorption = bank.modes[0].hp_coeff.as_f32();
 
-        // 0.3 + 0.0 * 0.4 = 0.3
-        assert!((damp_no_absorption - 0.3).abs() < f32::EPSILON);
-        // 0.3 + 1.0 * 0.4 = 0.7
-        assert!((damp_full_absorption - 0.7).abs() < f32::EPSILON);
+        // More LF absorption should give lower HP coefficient (more bass cut)
+        assert!(hp_full_lf_absorption < hp_no_absorption);
     }
 
     #[test]
@@ -284,7 +345,8 @@ mod tests {
             Meters::new(8.0),
             Meters::new(5.0),
             Meters::new(3.0),
-            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.05),
+            NormalizedValue::new(0.15),
             SampleRate::new(48000.0),
         );
         bank.set_amount(NormalizedValue::new(1.0));
@@ -316,7 +378,8 @@ mod tests {
             Meters::new(8.0),
             Meters::new(5.0),
             Meters::new(3.0),
-            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.05),
+            NormalizedValue::new(0.15),
             SampleRate::new(48000.0),
         );
         bank.set_amount(NormalizedValue::new(1.0));
@@ -352,7 +415,8 @@ mod tests {
             Meters::new(100.0),
             Meters::new(100.0),
             Meters::new(100.0),
-            NormalizedValue::new(0.1),
+            NormalizedValue::new(0.05),
+            NormalizedValue::new(0.15),
             SampleRate::new(48000.0),
         );
         for mode in &bank.modes {
@@ -365,6 +429,7 @@ mod tests {
         let mut comb = CombFilter::new();
         comb.update(
             Meters::new(5.0),
+            NormalizedValue::new(0.1),
             NormalizedValue::new(0.3),
             SampleRate::new(48000.0),
         );

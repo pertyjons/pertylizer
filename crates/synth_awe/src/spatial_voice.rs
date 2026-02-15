@@ -296,7 +296,9 @@ impl SpatialVoicePool {
         room_width: Meters,
         room_height: Meters,
         listener_pos: Position3,
-        absorption: NormalizedValue,
+        absorption_low: NormalizedValue,
+        absorption_mid: NormalizedValue,
+        absorption_high: NormalizedValue,
         diffusion: NormalizedValue,
         sample_rate: SampleRate,
     ) {
@@ -312,7 +314,9 @@ impl SpatialVoicePool {
             room_height,
             pos,
             listener_pos,
-            absorption,
+            absorption_low,
+            absorption_mid,
+            absorption_high,
             diffusion,
             sample_rate,
         );

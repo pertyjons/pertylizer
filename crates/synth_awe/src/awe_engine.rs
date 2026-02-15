@@ -23,6 +23,13 @@ use crate::types::{Meters, Position3, SampleOffset, StretchFactor};
 /// Smooth parameter ramp time in seconds (~5 ms).
 const RAMP_TIME_SECONDS: Seconds = Seconds::new(0.005);
 
+/// Amplification factor for frequency-dependent absorption differences.
+///
+/// Raw absorption values for hard materials (0.01–0.08) cluster too closely
+/// to produce audible filter differences in the FDN feedback loop. This
+/// multiplier spreads them out for perceptual impact.
+const ABSORPTION_AMPLIFICATION: f32 = 3.0;
+
 /// Portal delay line max length in samples.
 const PORTAL_MAX_DELAY: SampleCount = SampleCount::new(28_800);
 
@@ -143,21 +150,32 @@ impl AweEngine {
         // Compute ramp coefficient for ~5 ms smoothing
         let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
 
-        // Pre-compute FDN parameters from room geometry
-        let absorption = self.material.average_absorption();
+        // Pre-compute FDN parameters from per-band material absorption
+        let abs_low = self.material.absorption_low.as_f32();
+        let abs_high = self.material.absorption_high.as_f32();
         let material_diffusion = self.material.diffusion;
         let rt60 = self.calculate_rt60();
 
-        // Freq warp: bass hears bigger room (more LP damping = bass reverberates more)
+        // Amplify differences between materials for audible impact
+        let abs_high_eff = (abs_high * ABSORPTION_AMPLIFICATION).min(1.0);
+        let abs_low_eff = (abs_low * ABSORPTION_AMPLIFICATION).min(1.0);
+
+        // Freq warp: positive = bass decays faster (brighter), negative = HF decays faster (darker)
         let freq_warp = self.snapshot.freq_warp;
-        let lp_coeff = (0.2 + absorption.as_f32() * 0.6) * (1.0 - freq_warp.as_f32() * 0.3);
+
+        // HF damping: driven by high-frequency absorption
+        // Metal (0.02): lp~0.15 → bright tail. Carpet (0.85): lp~0.85 → very dark tail.
+        let lp_coeff = (0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3);
+
+        // LF damping: driven by low-frequency absorption
+        // Metal (0.01): hp~0.997 → full bass. Glass (0.18): hp~0.89 → thinner bass.
+        let hp_coeff = (0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05;
 
         // Resonance boost: adds energy to feedback (with safety clamp)
         let resonance_boost = self.snapshot.resonance_boost;
         let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
             + resonance_boost.as_f32() * 0.15)
             .min(0.97);
-        let hp_coeff = 0.95;
         let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
         let sample_rate_recip = 1.0 / sample_rate.as_f32();
@@ -504,8 +522,6 @@ impl AweEngine {
         let room_length = self.room.length();
         let room_width = self.room.width();
         let room_height = self.room.height();
-        let absorption = self.material.average_absorption();
-        let diffusion = self.material.diffusion;
         let min_pos = Meters::new(0.1);
         let listener = Position3::new(
             self.snapshot
@@ -538,8 +554,10 @@ impl AweEngine {
                 room_width,
                 room_height,
                 listener,
-                absorption,
-                diffusion,
+                self.material.absorption_low,
+                self.material.absorption_mid,
+                self.material.absorption_high,
+                self.material.diffusion,
                 sample_rate,
             );
         }
@@ -547,15 +565,19 @@ impl AweEngine {
         // 4. Compute ramp coefficient
         let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
 
-        // Pre-compute FDN parameters
+        // Pre-compute FDN parameters from per-band material absorption
+        let abs_low = self.material.absorption_low.as_f32();
+        let abs_high = self.material.absorption_high.as_f32();
+        let abs_high_eff = (abs_high * ABSORPTION_AMPLIFICATION).min(1.0);
+        let abs_low_eff = (abs_low * ABSORPTION_AMPLIFICATION).min(1.0);
         let rt60 = self.calculate_rt60();
         let freq_warp = self.snapshot.freq_warp;
-        let lp_coeff = (0.2 + absorption.as_f32() * 0.6) * (1.0 - freq_warp.as_f32() * 0.3);
+        let lp_coeff = (0.1 + abs_high_eff * 0.75) * (1.0 - freq_warp.as_f32() * 0.3);
+        let hp_coeff = (0.997 - abs_low_eff * 0.2) - freq_warp.as_f32() * 0.05;
         let resonance_boost = self.snapshot.resonance_boost;
         let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
             + resonance_boost.as_f32() * 0.15)
             .min(0.97);
-        let hp_coeff = 0.95;
         let material_diffusion = self.material.diffusion;
         let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
         let width = 1.0;
@@ -874,7 +896,6 @@ impl AweEngine {
         let room_length = self.room.length();
         let room_width = self.room.width();
         let room_height = self.room.height();
-        let absorption = self.material.average_absorption();
 
         // Clamp positions inside the room
         let min_pos = Meters::new(0.1);
@@ -907,14 +928,16 @@ impl AweEngine {
                 .clamp(min_pos, room_height - min_pos),
         );
 
-        // Update early reflections (ISM)
+        // Update early reflections (ISM) with per-band absorption
         self.early_reflections.update_geometry(
             room_length,
             room_width,
             room_height,
             source,
             listener,
-            absorption,
+            self.material.absorption_low,
+            self.material.absorption_mid,
+            self.material.absorption_high,
             self.material.diffusion,
             sample_rate,
         );
@@ -928,12 +951,13 @@ impl AweEngine {
             room_scale * self.snapshot.tail_stretch.as_f32(),
         );
 
-        // Update room modes
+        // Update room modes with per-band absorption
         self.room_modes.update_geometry(
             room_length,
             room_width,
             room_height,
-            absorption,
+            self.material.absorption_low,
+            self.material.absorption_high,
             sample_rate,
         );
 
@@ -983,6 +1007,7 @@ impl Default for AweEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synth_core::Hertz;
 
     #[test]
     fn test_engine_new() {
@@ -1004,19 +1029,19 @@ mod tests {
         let mut engine = AweEngine::new();
         engine.set_enabled(true);
         // Set up geometry so reflections are active
-        engine.set_param(AweParam::DryWet(0.5));
+        engine.set_param(AweParam::DryWet(NormalizedValue::new(0.5)));
 
         let mut buffer = vec![0.0; 512];
         // Feed an impulse
         buffer[0] = 1.0;
         buffer[1] = 1.0;
 
-        engine.process(&mut buffer, 48000.0);
+        engine.process(&mut buffer, SampleRate::new(48000.0));
 
         // Process more blocks so reflections arrive
         for _ in 0..50 {
             let mut block = vec![0.0; 512];
-            engine.process(&mut block, 48000.0);
+            engine.process(&mut block, SampleRate::new(48000.0));
         }
 
         // The engine should be processing audio (not pass-through)
@@ -1029,36 +1054,36 @@ mod tests {
     #[test]
     fn test_engine_set_param() {
         let mut engine = AweEngine::new();
-        engine.set_param(AweParam::DryWet(0.7));
-        assert!((engine.snapshot().dry_wet - 0.7).abs() < 0.001);
+        engine.set_param(AweParam::DryWet(NormalizedValue::new(0.7)));
+        assert!((engine.snapshot().dry_wet.as_f32() - 0.7).abs() < 0.001);
     }
 
     #[test]
     fn test_engine_apply_snapshot() {
         let mut engine = AweEngine::new();
         let mut snap = AweSnapshot::default();
-        snap.dry_wet = 0.8;
-        snap.tail_stretch = 2.0;
+        snap.dry_wet = NormalizedValue::new(0.8);
+        snap.tail_stretch = StretchFactor::new(2.0);
         engine.apply_snapshot(snap);
-        assert!((engine.snapshot().dry_wet - 0.8).abs() < 0.001);
-        assert!((engine.snapshot().tail_stretch - 2.0).abs() < 0.001);
+        assert!((engine.snapshot().dry_wet.as_f32() - 0.8).abs() < 0.001);
+        assert!((engine.snapshot().tail_stretch.as_f32() - 2.0).abs() < 0.001);
     }
 
     #[test]
     fn test_engine_dry_signal_preserved_at_zero_wet() {
         let mut engine = AweEngine::new();
         engine.set_enabled(true);
-        engine.set_param(AweParam::DryWet(0.0));
+        engine.set_param(AweParam::DryWet(NormalizedValue::new(0.0)));
 
         // After a few blocks of ramping, dry/wet should settle at 0.0 (fully dry)
         for _ in 0..100 {
             let mut block = vec![0.0; 128];
-            engine.process(&mut block, 48000.0);
+            engine.process(&mut block, SampleRate::new(48000.0));
         }
 
         let mut buffer = vec![0.5, -0.3, 0.1, 0.8];
         let original = buffer.clone();
-        engine.process(&mut buffer, 48000.0);
+        engine.process(&mut buffer, SampleRate::new(48000.0));
 
         // With dry_wet=0 fully ramped, output should be very close to dry input
         for (out, orig) in buffer.iter().zip(original.iter()) {
@@ -1071,19 +1096,25 @@ mod tests {
         let engine = AweEngine::new();
         let rt60 = engine.calculate_rt60();
         // Default room 8x5x3, concrete (low absorption): should give long RT60
-        assert!(rt60 > 1.0, "RT60 should be > 1s for concrete, got {rt60}");
-        assert!(rt60 < 20.0, "RT60 should be < 20s, got {rt60}");
+        assert!(
+            rt60.as_f32() > 1.0,
+            "RT60 should be > 1s for concrete, got {rt60:?}"
+        );
+        assert!(rt60.as_f32() < 20.0, "RT60 should be < 20s, got {rt60:?}");
     }
 
     #[test]
     fn test_feedback_reasonable() {
         let engine = AweEngine::new();
         let rt60 = engine.calculate_rt60();
-        let feedback = engine.rt60_to_feedback(rt60, 48000.0);
-        assert!(feedback > 0.5, "Feedback should be > 0.5, got {feedback}");
+        let feedback = engine.rt60_to_feedback(rt60, SampleRate::new(48000.0));
         assert!(
-            feedback <= 0.97,
-            "Feedback should be <= 0.97, got {feedback}"
+            feedback.as_f32() > 0.5,
+            "Feedback should be > 0.5, got {feedback:?}"
+        );
+        assert!(
+            feedback.as_f32() <= 0.97,
+            "Feedback should be <= 0.97, got {feedback:?}"
         );
     }
 
@@ -1092,9 +1123,9 @@ mod tests {
         let mut engine = AweEngine::new();
         engine.geometry_dirty = false;
         engine.set_param(AweParam::RoomShape(RoomShape::Box {
-            length: 10.0,
-            width: 8.0,
-            height: 4.0,
+            length: Meters::new(10.0),
+            width: Meters::new(8.0),
+            height: Meters::new(4.0),
         }));
         assert!(engine.geometry_dirty);
     }
@@ -1103,17 +1134,17 @@ mod tests {
     fn test_stability_long_run() {
         let mut engine = AweEngine::new();
         engine.set_enabled(true);
-        engine.set_param(AweParam::DryWet(0.5));
+        engine.set_param(AweParam::DryWet(NormalizedValue::new(0.5)));
 
         // Process many blocks with impulse then silence
         let mut buffer = vec![0.0; 512];
         buffer[0] = 1.0;
         buffer[1] = 1.0;
-        engine.process(&mut buffer, 48000.0);
+        engine.process(&mut buffer, SampleRate::new(48000.0));
 
         for _ in 0..500 {
             let mut block = vec![0.0; 512];
-            engine.process(&mut block, 48000.0);
+            engine.process(&mut block, SampleRate::new(48000.0));
             for sample in &block {
                 assert!(sample.is_finite(), "Output is not finite");
                 assert!(sample.abs() < 10.0, "Output exploded: {sample}");
@@ -1126,18 +1157,18 @@ mod tests {
         let mut engine = AweEngine::new();
         engine.set_enabled(true);
         let mut buffer: Vec<f32> = Vec::new();
-        engine.process(&mut buffer, 48000.0);
+        engine.process(&mut buffer, SampleRate::new(48000.0));
         // Should not panic
     }
 
     #[test]
     fn test_lfo_params_applied() {
         let mut engine = AweEngine::new();
-        engine.set_param(AweParam::Lfo1Rate(2.0));
-        engine.set_param(AweParam::Lfo1Amount(0.5));
+        engine.set_param(AweParam::Lfo1Rate(Hertz::new(2.0)));
+        engine.set_param(AweParam::Lfo1Amount(NormalizedValue::new(0.5)));
         engine.set_param(AweParam::Lfo1Target(AweLfoTarget::DryWet));
-        assert!((engine.snapshot().lfo1.rate - 2.0).abs() < 0.001);
-        assert!((engine.snapshot().lfo1.amount - 0.5).abs() < 0.001);
+        assert!((engine.snapshot().lfo1.rate.as_f32() - 2.0).abs() < 0.001);
+        assert!((engine.snapshot().lfo1.amount.as_f32() - 0.5).abs() < 0.001);
         assert_eq!(engine.snapshot().lfo1.target, AweLfoTarget::DryWet);
     }
 }

@@ -1,4 +1,4 @@
-# Master TODO - Modular Synth (v0.132.0)
+# Master TODO - Modular Synth (v0.133.0)
 
 ## Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
 *Mål: Göra klart påbörjad arkitektur och fixa de mest irriterande begränsningarna för användaren.*

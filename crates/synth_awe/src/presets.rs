@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_presets_valid_dry_wet() {
         for preset in &awe_presets() {
-            let dw = preset.state.snapshot.dry_wet;
+            let dw = preset.state.snapshot.dry_wet.as_f32();
             assert!(
                 (0.0..=1.0).contains(&dw),
                 "Preset '{}' dry_wet out of range: {dw}",

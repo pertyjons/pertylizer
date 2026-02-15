@@ -61,8 +61,8 @@ impl Spatializer {
             gain_right: Gain::UNITY,
             shadow_state_left: FilterState::ZERO,
             shadow_state_right: FilterState::ZERO,
-            shadow_coeff_left: NormalizedValue::MAX,
-            shadow_coeff_right: NormalizedValue::MAX,
+            shadow_coeff_left: NormalizedValue::MIN,
+            shadow_coeff_right: NormalizedValue::MIN,
         }
     }
 
@@ -105,13 +105,13 @@ impl Spatializer {
         let shadow_amount = NormalizedValue::new(0.3 + 0.5 * angle.abs() / std::f32::consts::PI);
 
         if angle >= 0.0 {
-            // Source to the right: left ear is shadowed.
-            self.shadow_coeff_left = NormalizedValue::new(1.0 - shadow_amount.as_f32());
-            self.shadow_coeff_right = NormalizedValue::MAX;
+            // Source to the right: left ear is shadowed (higher coeff = more LP).
+            self.shadow_coeff_left = shadow_amount;
+            self.shadow_coeff_right = NormalizedValue::MIN;
         } else {
-            // Source to the left: right ear is shadowed.
-            self.shadow_coeff_left = NormalizedValue::MAX;
-            self.shadow_coeff_right = NormalizedValue::new(1.0 - shadow_amount.as_f32());
+            // Source to the left: right ear is shadowed (higher coeff = more LP).
+            self.shadow_coeff_left = NormalizedValue::MIN;
+            self.shadow_coeff_right = shadow_amount;
         }
     }
 
@@ -262,8 +262,8 @@ mod tests {
         let mut spat = Spatializer::new();
         spat.update(pos(10.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
 
-        // Left ear shadow coeff should be less than right.
-        assert!(spat.shadow_coeff_left.as_f32() < spat.shadow_coeff_right.as_f32());
+        // Left ear shadow coeff should be higher (more LP filtering on far ear).
+        assert!(spat.shadow_coeff_left.as_f32() > spat.shadow_coeff_right.as_f32());
     }
 
     #[test]
