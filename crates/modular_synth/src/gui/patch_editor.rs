@@ -739,11 +739,6 @@ impl PatchEditor {
                     } else {
                         // Normal modules: three-column layout (IN ports | content | OUT ports)
                         let col_w = theme().sizes.port_column_width;
-                        let min_content = theme().sizes.module_content_min_width;
-                        let available_w = ui.available_width();
-                        let content_w =
-                            (available_w - 2.0 * col_w - ui.spacing().item_spacing.x * 2.0)
-                                .max(min_content);
 
                         ui.horizontal(|ui| {
                             // Left port column (IN) - fixed width
@@ -758,9 +753,8 @@ impl PatchEditor {
                                 );
                             });
 
-                            // Content column - fills remaining width
+                            // Content column - auto-width based on content
                             ui.vertical(|ui| {
-                                ui.set_width(content_w);
                                 if let Some(panel_state) = self.panels.get_mut(&module_id) {
                                     let vis_buffer =
                                         handle.get_visualization_buffer(module_id);
@@ -778,7 +772,7 @@ impl PatchEditor {
                                 }
                             });
 
-                            // Right port column (OUT) - fixed width, right-aligned
+                            // Right port column (OUT) - fixed width
                             ui.vertical(|ui| {
                                 ui.set_width(col_w);
                                 self.draw_port_column(
