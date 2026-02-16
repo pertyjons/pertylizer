@@ -1,15 +1,25 @@
-//! Cable drawing utilities with gravity, shadows, and theme colors.
+//! Cable drawing utilities with orthogonal routing and animated flow particles.
 //!
-//! Uses `egui`'s `CubicBezierShape` for efficient GPU-batched rendering
-//! instead of manual line segment loops.
+//! Cables are drawn as right-angle lines (horizontal→vertical→horizontal)
+//! matching the left-to-right signal flow of the auto-layout. Animated
+//! particles along the cables show signal direction and activity.
 
-use eframe::egui::epaint::CubicBezierShape;
-use eframe::egui::{Color32, Pos2, Stroke};
+use eframe::egui::{Color32, Pos2, Stroke, Vec2};
 
 use super::port::WidgetPortType;
 use crate::gui::theme::theme;
 
+/// Horizontal clearance from module edge before turning vertical.
+const CLEARANCE: f32 = 25.0;
+
+/// Radius for rounded corners at bends.
+const CORNER_RADIUS: f32 = 5.0;
+
+/// Y-distance threshold below which a cable is drawn as a straight line.
+const STRAIGHT_THRESHOLD: f32 = 8.0;
+
 /// Get cable color from theme based on port type.
+#[must_use]
 pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
     let base = match port_type {
         WidgetPortType::Audio => theme().colors.cable_audio,
@@ -20,88 +30,186 @@ pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
 }
 
-/// Calculate bezier control points with gravity (sag).
-/// Returns [from, ctrl1, ctrl2, to] for a cubic bezier curve.
-fn bezier_points_with_sag(from: Pos2, to: Pos2, sag_factor: f32) -> [Pos2; 4] {
-    let dx = (to.x - from.x).abs();
+/// Calculate orthogonal route waypoints from output port to input port.
+///
+/// Returns 2–4 waypoints forming right-angle segments:
+/// - If ports are nearly horizontal: straight line (2 points)
+/// - Otherwise: horizontal out → vertical → horizontal in (4 points)
+#[must_use]
+fn calculate_route(from: Pos2, to: Pos2) -> Vec<Pos2> {
+    let dy = (to.y - from.y).abs();
+
+    if dy < STRAIGHT_THRESHOLD {
+        // Nearly horizontal — draw a straight line
+        return vec![from, to];
+    }
+
+    // Midpoint x between the two clearance points
+    let x_out = from.x + CLEARANCE;
+    let x_in = to.x - CLEARANCE;
+    let turn_x = (x_out + x_in) * 0.5;
+
+    vec![from, Pos2::new(turn_x, from.y), Pos2::new(turn_x, to.y), to]
+}
+
+/// Total path length along a set of waypoints.
+fn path_length(points: &[Pos2]) -> f32 {
+    points
+        .windows(2)
+        .map(|w| {
+            let dx = w[1].x - w[0].x;
+            let dy = w[1].y - w[0].y;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .sum()
+}
+
+/// Map a distance along the path to an (x, y) coordinate.
+fn point_at_distance(points: &[Pos2], dist: f32) -> Option<Pos2> {
+    let mut remaining = dist;
+    for w in points.windows(2) {
+        let dx = w[1].x - w[0].x;
+        let dy = w[1].y - w[0].y;
+        let seg_len = (dx * dx + dy * dy).sqrt();
+        if seg_len < 0.001 {
+            continue;
+        }
+        if remaining <= seg_len {
+            let t = remaining / seg_len;
+            return Some(Pos2::new(w[0].x + dx * t, w[0].y + dy * t));
+        }
+        remaining -= seg_len;
+    }
+    points.last().copied()
+}
+
+/// Draw the orthogonal line segments with optional rounded corners.
+fn draw_segments(
+    painter: &eframe::egui::Painter,
+    points: &[Pos2],
+    stroke: Stroke,
+    round_corners: bool,
+) {
+    if points.len() < 2 {
+        return;
+    }
+
+    if !round_corners || points.len() <= 2 {
+        // Straight segments, no rounding needed
+        for w in points.windows(2) {
+            painter.line_segment([w[0], w[1]], stroke);
+        }
+        return;
+    }
+
+    // Draw segments with rounded corners at bends
+    for i in 0..points.len() - 1 {
+        let a = points[i];
+        let b = points[i + 1];
+
+        // Shorten segment ends to leave room for arcs
+        let start = if i > 0 {
+            shorten_toward(a, b, CORNER_RADIUS)
+        } else {
+            a
+        };
+        let end = if i + 2 < points.len() {
+            shorten_toward(b, a, CORNER_RADIUS)
+        } else {
+            b
+        };
+
+        painter.line_segment([start, end], stroke);
+
+        // Draw rounded corner arc at the end of this segment (if not last)
+        if i + 2 < points.len() {
+            let c = points[i + 2];
+            draw_corner_arc(painter, b, a, c, stroke);
+        }
+    }
+}
+
+/// Move point `from` toward `to` by `amount`.
+#[must_use]
+fn shorten_toward(from: Pos2, to: Pos2, amount: f32) -> Pos2 {
+    let dx = to.x - from.x;
     let dy = to.y - from.y;
-
-    // Horizontal control offset (how "wide" the curve is)
-    let control_offset = dx * 0.4;
-
-    // Calculate sag - cable hangs down due to gravity
-    // Sag is proportional to horizontal distance, capped at max_sag
-    let max_sag = 100.0;
-    let sag = (dx * sag_factor).min(max_sag);
-
-    // If destination is below source, reduce sag effect
-    let sag_adjustment = if dy > 0.0 { sag * 0.5 } else { sag };
-
-    let ctrl1 = Pos2::new(from.x + control_offset, from.y + sag_adjustment);
-    let ctrl2 = Pos2::new(to.x - control_offset, to.y + sag_adjustment);
-
-    [from, ctrl1, ctrl2, to]
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < amount * 2.0 {
+        // Segment too short, don't shorten
+        return from;
+    }
+    let t = amount / len;
+    Pos2::new(from.x + dx * t, from.y + dy * t)
 }
 
-/// Draw a cubic bezier cable using egui's optimized shape.
-#[inline]
-fn draw_bezier_shape(painter: &eframe::egui::Painter, points: [Pos2; 4], stroke: Stroke) {
-    painter.add(CubicBezierShape::from_points_stroke(
-        points,
-        false,
-        Color32::TRANSPARENT,
-        stroke,
-    ));
+/// Draw a small arc at a corner where the path bends.
+/// Uses short line segments to approximate the arc.
+fn draw_corner_arc(
+    painter: &eframe::egui::Painter,
+    corner: Pos2,
+    prev: Pos2,
+    next: Pos2,
+    stroke: Stroke,
+) {
+    let r = CORNER_RADIUS;
+
+    // Direction vectors from corner toward prev and next
+    let to_prev = Vec2::new(prev.x - corner.x, prev.y - corner.y).normalized();
+    let to_next = Vec2::new(next.x - corner.x, next.y - corner.y).normalized();
+
+    let start = Pos2::new(corner.x + to_prev.x * r, corner.y + to_prev.y * r);
+    let end = Pos2::new(corner.x + to_next.x * r, corner.y + to_next.y * r);
+
+    // Simple 3-segment approximation of a quarter circle
+    let steps = 4;
+    let mut prev_pt = start;
+    for s in 1..=steps {
+        let t = s as f32 / steps as f32;
+        let pt = Pos2::new(
+            start.x
+                + (end.x - start.x) * t
+                + (corner.x - (start.x + end.x) * 0.5) * 4.0 * t * (1.0 - t) * 0.4,
+            start.y
+                + (end.y - start.y) * t
+                + (corner.y - (start.y + end.y) * 0.5) * 4.0 * t * (1.0 - t) * 0.4,
+        );
+        painter.line_segment([prev_pt, pt], stroke);
+        prev_pt = pt;
+    }
 }
 
-/// Draw a cable between two points with gravity (sag), shadow, and highlight.
+/// Draw a cable between two points with orthogonal routing, shadow, and highlight.
 pub fn draw_cable(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
-    // Control points with 15% sag
-    let points = bezier_points_with_sag(from, to, 0.15);
+    let points = calculate_route(from, to);
 
-    // Shadow (offset down and slightly right)
-    let shadow_offset = Pos2::new(2.0, 3.0).to_vec2();
-    let shadow_points = [
-        points[0] + shadow_offset,
-        points[1] + shadow_offset,
-        points[2] + shadow_offset,
-        points[3] + shadow_offset,
-    ];
-    let shadow_color = Color32::from_rgba_unmultiplied(0, 0, 0, 50);
-    draw_bezier_shape(painter, shadow_points, Stroke::new(4.0, shadow_color));
+    // Shadow (subtle offset)
+    let shadow_offset = Vec2::new(1.0, 2.0);
+    let shadow_points: Vec<Pos2> = points.iter().map(|p| *p + shadow_offset).collect();
+    let shadow_color = Color32::from_rgba_unmultiplied(0, 0, 0, 40);
+    draw_segments(
+        painter,
+        &shadow_points,
+        Stroke::new(3.5, shadow_color),
+        false,
+    );
 
-    // Main cable with semi-transparency
-    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 200);
-    draw_bezier_shape(painter, points, Stroke::new(3.0, cable_color));
-
-    // Subtle highlight (thinner, lighter line on top)
-    let highlight_offset = Pos2::new(0.0, -0.5).to_vec2();
-    let highlight_points = [
-        points[0] + highlight_offset,
-        points[1] + highlight_offset,
-        points[2] + highlight_offset,
-        points[3] + highlight_offset,
-    ];
-    let highlight_color = Color32::from_rgba_unmultiplied(255, 255, 255, 30);
-    draw_bezier_shape(painter, highlight_points, Stroke::new(1.0, highlight_color));
+    // Main cable
+    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160);
+    draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
 }
 
-/// Draw a cable being dragged (less sag, no shadow for responsiveness).
+/// Draw a cable being dragged (simpler, no shadow).
 pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
-    // Control points with reduced sag (5%) for more responsive feel
-    let points = bezier_points_with_sag(from, to, 0.05);
-
-    // Semi-transparent cable, no shadow for cleaner dragging
-    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180);
-    draw_bezier_shape(painter, points, Stroke::new(3.0, cable_color));
+    let points = calculate_route(from, to);
+    let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160);
+    draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
 }
 
 /// Draw a highlighted cable (hovered or selected) with glow effect.
 pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: Pos2) {
     let highlight_color = theme().colors.accent_red;
-
-    // Control points with standard sag
-    let points = bezier_points_with_sag(from, to, 0.15);
+    let points = calculate_route(from, to);
 
     // Outer glow
     let glow_color = Color32::from_rgba_unmultiplied(
@@ -110,7 +218,7 @@ pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: P
         highlight_color.b(),
         60,
     );
-    draw_bezier_shape(painter, points, Stroke::new(8.0, glow_color));
+    draw_segments(painter, &points, Stroke::new(8.0, glow_color), false);
 
     // Inner glow
     let inner_glow = Color32::from_rgba_unmultiplied(
@@ -119,41 +227,97 @@ pub fn draw_cable_highlighted(painter: &eframe::egui::Painter, from: Pos2, to: P
         highlight_color.b(),
         120,
     );
-    draw_bezier_shape(painter, points, Stroke::new(5.0, inner_glow));
+    draw_segments(painter, &points, Stroke::new(5.0, inner_glow), false);
 
     // Core cable
-    draw_bezier_shape(painter, points, Stroke::new(3.0, highlight_color));
+    draw_segments(painter, &points, Stroke::new(2.5, highlight_color), true);
 }
 
-/// Evaluate cubic bezier at parameter t (for hit testing).
-#[inline]
-fn bezier_point(from: Pos2, ctrl1: Pos2, ctrl2: Pos2, to: Pos2, t: f32) -> Pos2 {
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let mt = 1.0 - t;
-    let mt2 = mt * mt;
-    let mt3 = mt2 * mt;
+/// Draw animated flow particles along a cable.
+///
+/// Small circles move along the orthogonal path in the signal direction.
+/// Speed and spacing depend on port type:
+/// - Audio: fast (120px/s), dense (30px spacing)
+/// - Control/CV: medium (60px/s), sparse (50px spacing)
+/// - Gate: pulsing (80px/s), spacing 60px
+pub fn draw_flow_particles(
+    painter: &eframe::egui::Painter,
+    from: Pos2,
+    to: Pos2,
+    color: Color32,
+    port_type: WidgetPortType,
+    time: f64,
+) {
+    let points = calculate_route(from, to);
+    let total_len = path_length(&points);
+    if total_len < 1.0 {
+        return;
+    }
 
-    let x = mt3 * from.x + 3.0 * mt2 * t * ctrl1.x + 3.0 * mt * t2 * ctrl2.x + t3 * to.x;
-    let y = mt3 * from.y + 3.0 * mt2 * t * ctrl1.y + 3.0 * mt * t2 * ctrl2.y + t3 * to.y;
+    let (speed, spacing, radius) = match port_type {
+        WidgetPortType::Audio => (120.0_f64, 30.0_f64, 1.8_f32),
+        WidgetPortType::Control => (60.0, 50.0, 1.8),
+        WidgetPortType::Gate => (80.0, 60.0, 2.0),
+        WidgetPortType::Midi => (70.0, 45.0, 1.8),
+    };
 
-    Pos2::new(x, y)
+    let particle_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 220);
+
+    // Calculate how many particles fit
+    let total_len_f64 = f64::from(total_len);
+    let num_particles = (total_len_f64 / spacing).ceil() as i32;
+
+    // Base offset from time
+    let base_offset = (time * speed) % total_len_f64;
+
+    for i in 0..num_particles {
+        let dist = (base_offset + f64::from(i) * spacing) % total_len_f64;
+
+        if let Some(pos) = point_at_distance(&points, dist as f32) {
+            // For gate type, pulse the alpha
+            let draw_color = if port_type == WidgetPortType::Gate {
+                let pulse = ((time * 6.0).sin() * 0.5 + 0.5) as f32;
+                let alpha = (160.0 + pulse * 60.0) as u8;
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+            } else {
+                particle_color
+            };
+
+            painter.circle_filled(pos, radius, draw_color);
+        }
+    }
 }
 
-/// Check if a point is near a bezier cable (for hit testing).
-/// Uses the same control points as draw_cable.
+/// Check if a point is near an orthogonal cable (for hit testing).
+/// Tests distance to each line segment of the route.
+#[must_use]
 pub fn point_near_cable(point: Pos2, from: Pos2, to: Pos2, threshold: f32) -> bool {
-    let [p0, p1, p2, p3] = bezier_points_with_sag(from, to, 0.15);
+    let points = calculate_route(from, to);
 
-    // Sample points along the curve and check distance
-    let segments = 16;
-    for i in 0..=segments {
-        let t = i as f32 / segments as f32;
-        let curve_point = bezier_point(p0, p1, p2, p3, t);
-        let dist = ((point.x - curve_point.x).powi(2) + (point.y - curve_point.y).powi(2)).sqrt();
-        if dist < threshold {
+    for w in points.windows(2) {
+        if point_to_segment_distance(point, w[0], w[1]) < threshold {
             return true;
         }
     }
     false
+}
+
+/// Distance from a point to a line segment.
+fn point_to_segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = Vec2::new(b.x - a.x, b.y - a.y);
+    let ap = Vec2::new(p.x - a.x, p.y - a.y);
+
+    let len_sq = ab.x * ab.x + ab.y * ab.y;
+    if len_sq < 0.001 {
+        return (ap.x * ap.x + ap.y * ap.y).sqrt();
+    }
+
+    // Project point onto segment, clamped to [0, 1]
+    let t = (ap.x * ab.x + ap.y * ab.y) / len_sq;
+    let t = t.clamp(0.0, 1.0);
+
+    let closest = Pos2::new(a.x + ab.x * t, a.y + ab.y * t);
+    let dx = p.x - closest.x;
+    let dy = p.y - closest.y;
+    (dx * dx + dy * dy).sqrt()
 }

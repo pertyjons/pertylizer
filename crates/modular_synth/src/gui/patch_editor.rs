@@ -19,7 +19,7 @@ use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
     WidgetPortDirection, WidgetPortType, cable_color, draw_cable, draw_cable_dragging,
-    draw_cable_highlighted, point_near_cable,
+    draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -834,7 +834,8 @@ impl PatchEditor {
         self.handle_port_interactions(ui, &mut result);
 
         // Draw connections in foreground layer and handle cable removal
-        let cables_to_remove = self.draw_connections_foreground(ui);
+        let time = ui.input(|i| i.time);
+        let cables_to_remove = self.draw_connections_foreground(ui, time);
         if !cables_to_remove.is_empty() {
             for cable in cables_to_remove {
                 self.connections.retain(|c| c != &cable);
@@ -1023,7 +1024,7 @@ impl PatchEditor {
 
     /// Draw connections in a foreground layer so they appear above modules.
     /// Returns connections that should be removed (right-clicked).
-    fn draw_connections_foreground(&self, ui: &Ui) -> Vec<Connection> {
+    fn draw_connections_foreground(&self, ui: &Ui, time: f64) -> Vec<Connection> {
         let painter = ui
             .ctx()
             .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
@@ -1046,10 +1047,12 @@ impl PatchEditor {
                 self.port_positions.get(&from_key),
                 self.port_positions.get(&to_key),
             ) {
-                // Check if mouse is near this cable (use new sag-aware hit testing)
+                // Check if mouse is near this cable
                 let is_hovered = pointer_pos
                     .map(|p| point_near_cable(p, from_pos.position, to_pos.position, 10.0))
                     .unwrap_or(false);
+
+                let color = cable_color(from_pos.port_type, 180);
 
                 if is_hovered {
                     // Draw highlighted cable with glow effect
@@ -1072,10 +1075,19 @@ impl PatchEditor {
                         to_remove.push(*connection);
                     }
                 } else {
-                    // Draw normal cable with theme color and transparency
-                    let color = cable_color(from_pos.port_type, 180);
+                    // Draw normal cable with theme color
                     draw_cable(&painter, from_pos.position, to_pos.position, color);
                 }
+
+                // Animated flow particles on all cables
+                draw_flow_particles(
+                    &painter,
+                    from_pos.position,
+                    to_pos.position,
+                    color,
+                    from_pos.port_type,
+                    time,
+                );
             }
         }
 

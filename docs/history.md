@@ -1,5 +1,26 @@
 # Version History
 
+## [0.140.0] - 2026-02-16
+### Ny — Ortogonala kablar med animerat signalflöde
+
+**Ortogonal kabelrouting:**
+- Kablar ritas som rätvinkliga linjer (horisontellt→vertikalt→horisontellt) istället för bezier-kurvor
+- Matchar auto-layoutens vänster→höger signalflöde visuellt
+- Avrundade hörn (5px radie) vid svängar för mjukare utseende
+- Subtilare skuggor (1px, 2px offset, alpha 40) som passar den nya stilen
+- Nästan horisontella kablar (inom 8px) förenklas till raka linjer
+
+**Animerade flödespartiklar:**
+- Små cirklar rör sig längs kablarna i signalriktningen
+- Audio: snabba partiklar (120px/s), tät spacing (30px)
+- Control/CV: medelhastighet (60px/s), glesare spacing (50px)
+- Gate: pulserande partiklar (80px/s), blinkande alpha
+- MIDI: 70px/s, 45px spacing
+
+**Förbättrad hit-testing:**
+- Exakt punkt-till-linjesegment-avstånd istället för bezier-sampling
+- Snabbare och mer precis hover-detektion
+
 ## [0.139.0] - 2026-02-16
 ### Förbättrad — Storleksmedveten auto-layout + smart modulationsplacering
 
