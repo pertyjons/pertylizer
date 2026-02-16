@@ -1,5 +1,16 @@
 # Version History
 
+## [0.135.0] - 2026-02-16
+### Förbättrad — ScrollArea i patch-editorn
+
+**ScrollArea med constrain_to:**
+- Patch-editorns innehåll wrappat i `egui::ScrollArea::both()` — scrollbars visas automatiskt när moduler inte ryms
+- Varje modul-fönster använder `Window::constrain_to(scroll_rect)` så moduler inte kan dras utanför ytan
+- Borttagen manuell canvas-panering (`canvas_offset`) — ScrollArea hanterar scrollning inbyggt
+- Grid-linjer ritas relativt till scroll-ytan utan offset-beräkning
+- Auto-layout fungerar direkt med scroll-rektangeln utan offset-konvertering
+- Toolbar förblir synlig i förgrundslagret, positionerad relativt till den synliga ytan
+
 ## [0.134.0] - 2026-02-15
 ### Förbättrad — AWE perceptuellt distinkt absorption
 

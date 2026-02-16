@@ -95,8 +95,6 @@ pub struct PatchEditor {
     selected_module: Option<ModuleId>,
     /// Connection being drawn.
     pending_connection: Option<PendingConnection>,
-    /// Canvas offset for panning.
-    canvas_offset: Vec2,
     /// Module descriptors (cached).
     descriptors: HashMap<ModuleId, ModuleDescriptor>,
     /// Next position for new modules.
@@ -120,7 +118,6 @@ impl PatchEditor {
             port_positions: HashMap::new(),
             selected_module: None,
             pending_connection: None,
-            canvas_offset: Vec2::ZERO,
             descriptors: HashMap::new(),
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
@@ -364,6 +361,21 @@ impl PatchEditor {
         ports
     }
 
+    /// Calculate the bounding box of all module positions + estimated size.
+    /// Used to tell ScrollArea how large the content is.
+    fn calculate_content_size(&self) -> Vec2 {
+        if self.panels.is_empty() {
+            return Vec2::new(800.0, 600.0);
+        }
+        let mut max_x: f32 = 0.0;
+        let mut max_y: f32 = 0.0;
+        for panel in self.panels.values() {
+            max_x = max_x.max(panel.position.x + 350.0);
+            max_y = max_y.max(panel.position.y + 400.0);
+        }
+        Vec2::new(max_x + 100.0, max_y + 100.0)
+    }
+
     /// Draw the rack view.
     ///
     /// The `instrument_id` is used to namespace egui widget IDs, preventing
@@ -376,21 +388,26 @@ impl PatchEditor {
         instrument_id: u64,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
+        let content_size = self.calculate_content_size();
 
-        // Canvas background
-        let canvas_rect = ui.available_rect_before_wrap();
-        let response = ui.allocate_rect(canvas_rect, Sense::click_and_drag());
+        // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
+        let visible_rect = ui.available_rect_before_wrap();
 
-        // Handle canvas panning with middle mouse
-        if response.dragged_by(egui::PointerButton::Middle) {
-            self.canvas_offset += response.drag_delta();
-        }
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+            // Allocate space for all content so ScrollArea shows scrollbars
+            let scroll_rect = Rect::from_min_size(
+                ui.max_rect().min,
+                content_size.max(ui.available_size()),
+            );
+            let response = ui.allocate_rect(scroll_rect, Sense::click_and_drag());
 
-        // Draw grid
-        self.draw_grid(ui, canvas_rect);
+            // Draw grid
+            self.draw_grid(ui, scroll_rect);
 
-        // Store the canvas rect for auto-layout calculations
-        result.canvas_rect = Some(canvas_rect);
+            // Store the canvas rect for auto-layout calculations
+            result.canvas_rect = Some(scroll_rect);
 
         // Clear port positions for this frame
         self.port_positions.clear();
@@ -493,11 +510,12 @@ impl PatchEditor {
                 .min_width(theme().sizes.module_min_width)
                 .frame(frame);
 
-            // Use current_pos for forced repositioning, default_pos for normal operation
+            // Constrain modules to scroll area and position them
+            let window = window.constrain_to(scroll_rect);
             let window = if needs_reposition {
-                window.current_pos(panel_position + self.canvas_offset)
+                window.current_pos(panel_position)
             } else {
-                window.default_pos(panel_position + self.canvas_offset)
+                window.default_pos(panel_position)
             };
 
             // Get processing info for this module
@@ -752,7 +770,7 @@ impl PatchEditor {
                     .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
                     && let Some(panel_state) = self.panels.get_mut(&module_id)
                 {
-                    panel_state.position = new_pos - self.canvas_offset;
+                    panel_state.position = new_pos;
                 }
 
                 // Bring to front on click
@@ -809,9 +827,10 @@ impl PatchEditor {
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
         }
+        }); // end ScrollArea
 
-        // Draw toolbar in foreground layer (always on top)
-        self.draw_toolbar_foreground(ui, canvas_rect, &mut result);
+        // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
+        self.draw_toolbar_foreground(ui, visible_rect, &mut result);
 
         result
     }
@@ -943,13 +962,11 @@ impl PatchEditor {
 
         // Grid lines
         let grid_size = 50.0;
-        let offset_x = self.canvas_offset.x % grid_size;
-        let offset_y = self.canvas_offset.y % grid_size;
 
         let grid_color = Color32::from_rgba_unmultiplied(60, 65, 75, 50);
 
         // Vertical lines
-        let mut x = rect.left() + offset_x;
+        let mut x = rect.left();
         while x < rect.right() {
             painter.line_segment(
                 [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
@@ -959,7 +976,7 @@ impl PatchEditor {
         }
 
         // Horizontal lines
-        let mut y = rect.top() + offset_y;
+        let mut y = rect.top();
         while y < rect.bottom() {
             painter.line_segment(
                 [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
@@ -1246,11 +1263,7 @@ impl PatchEditor {
             })
             .collect();
 
-        // Calculate layout rect relative to canvas (subtract offset)
-        let layout_rect = egui::Rect::from_min_max(
-            available_rect.min - self.canvas_offset,
-            available_rect.max - self.canvas_offset,
-        );
+        let layout_rect = available_rect;
 
         let result = calculate_layout(&modules, &connections, layout_rect);
 
