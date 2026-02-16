@@ -486,6 +486,31 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::SignalMonitor => {
+            let mut m = synth_modules::SignalMonitor::new();
+            let descriptor = m.descriptor();
+            patch_editor.add_module_at(module_id, descriptor.clone(), position);
+
+            // Create shared vis buffer and inject into module
+            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+            handle.add_visualization_buffer(module_id, buffer.clone());
+            m.set_vis_sink(buffer);
+
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+            apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                None,
+                patch_editor,
+                handle,
+                instrument_id,
+            );
+        }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
             patch_editor.add_module_at(module_id, descriptor, position);
@@ -1009,6 +1034,7 @@ pub fn create_patch_from_rack(
                 ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
                     "mod_matrix" => PatchModuleType::ModMatrix,
                     "envelope_follower" => PatchModuleType::EnvelopeFollower,
+                    "signal_monitor" => PatchModuleType::SignalMonitor,
                     _ => continue,
                 },
                 ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {

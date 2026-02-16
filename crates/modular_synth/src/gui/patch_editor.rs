@@ -1622,6 +1622,50 @@ fn draw_module_panel_params(
         return draw_mod_matrix_grid(ui, state, descriptor, accent_color, analysis);
     }
 
+    // Signal Monitor — draw oscilloscope display above parameters
+    if descriptor.type_id.0 == "signal_monitor" {
+        let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
+        let trigger_level = state.param_values.get("Trig").copied().unwrap_or(0.5);
+
+        let samples = if let Some(buffer) = vis_buffer {
+            let (left, _right) = buffer.read_samples();
+            let step = left.len().max(1) / 256;
+            if step > 0 {
+                left.into_iter().step_by(step.max(1)).take(256).collect()
+            } else {
+                left
+            }
+        } else {
+            (0..256)
+                .map(|i| {
+                    let t = i as f32 / 256.0;
+                    (t * std::f32::consts::TAU * 3.0).sin() * 0.5
+                })
+                .collect()
+        };
+
+        let width = ui.available_width().clamp(120.0, 300.0);
+        let height = (width * 0.5).clamp(60.0, 120.0);
+
+        super::widgets::draw_oscilloscope_with_trigger(
+            ui,
+            &samples,
+            width,
+            height,
+            gain,
+            theme().colors.accent_cyan,
+            Some(trigger_level),
+        );
+
+        if vis_buffer.is_none() {
+            ui.label(
+                egui::RichText::new("No signal")
+                    .small()
+                    .color(theme().colors.text_dim),
+            );
+        }
+    }
+
     // Group parameters by widget hint (non-Envelope modules)
     let waveform_params: Vec<_> = descriptor
         .parameters
@@ -2142,6 +2186,7 @@ pub enum PaletteSelection {
     RandomGates,
     GranularOsc,
     KineticModulator,
+    SignalMonitor,
 }
 
 impl ModulePalette {
@@ -2293,6 +2338,11 @@ impl ModulePalette {
                         selected = Some(PaletteSelection::Visualizer(
                             PaletteVisualizerType::SpectrumAnalyzer,
                         ));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("🔍 Signal Monitor").clicked() {
+                        selected = Some(PaletteSelection::SignalMonitor);
                         ui.close();
                     }
                 },

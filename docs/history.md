@@ -1,5 +1,30 @@
 # Version History
 
+## [0.141.0] - 2026-02-16
+### Ny — Signal Monitor (inline vågformsvisare)
+
+**Signal Monitor PolyModule:**
+- Ny voice-graf modul som kan kopplas in var som helst i signalkedjan
+- Pass-through: kopierar input till output utan modifikation
+- Visar vågformen i realtid med rising-edge trigger-detektion för stabil display
+- Parametrar: Time (tidsskala/zoom), Gain (vertikal förstärkning), Trigger (tröskelnivå), Frozen (pausa)
+- Kategori: Utility — renderas med in/ut-portar i three-column layout
+
+**VisualizationSink trait (synth_core):**
+- Nytt trait som bryter cirkulärt beroende mellan synth_modules och synth_engine
+- SignalMonitor använder `Option<Arc<dyn VisualizationSink>>` med injektion från GUI-lagret
+- VisualizationBuffer implementerar VisualizationSink i synth_engine
+
+**Förbättrad Oscilloscope:**
+- Rising-edge trigger-detektion för stabil vågformsvisning (samma algoritm som Signal Monitor)
+- Stack-allokerade buffertar istället för Vec-allokeringar i process() (realtidssäkert)
+
+**GUI-integration:**
+- Signal Monitor tillgänglig i Visualizer-palettmenyn
+- Oscilloskop-widget med trigger-nivålinje (gul horisontell linje)
+- Patch-serialisering (spara/ladda) för Signal Monitor
+- Vis-buffer cleanup vid modulborttagning för Utility/PhysicalModeling-kategorier
+
 ## [0.140.0] - 2026-02-16
 ### Ny — Ortogonala kablar med animerat signalflöde
 

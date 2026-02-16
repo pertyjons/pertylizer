@@ -4,7 +4,7 @@
 //! captures samples for display without modifying the signal.
 
 use synth_core::*;
-use synth_core::{Gain, NormalizedValue, SampleRate, Seconds};
+use synth_core::{BipolarValue, Gain, NormalizedValue, SampleCount, SampleRate, Seconds};
 use synth_core::{ModuleType, OscilloscopeParam, Param};
 
 use super::VisualizationBuffer;
@@ -25,19 +25,42 @@ pub struct Oscilloscope {
     mix: NormalizedValue,
     /// Sample rate.
     sample_rate: SampleRate,
+    /// Previous left sample for rising-edge detection.
+    prev_sample_l: BipolarValue,
+    /// Whether we are currently capturing a triggered sweep.
+    triggered: bool,
+    /// How many samples have been captured in the current sweep.
+    capture_count: SampleCount,
+    /// Total samples to capture per sweep (time_scale * sample_rate).
+    display_samples: SampleCount,
 }
 
 impl Oscilloscope {
     pub fn new() -> Self {
+        let sample_rate = SampleRate::DVD_QUALITY;
+        let time_scale = Seconds::new(0.01);
+        let display_samples =
+            SampleCount::new((time_scale.as_f32() * sample_rate.as_f32()) as usize);
+
         Self {
             buffer: VisualizationBuffer::new(4096),
-            time_scale: Seconds::new(0.01),
+            time_scale,
             gain: Gain::UNITY,
             trigger_level: NormalizedValue::CENTER,
             frozen: false,
             mix: NormalizedValue::MAX,
-            sample_rate: SampleRate::DVD_QUALITY,
+            sample_rate,
+            prev_sample_l: BipolarValue::CENTER,
+            triggered: false,
+            capture_count: SampleCount::ZERO,
+            display_samples,
         }
+    }
+
+    /// Recalculate display_samples from time_scale and sample_rate.
+    fn update_display_samples(&mut self) {
+        let samples = (self.time_scale.as_f32() * self.sample_rate.as_f32()) as usize;
+        self.display_samples = SampleCount::new(samples.max(1));
     }
 
     /// Get the visualization buffer for GUI access.
@@ -72,6 +95,10 @@ impl Clone for Oscilloscope {
             frozen: self.frozen,
             mix: self.mix,
             sample_rate: self.sample_rate,
+            prev_sample_l: self.prev_sample_l,
+            triggered: self.triggered,
+            capture_count: self.capture_count,
+            display_samples: self.display_samples,
         }
     }
 }
@@ -125,26 +152,63 @@ impl AudioEffect for Oscilloscope {
         // Pass-through: copy input to output
         output.copy_from_slice(input);
 
-        // Capture samples for visualization (unless frozen)
+        // Capture samples for visualization with trigger detection (unless frozen)
         if !self.frozen {
-            // Input is interleaved stereo [L, R, L, R, ...]
+            let threshold = self.trigger_level.as_f32() * 2.0 - 1.0;
+            let gain = self.gain.as_f32();
             let num_frames = input.len() / 2;
-            let mut left_samples = Vec::with_capacity(num_frames);
-            let mut right_samples = Vec::with_capacity(num_frames);
+
+            // Use fixed-size stack buffer to avoid heap allocation
+            let mut left_buf = [0.0_f32; 256];
+            let mut right_buf = [0.0_f32; 256];
+            let mut buf_pos = 0_usize;
 
             for i in 0..num_frames {
-                left_samples.push(input[i * 2] * self.gain.as_f32());
-                right_samples.push(input[i * 2 + 1] * self.gain.as_f32());
+                let left = input[i * 2];
+
+                if !self.triggered {
+                    let prev = self.prev_sample_l.as_f32();
+                    if prev < threshold && left >= threshold {
+                        self.triggered = true;
+                        self.capture_count = SampleCount::ZERO;
+                    }
+                }
+
+                if self.triggered {
+                    if self.capture_count.as_usize() < self.display_samples.as_usize() {
+                        left_buf[buf_pos] = left * gain;
+                        right_buf[buf_pos] = input[i * 2 + 1] * gain;
+                        buf_pos += 1;
+                        self.capture_count = SampleCount::new(self.capture_count.as_usize() + 1);
+
+                        if buf_pos >= left_buf.len() {
+                            self.buffer
+                                .write_samples(&left_buf[..buf_pos], &right_buf[..buf_pos]);
+                            buf_pos = 0;
+                        }
+                    } else {
+                        self.triggered = false;
+                    }
+                }
+
+                self.prev_sample_l = BipolarValue::new(left);
             }
 
-            self.buffer.write_samples(&left_samples, &right_samples);
+            // Flush remaining samples
+            if buf_pos > 0 {
+                self.buffer
+                    .write_samples(&left_buf[..buf_pos], &right_buf[..buf_pos]);
+            }
         }
     }
 
     fn set_param(&mut self, param: Param) {
         if let Param::Oscilloscope(osc_param) = param {
             match osc_param {
-                OscilloscopeParam::Time(t) => self.time_scale = t,
+                OscilloscopeParam::Time(t) => {
+                    self.time_scale = t;
+                    self.update_display_samples();
+                }
                 OscilloscopeParam::Gain(g) => self.gain = g,
                 OscilloscopeParam::Trigger(t) => self.trigger_level = t,
                 OscilloscopeParam::Frozen(f) => self.frozen = f,
@@ -182,6 +246,9 @@ impl AudioEffect for Oscilloscope {
 
     fn reset(&mut self) {
         self.buffer = VisualizationBuffer::new(4096);
+        self.prev_sample_l = BipolarValue::CENTER;
+        self.triggered = false;
+        self.capture_count = SampleCount::ZERO;
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

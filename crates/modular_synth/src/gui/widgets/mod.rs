@@ -27,7 +27,7 @@ pub use frame::module_frame;
 pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
 pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
-pub use scope::draw_oscilloscope;
+pub use scope::{draw_oscilloscope, draw_oscilloscope_with_trigger};
 pub use spectrum::draw_spectrum_analyzer;
 pub use tooltip::{draw_tooltip_above, draw_tooltip_right_of, draw_value_tooltip};
 pub use waveform::{WaveformSelector, WaveformType};

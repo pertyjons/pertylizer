@@ -615,6 +615,9 @@ impl eframe::App for SynthApp {
                             PaletteSelection::KineticModulator => {
                                 self.add_kinetic_modulator_module();
                             }
+                            PaletteSelection::SignalMonitor => {
+                                self.add_signal_monitor_module();
+                            }
                         }
                     }
 
@@ -759,10 +762,13 @@ impl eframe::App for SynthApp {
 
             // Handle module removal
             for module_id in result.modules_to_remove {
-                // Get module descriptor to determine type
+                // Get module descriptor to determine type (before removing from editor)
                 let category = patch_editor
                     .module_descriptor(module_id)
                     .map(|d| d.category);
+                let type_id = patch_editor
+                    .module_descriptor(module_id)
+                    .map(|d| d.type_id.0.clone());
 
                 patch_editor.remove_module(module_id);
 
@@ -788,13 +794,19 @@ impl eframe::App for SynthApp {
                         | ModuleCategory::LFO
                         | ModuleCategory::Amplifier
                         | ModuleCategory::Mixer
-                        | ModuleCategory::Output,
+                        | ModuleCategory::Output
+                        | ModuleCategory::Utility
+                        | ModuleCategory::PhysicalModeling,
                     ) => {
                         // Remove from active instrument's voice graph
                         self.handle.send(EngineCommand::RemoveModule {
                             instrument_id: Some(active_id),
                             id: module_id,
                         });
+                        // Signal monitor has a vis buffer that needs cleanup
+                        if type_id.as_deref() == Some("signal_monitor") {
+                            self.handle.remove_visualization_buffer(module_id);
+                        }
                     }
                     _ => {}
                 }
@@ -1225,6 +1237,30 @@ impl SynthApp {
         };
         editor.add_module(next_id, descriptor);
 
+        self.handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(self.active_instrument_id),
+            id: next_id,
+            module,
+        });
+    }
+
+    fn add_signal_monitor_module(&mut self) {
+        let mut m = synth_modules::SignalMonitor::new();
+        let descriptor = m.descriptor();
+
+        let next_id = self.next_module_id(TypedModuleType::SignalMonitor);
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
+
+        // Create shared vis buffer and inject into module as trait object
+        let buffer = std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+        self.handle
+            .add_visualization_buffer(next_id, buffer.clone());
+        m.set_vis_sink(buffer);
+
+        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
         self.handle.send(EngineCommand::AddModuleInstance {
             instrument_id: Some(self.active_instrument_id),
             id: next_id,

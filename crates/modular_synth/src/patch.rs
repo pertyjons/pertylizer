@@ -122,6 +122,8 @@ pub enum PatchModuleType {
     PhaseVocoder,
     // Kinetic modulation (v0.132.0)
     KineticModulator,
+    // Signal monitor (inline voice-level visualizer)
+    SignalMonitor,
 }
 
 impl PatchModuleType {
@@ -167,6 +169,7 @@ impl PatchModuleType {
             Self::Convolver => "convolver",
             Self::PhaseVocoder => "phase_vocoder",
             Self::KineticModulator => "kinetic_modulator",
+            Self::SignalMonitor => "signal_monitor",
         }
     }
 
@@ -213,6 +216,7 @@ impl PatchModuleType {
             Self::Convolver => "cnv",
             Self::PhaseVocoder => "pvc",
             Self::KineticModulator => "kin",
+            Self::SignalMonitor => "smn",
         }
     }
 

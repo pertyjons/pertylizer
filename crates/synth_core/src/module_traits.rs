@@ -960,3 +960,19 @@ impl FilterModel {
 }
 
 // Note: MathAlgo::to_choices is defined in engine/params/oscillators.rs
+
+// ============================================================================
+// VISUALIZATION SINK TRAIT
+// ============================================================================
+
+/// Trait for writing visualization samples from the audio thread.
+///
+/// Implemented by `VisualizationBuffer` in `synth_engine`. Used by
+/// voice-level modules (like `SignalMonitor`) that need to send
+/// waveform data to the GUI without a direct dependency on `synth_engine`.
+pub trait VisualizationSink: Send + Sync {
+    /// Write left and right channel samples for visualization.
+    ///
+    /// Must be non-blocking from the audio thread (use `try_lock` internally).
+    fn write_vis_samples(&self, left: &[f32], right: &[f32]);
+}

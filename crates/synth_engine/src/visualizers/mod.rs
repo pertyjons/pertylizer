@@ -327,3 +327,9 @@ impl Clone for VisualizationBuffer {
         Self::new(self.size)
     }
 }
+
+impl synth_core::VisualizationSink for VisualizationBuffer {
+    fn write_vis_samples(&self, left: &[f32], right: &[f32]) {
+        self.write_samples(left, right);
+    }
+}

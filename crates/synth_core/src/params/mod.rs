@@ -29,6 +29,7 @@ mod oscillators;
 mod phase_vocoder;
 mod physical;
 mod ring_mod;
+mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
 mod waveshaper;
@@ -65,6 +66,7 @@ pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
 pub use ring_mod::RingModParam;
+pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
@@ -128,6 +130,8 @@ pub enum ModuleType {
     PhaseVocoder,
     // Kinetic modulation
     KineticModulator,
+    // Signal monitor (inline voice-level visualizer)
+    SignalMonitor,
 }
 
 impl ModuleType {
@@ -172,6 +176,8 @@ impl ModuleType {
                 | Self::GranularOsc
                 // Kinetic modulation
                 | Self::KineticModulator
+                // Signal monitor (inline visualizer in voice graph)
+                | Self::SignalMonitor
         )
     }
 
@@ -272,6 +278,7 @@ impl ModuleType {
             Self::Convolver => "Convolver",
             Self::PhaseVocoder => "Phase Vocoder",
             Self::KineticModulator => "Kinetic Mod",
+            Self::SignalMonitor => "Signal Monitor",
         }
     }
 
@@ -323,6 +330,7 @@ impl ModuleType {
             Self::Convolver => "cnv",
             Self::PhaseVocoder => "pvc",
             Self::KineticModulator => "kin",
+            Self::SignalMonitor => "smn",
         }
     }
 
@@ -374,6 +382,7 @@ impl ModuleType {
             "cnv" => Some(Self::Convolver),
             "pvc" => Some(Self::PhaseVocoder),
             "kin" => Some(Self::KineticModulator),
+            "smn" => Some(Self::SignalMonitor),
             _ => None,
         }
     }
@@ -443,6 +452,8 @@ pub enum Param {
     PhaseVocoder(PhaseVocoderParam),
     // Kinetic modulation
     Kinetic(KineticParam),
+    // Signal monitor
+    SignalMonitor(SignalMonitorParam),
 }
 
 impl Param {
@@ -502,6 +513,7 @@ impl Param {
             (Self::Convolver(a), Self::Convolver(b)) => a.same_kind(b),
             (Self::PhaseVocoder(a), Self::PhaseVocoder(b)) => a.same_kind(b),
             (Self::Kinetic(a), Self::Kinetic(b)) => a.same_kind(b),
+            (Self::SignalMonitor(a), Self::SignalMonitor(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -553,6 +565,7 @@ impl Param {
             Self::Convolver(_) => ModuleType::Convolver,
             Self::PhaseVocoder(_) => ModuleType::PhaseVocoder,
             Self::Kinetic(_) => ModuleType::KineticModulator,
+            Self::SignalMonitor(_) => ModuleType::SignalMonitor,
         }
     }
 
@@ -603,6 +616,7 @@ impl Param {
             Self::Convolver(p) => p.name(),
             Self::PhaseVocoder(p) => p.name(),
             Self::Kinetic(p) => p.name(),
+            Self::SignalMonitor(p) => p.name(),
         }
     }
 
@@ -653,6 +667,7 @@ impl Param {
             Self::Convolver(p) => p.as_f32(),
             Self::PhaseVocoder(p) => p.as_f32(),
             Self::Kinetic(p) => p.as_f32(),
+            Self::SignalMonitor(p) => p.as_f32(),
         }
     }
 
@@ -703,6 +718,7 @@ impl Param {
             Self::Convolver(p) => Self::Convolver(p.with_f32(value)),
             Self::PhaseVocoder(p) => Self::PhaseVocoder(p.with_f32(value)),
             Self::Kinetic(p) => Self::Kinetic(p.with_f32(value)),
+            Self::SignalMonitor(p) => Self::SignalMonitor(p.with_f32(value)),
         }
     }
 }
