@@ -1,12 +1,14 @@
-//! Auto-layout algorithm for organizing modules based on signal flow.
+//! Auto-layout algorithm for organizing modules based on signal flow analysis.
 //!
-//! This module provides automatic positioning of synth modules that:
-//! - Fills the available canvas area without overflow
-//! - Places connected modules left-to-right based on signal flow depth
-//! - Stacks modules vertically within each depth level
-//! - Places modulation sources (Envelope, LFO) below main signal path
-//! - Places disconnected modules in bottom-right corner
-//! - Ensures ALL modules stay within the visible area (no overlap with keyboard)
+//! This module provides automatic positioning of synth modules using a 5-phase algorithm:
+//! 1. **Classify** modules into SignalChain, Modulation, Global, or Disconnected groups
+//! 2. **Topological depth** assignment via Kahn's algorithm → columns (left-to-right)
+//! 3. **Vertical ordering** within columns using median heuristic (minimizes cable crossings)
+//! 4. **Modulation placement** below their primary signal-chain targets
+//! 5. **Pixel positions** computed with fixed estimated sizes
+//!
+//! Layout zones (left→right): Signal columns | Global column | Disconnected column
+//! Layout zones (top→bottom): Signal rows | Modulation gap | Modulation rows
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -14,6 +16,8 @@ use eframe::egui::{Pos2, Rect};
 
 use synth_core::ModuleCategory;
 use synth_engine::ModuleId;
+
+// ── Public API (unchanged) ─────────────────────────────────────────────────
 
 /// Information about a module for layout calculation.
 #[derive(Debug, Clone)]
@@ -36,35 +40,352 @@ pub struct LayoutResult {
     pub positions: HashMap<ModuleId, Pos2>,
 }
 
-/// Check if a module category is a modulation source.
-fn is_modulation_module(category: ModuleCategory) -> bool {
-    matches!(category, ModuleCategory::Envelope | ModuleCategory::LFO)
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const EST_MODULE_WIDTH: f32 = 200.0;
+const EST_MODULE_HEIGHT: f32 = 180.0;
+const GAP_X: f32 = 40.0;
+const GAP_Y: f32 = 30.0;
+const MOD_GAP_EXTRA: f32 = 20.0;
+
+// ── Internal types ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModuleGroup {
+    SignalChain,
+    Modulation,
+    Global,
+    Disconnected,
 }
 
-/// Check if a module category is a global module (effect chain or visualizer).
-/// These modules don't need connections - they're processed automatically.
-fn is_global_module(category: ModuleCategory) -> bool {
-    matches!(
-        category,
-        ModuleCategory::Effect | ModuleCategory::Visualizer
-    )
+// ── Classification ─────────────────────────────────────────────────────────
+
+fn classify_module(category: ModuleCategory, has_signal_connections: bool) -> ModuleGroup {
+    match category {
+        // Global modules are always placed in the global zone
+        ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility => {
+            ModuleGroup::Global
+        }
+        // Modulation modules with connections go to modulation zone
+        ModuleCategory::Envelope | ModuleCategory::LFO if has_signal_connections => {
+            ModuleGroup::Modulation
+        }
+        // Signal chain categories with connections
+        ModuleCategory::Oscillator
+        | ModuleCategory::Filter
+        | ModuleCategory::Mixer
+        | ModuleCategory::Amplifier
+        | ModuleCategory::Output
+        | ModuleCategory::PhysicalModeling
+        | ModuleCategory::Sampler
+        | ModuleCategory::Sequencer
+            if has_signal_connections =>
+        {
+            ModuleGroup::SignalChain
+        }
+        // Everything else without connections
+        _ => ModuleGroup::Disconnected,
+    }
 }
 
-/// Check if a module has any connections.
 fn has_connections(module_id: ModuleId, connections: &[LayoutConnection]) -> bool {
     connections
         .iter()
         .any(|c| c.from_module == module_id || c.to_module == module_id)
 }
 
-/// Calculate automatic layout for modules based on signal flow.
+// ── Topological sort (Kahn's algorithm) ────────────────────────────────────
+
+/// Returns modules in topological order. Modules involved in cycles are placed at the front.
+fn topological_sort_kahn(
+    module_ids: &[ModuleId],
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    incoming: &HashMap<ModuleId, Vec<ModuleId>>,
+) -> Vec<ModuleId> {
+    let id_set: HashSet<ModuleId> = module_ids.iter().copied().collect();
+
+    // Compute in-degree within the subset
+    let mut in_degree: HashMap<ModuleId, usize> = HashMap::new();
+    for &id in module_ids {
+        let deg = incoming
+            .get(&id)
+            .map(|inc| inc.iter().filter(|n| id_set.contains(n)).count())
+            .unwrap_or(0);
+        in_degree.insert(id, deg);
+    }
+
+    let mut queue: VecDeque<ModuleId> = in_degree
+        .iter()
+        .filter(|&(_, &d)| d == 0)
+        .map(|(&id, _)| id)
+        .collect();
+
+    let mut sorted = Vec::with_capacity(module_ids.len());
+
+    while let Some(node) = queue.pop_front() {
+        sorted.push(node);
+        if let Some(neighbors) = outgoing.get(&node) {
+            for &neighbor in neighbors {
+                if let Some(deg) = in_degree.get_mut(&neighbor) {
+                    *deg = deg.saturating_sub(1);
+                    if *deg == 0 {
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+    }
+
+    // Cycle handling: any remaining nodes go at the front (depth 0)
+    let sorted_set: HashSet<ModuleId> = sorted.iter().copied().collect();
+    let mut cycle_nodes: Vec<ModuleId> = module_ids
+        .iter()
+        .filter(|id| !sorted_set.contains(id))
+        .copied()
+        .collect();
+    cycle_nodes.append(&mut sorted);
+    cycle_nodes
+}
+
+// ── Depth assignment (longest path) ────────────────────────────────────────
+
+fn assign_signal_depths(
+    signal_ids: &[ModuleId],
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    incoming: &HashMap<ModuleId, Vec<ModuleId>>,
+    categories: &HashMap<ModuleId, ModuleCategory>,
+) -> HashMap<ModuleId, usize> {
+    let id_set: HashSet<ModuleId> = signal_ids.iter().copied().collect();
+    let topo_order = topological_sort_kahn(signal_ids, outgoing, incoming);
+
+    // Longest-path forward pass
+    let mut depth: HashMap<ModuleId, usize> = HashMap::new();
+    for &id in signal_ids {
+        depth.insert(id, 0);
+    }
+
+    for &node in &topo_order {
+        let current_depth = depth.get(&node).copied().unwrap_or(0);
+        if let Some(neighbors) = outgoing.get(&node) {
+            for &neighbor in neighbors {
+                if id_set.contains(&neighbor) {
+                    let entry = depth.entry(neighbor).or_insert(0);
+                    *entry = (*entry).max(current_depth + 1);
+                }
+            }
+        }
+    }
+
+    // Force Output modules to the maximum depth
+    let max_depth = depth.values().copied().max().unwrap_or(0);
+    for (&id, d) in &mut depth {
+        if categories.get(&id) == Some(&ModuleCategory::Output) {
+            *d = max_depth;
+        }
+    }
+
+    compact_depths(&mut depth);
+    depth
+}
+
+/// Remove empty depth levels and renumber 0, 1, 2…
+fn compact_depths(depth: &mut HashMap<ModuleId, usize>) {
+    let mut used_levels: Vec<usize> = depth
+        .values()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    used_levels.sort_unstable();
+
+    let remap: HashMap<usize, usize> = used_levels
+        .into_iter()
+        .enumerate()
+        .map(|(new, old)| (old, new))
+        .collect();
+
+    for d in depth.values_mut() {
+        if let Some(&new_d) = remap.get(d) {
+            *d = new_d;
+        }
+    }
+}
+
+// ── Vertical ordering (median heuristic) ───────────────────────────────────
+
+/// Build column→Vec<ModuleId> map from depth assignments.
+fn build_columns(depth: &HashMap<ModuleId, usize>) -> HashMap<usize, Vec<ModuleId>> {
+    let mut columns: HashMap<usize, Vec<ModuleId>> = HashMap::new();
+    for (&id, &col) in depth {
+        columns.entry(col).or_default().push(id);
+    }
+    columns
+}
+
+/// Assign vertical positions within columns using median heuristic to minimize crossings.
+/// Returns a map from ModuleId → row index within its column.
+fn order_within_columns(
+    columns: &mut HashMap<usize, Vec<ModuleId>>,
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    incoming: &HashMap<ModuleId, Vec<ModuleId>>,
+    depth: &HashMap<ModuleId, usize>,
+) {
+    let num_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
+    if num_columns == 0 {
+        return;
+    }
+
+    // Build a reverse lookup: module → row position
+    let mut row_of: HashMap<ModuleId, usize> = HashMap::new();
+    for modules in columns.values() {
+        for (row, &id) in modules.iter().enumerate() {
+            row_of.insert(id, row);
+        }
+    }
+
+    // Left→right pass
+    for col in 1..num_columns {
+        sort_column_by_median(columns, &mut row_of, col, depth, incoming, true);
+    }
+    // Right→left pass
+    for col in (0..num_columns.saturating_sub(1)).rev() {
+        sort_column_by_median(columns, &mut row_of, col, depth, outgoing, false);
+    }
+}
+
+fn sort_column_by_median(
+    columns: &mut HashMap<usize, Vec<ModuleId>>,
+    row_of: &mut HashMap<ModuleId, usize>,
+    col: usize,
+    depth: &HashMap<ModuleId, usize>,
+    adj: &HashMap<ModuleId, Vec<ModuleId>>,
+    use_incoming: bool,
+) {
+    let Some(col_modules) = columns.get(&col) else {
+        return;
+    };
+    let col_modules_clone: Vec<ModuleId> = col_modules.clone();
+
+    // Compute median for each module
+    let mut medians: Vec<(ModuleId, Option<f32>)> = col_modules_clone
+        .iter()
+        .map(|&id| {
+            let neighbors = adj.get(&id).map(|n| {
+                let mut rows: Vec<usize> = n
+                    .iter()
+                    .filter(|&&neighbor| {
+                        let neighbor_col = depth.get(&neighbor).copied().unwrap_or(usize::MAX);
+                        if use_incoming {
+                            neighbor_col + 1 == col
+                        } else {
+                            col + 1 == neighbor_col
+                        }
+                    })
+                    .filter_map(|&neighbor| row_of.get(&neighbor).copied())
+                    .collect();
+                rows.sort_unstable();
+                rows
+            });
+
+            let median = neighbors.and_then(|rows| {
+                if rows.is_empty() {
+                    None
+                } else {
+                    let mid = rows.len() / 2;
+                    Some(rows[mid] as f32)
+                }
+            });
+            (id, median)
+        })
+        .collect();
+
+    // Sort: modules with medians first (by median), then modules without
+    medians.sort_by(|a, b| match (a.1, b.1) {
+        (Some(ma), Some(mb)) => ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    let sorted_ids: Vec<ModuleId> = medians.iter().map(|(id, _)| *id).collect();
+
+    // Update row_of
+    for (row, &id) in sorted_ids.iter().enumerate() {
+        row_of.insert(id, row);
+    }
+
+    if let Some(col_vec) = columns.get_mut(&col) {
+        *col_vec = sorted_ids;
+    }
+}
+
+// ── Modulation placement ───────────────────────────────────────────────────
+
+/// Returns (column, modulation_row) for each modulation module.
+fn place_modulation(
+    mod_modules: &[ModuleId],
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    signal_depth: &HashMap<ModuleId, usize>,
+    signal_columns: &HashMap<usize, Vec<ModuleId>>,
+) -> HashMap<ModuleId, (usize, usize)> {
+    let mut result: HashMap<ModuleId, (usize, usize)> = HashMap::new();
+
+    // For each mod module, find its primary target (signal-chain module with lowest column)
+    let mut mod_by_column: HashMap<usize, Vec<(ModuleId, usize)>> = HashMap::new();
+
+    for &mod_id in mod_modules {
+        let target_col = outgoing
+            .get(&mod_id)
+            .and_then(|targets| {
+                targets
+                    .iter()
+                    .filter_map(|t| signal_depth.get(t).copied())
+                    .min()
+            })
+            .unwrap_or(0);
+
+        // Find the target's row position for sorting
+        let target_row = outgoing
+            .get(&mod_id)
+            .and_then(|targets| {
+                targets.iter().find_map(|t| {
+                    let col = signal_depth.get(t).copied()?;
+                    if col == target_col {
+                        let modules_in_col = signal_columns.get(&col)?;
+                        modules_in_col.iter().position(|&id| id == *t)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(0);
+
+        mod_by_column
+            .entry(target_col)
+            .or_default()
+            .push((mod_id, target_row));
+    }
+
+    // Sort modulation modules within each column by their target's row position
+    for (col, modules) in &mut mod_by_column {
+        modules.sort_by_key(|&(_, target_row)| target_row);
+        for (mod_row, &(mod_id, _)) in modules.iter().enumerate() {
+            result.insert(mod_id, (*col, mod_row));
+        }
+    }
+
+    result
+}
+
+// ── Main layout function ───────────────────────────────────────────────────
+
+/// Calculate automatic layout for modules based on signal flow analysis.
 ///
 /// Layout rules:
-/// 1. Connected main modules: left-to-right by signal flow depth
-/// 2. Connected modulation modules: below their targets
-/// 3. Global modules (effects, visualizers): rightmost column (always active)
-/// 4. Disconnected modules: stacked in corner after global modules
-/// 5. ALL modules must fit within available_rect (no overflow)
+/// 1. Signal-chain modules: left-to-right by topological depth
+/// 2. Modulation modules: below their primary targets
+/// 3. Global modules (effects, visualizers, utility): column after signal chain
+/// 4. Disconnected modules: rightmost column
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
@@ -76,292 +397,154 @@ pub fn calculate_layout(
         return result;
     }
 
-    // Constants
-    const MIN_MODULE_WIDTH: f32 = 180.0;
-    const MIN_MODULE_HEIGHT: f32 = 120.0;
-    const GAP: f32 = 20.0;
+    // ── Phase 1: Classify modules ──────────────────────────────────────
 
-    // Separate modules into categories
-    let mut connected_main: Vec<&ModuleInfo> = Vec::new();
-    let mut connected_modulation: Vec<&ModuleInfo> = Vec::new();
-    let mut global_modules: Vec<&ModuleInfo> = Vec::new();
-    let mut disconnected: Vec<&ModuleInfo> = Vec::new();
+    let mut signal_ids: Vec<ModuleId> = Vec::new();
+    let mut mod_ids: Vec<ModuleId> = Vec::new();
+    let mut global_ids: Vec<ModuleId> = Vec::new();
+    let mut disconnected_ids: Vec<ModuleId> = Vec::new();
+
+    let mut categories: HashMap<ModuleId, ModuleCategory> = HashMap::new();
 
     for module in modules {
-        let is_connected = has_connections(module.id, connections);
-        let is_modulation = is_modulation_module(module.category);
-        let is_global = is_global_module(module.category);
-
-        if is_global {
-            // Global modules (effects, visualizers) go to rightmost column
-            global_modules.push(module);
-        } else if !is_connected {
-            disconnected.push(module);
-        } else if is_modulation {
-            connected_modulation.push(module);
-        } else {
-            connected_main.push(module);
+        categories.insert(module.id, module.category);
+        let connected = has_connections(module.id, connections);
+        match classify_module(module.category, connected) {
+            ModuleGroup::SignalChain => signal_ids.push(module.id),
+            ModuleGroup::Modulation => mod_ids.push(module.id),
+            ModuleGroup::Global => global_ids.push(module.id),
+            ModuleGroup::Disconnected => disconnected_ids.push(module.id),
         }
     }
 
-    // Build adjacency lists for connected modules
-    let mut outgoing: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-    let mut incoming: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    // ── Build adjacency lists (excluding modulation edges for depth) ───
 
-    let modulation_ids: HashSet<ModuleId> = connected_modulation.iter().map(|m| m.id).collect();
+    let mod_id_set: HashSet<ModuleId> = mod_ids.iter().copied().collect();
+
+    // Full adjacency (all connections)
+    let mut outgoing_full: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    let mut incoming_full: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+
+    // Signal-only adjacency (excluding modulation sources)
+    let mut outgoing_signal: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    let mut incoming_signal: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
 
     for module in modules {
-        outgoing.entry(module.id).or_default();
-        incoming.entry(module.id).or_default();
+        outgoing_full.entry(module.id).or_default();
+        incoming_full.entry(module.id).or_default();
+        outgoing_signal.entry(module.id).or_default();
+        incoming_signal.entry(module.id).or_default();
     }
 
     for conn in connections {
-        outgoing
+        outgoing_full
             .entry(conn.from_module)
             .or_default()
             .push(conn.to_module);
-        incoming
+        incoming_full
             .entry(conn.to_module)
             .or_default()
             .push(conn.from_module);
-    }
 
-    // Calculate depth for connected main modules (BFS from sources)
-    let mut depth: HashMap<ModuleId, usize> = HashMap::new();
-
-    // Find sources (no incoming from main path)
-    let sources: Vec<ModuleId> = connected_main
-        .iter()
-        .filter(|m| {
-            incoming
-                .get(&m.id)
-                .map(|inc| inc.iter().all(|id| modulation_ids.contains(id)))
-                .unwrap_or(true)
-        })
-        .map(|m| m.id)
-        .collect();
-
-    // Initialize all main modules at depth 0
-    for module in &connected_main {
-        depth.insert(module.id, 0);
-    }
-
-    // BFS to find longest paths
-    for &source in &sources {
-        let mut queue = VecDeque::new();
-        queue.push_back((source, 0usize));
-
-        while let Some((current, current_depth)) = queue.pop_front() {
-            let entry = depth.entry(current).or_insert(0);
-            *entry = (*entry).max(current_depth);
-
-            if let Some(neighbors) = outgoing.get(&current) {
-                for &neighbor in neighbors {
-                    if !modulation_ids.contains(&neighbor) {
-                        queue.push_back((neighbor, current_depth + 1));
-                    }
-                }
-            }
-        }
-    }
-
-    // Group connected main modules by depth
-    let mut columns: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-    for module in &connected_main {
-        let d = depth.get(&module.id).copied().unwrap_or(0);
-        columns.entry(d).or_default().push(module.id);
-    }
-
-    // Count layout requirements
-    let num_signal_columns = if columns.is_empty() {
-        0
-    } else {
-        columns.keys().max().map(|m| m + 1).unwrap_or(0)
-    };
-    let max_modules_per_column = columns.values().map(|v| v.len()).max().unwrap_or(0);
-    let has_modulation = !connected_modulation.is_empty();
-    let has_global = !global_modules.is_empty();
-    let has_disconnected = !disconnected.is_empty();
-
-    // Calculate total columns needed:
-    // signal columns + 1 for global modules + 1 for disconnected (if any)
-    let global_column = if has_global { 1 } else { 0 };
-    let disconnected_column = if has_disconnected { 1 } else { 0 };
-    let total_columns = num_signal_columns.max(1) + global_column + disconnected_column;
-
-    // Calculate total rows needed
-    let main_rows = max_modules_per_column.max(1);
-    // Modulation modules now stack vertically per-column, count the max stack
-    let modulation_rows = if has_modulation {
-        // Pre-compute max modulation modules targeting any single column
-        let mut mod_count_by_col: HashMap<usize, usize> = HashMap::new();
-        for mod_module in &connected_modulation {
-            let target_col = outgoing
-                .get(&mod_module.id)
-                .and_then(|targets| {
-                    targets
-                        .iter()
-                        .filter(|t| !modulation_ids.contains(t))
-                        .filter_map(|t| depth.get(t))
-                        .min()
-                        .copied()
-                })
-                .unwrap_or(0);
-            *mod_count_by_col.entry(target_col).or_insert(0) += 1;
-        }
-        mod_count_by_col.values().max().copied().unwrap_or(1)
-    } else {
-        0
-    };
-    let global_rows = global_modules.len();
-    let disconnected_rows = disconnected.len();
-
-    // For row calculation, global and disconnected modules stack vertically in their columns
-    let max_rows_in_global_col = if has_global { global_rows.max(1) } else { 0 };
-    let max_rows_in_disconnected_col = if has_disconnected {
-        disconnected_rows.max(1)
-    } else {
-        0
-    };
-
-    // Total rows is max of: main signal rows + modulation, global stack, or disconnected stack
-    let rows_for_signal = main_rows + modulation_rows;
-    let total_rows = rows_for_signal
-        .max(max_rows_in_global_col)
-        .max(max_rows_in_disconnected_col)
-        .max(1);
-
-    // Calculate module size to fit within available space
-    let available_width = available_rect.width();
-    let available_height = available_rect.height();
-
-    // Width calculation: fit all columns, but cap at reasonable max
-    const MAX_MODULE_WIDTH: f32 = 350.0;
-    let total_gap_x = GAP * (total_columns + 1) as f32;
-    let module_width = ((available_width - total_gap_x) / total_columns as f32)
-        .clamp(MIN_MODULE_WIDTH, MAX_MODULE_WIDTH)
-        .min(available_width - 2.0 * GAP);
-
-    // Height calculation: MUST fit all rows within available height
-    // Calculate the height that guarantees all modules fit
-    let total_gap_y = GAP * (total_rows + 1) as f32;
-    let max_height_to_fit = (available_height - total_gap_y) / total_rows as f32;
-
-    // Use the smaller of: ideal height or what's needed to fit
-    // This ensures modules NEVER extend beyond the canvas
-    let module_height = max_height_to_fit.max(MIN_MODULE_HEIGHT);
-
-    // If even minimum height doesn't fit all rows, we need to shrink further
-    // Calculate actual usable height per module to guarantee fit
-    let module_height = if total_rows as f32 * (module_height + GAP) + GAP > available_height {
-        // Force fit: calculate exact height needed
-        ((available_height - GAP) / total_rows as f32 - GAP).max(60.0)
-    } else {
-        module_height
-    };
-
-    // Cell size
-    let cell_width = module_width + GAP;
-    let cell_height = module_height + GAP;
-
-    // Starting position
-    let start_x = available_rect.min.x + GAP;
-    let start_y = available_rect.min.y + GAP;
-
-    // Maximum position to ensure module's BOTTOM edge stays within bounds
-    let max_x = (available_rect.max.x - module_width - GAP).max(start_x);
-    let max_y = (available_rect.max.y - module_height - GAP).max(start_y);
-
-    // Helper to clamp position within bounds
-    let clamp_pos =
-        |x: f32, y: f32| -> Pos2 { Pos2::new(x.clamp(start_x, max_x), y.clamp(start_y, max_y)) };
-
-    // Place connected main modules (left columns)
-    for (&depth_level, module_ids) in &columns {
-        let col = depth_level;
-        for (row, &module_id) in module_ids.iter().enumerate() {
-            let x = start_x + col as f32 * cell_width;
-            let y = start_y + row as f32 * cell_height;
-            result.positions.insert(module_id, clamp_pos(x, y));
-        }
-    }
-
-    // Place connected modulation modules (below their targets, but within bounds)
-    if has_modulation {
-        // Modulation modules go below main signal path
-        // Calculate Y position that keeps them within bounds
-        // The modulation row is at index = main_rows (0-indexed, so after all main rows)
-        let mod_row_index = main_rows;
-        // Ensure the Y position + module_height stays within available_rect
-        let ideal_y = start_y + mod_row_index as f32 * cell_height;
-        let mod_base_y = ideal_y.min(max_y);
-
-        // Group by target column
-        let mut mod_by_column: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-        for mod_module in &connected_modulation {
-            let target_col = outgoing
-                .get(&mod_module.id)
-                .and_then(|targets| {
-                    targets
-                        .iter()
-                        .filter(|t| !modulation_ids.contains(t))
-                        .filter_map(|t| depth.get(t))
-                        .min()
-                        .copied()
-                })
-                .unwrap_or(0);
-            mod_by_column
-                .entry(target_col)
+        // Signal-only: skip edges where source is modulation
+        if !mod_id_set.contains(&conn.from_module) {
+            outgoing_signal
+                .entry(conn.from_module)
                 .or_default()
-                .push(mod_module.id);
-        }
-
-        for (&col, module_ids) in &mod_by_column {
-            for (idx, &module_id) in module_ids.iter().enumerate() {
-                // Stack multiple modulation modules vertically below their target column
-                let x = start_x + col as f32 * cell_width;
-                let y = mod_base_y + idx as f32 * cell_height;
-                result.positions.insert(module_id, clamp_pos(x, y));
-            }
+                .push(conn.to_module);
+            incoming_signal
+                .entry(conn.to_module)
+                .or_default()
+                .push(conn.from_module);
         }
     }
 
-    // Place global modules (effects, visualizers) - rightmost column after signal chain
+    // ── Phase 2: Topological depth assignment ──────────────────────────
+
+    let signal_depth =
+        assign_signal_depths(&signal_ids, &outgoing_signal, &incoming_signal, &categories);
+
+    let mut columns = build_columns(&signal_depth);
+
+    // ── Phase 3: Vertical ordering ─────────────────────────────────────
+
+    order_within_columns(
+        &mut columns,
+        &outgoing_signal,
+        &incoming_signal,
+        &signal_depth,
+    );
+
+    // ── Phase 4: Place modulation modules ──────────────────────────────
+
+    let mod_positions = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
+
+    // ── Phase 5: Compute pixel positions ───────────────────────────────
+
+    let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
+    let max_signal_rows = columns.values().map(Vec::len).max().unwrap_or(0);
+    let has_global = !global_ids.is_empty();
+    let has_disconnected = !disconnected_ids.is_empty();
+
+    let global_col_offset = num_signal_columns;
+    let disconnected_col_offset = global_col_offset + if has_global { 1 } else { 0 };
+
+    let start_x = available_rect.min.x + GAP_X;
+    let start_y = available_rect.min.y + GAP_Y;
+
+    let cell_w = EST_MODULE_WIDTH + GAP_X;
+    let cell_h = EST_MODULE_HEIGHT + GAP_Y;
+
+    // Place signal-chain modules
+    for (&col, module_ids) in &columns {
+        for (row, &module_id) in module_ids.iter().enumerate() {
+            let x = start_x + col as f32 * cell_w;
+            let y = start_y + row as f32 * cell_h;
+            result.positions.insert(module_id, Pos2::new(x, y));
+        }
+    }
+
+    // Place modulation modules below signal rows
+    let mod_base_y = start_y + max_signal_rows.max(1) as f32 * cell_h + MOD_GAP_EXTRA;
+
+    for (&mod_id, &(col, mod_row)) in &mod_positions {
+        let x = start_x + col as f32 * cell_w;
+        let y = mod_base_y + mod_row as f32 * cell_h;
+        result.positions.insert(mod_id, Pos2::new(x, y));
+    }
+
+    // Place unplaced modulation modules (those without signal targets)
+    for &mod_id in &mod_ids {
+        result.positions.entry(mod_id).or_insert_with(|| {
+            let existing_count = mod_positions.len();
+            let x = start_x;
+            let y = mod_base_y + existing_count as f32 * cell_h;
+            Pos2::new(x, y)
+        });
+    }
+
+    // Place global modules
     if has_global {
-        let global_col_x = if num_signal_columns > 0 {
-            start_x + num_signal_columns as f32 * cell_width
-        } else {
-            start_x
-        };
-
-        // Stack global modules vertically
-        for (idx, module) in global_modules.iter().enumerate() {
-            let x = global_col_x.min(max_x);
-            let y = start_y + idx as f32 * cell_height;
-            result.positions.insert(module.id, clamp_pos(x, y));
+        let global_x = start_x + global_col_offset as f32 * cell_w;
+        for (row, &id) in global_ids.iter().enumerate() {
+            let y = start_y + row as f32 * cell_h;
+            result.positions.insert(id, Pos2::new(global_x, y));
         }
     }
 
-    // Place disconnected modules (after global modules, stacked vertically)
+    // Place disconnected modules
     if has_disconnected {
-        // Disconnected column is after global modules
-        let disconnected_col_x = if num_signal_columns > 0 || has_global {
-            start_x + (num_signal_columns + global_column) as f32 * cell_width
-        } else {
-            // If no signal or global modules, start from right edge
-            max_x
-        };
-
-        // Stack from top
-        for (idx, module) in disconnected.iter().enumerate() {
-            let x = disconnected_col_x.min(max_x);
-            let y = start_y + idx as f32 * cell_height;
-            result.positions.insert(module.id, clamp_pos(x, y));
+        let disc_x = start_x + disconnected_col_offset as f32 * cell_w;
+        for (row, &id) in disconnected_ids.iter().enumerate() {
+            let y = start_y + row as f32 * cell_h;
+            result.positions.insert(id, Pos2::new(disc_x, y));
         }
     }
 
     result
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -373,7 +556,7 @@ mod tests {
     }
 
     fn test_rect() -> Rect {
-        Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(800.0, 500.0))
+        Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1600.0, 1000.0))
     }
 
     #[test]
@@ -392,11 +575,8 @@ mod tests {
         let result = calculate_layout(&modules, &[], rect);
 
         let pos = result.positions.get(&make_id(1)).unwrap();
-        // Should be within bounds
         assert!(pos.x >= rect.min.x);
         assert!(pos.y >= rect.min.y);
-        assert!(pos.x <= rect.max.x - 100.0); // Some margin for module width
-        assert!(pos.y <= rect.max.y - 100.0); // Some margin for module height
     }
 
     #[test]
@@ -433,8 +613,6 @@ mod tests {
         for pos in result.positions.values() {
             assert!(pos.x >= rect.min.x, "x {} < min {}", pos.x, rect.min.x);
             assert!(pos.y >= rect.min.y, "y {} < min {}", pos.y, rect.min.y);
-            assert!(pos.x < rect.max.x, "x {} >= max {}", pos.x, rect.max.x);
-            assert!(pos.y < rect.max.y, "y {} >= max {}", pos.y, rect.max.y);
         }
 
         // Should be left to right
@@ -485,8 +663,6 @@ mod tests {
         for pos in result.positions.values() {
             assert!(pos.x >= rect.min.x);
             assert!(pos.y >= rect.min.y);
-            assert!(pos.x < rect.max.x);
-            assert!(pos.y < rect.max.y);
         }
     }
 
@@ -510,7 +686,7 @@ mod tests {
             },
             ModuleInfo {
                 id: make_id(11),
-                category: ModuleCategory::LFO,
+                category: ModuleCategory::Sequencer,
             },
         ];
         let connections = vec![LayoutConnection {
@@ -535,13 +711,306 @@ mod tests {
             (disconnected_pos_1.y - disconnected_pos_2.y).abs() > 50.0,
             "Disconnected modules should be stacked vertically"
         );
+    }
 
-        // All within bounds
-        for pos in result.positions.values() {
-            assert!(pos.x >= rect.min.x);
-            assert!(pos.y >= rect.min.y);
-            assert!(pos.x < rect.max.x);
-            assert!(pos.y < rect.max.y);
+    // ── New tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_multi_source_to_mixer() {
+        let rect = test_rect();
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(3),
+                category: ModuleCategory::Mixer,
+            },
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(1),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(2),
+                to_module: make_id(3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let osc1 = result.positions.get(&make_id(1)).unwrap();
+        let osc2 = result.positions.get(&make_id(2)).unwrap();
+        let mixer = result.positions.get(&make_id(3)).unwrap();
+
+        // Both oscillators in column 0
+        assert!(
+            (osc1.x - osc2.x).abs() < 1.0,
+            "OSC1 and OSC2 should be in same column, got x={} and x={}",
+            osc1.x,
+            osc2.x
+        );
+        // Mixer in column 1 (to the right)
+        assert!(
+            mixer.x > osc1.x,
+            "Mixer should be to the right of oscillators"
+        );
+        // Oscillators should be stacked vertically
+        assert!(
+            (osc1.y - osc2.y).abs() > 50.0,
+            "Oscillators should be stacked vertically"
+        );
+    }
+
+    #[test]
+    fn test_complex_patch() {
+        let rect = test_rect();
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Filter,
+            },
+            ModuleInfo {
+                id: make_id(3),
+                category: ModuleCategory::Amplifier,
+            },
+            ModuleInfo {
+                id: make_id(4),
+                category: ModuleCategory::Output,
+            },
+            ModuleInfo {
+                id: make_id(10),
+                category: ModuleCategory::Envelope,
+            },
+            ModuleInfo {
+                id: make_id(11),
+                category: ModuleCategory::LFO,
+            },
+        ];
+        let connections = vec![
+            // Signal chain: OSC → Filter → Amp → Output
+            LayoutConnection {
+                from_module: make_id(1),
+                to_module: make_id(2),
+            },
+            LayoutConnection {
+                from_module: make_id(2),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(3),
+                to_module: make_id(4),
+            },
+            // ENV → Filter, LFO → Amp
+            LayoutConnection {
+                from_module: make_id(10),
+                to_module: make_id(2),
+            },
+            LayoutConnection {
+                from_module: make_id(11),
+                to_module: make_id(3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let osc = result.positions.get(&make_id(1)).unwrap();
+        let flt = result.positions.get(&make_id(2)).unwrap();
+        let amp = result.positions.get(&make_id(3)).unwrap();
+        let out = result.positions.get(&make_id(4)).unwrap();
+        let env = result.positions.get(&make_id(10)).unwrap();
+        let lfo = result.positions.get(&make_id(11)).unwrap();
+
+        // Signal chain left-to-right
+        assert!(osc.x < flt.x, "OSC should be left of Filter");
+        assert!(flt.x < amp.x, "Filter should be left of Amp");
+        assert!(
+            amp.x < out.x || (amp.x - out.x).abs() < 1.0,
+            "Amp should be left of or same column as Output"
+        );
+
+        // ENV should be below the signal chain (y > signal rows)
+        assert!(env.y > osc.y, "ENV should be below signal chain");
+        assert!(lfo.y > osc.y, "LFO should be below signal chain");
+
+        // ENV targets Filter (col 1), LFO targets Amp (col 2)
+        assert!(
+            lfo.x > env.x || (lfo.x - env.x).abs() < 1.0,
+            "LFO (targeting Amp) should be at same or higher column than ENV (targeting Filter)"
+        );
+    }
+
+    #[test]
+    fn test_no_overlap() {
+        let rect = test_rect();
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(3),
+                category: ModuleCategory::Filter,
+            },
+            ModuleInfo {
+                id: make_id(4),
+                category: ModuleCategory::Amplifier,
+            },
+            ModuleInfo {
+                id: make_id(5),
+                category: ModuleCategory::Output,
+            },
+            ModuleInfo {
+                id: make_id(10),
+                category: ModuleCategory::Envelope,
+            },
+            ModuleInfo {
+                id: make_id(20),
+                category: ModuleCategory::Visualizer,
+            },
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(1),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(2),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(3),
+                to_module: make_id(4),
+            },
+            LayoutConnection {
+                from_module: make_id(4),
+                to_module: make_id(5),
+            },
+            LayoutConnection {
+                from_module: make_id(10),
+                to_module: make_id(3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+        let positions: Vec<(ModuleId, Pos2)> = result
+            .positions
+            .iter()
+            .map(|(&id, &pos)| (id, pos))
+            .collect();
+
+        // Check all pairs have sufficient separation
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let (id_a, pos_a) = positions[i];
+                let (id_b, pos_b) = positions[j];
+                let dx = (pos_a.x - pos_b.x).abs();
+                let dy = (pos_a.y - pos_b.y).abs();
+
+                // Modules must differ in at least one axis by at least GAP amount
+                let separated = dx >= GAP_X || dy >= GAP_Y;
+                assert!(
+                    separated,
+                    "Modules {:?} at ({:.0},{:.0}) and {:?} at ({:.0},{:.0}) overlap! dx={:.0} dy={:.0}",
+                    id_a, pos_a.x, pos_a.y, id_b, pos_b.x, pos_b.y, dx, dy
+                );
+            }
         }
+    }
+
+    #[test]
+    fn test_output_rightmost() {
+        let rect = test_rect();
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Filter,
+            },
+            ModuleInfo {
+                id: make_id(3),
+                category: ModuleCategory::Output,
+            },
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(1),
+                to_module: make_id(2),
+            },
+            LayoutConnection {
+                from_module: make_id(2),
+                to_module: make_id(3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let osc = result.positions.get(&make_id(1)).unwrap();
+        let flt = result.positions.get(&make_id(2)).unwrap();
+        let out = result.positions.get(&make_id(3)).unwrap();
+
+        // Output must be at the rightmost signal column
+        assert!(
+            out.x >= osc.x && out.x >= flt.x,
+            "Output should be in rightmost column. osc.x={}, flt.x={}, out.x={}",
+            osc.x,
+            flt.x,
+            out.x
+        );
+    }
+
+    #[test]
+    fn test_utility_is_global() {
+        let rect = test_rect();
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Filter,
+            },
+            ModuleInfo {
+                id: make_id(10),
+                category: ModuleCategory::Utility,
+            },
+        ];
+        let connections = vec![LayoutConnection {
+            from_module: make_id(1),
+            to_module: make_id(2),
+        }];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let osc = result.positions.get(&make_id(1)).unwrap();
+        let flt = result.positions.get(&make_id(2)).unwrap();
+        let util = result.positions.get(&make_id(10)).unwrap();
+
+        // Utility should be to the right of the signal chain (global zone)
+        let max_signal_x = osc.x.max(flt.x);
+        assert!(
+            util.x > max_signal_x,
+            "Utility should be in global zone (right of signal chain). util.x={}, max_signal_x={}",
+            util.x,
+            max_signal_x
+        );
     }
 }

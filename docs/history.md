@@ -1,5 +1,24 @@
 # Version History
 
+## [0.137.0] - 2026-02-16
+### Förbättrad — Auto-layout baserad på signalflödesanalys
+
+**Ny 5-fas layoutalgoritm:**
+- Fas 1: Klassificerar moduler i fyra grupper — SignalChain, Modulation, Global (Effect/Visualizer/Utility), Disconnected
+- Fas 2: Topologisk djuptilldelning via Kahns algoritm → kolumner vänster-till-höger med longest-path
+- Fas 3: Vertikal ordning inom kolumner med median-heuristik (minimerar kabelkorsningar)
+- Fas 4: Modulationskällor (Envelope/LFO) placeras under sina primära signalkedjemål
+- Fas 5: Pixelpositioner med fasta estimerade storlekar (ScrollArea hanterar overflow)
+
+**Förbättringar jämfört med tidigare BFS-layout:**
+- Parallella signalvägar (t.ex. två oscillatorer → mixer) hanteras korrekt
+- Output-moduler tvingas till sista signalkolumnen
+- Utility-moduler placeras i global-zonen (ej disconnected)
+- Cykler hanteras gracefully via Kahns algoritm
+- Moduler överlappar inte längre varandra
+
+**Nya tester:** `test_multi_source_to_mixer`, `test_complex_patch`, `test_no_overlap`, `test_output_rightmost`, `test_utility_is_global`
+
 ## [0.136.0] - 2026-02-16
 ### Förbättrad — Moduler klipps av paneler
 
