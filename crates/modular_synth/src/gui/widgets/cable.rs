@@ -30,26 +30,55 @@ pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
 }
 
+/// Vertical bypass offset when routing around modules.
+const BYPASS_OFFSET: f32 = 40.0;
+
 /// Calculate orthogonal route waypoints from output port to input port.
 ///
-/// Returns 2–4 waypoints forming right-angle segments:
-/// - If ports are nearly horizontal: straight line (2 points)
-/// - Otherwise: horizontal out → vertical → horizontal in (4 points)
+/// Output always exits RIGHT, input always enters from LEFT.
+/// The vertical segment is placed in the gap between modules so cables
+/// never cross over any module.
+///
+/// - Forward (gap between modules): 2 or 4 waypoints
+/// - Backward/close (no gap): 6 waypoints routed around both modules
 #[must_use]
 fn calculate_route(from: Pos2, to: Pos2) -> Vec<Pos2> {
-    let dy = (to.y - from.y).abs();
+    // Output exits right, input enters left
+    let x_after_out = from.x + CLEARANCE;
+    let x_before_in = to.x - CLEARANCE;
 
-    if dy < STRAIGHT_THRESHOLD {
-        // Nearly horizontal — draw a straight line
-        return vec![from, to];
+    if x_after_out < x_before_in {
+        // Forward routing: there is a gap between the modules.
+        // Place the vertical segment in the middle of that gap.
+        let dy = (to.y - from.y).abs();
+        if dy < STRAIGHT_THRESHOLD {
+            // Nearly horizontal and forward — straight line through the gap
+            vec![from, to]
+        } else {
+            let turn_x = (x_after_out + x_before_in) * 0.5;
+            vec![from, Pos2::new(turn_x, from.y), Pos2::new(turn_x, to.y), to]
+        }
+    } else {
+        // Backward or overlapping: no clear gap between modules.
+        // Route around both modules so the cable never crosses them:
+        //
+        //           ┌──────────────────────────────┐
+        //           │                              │
+        //  [B]──in──┘   (bypass_y above both)      └──out──[A]
+        //
+        let right_x = from.x + CLEARANCE;
+        let left_x = to.x - CLEARANCE;
+        let bypass_y = from.y.min(to.y) - BYPASS_OFFSET;
+
+        vec![
+            from,
+            Pos2::new(right_x, from.y),
+            Pos2::new(right_x, bypass_y),
+            Pos2::new(left_x, bypass_y),
+            Pos2::new(left_x, to.y),
+            to,
+        ]
     }
-
-    // Midpoint x between the two clearance points
-    let x_out = from.x + CLEARANCE;
-    let x_in = to.x - CLEARANCE;
-    let turn_x = (x_out + x_in) * 0.5;
-
-    vec![from, Pos2::new(turn_x, from.y), Pos2::new(turn_x, to.y), to]
 }
 
 /// Total path length along a set of waypoints.
