@@ -831,6 +831,11 @@ impl PatchEditor {
             draw_cable_dragging(&painter, pending.from_position, pending.current_pos, color);
         }
 
+        // Mask areas outside the visible rect so module windows don't overlap surrounding panels.
+        // egui::Window renders at Order::Middle (top-level), so we paint opaque rects at
+        // Order::Foreground to clip them visually.
+        self.draw_viewport_mask(ui, visible_rect);
+
         // Handle click on empty space to deselect
         if let Some(ref response) = canvas_response
             && response.clicked()
@@ -847,6 +852,61 @@ impl PatchEditor {
         self.draw_toolbar_foreground(ui, visible_rect, &mut result);
 
         result
+    }
+
+    /// Paint opaque rectangles around the visible viewport to mask module windows
+    /// that extend beyond the patch editor area into surrounding panels.
+    fn draw_viewport_mask(&self, ui: &Ui, visible_rect: Rect) {
+        #[allow(deprecated)]
+        let screen_rect = ui.ctx().screen_rect();
+        let panel_fill = ui.ctx().style().visuals.panel_fill;
+        let mask_layer = LayerId::new(Order::Foreground, egui::Id::new("patch_viewport_mask"));
+        let painter = ui.ctx().layer_painter(mask_layer);
+
+        // Top mask
+        if visible_rect.min.y > screen_rect.min.y {
+            painter.rect_filled(
+                Rect::from_min_max(
+                    screen_rect.min,
+                    Pos2::new(screen_rect.max.x, visible_rect.min.y),
+                ),
+                0.0,
+                panel_fill,
+            );
+        }
+        // Bottom mask
+        if visible_rect.max.y < screen_rect.max.y {
+            painter.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(screen_rect.min.x, visible_rect.max.y),
+                    screen_rect.max,
+                ),
+                0.0,
+                panel_fill,
+            );
+        }
+        // Left mask
+        if visible_rect.min.x > screen_rect.min.x {
+            painter.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(screen_rect.min.x, visible_rect.min.y),
+                    Pos2::new(visible_rect.min.x, visible_rect.max.y),
+                ),
+                0.0,
+                panel_fill,
+            );
+        }
+        // Right mask
+        if visible_rect.max.x < screen_rect.max.x {
+            painter.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(visible_rect.max.x, visible_rect.min.y),
+                    Pos2::new(screen_rect.max.x, visible_rect.max.y),
+                ),
+                0.0,
+                panel_fill,
+            );
+        }
     }
 
     /// Draw the toolbar overlay in the foreground layer.
