@@ -1,5 +1,19 @@
 # Version History
 
+## [0.136.0] - 2026-02-16
+### Förbättrad — Moduler klipps av paneler
+
+**Area + Frame istället för Window:**
+- Moduler renderas nu med `egui::Area` + `Frame::window` istället för `egui::Window`
+- Moduler hamnar i `Order::Background` (samma lager som paneler) istället för `Order::Middle`
+- CentralPanel renderas före övriga paneler — toolbar, keyboard och sidopaneler målar ovanpå
+- Moduler som sticker ut utanför patch-editorn klipps nu naturligt av omgivande paneler
+
+**Manuell titelrad:**
+- Ersätter Windows inbyggda titelrad med rubrik + stängknapp (✕)
+- Stängknapp visas bara för okopplade moduler (Disconnected)
+- Kablar och toolbar-overlay renderas fortfarande i förgrunden
+
 ## [0.135.0] - 2026-02-16
 ### Förbättrad — ScrollArea i patch-editorn
 

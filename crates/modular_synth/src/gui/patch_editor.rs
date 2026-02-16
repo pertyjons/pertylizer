@@ -518,282 +518,298 @@ impl PatchEditor {
             let needs_reposition = self.needs_reposition.contains(&module_id);
 
             let title = analysis.display_name(module_id, &descriptor.name);
-            let window = egui::Window::new(&title)
-                .id(window_id)
-                .open(&mut open)
-                .collapsible(true)
-                .resizable(true)
-                .min_width(theme().sizes.module_min_width)
-                .frame(frame);
 
-            // Position windows in screen coordinates based on logical position and scroll offset
+            // Position in screen coordinates based on logical position and scroll offset
             let screen_pos = panel_position + area_origin - scroll_offset;
-            let window = window.constrain_to(constrain_rect);
-            let window = window.current_pos(screen_pos);
+
+            // Use Area + Frame instead of Window so modules render at Order::Background
+            // (same layer as panels). Panels rendered after CentralPanel paint over modules.
+            let area = egui::Area::new(window_id)
+                .order(Order::Background)
+                .movable(true)
+                .constrain_to(constrain_rect)
+                .current_pos(screen_pos);
 
             // Get processing info for this module
             let proc_position = processing_order.get(&module_id).copied();
             let is_source = self.is_source(module_id);
             let is_sink = self.is_sink(module_id);
 
-            let window_response = window.show(ui.ctx(), |ui| {
-                // Processing order and source/sink indicators
-                ui.horizontal(|ui| {
-                    // Accent color indicator
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, dimmed_accent);
+            let area_response = area.show(ui.ctx(), |ui| {
+                frame.show(ui, |ui| {
+                    ui.set_min_width(theme().sizes.module_min_width);
 
-                    // Processing order number
-                    if let Some(pos) = proc_position {
-                        let order_text = format!("#{}", pos + 1);
-                        ui.label(
-                            egui::RichText::new(order_text)
-                                .small()
-                                .color(theme().colors.text_dim),
-                        )
-                        .on_hover_text(format!(
-                            "Processing order: {} of {}",
-                            pos + 1,
-                            total_modules
-                        ));
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let t = theme();
-                        let button_min_size = Vec2::new(20.0, 20.0);
-
-                        // Power/bypass button (rightmost) - filled/hollow circle
-                        let (power_icon, power_color) = if is_bypassed {
-                            ("○", t.colors.text_dim) // Hollow = off
-                        } else {
-                            ("●", t.colors.accent_green) // Filled = on
-                        };
-                        let power_tooltip = if is_bypassed {
-                            "🔇 Bypassed\nModule output is muted.\nClick to activate."
-                        } else {
-                            "🔊 Active\nModule is processing audio.\nClick to bypass."
-                        };
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(power_icon).color(power_color).size(14.0),
-                                )
-                                .frame(false)
-                                .min_size(button_min_size),
-                            )
-                            .on_hover_text(power_tooltip)
-                            .clicked()
-                        {
-                            let new_bypass_state = !is_bypassed;
-                            self.bypassed.insert(module_id, new_bypass_state);
-                            result.bypass_toggles.push((module_id, new_bypass_state));
-                        }
-
-                        ui.add_space(2.0);
-
-                        // Connectivity status indicator - diamond shapes
-                        // Global modules (effects, visualizers, utility) are always connected
-                        let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
-                            let tooltip =
-                                if descriptor.category == ModuleCategory::Utility {
-                                    "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
-                                } else {
-                                    "⚡ Global Module\nProcessed automatically via effect chain."
-                                };
-                            (
-                                "◆",
-                                Color32::from_rgb(100, 180, 220),
-                                tooltip,
-                            )
-                        } else {
-                            match connectivity_status {
-                                ModuleConnectivity::Connected => (
-                                    "◆",
-                                    Color32::from_rgb(100, 200, 100),
-                                    "🔗 Routed to Output\nAudio from this module reaches the output.",
-                                ),
-                                ModuleConnectivity::Orphaned => (
-                                    "◇",
-                                    Color32::from_rgb(200, 200, 100),
-                                    "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
-                                ),
-                                ModuleConnectivity::Disconnected => (
-                                    "◇",
-                                    Color32::from_rgb(100, 100, 100),
-                                    "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
-                                ),
+                    // Title bar with module name + close button
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if connectivity_status == ModuleConnectivity::Disconnected
+                                && ui.small_button("\u{2715}").clicked()
+                            {
+                                open = false;
                             }
-                        };
-                        ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(conn_icon).color(conn_color).size(12.0),
-                            )
-                            .frame(false)
-                            .min_size(button_min_size),
-                        )
-                        .on_hover_text(conn_tooltip);
-
-                        // Source indicator (no inputs) - small arrow
-                        if is_source {
-                            ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("▸")
-                                        .color(Color32::from_rgb(100, 200, 100))
-                                        .size(10.0),
-                                )
-                                .frame(false)
-                                .min_size(Vec2::new(14.0, 20.0)),
-                            )
-                            .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
-                        }
-
-                        // Sink indicator (no outputs) - small square
-                        if is_sink {
-                            ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("◼")
-                                        .color(Color32::from_rgb(200, 100, 100))
-                                        .size(10.0),
-                                )
-                                .frame(false)
-                                .min_size(Vec2::new(14.0, 20.0)),
-                            )
-                            .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
-                        }
+                        });
                     });
-                });
 
-                ui.separator();
+                    // Processing order and source/sink indicators
+                    ui.horizontal(|ui| {
+                        // Accent color indicator
+                        let (rect, _) =
+                            ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
+                        ui.painter().rect_filled(rect, 2.0, dimmed_accent);
 
-                // Check if this is a global module (no ports to show in columns)
-                let is_global = matches!(
-                    descriptor.category,
-                    ModuleCategory::Effect | ModuleCategory::Visualizer
-                );
-
-                if is_global {
-                    // Global modules: full-width content, no port columns
-                    let is_effect = descriptor.category == ModuleCategory::Effect;
-                    if is_effect {
-                        ui.horizontal(|ui| {
+                        // Processing order number
+                        if let Some(pos) = proc_position {
+                            let order_text = format!("#{}", pos + 1);
                             ui.label(
-                                egui::RichText::new("⚡ Effect Chain")
-                                    .size(11.0)
+                                egui::RichText::new(order_text)
+                                    .small()
                                     .color(theme().colors.text_dim),
-                            );
-                        });
-                        ui.label(
-                            egui::RichText::new("Applied automatically after voice mixing")
-                                .size(9.0)
-                                .color(theme().colors.text_dim.gamma_multiply(0.7)),
+                            )
+                            .on_hover_text(format!(
+                                "Processing order: {} of {}",
+                                pos + 1,
+                                total_modules
+                            ));
+                        }
+
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                let t = theme();
+                                let button_min_size = Vec2::new(20.0, 20.0);
+
+                                // Power/bypass button (rightmost) - filled/hollow circle
+                                let (power_icon, power_color) = if is_bypassed {
+                                    ("○", t.colors.text_dim) // Hollow = off
+                                } else {
+                                    ("●", t.colors.accent_green) // Filled = on
+                                };
+                                let power_tooltip = if is_bypassed {
+                                    "🔇 Bypassed\nModule output is muted.\nClick to activate."
+                                } else {
+                                    "🔊 Active\nModule is processing audio.\nClick to bypass."
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(power_icon)
+                                                .color(power_color)
+                                                .size(14.0),
+                                        )
+                                        .frame(false)
+                                        .min_size(button_min_size),
+                                    )
+                                    .on_hover_text(power_tooltip)
+                                    .clicked()
+                                {
+                                    let new_bypass_state = !is_bypassed;
+                                    self.bypassed.insert(module_id, new_bypass_state);
+                                    result.bypass_toggles.push((module_id, new_bypass_state));
+                                }
+
+                                ui.add_space(2.0);
+
+                                // Connectivity status indicator - diamond shapes
+                                // Global modules (effects, visualizers, utility) are always connected
+                                let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
+                                    let tooltip =
+                                        if descriptor.category == ModuleCategory::Utility {
+                                            "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
+                                        } else {
+                                            "⚡ Global Module\nProcessed automatically via effect chain."
+                                        };
+                                    ("◆", Color32::from_rgb(100, 180, 220), tooltip)
+                                } else {
+                                    match connectivity_status {
+                                        ModuleConnectivity::Connected => (
+                                            "◆",
+                                            Color32::from_rgb(100, 200, 100),
+                                            "🔗 Routed to Output\nAudio from this module reaches the output.",
+                                        ),
+                                        ModuleConnectivity::Orphaned => (
+                                            "◇",
+                                            Color32::from_rgb(200, 200, 100),
+                                            "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                                        ),
+                                        ModuleConnectivity::Disconnected => (
+                                            "◇",
+                                            Color32::from_rgb(100, 100, 100),
+                                            "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                                        ),
+                                    }
+                                };
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(conn_icon)
+                                            .color(conn_color)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text(conn_tooltip);
+
+                                // Source indicator (no inputs) - small arrow
+                                if is_source {
+                                    ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new("▸")
+                                                .color(Color32::from_rgb(100, 200, 100))
+                                                .size(10.0),
+                                        )
+                                        .frame(false)
+                                        .min_size(Vec2::new(14.0, 20.0)),
+                                    )
+                                    .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
+                                }
+
+                                // Sink indicator (no outputs) - small square
+                                if is_sink {
+                                    ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new("◼")
+                                                .color(Color32::from_rgb(200, 100, 100))
+                                                .size(10.0),
+                                        )
+                                        .frame(false)
+                                        .min_size(Vec2::new(14.0, 20.0)),
+                                    )
+                                    .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
+                                }
+                            },
                         );
-                    } else {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("📊 Visualizer")
-                                    .size(11.0)
-                                    .color(theme().colors.text_dim),
-                            );
-                        });
-                        ui.label(
-                            egui::RichText::new("Displays final output signal")
-                                .size(9.0)
-                                .color(theme().colors.text_dim.gamma_multiply(0.7)),
-                        );
-                    }
+                    });
+
                     ui.separator();
 
-                    if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                        let vis_buffer = handle.get_visualization_buffer(module_id);
-                        let panel_result = draw_module_panel_params(
-                            ui,
-                            panel_state,
-                            &descriptor,
-                            accent_color,
-                            vis_buffer,
-                            &analysis,
-                        );
-                        for param in panel_result.param_changes {
-                            result.param_changes.push((module_id, param));
-                        }
-                    }
-                } else {
-                    // Normal modules: three-column layout (IN ports | content | OUT ports)
-                    let col_w = theme().sizes.port_column_width;
-                    let min_content = theme().sizes.module_content_min_width;
-                    let available_w = ui.available_width();
-                    let content_w = (available_w - 2.0 * col_w - ui.spacing().item_spacing.x * 2.0)
-                        .max(min_content);
+                    // Check if this is a global module (no ports to show in columns)
+                    let is_global = matches!(
+                        descriptor.category,
+                        ModuleCategory::Effect | ModuleCategory::Visualizer
+                    );
 
-                    ui.horizontal(|ui| {
-                        // Left port column (IN) - fixed width
-                        ui.vertical(|ui| {
-                            ui.set_width(col_w);
-                            self.draw_port_column(
-                                ui,
-                                module_id,
-                                &descriptor,
-                                WidgetPortDirection::Input,
-                                &connected_ports,
-                            );
-                        });
-
-                        // Content column - fills remaining width
-                        ui.vertical(|ui| {
-                            ui.set_width(content_w);
-                            if let Some(panel_state) =
-                                self.panels.get_mut(&module_id)
-                            {
-                                let vis_buffer =
-                                    handle.get_visualization_buffer(module_id);
-                                let panel_result = draw_module_panel_params(
-                                    ui,
-                                    panel_state,
-                                    &descriptor,
-                                    accent_color,
-                                    vis_buffer,
-                                    &analysis,
+                    if is_global {
+                        // Global modules: full-width content, no port columns
+                        let is_effect = descriptor.category == ModuleCategory::Effect;
+                        if is_effect {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("⚡ Effect Chain")
+                                        .size(11.0)
+                                        .color(theme().colors.text_dim),
                                 );
-                                for param in panel_result.param_changes {
-                                    result.param_changes.push((module_id, param));
-                                }
-                            }
-                        });
-
-                        // Right port column (OUT) - fixed width, right-aligned
-                        ui.vertical(|ui| {
-                            ui.set_width(col_w);
-                            self.draw_port_column(
-                                ui,
-                                module_id,
-                                &descriptor,
-                                WidgetPortDirection::Output,
-                                &connected_ports,
+                            });
+                            ui.label(
+                                egui::RichText::new("Applied automatically after voice mixing")
+                                    .size(9.0)
+                                    .color(theme().colors.text_dim.gamma_multiply(0.7)),
                             );
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("📊 Visualizer")
+                                        .size(11.0)
+                                        .color(theme().colors.text_dim),
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new("Displays final output signal")
+                                    .size(9.0)
+                                    .color(theme().colors.text_dim.gamma_multiply(0.7)),
+                            );
+                        }
+                        ui.separator();
+
+                        if let Some(panel_state) = self.panels.get_mut(&module_id) {
+                            let vis_buffer = handle.get_visualization_buffer(module_id);
+                            let panel_result = draw_module_panel_params(
+                                ui,
+                                panel_state,
+                                &descriptor,
+                                accent_color,
+                                vis_buffer,
+                                &analysis,
+                            );
+                            for param in panel_result.param_changes {
+                                result.param_changes.push((module_id, param));
+                            }
+                        }
+                    } else {
+                        // Normal modules: three-column layout (IN ports | content | OUT ports)
+                        let col_w = theme().sizes.port_column_width;
+                        let min_content = theme().sizes.module_content_min_width;
+                        let available_w = ui.available_width();
+                        let content_w =
+                            (available_w - 2.0 * col_w - ui.spacing().item_spacing.x * 2.0)
+                                .max(min_content);
+
+                        ui.horizontal(|ui| {
+                            // Left port column (IN) - fixed width
+                            ui.vertical(|ui| {
+                                ui.set_width(col_w);
+                                self.draw_port_column(
+                                    ui,
+                                    module_id,
+                                    &descriptor,
+                                    WidgetPortDirection::Input,
+                                    &connected_ports,
+                                );
+                            });
+
+                            // Content column - fills remaining width
+                            ui.vertical(|ui| {
+                                ui.set_width(content_w);
+                                if let Some(panel_state) = self.panels.get_mut(&module_id) {
+                                    let vis_buffer =
+                                        handle.get_visualization_buffer(module_id);
+                                    let panel_result = draw_module_panel_params(
+                                        ui,
+                                        panel_state,
+                                        &descriptor,
+                                        accent_color,
+                                        vis_buffer,
+                                        &analysis,
+                                    );
+                                    for param in panel_result.param_changes {
+                                        result.param_changes.push((module_id, param));
+                                    }
+                                }
+                            });
+
+                            // Right port column (OUT) - fixed width, right-aligned
+                            ui.vertical(|ui| {
+                                ui.set_width(col_w);
+                                self.draw_port_column(
+                                    ui,
+                                    module_id,
+                                    &descriptor,
+                                    WidgetPortDirection::Output,
+                                    &connected_ports,
+                                );
+                            });
                         });
-                    });
-                }
+                    }
+                });
             });
 
-            // Handle window interaction
-            if let Some(inner_response) = window_response {
-                // Update logical position from screen position
-                if let Some(new_screen_pos) = ui
-                    .ctx()
-                    .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
-                    && let Some(panel_state) = self.panels.get_mut(&module_id)
-                {
-                    panel_state.position = new_screen_pos - area_origin + scroll_offset;
-                }
-
-                // Bring to front on click
-                if inner_response.response.clicked() || inner_response.response.drag_started() {
-                    self.selected_module = Some(module_id);
-                    bring_to_front = Some(module_id);
-                }
+            // Handle area interaction — Area always returns InnerResponse (no Option)
+            // Update logical position from screen position
+            if let Some(new_screen_pos) = ui
+                .ctx()
+                .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
+                && let Some(panel_state) = self.panels.get_mut(&module_id)
+            {
+                panel_state.position = new_screen_pos - area_origin + scroll_offset;
             }
 
-            // Handle window close (delete module)
+            // Bring to front on click
+            if area_response.response.clicked() || area_response.response.drag_started() {
+                self.selected_module = Some(module_id);
+                bring_to_front = Some(module_id);
+            }
+
+            // Handle close (delete module) — triggered by close button
             if !open {
                 result.modules_to_remove.push(module_id);
             }
