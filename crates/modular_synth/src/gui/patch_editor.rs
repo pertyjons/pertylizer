@@ -539,7 +539,6 @@ impl PatchEditor {
                 // Clip to the visible scroll area so modules don't paint over panels
                 ui.set_clip_rect(visible_rect);
                 frame.show(ui, |ui| {
-                    ui.set_min_width(theme().sizes.module_min_width);
 
                     // Title bar with module name + close button
                     ui.horizontal(|ui| {
