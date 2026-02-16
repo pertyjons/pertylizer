@@ -393,21 +393,28 @@ impl PatchEditor {
         // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
         let visible_rect = ui.available_rect_before_wrap();
 
-        egui::ScrollArea::both()
+        // Phase 1: ScrollArea for scrollbars and grid background
+        let mut canvas_response = None;
+        let scroll_output = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-            // Allocate space for all content so ScrollArea shows scrollbars
-            let scroll_rect = Rect::from_min_size(
-                ui.max_rect().min,
-                content_size.max(ui.available_size()),
-            );
-            let response = ui.allocate_rect(scroll_rect, Sense::click_and_drag());
+                // Allocate space for all content so ScrollArea shows scrollbars
+                let scroll_rect =
+                    Rect::from_min_size(ui.max_rect().min, content_size.max(ui.available_size()));
+                canvas_response = Some(ui.allocate_rect(scroll_rect, Sense::click_and_drag()));
 
-            // Draw grid
-            self.draw_grid(ui, scroll_rect);
+                // Draw grid
+                self.draw_grid(ui, scroll_rect);
 
-            // Store the canvas rect for auto-layout calculations
-            result.canvas_rect = Some(scroll_rect);
+                scroll_rect
+            });
+
+        let scroll_rect = scroll_output.inner;
+        let scroll_offset = scroll_output.state.offset;
+        let area_origin = visible_rect.min.to_vec2();
+
+        // Store the canvas rect for auto-layout calculations (in logical coordinates)
+        result.canvas_rect = Some(scroll_rect);
 
         // Clear port positions for this frame
         self.port_positions.clear();
@@ -426,6 +433,15 @@ impl PatchEditor {
         let processing_order: HashMap<ModuleId, usize> =
             self.calculate_processing_order().into_iter().collect();
         let total_modules = module_ids.len();
+
+        // Constrain rect: prevent modules going to negative logical coords,
+        // allow extending right/down (content grows to fit)
+        let content_origin_screen = Pos2::new(
+            visible_rect.min.x - scroll_offset.x,
+            visible_rect.min.y - scroll_offset.y,
+        );
+        let constrain_rect =
+            Rect::from_min_size(content_origin_screen, Vec2::new(20000.0, 20000.0));
 
         // Track which module to bring to front
         let mut bring_to_front: Option<ModuleId> = None;
@@ -510,13 +526,10 @@ impl PatchEditor {
                 .min_width(theme().sizes.module_min_width)
                 .frame(frame);
 
-            // Constrain modules to scroll area and position them
-            let window = window.constrain_to(scroll_rect);
-            let window = if needs_reposition {
-                window.current_pos(panel_position)
-            } else {
-                window.default_pos(panel_position)
-            };
+            // Position windows in screen coordinates based on logical position and scroll offset
+            let screen_pos = panel_position + area_origin - scroll_offset;
+            let window = window.constrain_to(constrain_rect);
+            let window = window.current_pos(screen_pos);
 
             // Get processing info for this module
             let proc_position = processing_order.get(&module_id).copied();
@@ -764,13 +777,13 @@ impl PatchEditor {
 
             // Handle window interaction
             if let Some(inner_response) = window_response {
-                // Update position from window
-                if let Some(new_pos) = ui
+                // Update logical position from screen position
+                if let Some(new_screen_pos) = ui
                     .ctx()
                     .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
                     && let Some(panel_state) = self.panels.get_mut(&module_id)
                 {
-                    panel_state.position = new_pos;
+                    panel_state.position = new_screen_pos - area_origin + scroll_offset;
                 }
 
                 // Bring to front on click
@@ -819,7 +832,9 @@ impl PatchEditor {
         }
 
         // Handle click on empty space to deselect
-        if response.clicked() {
+        if let Some(ref response) = canvas_response
+            && response.clicked()
+        {
             self.selected_module = None;
         }
 
@@ -827,7 +842,6 @@ impl PatchEditor {
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
         }
-        }); // end ScrollArea
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
         self.draw_toolbar_foreground(ui, visible_rect, &mut result);
