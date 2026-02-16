@@ -6,7 +6,7 @@
 //! Modules are rendered as draggable, resizable windows with z-order support.
 //! Cables are rendered in a foreground layer so they appear above modules.
 
-use eframe::egui::{self, Color32, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
+use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -833,9 +833,19 @@ impl PatchEditor {
         // Handle port interactions for connections
         self.handle_port_interactions(ui, &mut result);
 
+        // Collect module screen rects for cable obstacle avoidance
+        let module_rects: Vec<Rect> = self
+            .panels
+            .keys()
+            .filter_map(|mid| {
+                let wid = Id::new((instrument_id, "module_window", mid.to_string()));
+                ui.ctx().memory(|mem| mem.area_rect(wid))
+            })
+            .collect();
+
         // Draw connections in foreground layer and handle cable removal
         let time = ui.input(|i| i.time);
-        let cables_to_remove = self.draw_connections_foreground(ui, time);
+        let cables_to_remove = self.draw_connections_foreground(ui, time, &module_rects);
         if !cables_to_remove.is_empty() {
             for cable in cables_to_remove {
                 self.connections.retain(|c| c != &cable);
@@ -1024,7 +1034,12 @@ impl PatchEditor {
 
     /// Draw connections in a foreground layer so they appear above modules.
     /// Returns connections that should be removed (right-clicked).
-    fn draw_connections_foreground(&self, ui: &Ui, time: f64) -> Vec<Connection> {
+    fn draw_connections_foreground(
+        &self,
+        ui: &Ui,
+        time: f64,
+        module_rects: &[Rect],
+    ) -> Vec<Connection> {
         let painter = ui
             .ctx()
             .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
@@ -1049,14 +1064,21 @@ impl PatchEditor {
             ) {
                 // Check if mouse is near this cable
                 let is_hovered = pointer_pos
-                    .map(|p| point_near_cable(p, from_pos.position, to_pos.position, 10.0))
+                    .map(|p| {
+                        point_near_cable(p, from_pos.position, to_pos.position, 10.0, module_rects)
+                    })
                     .unwrap_or(false);
 
                 let color = cable_color(from_pos.port_type, 180);
 
                 if is_hovered {
                     // Draw highlighted cable with glow effect
-                    draw_cable_highlighted(&painter, from_pos.position, to_pos.position);
+                    draw_cable_highlighted(
+                        &painter,
+                        from_pos.position,
+                        to_pos.position,
+                        module_rects,
+                    );
 
                     // Show tooltip
                     if let Some(pos) = pointer_pos {
@@ -1076,7 +1098,13 @@ impl PatchEditor {
                     }
                 } else {
                     // Draw normal cable with theme color
-                    draw_cable(&painter, from_pos.position, to_pos.position, color);
+                    draw_cable(
+                        &painter,
+                        from_pos.position,
+                        to_pos.position,
+                        color,
+                        module_rects,
+                    );
                 }
 
                 // Animated flow particles on all cables
@@ -1087,6 +1115,7 @@ impl PatchEditor {
                     color,
                     from_pos.port_type,
                     time,
+                    module_rects,
                 );
             }
         }
