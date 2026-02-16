@@ -1,5 +1,32 @@
 # Version History
 
+## [0.139.0] - 2026-02-16
+### Förbättrad — Storleksmedveten auto-layout + smart modulationsplacering
+
+**Modulationsmoduler placeras per kolumn:**
+- ADSR/LFO placeras direkt under sin målkolumns signalmoduler, inte under den globalt högsta kolumnen
+- Före: 3 oscillatorer i kolumn 0 (600px) → ADSR för Filter i kolumn 1 hamnade under 600px
+- Efter: ADSR placeras direkt under Filter (~200px) — sparar utrymme och håller modulatorer synliga
+
+**Mod matrix fix:**
+- Fast slotbredd (140px) istället för `ui.available_width()` som växte obegränsat i auto-sized Areas
+
+## [0.138.0] - 2026-02-16
+### Förbättrad — Storleksmedveten auto-layout (inga överlapp)
+
+**Problem:** Moduler överlappade varandra eftersom auto-layout använde fasta cellstorlekar (250×200px) medan modulerna har varierande storlekar (envelope ~360px hög, oscillator ~260px, LFO ~150px).
+
+**Lösning:**
+- `ModulePanelState` sparar nu varje moduls faktiska renderade storlek (`size: Vec2`)
+- `patch_editor.rs` uppdaterar `panel_state.size` från `area_rect.size()` efter varje frame
+- Auto-layout använder faktiska storlekar istället för fasta celler:
+  - Kolumnbredd = max snappade bredd av alla moduler i kolumnen + 1 gridcells gap
+  - Radpositioner beräknas kumulativt per kolumn med faktisk (snappahöjd + gap
+  - Modulationszon startar under den högsta signalkolumnen
+- `snap_size_to_grid()` rundar upp modulstorlekar till hela gridceller (50px)
+
+**Nytt test:** `test_no_overlap_mixed_sizes` — verifierar att moduler med blandade storlekar inte överlappar (rect-intersection check)
+
 ## [0.137.0] - 2026-02-16
 ### Förbättrad — Auto-layout baserad på signalflödesanalys
 

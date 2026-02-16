@@ -25,6 +25,8 @@ pub struct ModulePanelState {
     pub id: ModuleId,
     /// Position in the rack.
     pub position: Pos2,
+    /// Last rendered size (used by auto-layout to avoid overlaps).
+    pub size: Vec2,
     /// Cached parameter values (indexed by parameter name for lookup).
     /// Key is the parameter name from the descriptor.
     pub param_values: HashMap<String, f32>,
@@ -43,6 +45,7 @@ impl ModulePanelState {
         Self {
             id,
             position,
+            size: Vec2::new(250.0, 200.0),
             param_values: HashMap::new(),
             selected: false,
             dragging: false,

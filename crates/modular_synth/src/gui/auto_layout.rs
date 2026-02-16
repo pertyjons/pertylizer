@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use eframe::egui::{Pos2, Rect};
+use eframe::egui::{Pos2, Rect, Vec2};
 
 use synth_core::ModuleCategory;
 use synth_engine::ModuleId;
@@ -24,6 +24,8 @@ use synth_engine::ModuleId;
 pub struct ModuleInfo {
     pub id: ModuleId,
     pub category: ModuleCategory,
+    /// Rendered size of this module (used for overlap-free positioning).
+    pub size: Vec2,
 }
 
 /// A connection between two modules for layout calculation.
@@ -45,12 +47,8 @@ pub struct LayoutResult {
 /// Grid cell size — must match `patch_editor::GRID_SIZE`.
 const GRID: f32 = 50.0;
 
-/// Module cell width in grid units (module ~200px + gap = 5 grid cells = 250px).
-const CELL_W_GRIDS: f32 = 5.0;
-/// Module cell height in grid units (module ~180px + gap = 4 grid cells = 200px).
-const CELL_H_GRIDS: f32 = 4.0;
-/// Extra vertical gap between signal and modulation zones (1 grid cell).
-const MOD_GAP_GRIDS: f32 = 1.0;
+/// Extra gap between modules (1 grid cell).
+const GAP: f32 = GRID;
 
 // ── Internal types ─────────────────────────────────────────────────────────
 
@@ -483,69 +481,121 @@ pub fn calculate_layout(
 
     let mod_positions = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
 
-    // ── Phase 5: Compute grid-snapped pixel positions ────────────────
+    // ── Phase 5: Size-aware pixel positions ────────────────────────────
+
+    // Build size lookup from input modules
+    let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
 
     let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
-    let max_signal_rows = columns.values().map(Vec::len).max().unwrap_or(0);
-    let has_global = !global_ids.is_empty();
-    let has_disconnected = !disconnected_ids.is_empty();
 
-    let global_col_offset = num_signal_columns;
-    let disconnected_col_offset = global_col_offset + if has_global { 1 } else { 0 };
+    let start_x = GRID;
+    let start_y = GRID;
 
-    // Grid-aligned cell sizes and origin at grid position (1,1)
-    let cell_w = CELL_W_GRIDS * GRID;
-    let cell_h = CELL_H_GRIDS * GRID;
-    let start_x = GRID; // grid column 1
-    let start_y = GRID; // grid row 1
-
-    // Place signal-chain modules
+    // Compute column widths = max snapped width of modules in that column + GAP
+    let mut col_widths: Vec<f32> = vec![0.0; num_signal_columns];
     for (&col, module_ids) in &columns {
-        for (row, &module_id) in module_ids.iter().enumerate() {
-            let x = start_x + col as f32 * cell_w;
-            let y = start_y + row as f32 * cell_h;
-            result.positions.insert(module_id, Pos2::new(x, y));
+        let max_w = module_ids
+            .iter()
+            .map(|id| snap_size_to_grid(sizes.get(id).copied().unwrap_or(DEFAULT_SIZE)).x)
+            .fold(0.0_f32, f32::max);
+        if let Some(w) = col_widths.get_mut(col) {
+            *w = max_w + GAP;
         }
     }
 
-    // Place modulation modules below signal rows
-    let mod_base_y = start_y + max_signal_rows.max(1) as f32 * cell_h + MOD_GAP_GRIDS * GRID;
+    // Cumulative column x-positions
+    let mut col_x: Vec<f32> = vec![start_x; num_signal_columns];
+    for c in 1..num_signal_columns {
+        col_x[c] = col_x[c - 1] + col_widths[c - 1];
+    }
 
-    for (&mod_id, &(col, mod_row)) in &mod_positions {
-        let x = start_x + col as f32 * cell_w;
-        let y = mod_base_y + mod_row as f32 * cell_h;
+    // Place signal-chain modules with cumulative y per column
+    let mut col_bottom: Vec<f32> = vec![start_y; num_signal_columns];
+    for col in 0..num_signal_columns {
+        if let Some(module_ids) = columns.get(&col) {
+            let mut y = start_y;
+            for &module_id in module_ids {
+                let snapped =
+                    snap_size_to_grid(sizes.get(&module_id).copied().unwrap_or(DEFAULT_SIZE));
+                result.positions.insert(module_id, Pos2::new(col_x[col], y));
+                y += snapped.y + GAP;
+            }
+            col_bottom[col] = y;
+        }
+    }
+
+    // Place modulation modules directly below their target column's signal modules.
+    // This avoids pushing modulators far down when one column is much taller than others.
+    for (&mod_id, &(col, _mod_row)) in &mod_positions {
+        let x = col_x.get(col).copied().unwrap_or(start_x);
+        let y = col_bottom.get(col).copied().unwrap_or(start_y);
+        let snapped = snap_size_to_grid(sizes.get(&mod_id).copied().unwrap_or(DEFAULT_SIZE));
         result.positions.insert(mod_id, Pos2::new(x, y));
+        // Update col_bottom so subsequent modulators in the same column stack below
+        if let Some(bottom) = col_bottom.get_mut(col) {
+            *bottom = y + snapped.y + GAP;
+        }
     }
 
     // Place unplaced modulation modules (those without signal targets)
+    let max_bottom = col_bottom.iter().copied().fold(start_y, f32::max);
+    let mut unplaced_y = max_bottom;
     for &mod_id in &mod_ids {
-        result.positions.entry(mod_id).or_insert_with(|| {
-            let existing_count = mod_positions.len();
-            let x = start_x;
-            let y = mod_base_y + existing_count as f32 * cell_h;
-            Pos2::new(x, y)
-        });
+        if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(mod_id) {
+            let snapped = snap_size_to_grid(sizes.get(&mod_id).copied().unwrap_or(DEFAULT_SIZE));
+            e.insert(Pos2::new(start_x, unplaced_y));
+            unplaced_y += snapped.y + GAP;
+        }
     }
 
+    // x-offset for extra columns (global, disconnected)
+    let signal_end_x = if num_signal_columns > 0 {
+        col_x[num_signal_columns - 1] + col_widths[num_signal_columns - 1]
+    } else {
+        start_x
+    };
+
     // Place global modules
-    if has_global {
-        let global_x = start_x + global_col_offset as f32 * cell_w;
-        for (row, &id) in global_ids.iter().enumerate() {
-            let y = start_y + row as f32 * cell_h;
-            result.positions.insert(id, Pos2::new(global_x, y));
+    if !global_ids.is_empty() {
+        let mut y = start_y;
+        for &id in &global_ids {
+            let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
+            result.positions.insert(id, Pos2::new(signal_end_x, y));
+            y += snapped.y + GAP;
         }
     }
 
     // Place disconnected modules
-    if has_disconnected {
-        let disc_x = start_x + disconnected_col_offset as f32 * cell_w;
-        for (row, &id) in disconnected_ids.iter().enumerate() {
-            let y = start_y + row as f32 * cell_h;
+    if !disconnected_ids.is_empty() {
+        // Compute global column width for offset
+        let global_max_w = if global_ids.is_empty() {
+            0.0
+        } else {
+            global_ids
+                .iter()
+                .map(|id| snap_size_to_grid(sizes.get(id).copied().unwrap_or(DEFAULT_SIZE)).x)
+                .fold(0.0_f32, f32::max)
+                + GAP
+        };
+        let disc_x = signal_end_x + global_max_w;
+        let mut y = start_y;
+        for &id in &disconnected_ids {
+            let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
             result.positions.insert(id, Pos2::new(disc_x, y));
+            y += snapped.y + GAP;
         }
     }
 
     result
+}
+
+/// Default module size (fallback before first render).
+const DEFAULT_SIZE: Vec2 = Vec2::new(250.0, 200.0);
+
+/// Snap a size up to whole grid cells.
+#[must_use]
+fn snap_size_to_grid(size: Vec2) -> Vec2 {
+    Vec2::new((size.x / GRID).ceil() * GRID, (size.y / GRID).ceil() * GRID)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -555,8 +605,19 @@ pub fn calculate_layout(
 mod tests {
     use super::*;
 
+    /// Default test size for modules.
+    const TEST_SIZE: Vec2 = Vec2::new(200.0, 180.0);
+
     fn make_id(n: u16) -> ModuleId {
         ModuleId::new(synth_core::ModuleType::Oscillator, n)
+    }
+
+    fn make_module(id: ModuleId, category: ModuleCategory) -> ModuleInfo {
+        ModuleInfo {
+            id,
+            category,
+            size: TEST_SIZE,
+        }
     }
 
     fn test_rect() -> Rect {
@@ -571,10 +632,7 @@ mod tests {
 
     #[test]
     fn test_single_disconnected_module() {
-        let modules = vec![ModuleInfo {
-            id: make_id(1),
-            category: ModuleCategory::Oscillator,
-        }];
+        let modules = vec![make_module(make_id(1), ModuleCategory::Oscillator)];
         let rect = test_rect();
         let result = calculate_layout(&modules, &[], rect);
 
@@ -587,18 +645,9 @@ mod tests {
     fn test_linear_chain_within_bounds() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Amplifier,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(make_id(3), ModuleCategory::Amplifier),
         ];
         let connections = vec![
             LayoutConnection {
@@ -631,18 +680,9 @@ mod tests {
     fn test_modulation_below_and_within_bounds() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Envelope,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(make_id(3), ModuleCategory::Envelope),
         ];
         let connections = vec![
             LayoutConnection {
@@ -675,23 +715,11 @@ mod tests {
         let rect = test_rect();
         let modules = vec![
             // Connected chain
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
             // Disconnected
-            ModuleInfo {
-                id: make_id(10),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(11),
-                category: ModuleCategory::Sequencer,
-            },
+            make_module(make_id(10), ModuleCategory::Oscillator),
+            make_module(make_id(11), ModuleCategory::Sequencer),
         ];
         let connections = vec![LayoutConnection {
             from_module: make_id(1),
@@ -723,18 +751,9 @@ mod tests {
     fn test_multi_source_to_mixer() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Mixer,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Oscillator),
+            make_module(make_id(3), ModuleCategory::Mixer),
         ];
         let connections = vec![
             LayoutConnection {
@@ -776,30 +795,12 @@ mod tests {
     fn test_complex_patch() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Amplifier,
-            },
-            ModuleInfo {
-                id: make_id(4),
-                category: ModuleCategory::Output,
-            },
-            ModuleInfo {
-                id: make_id(10),
-                category: ModuleCategory::Envelope,
-            },
-            ModuleInfo {
-                id: make_id(11),
-                category: ModuleCategory::LFO,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(make_id(3), ModuleCategory::Amplifier),
+            make_module(make_id(4), ModuleCategory::Output),
+            make_module(make_id(10), ModuleCategory::Envelope),
+            make_module(make_id(11), ModuleCategory::LFO),
         ];
         let connections = vec![
             // Signal chain: OSC → Filter → Amp → Output
@@ -858,34 +859,13 @@ mod tests {
     fn test_no_overlap() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(4),
-                category: ModuleCategory::Amplifier,
-            },
-            ModuleInfo {
-                id: make_id(5),
-                category: ModuleCategory::Output,
-            },
-            ModuleInfo {
-                id: make_id(10),
-                category: ModuleCategory::Envelope,
-            },
-            ModuleInfo {
-                id: make_id(20),
-                category: ModuleCategory::Visualizer,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Oscillator),
+            make_module(make_id(3), ModuleCategory::Filter),
+            make_module(make_id(4), ModuleCategory::Amplifier),
+            make_module(make_id(5), ModuleCategory::Output),
+            make_module(make_id(10), ModuleCategory::Envelope),
+            make_module(make_id(20), ModuleCategory::Visualizer),
         ];
         let connections = vec![
             LayoutConnection {
@@ -940,18 +920,9 @@ mod tests {
     fn test_output_rightmost() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(3),
-                category: ModuleCategory::Output,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(make_id(3), ModuleCategory::Output),
         ];
         let connections = vec![
             LayoutConnection {
@@ -984,18 +955,9 @@ mod tests {
     fn test_utility_is_global() {
         let rect = test_rect();
         let modules = vec![
-            ModuleInfo {
-                id: make_id(1),
-                category: ModuleCategory::Oscillator,
-            },
-            ModuleInfo {
-                id: make_id(2),
-                category: ModuleCategory::Filter,
-            },
-            ModuleInfo {
-                id: make_id(10),
-                category: ModuleCategory::Utility,
-            },
+            make_module(make_id(1), ModuleCategory::Oscillator),
+            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(make_id(10), ModuleCategory::Utility),
         ];
         let connections = vec![LayoutConnection {
             from_module: make_id(1),
@@ -1016,5 +978,94 @@ mod tests {
             util.x,
             max_signal_x
         );
+    }
+
+    #[test]
+    fn test_no_overlap_mixed_sizes() {
+        let rect = test_rect();
+        // Simulate realistic mixed sizes: small oscillator, tall envelope, wide mixer
+        let modules = vec![
+            ModuleInfo {
+                id: make_id(1),
+                category: ModuleCategory::Oscillator,
+                size: Vec2::new(200.0, 150.0),
+            },
+            ModuleInfo {
+                id: make_id(2),
+                category: ModuleCategory::Oscillator,
+                size: Vec2::new(200.0, 260.0),
+            },
+            ModuleInfo {
+                id: make_id(3),
+                category: ModuleCategory::Filter,
+                size: Vec2::new(220.0, 280.0),
+            },
+            ModuleInfo {
+                id: make_id(4),
+                category: ModuleCategory::Amplifier,
+                size: Vec2::new(180.0, 200.0),
+            },
+            ModuleInfo {
+                id: make_id(5),
+                category: ModuleCategory::Output,
+                size: Vec2::new(160.0, 120.0),
+            },
+            ModuleInfo {
+                id: make_id(10),
+                category: ModuleCategory::Envelope,
+                size: Vec2::new(250.0, 360.0),
+            },
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(1),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(2),
+                to_module: make_id(3),
+            },
+            LayoutConnection {
+                from_module: make_id(3),
+                to_module: make_id(4),
+            },
+            LayoutConnection {
+                from_module: make_id(4),
+                to_module: make_id(5),
+            },
+            LayoutConnection {
+                from_module: make_id(10),
+                to_module: make_id(3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        // Build rects from positions + snapped sizes
+        let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
+        let rects: Vec<(ModuleId, Rect)> = result
+            .positions
+            .iter()
+            .map(|(&id, &pos)| {
+                let snapped = snap_size_to_grid(sizes[&id]);
+                (id, Rect::from_min_size(pos, snapped))
+            })
+            .collect();
+
+        // Check no pair of modules overlaps
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let (id_a, rect_a) = rects[i];
+                let (id_b, rect_b) = rects[j];
+                assert!(
+                    !rect_a.intersects(rect_b),
+                    "Modules {:?} ({:?}) and {:?} ({:?}) overlap!",
+                    id_a,
+                    rect_a,
+                    id_b,
+                    rect_b
+                );
+            }
+        }
     }
 }

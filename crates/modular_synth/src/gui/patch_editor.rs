@@ -799,14 +799,13 @@ impl PatchEditor {
             });
 
             // Handle area interaction — Area always returns InnerResponse (no Option)
-            // Update logical position from screen position, snapped to grid
-            if let Some(new_screen_pos) = ui
-                .ctx()
-                .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
+            // Update logical position and size from screen rect, snapped to grid
+            if let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(window_id))
                 && let Some(panel_state) = self.panels.get_mut(&module_id)
             {
-                let logical_pos = new_screen_pos - area_origin + scroll_offset;
+                let logical_pos = area_rect.min - area_origin + scroll_offset;
                 panel_state.position = snap_to_grid(logical_pos);
+                panel_state.size = area_rect.size();
             }
 
             // Bring to front on click
@@ -1285,11 +1284,12 @@ impl PatchEditor {
         // Collect module info
         let modules: Vec<ModuleInfo> = self
             .panels
-            .keys()
-            .filter_map(|&id| {
+            .iter()
+            .filter_map(|(&id, panel)| {
                 self.descriptors.get(&id).map(|desc| ModuleInfo {
                     id,
                     category: desc.category,
+                    size: panel.size,
                 })
             })
             .collect();
@@ -1867,12 +1867,9 @@ fn draw_mod_matrix_grid(
 
     ui.add_space(4.0);
 
-    // Calculate fixed slot width so all slots are equal size
+    // Fixed slot width — avoid ui.available_width() which is unbounded in auto-sized Areas
     let grid_spacing = 4.0;
-    let available_width = ui.available_width();
-    let slot_width = ((available_width - (dim as f32 - 1.0) * grid_spacing) / dim as f32)
-        // Account for group frame margins (~8px per side)
-        - 16.0;
+    let slot_width: f32 = 140.0;
     let combo_width = (slot_width - 20.0).max(60.0);
 
     // --- Grid of slots ---
