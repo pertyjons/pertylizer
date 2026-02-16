@@ -42,11 +42,15 @@ pub struct LayoutResult {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const EST_MODULE_WIDTH: f32 = 200.0;
-const EST_MODULE_HEIGHT: f32 = 180.0;
-const GAP_X: f32 = 40.0;
-const GAP_Y: f32 = 30.0;
-const MOD_GAP_EXTRA: f32 = 20.0;
+/// Grid cell size — must match `patch_editor::GRID_SIZE`.
+const GRID: f32 = 50.0;
+
+/// Module cell width in grid units (module ~200px + gap = 5 grid cells = 250px).
+const CELL_W_GRIDS: f32 = 5.0;
+/// Module cell height in grid units (module ~180px + gap = 4 grid cells = 200px).
+const CELL_H_GRIDS: f32 = 4.0;
+/// Extra vertical gap between signal and modulation zones (1 grid cell).
+const MOD_GAP_GRIDS: f32 = 1.0;
 
 // ── Internal types ─────────────────────────────────────────────────────────
 
@@ -389,7 +393,7 @@ fn place_modulation(
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
-    available_rect: Rect,
+    _available_rect: Rect,
 ) -> LayoutResult {
     let mut result = LayoutResult::default();
 
@@ -479,7 +483,7 @@ pub fn calculate_layout(
 
     let mod_positions = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
 
-    // ── Phase 5: Compute pixel positions ───────────────────────────────
+    // ── Phase 5: Compute grid-snapped pixel positions ────────────────
 
     let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
     let max_signal_rows = columns.values().map(Vec::len).max().unwrap_or(0);
@@ -489,11 +493,11 @@ pub fn calculate_layout(
     let global_col_offset = num_signal_columns;
     let disconnected_col_offset = global_col_offset + if has_global { 1 } else { 0 };
 
-    let start_x = available_rect.min.x + GAP_X;
-    let start_y = available_rect.min.y + GAP_Y;
-
-    let cell_w = EST_MODULE_WIDTH + GAP_X;
-    let cell_h = EST_MODULE_HEIGHT + GAP_Y;
+    // Grid-aligned cell sizes and origin at grid position (1,1)
+    let cell_w = CELL_W_GRIDS * GRID;
+    let cell_h = CELL_H_GRIDS * GRID;
+    let start_x = GRID; // grid column 1
+    let start_y = GRID; // grid row 1
 
     // Place signal-chain modules
     for (&col, module_ids) in &columns {
@@ -505,7 +509,7 @@ pub fn calculate_layout(
     }
 
     // Place modulation modules below signal rows
-    let mod_base_y = start_y + max_signal_rows.max(1) as f32 * cell_h + MOD_GAP_EXTRA;
+    let mod_base_y = start_y + max_signal_rows.max(1) as f32 * cell_h + MOD_GAP_GRIDS * GRID;
 
     for (&mod_id, &(col, mod_row)) in &mod_positions {
         let x = start_x + col as f32 * cell_w;
@@ -921,8 +925,8 @@ mod tests {
                 let dx = (pos_a.x - pos_b.x).abs();
                 let dy = (pos_a.y - pos_b.y).abs();
 
-                // Modules must differ in at least one axis by at least GAP amount
-                let separated = dx >= GAP_X || dy >= GAP_Y;
+                // Modules must differ in at least one axis by at least one grid cell
+                let separated = dx >= GRID || dy >= GRID;
                 assert!(
                     separated,
                     "Modules {:?} at ({:.0},{:.0}) and {:?} at ({:.0},{:.0}) overlap! dx={:.0} dy={:.0}",

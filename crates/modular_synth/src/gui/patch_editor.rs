@@ -22,6 +22,17 @@ use super::widgets::{
     draw_cable_highlighted, point_near_cable,
 };
 
+/// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
+pub(crate) const GRID_SIZE: f32 = 50.0;
+
+/// Snap a position to the nearest grid point.
+fn snap_to_grid(pos: Pos2) -> Pos2 {
+    Pos2::new(
+        (pos.x / GRID_SIZE).round() * GRID_SIZE,
+        (pos.y / GRID_SIZE).round() * GRID_SIZE,
+    )
+}
+
 /// Patch analysis: counts module types to enable smart display names and filtering.
 ///
 /// Built once per frame from the current panels. Used for:
@@ -788,13 +799,14 @@ impl PatchEditor {
             });
 
             // Handle area interaction — Area always returns InnerResponse (no Option)
-            // Update logical position from screen position
+            // Update logical position from screen position, snapped to grid
             if let Some(new_screen_pos) = ui
                 .ctx()
                 .memory(|mem| mem.area_rect(window_id).map(|r| r.min))
                 && let Some(panel_state) = self.panels.get_mut(&module_id)
             {
-                panel_state.position = new_screen_pos - area_origin + scroll_offset;
+                let logical_pos = new_screen_pos - area_origin + scroll_offset;
+                panel_state.position = snap_to_grid(logical_pos);
             }
 
             // Bring to front on click
@@ -985,7 +997,7 @@ impl PatchEditor {
         painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
 
         // Grid lines
-        let grid_size = 50.0;
+        let grid_size = GRID_SIZE;
 
         let grid_color = Color32::from_rgba_unmultiplied(60, 65, 75, 50);
 
