@@ -543,7 +543,158 @@ impl eframe::App for SynthApp {
             });
         });
 
-        // Main content - CentralPanel rendered FIRST so panels paint over it
+        // Toolbar for adding modules (only show in Rack view)
+        if self.active_view == AppView::Rack {
+            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(selection) = ModulePalette::show(ui) {
+                        match selection {
+                            PaletteSelection::Category(category) => {
+                                self.add_module_of_category(category);
+                            }
+                            PaletteSelection::MathOscillator => {
+                                self.add_math_oscillator_module();
+                            }
+                            PaletteSelection::SubOscillator => {
+                                self.add_sub_oscillator_module();
+                            }
+                            PaletteSelection::Noise => {
+                                self.add_noise_module();
+                            }
+                            PaletteSelection::ModMatrix => {
+                                self.add_mod_matrix_module();
+                            }
+                            PaletteSelection::Effect(effect_type) => {
+                                self.add_effect_module(effect_type);
+                            }
+                            PaletteSelection::Visualizer(viz_type) => {
+                                self.add_visualizer_module(viz_type);
+                            }
+                            PaletteSelection::StereoOutput => {
+                                self.add_stereo_output_module();
+                            }
+                            // Modulation / Utility
+                            PaletteSelection::RingMod => {
+                                self.add_ring_mod_module();
+                            }
+                            PaletteSelection::EnvelopeFollower => {
+                                self.add_envelope_follower_module();
+                            }
+                            PaletteSelection::WavetableOsc => {
+                                self.add_wavetable_osc_module();
+                            }
+                            // Physical modeling
+                            PaletteSelection::KeyboardPanner => {
+                                self.add_keyboard_panner_module();
+                            }
+                            PaletteSelection::BodyResonance => {
+                                self.add_body_resonance_module();
+                            }
+                            PaletteSelection::MechanicalNoise => {
+                                self.add_mechanical_noise_module();
+                            }
+                            // New modules
+                            PaletteSelection::Mseg => {
+                                self.add_mseg_module();
+                            }
+                            PaletteSelection::AdditiveOsc => {
+                                self.add_additive_osc_module();
+                            }
+                            PaletteSelection::Euclidean => {
+                                self.add_euclidean_module();
+                            }
+                            PaletteSelection::TuringMachine => {
+                                self.add_turing_machine_module();
+                            }
+                            PaletteSelection::RandomGates => {
+                                self.add_random_gates_module();
+                            }
+                            PaletteSelection::GranularOsc => {
+                                self.add_granular_osc_module();
+                            }
+                            PaletteSelection::KineticModulator => {
+                                self.add_kinetic_modulator_module();
+                            }
+                        }
+                    }
+
+                    ui.separator();
+
+                    // Glide/Portamento control
+                    ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
+                    let glide_response = ui.add(
+                        egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
+                            .suffix(" s")
+                            .fixed_decimals(2)
+                            .custom_formatter(|v, _| {
+                                if v < 0.001 {
+                                    "Off".to_string()
+                                } else {
+                                    format!("{:.2}s", v)
+                                }
+                            }),
+                    );
+                    if glide_response.changed() {
+                        self.handle
+                            .send(EngineCommand::SetGlideTime(synth_core::Seconds::new(
+                                self.glide_time,
+                            )));
+                    }
+
+                    ui.separator();
+
+                    // Connection info (from active instrument's patch editor)
+                    let (conn_count, module_count) = self
+                        .active_patch_editor_ref()
+                        .map(|e| (e.connections().len(), e.module_ids().len()))
+                        .unwrap_or((0, 0));
+                    ui.label(
+                        RichText::new(format!(
+                            "Modules: {} | Connections: {}",
+                            module_count, conn_count
+                        ))
+                        .color(theme().colors.text_dim),
+                    );
+                });
+            });
+        } // end if Rack view - toolbar
+
+        // Bottom panel with keyboard (always visible)
+        egui::TopBottomPanel::bottom("keyboard_panel")
+            .min_height(120.0)
+            .show(ctx, |ui| {
+                self.draw_keyboard(ui);
+            });
+
+        // Side panels only visible in Rack view
+        if self.active_view == AppView::Rack {
+            // Left side panel with instrument rack
+            egui::SidePanel::left("instrument_rack_panel")
+                .min_width(320.0)
+                .max_width(400.0)
+                .show(ctx, |ui| {
+                    show_instrument_rack(
+                        ui,
+                        &mut self.instruments,
+                        &mut self.active_instrument_id,
+                        &mut self.handle,
+                        &mut self.next_instrument_id,
+                    );
+                });
+
+            // Right side panel with meters and master effects (resizable)
+            egui::SidePanel::right("meters_panel")
+                .min_width(140.0)
+                .default_width(180.0)
+                .max_width(300.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.draw_meters(ui);
+                });
+        }
+
+        // Main content - CentralPanel rendered LAST (normal egui order)
+        // Module Areas are clipped to visible_rect in patch_editor.rs
         match self.active_view {
             AppView::Rack => {
                 // Rack view: show the active instrument's patch editor
@@ -695,157 +846,6 @@ impl eframe::App for SynthApp {
                     &mut self.awe_ui,
                 );
             }
-        }
-
-        // Panels rendered AFTER CentralPanel so they paint over module windows
-        // Toolbar for adding modules (only show in Rack view)
-        if self.active_view == AppView::Rack {
-            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(selection) = ModulePalette::show(ui) {
-                        match selection {
-                            PaletteSelection::Category(category) => {
-                                self.add_module_of_category(category);
-                            }
-                            PaletteSelection::MathOscillator => {
-                                self.add_math_oscillator_module();
-                            }
-                            PaletteSelection::SubOscillator => {
-                                self.add_sub_oscillator_module();
-                            }
-                            PaletteSelection::Noise => {
-                                self.add_noise_module();
-                            }
-                            PaletteSelection::ModMatrix => {
-                                self.add_mod_matrix_module();
-                            }
-                            PaletteSelection::Effect(effect_type) => {
-                                self.add_effect_module(effect_type);
-                            }
-                            PaletteSelection::Visualizer(viz_type) => {
-                                self.add_visualizer_module(viz_type);
-                            }
-                            PaletteSelection::StereoOutput => {
-                                self.add_stereo_output_module();
-                            }
-                            // Modulation / Utility
-                            PaletteSelection::RingMod => {
-                                self.add_ring_mod_module();
-                            }
-                            PaletteSelection::EnvelopeFollower => {
-                                self.add_envelope_follower_module();
-                            }
-                            PaletteSelection::WavetableOsc => {
-                                self.add_wavetable_osc_module();
-                            }
-                            // Physical modeling
-                            PaletteSelection::KeyboardPanner => {
-                                self.add_keyboard_panner_module();
-                            }
-                            PaletteSelection::BodyResonance => {
-                                self.add_body_resonance_module();
-                            }
-                            PaletteSelection::MechanicalNoise => {
-                                self.add_mechanical_noise_module();
-                            }
-                            // New modules
-                            PaletteSelection::Mseg => {
-                                self.add_mseg_module();
-                            }
-                            PaletteSelection::AdditiveOsc => {
-                                self.add_additive_osc_module();
-                            }
-                            PaletteSelection::Euclidean => {
-                                self.add_euclidean_module();
-                            }
-                            PaletteSelection::TuringMachine => {
-                                self.add_turing_machine_module();
-                            }
-                            PaletteSelection::RandomGates => {
-                                self.add_random_gates_module();
-                            }
-                            PaletteSelection::GranularOsc => {
-                                self.add_granular_osc_module();
-                            }
-                            PaletteSelection::KineticModulator => {
-                                self.add_kinetic_modulator_module();
-                            }
-                        }
-                    }
-
-                    ui.separator();
-
-                    // Glide/Portamento control
-                    ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
-                    let glide_response = ui.add(
-                        egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
-                            .suffix(" s")
-                            .fixed_decimals(2)
-                            .custom_formatter(|v, _| {
-                                if v < 0.001 {
-                                    "Off".to_string()
-                                } else {
-                                    format!("{:.2}s", v)
-                                }
-                            }),
-                    );
-                    if glide_response.changed() {
-                        self.handle
-                            .send(EngineCommand::SetGlideTime(synth_core::Seconds::new(
-                                self.glide_time,
-                            )));
-                    }
-
-                    ui.separator();
-
-                    // Connection info (from active instrument's patch editor)
-                    let (conn_count, module_count) = self
-                        .active_patch_editor_ref()
-                        .map(|e| (e.connections().len(), e.module_ids().len()))
-                        .unwrap_or((0, 0));
-                    ui.label(
-                        RichText::new(format!(
-                            "Modules: {} | Connections: {}",
-                            module_count, conn_count
-                        ))
-                        .color(theme().colors.text_dim),
-                    );
-                });
-            });
-        } // end if Rack view - toolbar
-
-        // Bottom panel with keyboard (always visible)
-        egui::TopBottomPanel::bottom("keyboard_panel")
-            .min_height(120.0)
-            .show(ctx, |ui| {
-                self.draw_keyboard(ui);
-            });
-
-        // Side panels only visible in Rack view
-        if self.active_view == AppView::Rack {
-            // Left side panel with instrument rack
-            egui::SidePanel::left("instrument_rack_panel")
-                .min_width(320.0)
-                .max_width(400.0)
-                .show(ctx, |ui| {
-                    show_instrument_rack(
-                        ui,
-                        &mut self.instruments,
-                        &mut self.active_instrument_id,
-                        &mut self.handle,
-                        &mut self.next_instrument_id,
-                    );
-                });
-
-            // Right side panel with meters and master effects (resizable)
-            egui::SidePanel::right("meters_panel")
-                .min_width(140.0)
-                .default_width(180.0)
-                .max_width(300.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    self.draw_meters(ui);
-                });
         }
 
         // Dialogs

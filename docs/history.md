@@ -6,8 +6,8 @@
 **Area + Frame istället för Window:**
 - Moduler renderas nu med `egui::Area` + `Frame::window` istället för `egui::Window`
 - Moduler hamnar i `Order::Background` (samma lager som paneler) istället för `Order::Middle`
-- CentralPanel renderas före övriga paneler — toolbar, keyboard och sidopaneler målar ovanpå
-- Moduler som sticker ut utanför patch-editorn klipps nu naturligt av omgivande paneler
+- Varje modul-Area klipps till scroll-ytans synliga rektangel via `set_clip_rect(visible_rect)`
+- Moduler som sticker ut utanför patch-editorn klipps nu av omgivande paneler
 
 **Manuell titelrad:**
 - Ersätter Windows inbyggda titelrad med rubrik + stängknapp (✕)

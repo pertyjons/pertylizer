@@ -536,6 +536,8 @@ impl PatchEditor {
             let is_sink = self.is_sink(module_id);
 
             let area_response = area.show(ui.ctx(), |ui| {
+                // Clip to the visible scroll area so modules don't paint over panels
+                ui.set_clip_rect(visible_rect);
                 frame.show(ui, |ui| {
                     ui.set_min_width(theme().sizes.module_min_width);
 
