@@ -543,16 +543,14 @@ impl PatchEditor {
                     // Title bar with module name + close button
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if connectivity_status == ModuleConnectivity::Disconnected
-                                && ui.small_button("\u{2715}").clicked()
-                            {
-                                open = false;
-                            }
-                        });
+                        if connectivity_status == ModuleConnectivity::Disconnected
+                            && ui.small_button("\u{2715}").clicked()
+                        {
+                            open = false;
+                        }
                     });
 
-                    // Processing order and source/sink indicators
+                    // Processing order and status indicators
                     ui.horizontal(|ui| {
                         // Accent color indicator
                         let (rect, _) =
@@ -574,112 +572,104 @@ impl PatchEditor {
                             ));
                         }
 
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                let t = theme();
-                                let button_min_size = Vec2::new(20.0, 20.0);
+                        let t = theme();
+                        let button_min_size = Vec2::new(20.0, 20.0);
 
-                                // Power/bypass button (rightmost) - filled/hollow circle
-                                let (power_icon, power_color) = if is_bypassed {
-                                    ("○", t.colors.text_dim) // Hollow = off
-                                } else {
-                                    ("●", t.colors.accent_green) // Filled = on
-                                };
-                                let power_tooltip = if is_bypassed {
-                                    "🔇 Bypassed\nModule output is muted.\nClick to activate."
-                                } else {
-                                    "🔊 Active\nModule is processing audio.\nClick to bypass."
-                                };
-                                if ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new(power_icon)
-                                                .color(power_color)
-                                                .size(14.0),
-                                        )
-                                        .frame(false)
-                                        .min_size(button_min_size),
-                                    )
-                                    .on_hover_text(power_tooltip)
-                                    .clicked()
-                                {
-                                    let new_bypass_state = !is_bypassed;
-                                    self.bypassed.insert(module_id, new_bypass_state);
-                                    result.bypass_toggles.push((module_id, new_bypass_state));
-                                }
-
-                                ui.add_space(2.0);
-
-                                // Connectivity status indicator - diamond shapes
-                                // Global modules (effects, visualizers, utility) are always connected
-                                let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
-                                    let tooltip =
-                                        if descriptor.category == ModuleCategory::Utility {
-                                            "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
-                                        } else {
-                                            "⚡ Global Module\nProcessed automatically via effect chain."
-                                        };
-                                    ("◆", Color32::from_rgb(100, 180, 220), tooltip)
-                                } else {
-                                    match connectivity_status {
-                                        ModuleConnectivity::Connected => (
-                                            "◆",
-                                            Color32::from_rgb(100, 200, 100),
-                                            "🔗 Routed to Output\nAudio from this module reaches the output.",
-                                        ),
-                                        ModuleConnectivity::Orphaned => (
-                                            "◇",
-                                            Color32::from_rgb(200, 200, 100),
-                                            "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
-                                        ),
-                                        ModuleConnectivity::Disconnected => (
-                                            "◇",
-                                            Color32::from_rgb(100, 100, 100),
-                                            "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
-                                        ),
-                                    }
-                                };
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(conn_icon)
-                                            .color(conn_color)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
+                        // Source indicator (no inputs)
+                        if is_source {
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("▸")
+                                        .color(Color32::from_rgb(100, 200, 100))
+                                        .size(10.0),
                                 )
-                                .on_hover_text(conn_tooltip);
+                                .frame(false)
+                                .min_size(Vec2::new(14.0, 20.0)),
+                            )
+                            .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
+                        }
 
-                                // Source indicator (no inputs) - small arrow
-                                if is_source {
-                                    ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new("▸")
-                                                .color(Color32::from_rgb(100, 200, 100))
-                                                .size(10.0),
-                                        )
-                                        .frame(false)
-                                        .min_size(Vec2::new(14.0, 20.0)),
-                                    )
-                                    .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
-                                }
+                        // Sink indicator (no outputs)
+                        if is_sink {
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("◼")
+                                        .color(Color32::from_rgb(200, 100, 100))
+                                        .size(10.0),
+                                )
+                                .frame(false)
+                                .min_size(Vec2::new(14.0, 20.0)),
+                            )
+                            .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
+                        }
 
-                                // Sink indicator (no outputs) - small square
-                                if is_sink {
-                                    ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new("◼")
-                                                .color(Color32::from_rgb(200, 100, 100))
-                                                .size(10.0),
-                                        )
-                                        .frame(false)
-                                        .min_size(Vec2::new(14.0, 20.0)),
-                                    )
-                                    .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
-                                }
-                            },
-                        );
+                        // Connectivity status indicator
+                        let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
+                            let tooltip =
+                                if descriptor.category == ModuleCategory::Utility {
+                                    "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
+                                } else {
+                                    "⚡ Global Module\nProcessed automatically via effect chain."
+                                };
+                            ("◆", Color32::from_rgb(100, 180, 220), tooltip)
+                        } else {
+                            match connectivity_status {
+                                ModuleConnectivity::Connected => (
+                                    "◆",
+                                    Color32::from_rgb(100, 200, 100),
+                                    "🔗 Routed to Output\nAudio from this module reaches the output.",
+                                ),
+                                ModuleConnectivity::Orphaned => (
+                                    "◇",
+                                    Color32::from_rgb(200, 200, 100),
+                                    "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                                ),
+                                ModuleConnectivity::Disconnected => (
+                                    "◇",
+                                    Color32::from_rgb(100, 100, 100),
+                                    "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                                ),
+                            }
+                        };
+                        ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(conn_icon)
+                                    .color(conn_color)
+                                    .size(12.0),
+                            )
+                            .frame(false)
+                            .min_size(button_min_size),
+                        )
+                        .on_hover_text(conn_tooltip);
+
+                        // Power/bypass button
+                        let (power_icon, power_color) = if is_bypassed {
+                            ("○", t.colors.text_dim)
+                        } else {
+                            ("●", t.colors.accent_green)
+                        };
+                        let power_tooltip = if is_bypassed {
+                            "🔇 Bypassed\nModule output is muted.\nClick to activate."
+                        } else {
+                            "🔊 Active\nModule is processing audio.\nClick to bypass."
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(power_icon)
+                                        .color(power_color)
+                                        .size(14.0),
+                                )
+                                .frame(false)
+                                .min_size(button_min_size),
+                            )
+                            .on_hover_text(power_tooltip)
+                            .clicked()
+                        {
+                            let new_bypass_state = !is_bypassed;
+                            self.bypassed.insert(module_id, new_bypass_state);
+                            result.bypass_toggles.push((module_id, new_bypass_state));
+                        }
                     });
 
                     ui.separator();
@@ -739,7 +729,6 @@ impl PatchEditor {
                     } else {
                         // Normal modules: three-column layout (IN ports | content | OUT ports)
                         let col_w = theme().sizes.port_column_width;
-                        let content_w = theme().sizes.module_content_min_width;
 
                         ui.horizontal(|ui| {
                             // Left port column (IN) - fixed width
@@ -754,9 +743,8 @@ impl PatchEditor {
                                 );
                             });
 
-                            // Content column - fixed width from theme
+                            // Content column - auto-width from content
                             ui.vertical(|ui| {
-                                ui.set_width(content_w);
                                 if let Some(panel_state) = self.panels.get_mut(&module_id) {
                                     let vis_buffer =
                                         handle.get_visualization_buffer(module_id);
