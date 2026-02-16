@@ -108,6 +108,8 @@ pub struct PatchEditor {
     /// Modules that need to be repositioned (after auto-layout).
     /// When a module is in this set, we use current_pos() instead of default_pos().
     needs_reposition: HashSet<ModuleId>,
+    /// When true, auto-layout runs on the next frame that has a canvas_rect.
+    needs_initial_layout: bool,
 }
 
 impl PatchEditor {
@@ -124,6 +126,7 @@ impl PatchEditor {
             connectivity: HashMap::new(),
             bypassed: HashMap::new(),
             needs_reposition: HashSet::new(),
+            needs_initial_layout: true,
         }
     }
 
@@ -416,6 +419,12 @@ impl PatchEditor {
         // Store the canvas rect for auto-layout calculations (in logical coordinates)
         result.canvas_rect = Some(scroll_rect);
 
+        // Auto-layout on first frame (after startup or patch load)
+        if self.needs_initial_layout && !self.panels.is_empty() {
+            self.needs_initial_layout = false;
+            self.apply_auto_layout(scroll_rect);
+        }
+
         // Clear port positions for this frame
         self.port_positions.clear();
 
@@ -540,17 +549,7 @@ impl PatchEditor {
                 ui.set_clip_rect(visible_rect);
                 frame.show(ui, |ui| {
 
-                    // Title bar with module name + close button
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
-                        if connectivity_status == ModuleConnectivity::Disconnected
-                            && ui.small_button("\u{2715}").clicked()
-                        {
-                            open = false;
-                        }
-                    });
-
-                    // Processing order and status indicators
+                    // Title bar: name + status icons + close button (single row)
                     ui.horizontal(|ui| {
                         // Accent color indicator
                         let (rect, _) =
@@ -571,6 +570,9 @@ impl PatchEditor {
                                 total_modules
                             ));
                         }
+
+                        // Module name
+                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
 
                         let t = theme();
                         let button_min_size = Vec2::new(20.0, 20.0);
@@ -669,6 +671,13 @@ impl PatchEditor {
                             let new_bypass_state = !is_bypassed;
                             self.bypassed.insert(module_id, new_bypass_state);
                             result.bypass_toggles.push((module_id, new_bypass_state));
+                        }
+
+                        // Close button (only for disconnected modules)
+                        if connectivity_status == ModuleConnectivity::Disconnected
+                            && ui.small_button("\u{2715}").clicked()
+                        {
+                            open = false;
                         }
                     });
 
@@ -1250,6 +1259,11 @@ impl PatchEditor {
         self.bypassed.insert(id, bypassed);
     }
 
+    /// Request auto-layout on the next frame (e.g. after loading a patch).
+    pub fn request_initial_layout(&mut self) {
+        self.needs_initial_layout = true;
+    }
+
     /// Apply automatic layout to modules based on signal flow.
     ///
     /// `available_rect` should be the area available for modules (excluding side panels).
@@ -1519,29 +1533,32 @@ fn draw_module_panel_params(
             .collect();
 
         if !knob_params.is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                for param in &knob_params {
-                    ui.vertical(|ui| {
-                        let current = state
-                            .param_values
-                            .get(&param.name)
-                            .copied()
-                            .unwrap_or(param.range.default);
-                        let mut value = current;
+            const KNOBS_PER_ROW: usize = 5;
+            for chunk in knob_params.chunks(KNOBS_PER_ROW) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    for param in chunk {
+                        ui.vertical(|ui| {
+                            let current = state
+                                .param_values
+                                .get(&param.name)
+                                .copied()
+                                .unwrap_or(param.range.default);
+                            let mut value = current;
 
-                        Knob::from_descriptor(&mut value, param)
-                            .size(theme().sizes.knob_size)
-                            .accent_color(accent_color)
-                            .show(ui);
+                            Knob::from_descriptor(&mut value, param)
+                                .size(theme().sizes.knob_size)
+                                .accent_color(accent_color)
+                                .show(ui);
 
-                        if (value - current).abs() > f32::EPSILON {
-                            state.param_values.insert(param.name.clone(), value);
-                            param_changes.push(param.id.with_f32(value));
-                        }
-                    });
-                }
-            });
+                            if (value - current).abs() > f32::EPSILON {
+                                state.param_values.insert(param.name.clone(), value);
+                                param_changes.push(param.id.with_f32(value));
+                            }
+                        });
+                    }
+                });
+            }
         }
 
         return PanelParamsResult { param_changes };
@@ -1738,32 +1755,35 @@ fn draw_module_panel_params(
         });
     }
 
-    // Draw knobs in a wrapped layout that responds to window width
+    // Draw knobs in rows of max 5
     if !knob_params.is_empty() {
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            for param in &knob_params {
-                ui.vertical(|ui| {
-                    let current = state
-                        .param_values
-                        .get(&param.name)
-                        .copied()
-                        .unwrap_or(param.range.default);
-                    let mut value = current;
+        const KNOBS_PER_ROW: usize = 5;
+        for chunk in knob_params.chunks(KNOBS_PER_ROW) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                for param in chunk {
+                    ui.vertical(|ui| {
+                        let current = state
+                            .param_values
+                            .get(&param.name)
+                            .copied()
+                            .unwrap_or(param.range.default);
+                        let mut value = current;
 
-                    Knob::from_descriptor(&mut value, param)
-                        .size(theme().sizes.knob_size)
-                        .accent_color(accent_color)
-                        .show(ui);
+                        Knob::from_descriptor(&mut value, param)
+                            .size(theme().sizes.knob_size)
+                            .accent_color(accent_color)
+                            .show(ui);
 
-                    if (value - current).abs() > f32::EPSILON {
-                        state.param_values.insert(param.name.clone(), value);
-                        param_changes.push(param.id.with_f32(value));
-                    }
-                });
-            }
-        });
+                        if (value - current).abs() > f32::EPSILON {
+                            state.param_values.insert(param.name.clone(), value);
+                            param_changes.push(param.id.with_f32(value));
+                        }
+                    });
+                }
+            });
+        }
     }
 
     PanelParamsResult { param_changes }

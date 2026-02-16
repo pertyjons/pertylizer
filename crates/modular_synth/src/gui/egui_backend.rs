@@ -1874,6 +1874,9 @@ impl SynthApp {
             active_id,
         );
 
+        // Auto-layout after loading a new patch
+        patch_editor.request_initial_layout();
+
         // Restore AWE UI state from loaded patch
         if let Some(awe) = &patch.settings.awe {
             self.awe_enabled = awe.enabled;
