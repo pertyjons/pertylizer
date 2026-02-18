@@ -6,15 +6,16 @@
 //!
 //! Uses rising-edge trigger detection for stable waveform display.
 //! Only one voice at a time can write to the visualization buffer —
-//! when a new voice triggers, it claims the sweep lock and the
-//! previous writer yields. This prevents garbled multi-voice overlap.
+//! a shared atomic generation counter ensures that when a new voice
+//! triggers, the previous writer detects the generation mismatch
+//! and yields. This prevents garbled multi-voice overlap.
 //!
 //! The visualization buffer is injected from the GUI layer via
 //! `set_vis_sink()` since this crate cannot depend on `synth_engine`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, InputPorts, ModuleCategory, ModuleDescriptor,
@@ -29,19 +30,22 @@ use synth_core::{
 /// Captures gain-scaled samples to a shared visualization sink for GUI display.
 /// Uses rising-edge trigger detection for a stable oscilloscope view.
 ///
-/// **Polyphony handling:** All voice clones share a single `sweep_active` lock.
-/// When a voice detects a rising-edge trigger, it atomically claims the lock.
-/// Only the lock owner writes samples. When the sweep completes (or a new
-/// voice triggers), the lock is released so the next voice can take over.
+/// **Polyphony handling:** All voice clones share a `sweep_generation` counter.
+/// When a voice triggers a new sweep it bumps the generation and records
+/// the new value locally. On every process call, the writing voice checks
+/// whether the shared generation still matches its own — if another voice
+/// bumped it, the old writer stops immediately.
 pub struct SignalMonitor {
     /// Shared visualization sink (injected from GUI layer via Arc).
     /// All voice clones share the same sink via Arc.
     vis_sink: Option<Arc<dyn VisualizationSink>>,
-    /// Shared sweep lock — only one voice writes at a time.
-    /// `true` = a voice is currently capturing a sweep.
-    sweep_active: Arc<AtomicBool>,
-    /// Whether THIS voice instance owns the current sweep.
-    i_own_sweep: bool,
+    /// Shared sweep generation counter — incremented each time any voice
+    /// starts a new sweep. The voice whose `my_sweep_gen` matches the
+    /// current value is the sole writer.
+    sweep_generation: Arc<AtomicU32>,
+    /// The generation this voice claimed when it started its current sweep.
+    /// Compared against `sweep_generation` to detect takeover.
+    my_sweep_gen: u32,
     /// Time scale — how many seconds of audio to display.
     time_scale: Seconds,
     /// Vertical gain for the display.
@@ -74,8 +78,8 @@ impl SignalMonitor {
 
         Self {
             vis_sink: None,
-            sweep_active: Arc::new(AtomicBool::new(false)),
-            i_own_sweep: false,
+            sweep_generation: Arc::new(AtomicU32::new(0)),
+            my_sweep_gen: 0,
             time_scale,
             gain: Gain::UNITY,
             trigger_level: NormalizedValue::CENTER,
@@ -102,6 +106,12 @@ impl SignalMonitor {
         let samples = (self.time_scale.as_f32() * self.sample_rate.as_f32()) as usize;
         self.display_samples = SampleCount::new(samples.max(1));
     }
+
+    /// Check whether this voice still owns the current sweep.
+    #[inline]
+    fn i_own_sweep(&self) -> bool {
+        self.my_sweep_gen == self.sweep_generation.load(Ordering::Relaxed)
+    }
 }
 
 impl Default for SignalMonitor {
@@ -113,11 +123,11 @@ impl Default for SignalMonitor {
 impl Clone for SignalMonitor {
     fn clone(&self) -> Self {
         Self {
-            // Arc clone: all voice clones share the same sink and sweep lock
+            // Arc clone: all voice clones share the same sink and generation counter
             vis_sink: self.vis_sink.clone(),
-            sweep_active: self.sweep_active.clone(),
-            // New clone does NOT own the sweep
-            i_own_sweep: false,
+            sweep_generation: self.sweep_generation.clone(),
+            // Generation 0 will never match after any voice has triggered
+            my_sweep_gen: 0,
             time_scale: self.time_scale,
             gain: self.gain,
             trigger_level: self.trigger_level,
@@ -222,17 +232,19 @@ impl PolyModule for SignalMonitor {
                     // Rising-edge detection
                     let prev = self.prev_sample.as_f32();
                     if prev < threshold && sample >= threshold {
-                        // Try to claim the sweep lock (or steal it from another voice)
-                        // We always allow a new trigger to take over — this gives
-                        // "last triggered voice wins" behavior.
-                        self.sweep_active.store(true, Ordering::Relaxed);
-                        self.i_own_sweep = true;
+                        // Claim the sweep by bumping the shared generation counter.
+                        // fetch_add returns the OLD value, so our generation = old + 1.
+                        let new_gen = self
+                            .sweep_generation
+                            .fetch_add(1, Ordering::Relaxed)
+                            .wrapping_add(1);
+                        self.my_sweep_gen = new_gen;
                         self.triggered = true;
                         self.capture_count = SampleCount::ZERO;
                     }
                 }
 
-                if self.triggered && self.i_own_sweep {
+                if self.triggered && self.i_own_sweep() {
                     if self.capture_count.as_usize() < self.display_samples.as_usize() {
                         left_buf[buf_pos] = sample * gain;
                         buf_pos += 1;
@@ -244,21 +256,19 @@ impl PolyModule for SignalMonitor {
                             buf_pos = 0;
                         }
                     } else {
-                        // Sweep complete — release the lock
+                        // Sweep complete
                         self.triggered = false;
-                        self.i_own_sweep = false;
-                        self.sweep_active.store(false, Ordering::Relaxed);
                     }
                 } else if self.triggered {
-                    // Another voice stole the sweep — give up
+                    // Another voice bumped the generation — we lost ownership, stop writing
                     self.triggered = false;
                 }
 
                 self.prev_sample = BipolarValue::new(sample);
             }
 
-            // Flush remaining samples
-            if buf_pos > 0 {
+            // Flush remaining samples (only if we still own the sweep)
+            if buf_pos > 0 && self.i_own_sweep() {
                 sink.write_vis_samples(&left_buf[..buf_pos], &left_buf[..buf_pos]);
             }
         }
@@ -313,7 +323,6 @@ impl PolyModule for SignalMonitor {
     fn reset(&mut self) {
         self.prev_sample = BipolarValue::CENTER;
         self.triggered = false;
-        self.i_own_sweep = false;
         self.capture_count = SampleCount::ZERO;
     }
 
@@ -382,21 +391,26 @@ mod tests {
     }
 
     #[test]
-    fn test_signal_monitor_clone_shares_sweep_lock() {
+    fn test_sweep_generation_prevents_concurrent_writes() {
         let sm = SignalMonitor::new();
         let cloned = sm.clone();
-        // Both should share the same sweep_active Arc
-        assert!(Arc::ptr_eq(&sm.sweep_active, &cloned.sweep_active));
-        // Neither should own a sweep initially
-        assert!(!sm.i_own_sweep);
-        assert!(!cloned.i_own_sweep);
+
+        // Both share the same generation counter
+        assert!(Arc::ptr_eq(&sm.sweep_generation, &cloned.sweep_generation));
+
+        // Initially generation is 0, both have my_sweep_gen = 0
+        // After first voice triggers, generation becomes 1
+        // so the clone's my_sweep_gen (0) no longer matches
+        sm.sweep_generation.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(sm.sweep_generation.load(Ordering::Relaxed), 1);
+        assert_eq!(cloned.my_sweep_gen, 0);
+        assert!(!cloned.i_own_sweep()); // clone lost ownership
     }
 
     #[test]
     fn test_signal_monitor_clone_shares_sink() {
         let sm = SignalMonitor::new();
         let cloned = sm.clone();
-        // Both should have no sink (not yet injected)
         assert!(sm.vis_sink.is_none());
         assert!(cloned.vis_sink.is_none());
     }
