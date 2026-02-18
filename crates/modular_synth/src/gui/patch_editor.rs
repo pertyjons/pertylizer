@@ -570,21 +570,6 @@ impl PatchEditor {
                             ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
                         ui.painter().rect_filled(rect, 2.0, dimmed_accent);
 
-                        // Processing order number
-                        if let Some(pos) = proc_position {
-                            let order_text = format!("#{}", pos + 1);
-                            ui.label(
-                                egui::RichText::new(order_text)
-                                    .small()
-                                    .color(theme().colors.text_dim),
-                            )
-                            .on_hover_text(format!(
-                                "Processing order: {} of {}",
-                                pos + 1,
-                                total_modules
-                            ));
-                        }
-
                         // Module name
                         ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
 
@@ -685,6 +670,21 @@ impl PatchEditor {
                             let new_bypass_state = !is_bypassed;
                             self.bypassed.insert(module_id, new_bypass_state);
                             result.bypass_toggles.push((module_id, new_bypass_state));
+                        }
+
+                        // Processing order number (at end of title bar)
+                        if let Some(pos) = proc_position {
+                            let order_text = format!("#{}", pos + 1);
+                            ui.label(
+                                egui::RichText::new(order_text)
+                                    .small()
+                                    .color(theme().colors.text_dim),
+                            )
+                            .on_hover_text(format!(
+                                "Processing order: {} of {}",
+                                pos + 1,
+                                total_modules
+                            ));
                         }
 
                         // Close button (only for disconnected modules)
@@ -1064,7 +1064,7 @@ impl PatchEditor {
                 // Check if mouse is near this cable
                 let is_hovered = pointer_pos
                     .map(|p| {
-                        point_near_cable(p, from_pos.position, to_pos.position, 10.0, module_rects)
+                        point_near_cable(p, from_pos.position, to_pos.position, 15.0, module_rects)
                     })
                     .unwrap_or(false);
 
