@@ -1,5 +1,24 @@
 # Version History
 
+## [0.143.0] - 2026-02-18
+### Ny — Kompakt Inline Signal Monitor
+
+**Inline Signal Monitor (100×50px):**
+- Ny kompakt variant av Signal Monitor som sätts in via högerklicksmenyn på kablar
+- Visar bara oscilloskop-vågformen utan titelrad, parametrar eller kontroller
+- 2 gridceller bred × 1 gridcell hög (100×50px)
+- Små portpunkter på vänster (in) och höger (ut) sida
+- Stängknapp (×) i övre högra hörnet
+
+**Stäng och återkoppla:**
+- Vid stängning av inline-monitorn återkopplas kablarna automatiskt
+- Inkommande anslutning (källa → monitor) och utgående (monitor → destination) ersätts med direktanslutning (källa → destination)
+- Monitorn tas bort efter återkoppling
+
+**Serialisering:**
+- Ny PatchModuleType::InlineSignalMonitor för korrekt sparning/laddning
+- Inline-monitorer bevaras vid sparning och återställs vid laddning
+
 ## [0.142.0] - 2026-02-18
 ### Ny — Högerklicksmeny på kablar med Signal Monitor-insättning
 

@@ -124,6 +124,8 @@ pub enum PatchModuleType {
     KineticModulator,
     // Signal monitor (inline voice-level visualizer)
     SignalMonitor,
+    // Inline signal monitor (compact 100×50px pass-through visualizer)
+    InlineSignalMonitor,
 }
 
 impl PatchModuleType {
@@ -170,6 +172,7 @@ impl PatchModuleType {
             Self::PhaseVocoder => "phase_vocoder",
             Self::KineticModulator => "kinetic_modulator",
             Self::SignalMonitor => "signal_monitor",
+            Self::InlineSignalMonitor => "inline_signal_monitor",
         }
     }
 
@@ -217,6 +220,7 @@ impl PatchModuleType {
             Self::PhaseVocoder => "pvc",
             Self::KineticModulator => "kin",
             Self::SignalMonitor => "smn",
+            Self::InlineSignalMonitor => "smn",
         }
     }
 

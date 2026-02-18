@@ -561,9 +561,233 @@ impl PatchEditor {
             let is_source = self.is_source(module_id);
             let is_sink = self.is_sink(module_id);
 
+            let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
+
             let area_response = area.show(ui.ctx(), |ui| {
                 // Clip to the visible scroll area so modules don't paint over panels
                 ui.set_clip_rect(visible_rect);
+
+                // Inline Signal Monitor: compact 100×50px with just oscilloscope + close button
+                if is_inline_monitor {
+                    let inline_frame = egui::Frame::new()
+                        .fill(theme().colors.bg_dark)
+                        .stroke(egui::Stroke::new(1.0, dimmed_accent.gamma_multiply(0.5)))
+                        .corner_radius(4.0);
+                    inline_frame.show(ui, |ui| {
+                        let panel_width = 100.0;
+                        let panel_height = 50.0;
+                        ui.set_min_size(Vec2::new(panel_width, panel_height));
+                        ui.set_max_size(Vec2::new(panel_width, panel_height));
+
+                        // Draw ports at left/right edges
+                        let port_col_w = 8.0;
+                        ui.horizontal(|ui| {
+                            // Left port (IN) — tiny dot
+                            ui.vertical(|ui| {
+                                ui.set_width(port_col_w);
+                                ui.set_height(panel_height);
+                                let center = ui.available_rect_before_wrap().center();
+                                for port in &descriptor.ports {
+                                    if port.direction == synth_core::PortDirection::Input {
+                                        let port_rect = egui::Rect::from_center_size(
+                                            center,
+                                            Vec2::splat(8.0),
+                                        );
+                                        let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
+                                        let port_color = if port_resp.hovered() {
+                                            theme().colors.accent_cyan
+                                        } else {
+                                            theme().colors.accent_cyan.gamma_multiply(0.6)
+                                        };
+                                        ui.painter().circle_filled(center, 3.0, port_color);
+
+                                        // Register port position for cables
+                                        let screen_pos = center;
+                                        let in_port_type = if port.port_type == synth_core::PortType::Audio {
+                                            WidgetPortType::Audio
+                                        } else {
+                                            WidgetPortType::Control
+                                        };
+                                        self.port_positions.insert(
+                                            (module_id, port.name.clone()),
+                                            PortPosition {
+                                                module_id,
+                                                port_name: port.name.clone(),
+                                                position: screen_pos,
+                                                direction: WidgetPortDirection::Input,
+                                                port_type: in_port_type,
+                                            },
+                                        );
+
+                                        // Handle port interaction for cable dragging
+                                        if port_resp.drag_started() {
+                                            self.pending_connection = Some(PendingConnection {
+                                                from_module: module_id,
+                                                from_port: port.name.clone(),
+                                                from_direction: WidgetPortDirection::Input,
+                                                from_type: in_port_type,
+                                                from_position: screen_pos,
+                                                current_pos: screen_pos,
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+
+                            // Oscilloscope content area
+                            let scope_width = panel_width - port_col_w * 2.0;
+                            let scope_height = panel_height;
+                            ui.vertical(|ui| {
+                                ui.set_width(scope_width);
+                                let vis_buffer = handle.get_visualization_buffer(module_id);
+                                let samples = if let Some(buffer) = vis_buffer {
+                                    let (left, _right) = buffer.read_samples();
+                                    let step = left.len().max(1) / 128;
+                                    if step > 0 {
+                                        left.into_iter().step_by(step.max(1)).take(128).collect()
+                                    } else {
+                                        left
+                                    }
+                                } else {
+                                    (0..128)
+                                        .map(|i| {
+                                            let t = i as f32 / 128.0;
+                                            (t * std::f32::consts::TAU * 3.0).sin() * 0.5
+                                        })
+                                        .collect()
+                                };
+
+                                super::widgets::draw_oscilloscope(
+                                    ui,
+                                    &samples,
+                                    scope_width,
+                                    scope_height,
+                                    1.0,
+                                    theme().colors.accent_cyan,
+                                );
+                            });
+
+                            // Right port (OUT) — tiny dot
+                            ui.vertical(|ui| {
+                                ui.set_width(port_col_w);
+                                ui.set_height(panel_height);
+                                let center = ui.available_rect_before_wrap().center();
+                                for port in &descriptor.ports {
+                                    if port.direction == synth_core::PortDirection::Output {
+                                        let port_rect = egui::Rect::from_center_size(
+                                            center,
+                                            Vec2::splat(8.0),
+                                        );
+                                        let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
+                                        let port_color = if port_resp.hovered() {
+                                            theme().colors.accent_green
+                                        } else {
+                                            theme().colors.accent_green.gamma_multiply(0.6)
+                                        };
+                                        ui.painter().circle_filled(center, 3.0, port_color);
+
+                                        let screen_pos = center;
+                                        let out_port_type = if port.port_type == synth_core::PortType::Audio {
+                                            WidgetPortType::Audio
+                                        } else {
+                                            WidgetPortType::Control
+                                        };
+                                        self.port_positions.insert(
+                                            (module_id, port.name.clone()),
+                                            PortPosition {
+                                                module_id,
+                                                port_name: port.name.clone(),
+                                                position: screen_pos,
+                                                direction: WidgetPortDirection::Output,
+                                                port_type: out_port_type,
+                                            },
+                                        );
+
+                                        if port_resp.drag_started() {
+                                            self.pending_connection = Some(PendingConnection {
+                                                from_module: module_id,
+                                                from_port: port.name.clone(),
+                                                from_direction: WidgetPortDirection::Output,
+                                                from_type: out_port_type,
+                                                from_position: screen_pos,
+                                                current_pos: screen_pos,
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+                        });
+
+                        // Close button overlay (×) in top-right corner
+                        let panel_rect = ui.min_rect();
+                        let close_size = Vec2::new(14.0, 14.0);
+                        let close_pos = Pos2::new(
+                            panel_rect.right() - close_size.x - 1.0,
+                            panel_rect.top() + 1.0,
+                        );
+                        let close_rect = Rect::from_min_size(close_pos, close_size);
+                        let close_resp = ui.allocate_rect(close_rect, Sense::click());
+                        let close_color = if close_resp.hovered() {
+                            Color32::from_rgb(255, 100, 100)
+                        } else {
+                            Color32::from_rgba_premultiplied(200, 200, 200, 150)
+                        };
+                        ui.painter().text(
+                            close_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "\u{2715}",
+                            egui::FontId::proportional(10.0),
+                            close_color,
+                        );
+
+                        if close_resp.clicked() {
+                            // Reconnect cables around this monitor before removing
+                            // Find incoming: something → this module "in"
+                            let incoming: Vec<_> = self.connections.iter()
+                                .filter(|c| c.to_module == module_id && c.to_port.as_str() == "in")
+                                .cloned()
+                                .collect();
+                            // Find outgoing: this module "out" → something
+                            let outgoing: Vec<_> = self.connections.iter()
+                                .filter(|c| c.from_module == module_id && c.from_port.as_str() == "out")
+                                .cloned()
+                                .collect();
+
+                            // Create bypass connections (from source directly to destination)
+                            for inc in &incoming {
+                                for out in &outgoing {
+                                    let bypass = Connection::new(
+                                        inc.from_module,
+                                        inc.from_port,
+                                        out.to_module,
+                                        out.to_port,
+                                    );
+                                    self.connections.push(bypass);
+                                    result.connections_to_add.push(bypass);
+                                }
+                            }
+
+                            // Remove all connections to/from this module
+                            let monitor_conns: Vec<_> = self.connections.iter()
+                                .filter(|c| c.from_module == module_id || c.to_module == module_id)
+                                .cloned()
+                                .collect();
+                            for c in &monitor_conns {
+                                result.connections_to_remove.push(*c);
+                            }
+                            self.connections.retain(|c| c.from_module != module_id && c.to_module != module_id);
+
+                            // Remove the module
+                            open = false;
+                            self.calculate_connectivity();
+                        }
+                    });
+
+                    // Request continuous repaint so the waveform updates
+                    ui.ctx().request_repaint();
+                    return;
+                }
+
                 frame.show(ui, |ui| {
 
                     // Title bar: name + status icons + close button (single row)

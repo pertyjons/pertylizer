@@ -841,11 +841,20 @@ impl eframe::App for SynthApp {
                 });
             }
 
-            // Handle signal monitor insertions — create module and rewire
+            // Handle signal monitor insertions — create inline monitor and rewire
             for connection in result.insert_signal_monitor_at {
-                // Create signal monitor module
+                // Create signal monitor module (same DSP, different GUI descriptor)
                 let mut m = synth_modules::SignalMonitor::new();
-                let descriptor = m.descriptor();
+
+                // Build an inline descriptor: compact type_id, no parameters, just ports
+                let inline_descriptor = synth_core::ModuleDescriptor::new(
+                    "inline_signal_monitor",
+                    "Mon",
+                )
+                .description("Inline signal monitor (compact pass-through)")
+                .category(synth_core::ModuleCategory::Utility)
+                .port(synth_core::PortDescriptor::audio_input("in", "In"))
+                .port(synth_core::PortDescriptor::audio_output("out", "Out"));
 
                 let counter = self
                     .instance_counters
@@ -867,7 +876,7 @@ impl eframe::App for SynthApp {
                     _ => egui::Pos2::new(100.0, 100.0),
                 };
 
-                patch_editor.add_module_at(monitor_id, descriptor, mid_pos);
+                patch_editor.add_module_at(monitor_id, inline_descriptor, mid_pos);
 
                 // Create shared vis buffer and inject into module
                 let buffer = std::sync::Arc::new(

@@ -511,6 +511,27 @@ fn load_module(
                 instrument_id,
             );
         }
+        PatchModuleType::InlineSignalMonitor => {
+            let mut m = synth_modules::SignalMonitor::new();
+            // Compact inline descriptor (no parameters, just in/out ports)
+            let inline_descriptor =
+                synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
+                    .description("Inline signal monitor (compact pass-through)")
+                    .category(synth_core::ModuleCategory::Utility)
+                    .port(synth_core::PortDescriptor::audio_input("in", "In"))
+                    .port(synth_core::PortDescriptor::audio_output("out", "Out"));
+            patch_editor.add_module_at(module_id, inline_descriptor, position);
+
+            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+            handle.add_visualization_buffer(module_id, buffer.clone());
+            m.set_vis_sink(buffer);
+
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+                module: Box::new(m),
+            });
+        }
         PatchModuleType::Oscilloscope => {
             let descriptor = Oscilloscope::new().descriptor();
             patch_editor.add_module_at(module_id, descriptor, position);
@@ -1035,6 +1056,7 @@ pub fn create_patch_from_rack(
                     "mod_matrix" => PatchModuleType::ModMatrix,
                     "envelope_follower" => PatchModuleType::EnvelopeFollower,
                     "signal_monitor" => PatchModuleType::SignalMonitor,
+                    "inline_signal_monitor" => PatchModuleType::InlineSignalMonitor,
                     _ => continue,
                 },
                 ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {
