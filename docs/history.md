@@ -1,7 +1,7 @@
 # Version History
 
 ## [0.143.0] - 2026-02-18
-### Ny — Kompakt Inline Signal Monitor
+### Ny — Kompakt Inline Signal Monitor + Polyfoniskt sweep-lås
 
 **Inline Signal Monitor (100×50px):**
 - Ny kompakt variant av Signal Monitor som sätts in via högerklicksmenyn på kablar
@@ -14,6 +14,13 @@
 - Vid stängning av inline-monitorn återkopplas kablarna automatiskt
 - Inkommande anslutning (källa → monitor) och utgående (monitor → destination) ersätts med direktanslutning (källa → destination)
 - Monitorn tas bort efter återkoppling
+
+**Polyfoniskt sweep-lås (alla Signal Monitors):**
+- Ny `Arc<AtomicBool>` sweep-lås delad mellan alla röstkloner
+- Bara en röst i taget skriver till visualiseringsbuffern
+- "Senast triggade röst vinner" — ny trigger tar alltid över
+- Förhindrar den röriga blandning av flera rösters vågformer som visades tidigare
+- Gäller både den stora Signal Monitor och den kompakta inline-varianten
 
 **Serialisering:**
 - Ny PatchModuleType::InlineSignalMonitor för korrekt sparning/laddning

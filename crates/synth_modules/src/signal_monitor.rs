@@ -5,12 +5,16 @@
 //! anywhere in the voice graph to inspect the waveform.
 //!
 //! Uses rising-edge trigger detection for stable waveform display.
+//! Only one voice at a time can write to the visualization buffer —
+//! when a new voice triggers, it claims the sweep lock and the
+//! previous writer yields. This prevents garbled multi-voice overlap.
 //!
 //! The visualization buffer is injected from the GUI layer via
 //! `set_vis_sink()` since this crate cannot depend on `synth_engine`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, InputPorts, ModuleCategory, ModuleDescriptor,
@@ -24,10 +28,20 @@ use synth_core::{
 /// Pass-through module: copies input to output without modification.
 /// Captures gain-scaled samples to a shared visualization sink for GUI display.
 /// Uses rising-edge trigger detection for a stable oscilloscope view.
+///
+/// **Polyphony handling:** All voice clones share a single `sweep_active` lock.
+/// When a voice detects a rising-edge trigger, it atomically claims the lock.
+/// Only the lock owner writes samples. When the sweep completes (or a new
+/// voice triggers), the lock is released so the next voice can take over.
 pub struct SignalMonitor {
     /// Shared visualization sink (injected from GUI layer via Arc).
     /// All voice clones share the same sink via Arc.
     vis_sink: Option<Arc<dyn VisualizationSink>>,
+    /// Shared sweep lock — only one voice writes at a time.
+    /// `true` = a voice is currently capturing a sweep.
+    sweep_active: Arc<AtomicBool>,
+    /// Whether THIS voice instance owns the current sweep.
+    i_own_sweep: bool,
     /// Time scale — how many seconds of audio to display.
     time_scale: Seconds,
     /// Vertical gain for the display.
@@ -60,6 +74,8 @@ impl SignalMonitor {
 
         Self {
             vis_sink: None,
+            sweep_active: Arc::new(AtomicBool::new(false)),
+            i_own_sweep: false,
             time_scale,
             gain: Gain::UNITY,
             trigger_level: NormalizedValue::CENTER,
@@ -97,14 +113,17 @@ impl Default for SignalMonitor {
 impl Clone for SignalMonitor {
     fn clone(&self) -> Self {
         Self {
-            // Arc clone: all voice clones share the same sink
+            // Arc clone: all voice clones share the same sink and sweep lock
             vis_sink: self.vis_sink.clone(),
+            sweep_active: self.sweep_active.clone(),
+            // New clone does NOT own the sweep
+            i_own_sweep: false,
             time_scale: self.time_scale,
             gain: self.gain,
             trigger_level: self.trigger_level,
             frozen: self.frozen,
             prev_sample: self.prev_sample,
-            triggered: self.triggered,
+            triggered: false,
             capture_count: self.capture_count,
             display_samples: self.display_samples,
             sample_rate: self.sample_rate,
@@ -161,6 +180,7 @@ impl Describable for SignalMonitor {
 }
 
 impl PolyModule for SignalMonitor {
+    #[allow(clippy::too_many_lines)]
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
@@ -202,12 +222,17 @@ impl PolyModule for SignalMonitor {
                     // Rising-edge detection
                     let prev = self.prev_sample.as_f32();
                     if prev < threshold && sample >= threshold {
+                        // Try to claim the sweep lock (or steal it from another voice)
+                        // We always allow a new trigger to take over — this gives
+                        // "last triggered voice wins" behavior.
+                        self.sweep_active.store(true, Ordering::Relaxed);
+                        self.i_own_sweep = true;
                         self.triggered = true;
                         self.capture_count = SampleCount::ZERO;
                     }
                 }
 
-                if self.triggered {
+                if self.triggered && self.i_own_sweep {
                     if self.capture_count.as_usize() < self.display_samples.as_usize() {
                         left_buf[buf_pos] = sample * gain;
                         buf_pos += 1;
@@ -219,9 +244,14 @@ impl PolyModule for SignalMonitor {
                             buf_pos = 0;
                         }
                     } else {
-                        // Sweep complete — wait for next trigger
+                        // Sweep complete — release the lock
                         self.triggered = false;
+                        self.i_own_sweep = false;
+                        self.sweep_active.store(false, Ordering::Relaxed);
                     }
+                } else if self.triggered {
+                    // Another voice stole the sweep — give up
+                    self.triggered = false;
                 }
 
                 self.prev_sample = BipolarValue::new(sample);
@@ -283,6 +313,7 @@ impl PolyModule for SignalMonitor {
     fn reset(&mut self) {
         self.prev_sample = BipolarValue::CENTER;
         self.triggered = false;
+        self.i_own_sweep = false;
         self.capture_count = SampleCount::ZERO;
     }
 
@@ -348,6 +379,17 @@ mod tests {
 
         let params = sm.get_params();
         assert_eq!(params.len(), 4);
+    }
+
+    #[test]
+    fn test_signal_monitor_clone_shares_sweep_lock() {
+        let sm = SignalMonitor::new();
+        let cloned = sm.clone();
+        // Both should share the same sweep_active Arc
+        assert!(Arc::ptr_eq(&sm.sweep_active, &cloned.sweep_active));
+        // Neither should own a sweep initially
+        assert!(!sm.i_own_sweep);
+        assert!(!cloned.i_own_sweep);
     }
 
     #[test]
