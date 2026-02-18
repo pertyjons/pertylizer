@@ -123,6 +123,8 @@ pub struct PatchEditor {
     needs_initial_layout: bool,
     /// Right-click context menu on a cable: (connection, screen position).
     cable_context_menu: Option<(Connection, Pos2)>,
+    /// Guards against the opening click also closing the menu on the same frame.
+    cable_menu_just_opened: bool,
 }
 
 impl PatchEditor {
@@ -141,6 +143,7 @@ impl PatchEditor {
             needs_reposition: HashSet::new(),
             needs_initial_layout: true,
             cable_context_menu: None,
+            cable_menu_just_opened: false,
         }
     }
 
@@ -1120,6 +1123,7 @@ impl PatchEditor {
                     && let Some(pos) = pointer_pos
                 {
                     self.cable_context_menu = Some((*connection, pos));
+                    self.cable_menu_just_opened = true;
                 }
 
                 // Animated flow particles on all cables
@@ -1139,6 +1143,8 @@ impl PatchEditor {
     /// Draw the cable right-click context menu and handle its actions.
     fn draw_cable_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
         let Some((connection, menu_pos)) = self.cable_context_menu else {
+            // Clear the guard when no menu is open
+            self.cable_menu_just_opened = false;
             return;
         };
 
@@ -1172,7 +1178,14 @@ impl PatchEditor {
                     });
             });
 
-        // Close on click outside the menu area, or after an action
+        // On the frame the menu was opened, the same right-click event is still
+        // active. Skip the close check so it doesn't immediately dismiss.
+        if self.cable_menu_just_opened {
+            self.cable_menu_just_opened = false;
+            return;
+        }
+
+        // Close on any click outside the menu area, or after an action
         let menu_rect = area_resp.response.rect;
         let pointer_pos = ui.input(|i| i.pointer.interact_pos());
         let any_click = ui.input(|i| {
