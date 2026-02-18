@@ -18,8 +18,8 @@ use synth_engine::{EngineHandle, ModuleId};
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    WidgetPortDirection, WidgetPortType, cable_color, draw_cable, draw_cable_dragging,
-    draw_cable_highlighted, draw_flow_particles, point_near_cable,
+    WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable, draw_cable,
+    draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -1061,10 +1061,10 @@ impl PatchEditor {
             ) {
                 let color = cable_color(from_pos.port_type, 180);
 
-                // Check if mouse is near this cable
+                // Check if mouse is near this cable (20px threshold for easy targeting)
                 let is_hovered = pointer_pos
                     .map(|p| {
-                        point_near_cable(p, from_pos.position, to_pos.position, 15.0, module_rects)
+                        point_near_cable(p, from_pos.position, to_pos.position, 20.0, module_rects)
                     })
                     .unwrap_or(false);
 
@@ -1079,6 +1079,31 @@ impl PatchEditor {
                         color,
                         module_rects,
                     );
+
+                    // Draw a small menu icon on the cable near the pointer
+                    if is_hovered && let Some(p) = pointer_pos {
+                        let snap = closest_point_on_cable(
+                            p,
+                            from_pos.position,
+                            to_pos.position,
+                            module_rects,
+                        );
+                        let icon_pos = snap + Vec2::new(10.0, -10.0);
+                        // Background pill
+                        let pill = Rect::from_center_size(icon_pos, Vec2::new(20.0, 16.0));
+                        painter.rect_filled(
+                            pill,
+                            4.0,
+                            Color32::from_rgba_unmultiplied(30, 30, 30, 200),
+                        );
+                        painter.text(
+                            icon_pos,
+                            egui::Align2::CENTER_CENTER,
+                            "\u{2630}",
+                            theme().fonts.small(),
+                            Color32::WHITE,
+                        );
+                    }
                 } else {
                     draw_cable(
                         &painter,

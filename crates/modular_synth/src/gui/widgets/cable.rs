@@ -442,6 +442,40 @@ pub fn point_near_cable(
     false
 }
 
+/// Find the closest point on an orthogonal cable to a given point.
+#[must_use]
+pub fn closest_point_on_cable(point: Pos2, from: Pos2, to: Pos2, obstacles: &[Rect]) -> Pos2 {
+    let points = calculate_route(from, to, obstacles);
+    let mut best = from;
+    let mut best_dist = f32::MAX;
+
+    for w in points.windows(2) {
+        let closest = closest_point_on_segment(point, w[0], w[1]);
+        let dx = point.x - closest.x;
+        let dy = point.y - closest.y;
+        let dist = dx * dx + dy * dy;
+        if dist < best_dist {
+            best_dist = dist;
+            best = closest;
+        }
+    }
+    best
+}
+
+/// Closest point on a line segment to a given point.
+fn closest_point_on_segment(p: Pos2, a: Pos2, b: Pos2) -> Pos2 {
+    let ab = Vec2::new(b.x - a.x, b.y - a.y);
+    let ap = Vec2::new(p.x - a.x, p.y - a.y);
+
+    let len_sq = ab.x * ab.x + ab.y * ab.y;
+    if len_sq < 0.001 {
+        return a;
+    }
+
+    let t = ((ap.x * ab.x + ap.y * ab.y) / len_sq).clamp(0.0, 1.0);
+    Pos2::new(a.x + ab.x * t, a.y + ab.y * t)
+}
+
 /// Distance from a point to a line segment.
 fn point_to_segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let ab = Vec2::new(b.x - a.x, b.y - a.y);
