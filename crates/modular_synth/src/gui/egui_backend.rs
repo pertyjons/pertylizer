@@ -841,6 +841,73 @@ impl eframe::App for SynthApp {
                 });
             }
 
+            // Handle signal monitor insertions — create module and rewire
+            for connection in result.insert_signal_monitor_at {
+                // Create signal monitor module
+                let mut m = synth_modules::SignalMonitor::new();
+                let descriptor = m.descriptor();
+
+                let counter = self
+                    .instance_counters
+                    .entry(TypedModuleType::SignalMonitor)
+                    .or_insert(0);
+                *counter += 1;
+                let monitor_id = ModuleId::new(TypedModuleType::SignalMonitor, *counter);
+
+                // Position between the two connected modules
+                let from_pos = patch_editor
+                    .get_module_data(connection.from_module)
+                    .map(|(_, pos, _)| pos);
+                let to_pos = patch_editor
+                    .get_module_data(connection.to_module)
+                    .map(|(_, pos, _)| pos);
+                let mid_pos = match (from_pos, to_pos) {
+                    (Some(a), Some(b)) => egui::Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0),
+                    (Some(a), None) => egui::Pos2::new(a.x + 200.0, a.y),
+                    _ => egui::Pos2::new(100.0, 100.0),
+                };
+
+                patch_editor.add_module_at(monitor_id, descriptor, mid_pos);
+
+                // Create shared vis buffer and inject into module
+                let buffer = std::sync::Arc::new(
+                    synth_engine::visualizers::VisualizationBuffer::new(4096),
+                );
+                self.handle
+                    .add_visualization_buffer(monitor_id, buffer.clone());
+                m.set_vis_sink(buffer);
+
+                let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+                self.handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(active_id),
+                    id: monitor_id,
+                    module,
+                });
+
+                // Wire: original_from → monitor "in", monitor "out" → original_to
+                let conn_in = synth_engine::graph::Connection::new(
+                    connection.from_module,
+                    connection.from_port,
+                    monitor_id,
+                    "in",
+                );
+                let conn_out = synth_engine::graph::Connection::new(
+                    monitor_id,
+                    "out",
+                    connection.to_module,
+                    connection.to_port,
+                );
+
+                for c in [conn_in, conn_out] {
+                    patch_editor.add_connection(c);
+                    self.handle.send(EngineCommand::Connect {
+                        instrument_id: Some(active_id),
+                        from: PortId::new(c.from_module, c.from_port),
+                        to: PortId::new(c.to_module, c.to_port),
+                    });
+                }
+            }
+
             // Handle auto-layout request
             if result.request_auto_layout
                 && let Some(canvas_rect) = result.canvas_rect

@@ -121,6 +121,8 @@ pub struct PatchEditor {
     needs_reposition: HashSet<ModuleId>,
     /// When true, auto-layout runs on the next frame that has a canvas_rect.
     needs_initial_layout: bool,
+    /// Right-click context menu on a cable: (connection, screen position).
+    cable_context_menu: Option<(Connection, Pos2)>,
 }
 
 impl PatchEditor {
@@ -138,6 +140,7 @@ impl PatchEditor {
             bypassed: HashMap::new(),
             needs_reposition: HashSet::new(),
             needs_initial_layout: true,
+            cable_context_menu: None,
         }
     }
 
@@ -843,16 +846,12 @@ impl PatchEditor {
             })
             .collect();
 
-        // Draw connections in foreground layer and handle cable removal
+        // Draw connections in foreground layer (hover highlight + right-click context menu)
         let time = ui.input(|i| i.time);
-        let cables_to_remove = self.draw_connections_foreground(ui, time, &module_rects);
-        if !cables_to_remove.is_empty() {
-            for cable in cables_to_remove {
-                self.connections.retain(|c| c != &cable);
-                result.connections_to_remove.push(cable);
-            }
-            self.calculate_connectivity();
-        }
+        self.draw_connections_foreground(ui, time, &module_rects);
+
+        // Draw cable context menu and handle its actions
+        self.draw_cable_context_menu(ui, &mut result);
 
         // Draw pending connection in foreground (less sag for responsive feel)
         if let Some(ref pending) = self.pending_connection {
@@ -870,9 +869,10 @@ impl PatchEditor {
             self.selected_module = None;
         }
 
-        // Cancel pending connection with escape (not right click - that's for cable removal now)
+        // Cancel pending connection with escape (not right click - that's for cable context menu now)
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
+            self.cable_context_menu = None;
         }
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
@@ -1033,20 +1033,17 @@ impl PatchEditor {
     }
 
     /// Draw connections in a foreground layer so they appear above modules.
-    /// Returns connections that should be removed (right-clicked).
-    fn draw_connections_foreground(
-        &self,
-        ui: &Ui,
-        time: f64,
-        module_rects: &[Rect],
-    ) -> Vec<Connection> {
+    /// Right-clicking a cable opens a context menu instead of removing directly.
+    fn draw_connections_foreground(&mut self, ui: &Ui, time: f64, module_rects: &[Rect]) {
         let painter = ui
             .ctx()
             .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
-        let mut to_remove = Vec::new();
 
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
         let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
+
+        // Track which cable the context menu targets so we highlight it
+        let menu_target = self.cable_context_menu.as_ref().map(|(c, _)| *c);
 
         for connection in &self.connections {
             let from_key = (
@@ -1062,6 +1059,8 @@ impl PatchEditor {
                 self.port_positions.get(&from_key),
                 self.port_positions.get(&to_key),
             ) {
+                let color = cable_color(from_pos.port_type, 180);
+
                 // Check if mouse is near this cable
                 let is_hovered = pointer_pos
                     .map(|p| {
@@ -1069,35 +1068,18 @@ impl PatchEditor {
                     })
                     .unwrap_or(false);
 
-                let color = cable_color(from_pos.port_type, 180);
+                // Highlight if hovered or if context menu is open for this cable
+                let show_highlight = is_hovered || menu_target.as_ref() == Some(connection);
 
-                if is_hovered {
-                    // Draw highlighted cable with glow effect
+                if show_highlight {
                     draw_cable_highlighted(
                         &painter,
                         from_pos.position,
                         to_pos.position,
+                        color,
                         module_rects,
                     );
-
-                    // Show tooltip
-                    if let Some(pos) = pointer_pos {
-                        let tooltip_pos = pos + Vec2::new(10.0, 10.0);
-                        painter.text(
-                            tooltip_pos,
-                            egui::Align2::LEFT_TOP,
-                            "Right-click to disconnect",
-                            theme().fonts.normal(),
-                            Color32::WHITE,
-                        );
-                    }
-
-                    // Remove on right click
-                    if right_clicked {
-                        to_remove.push(*connection);
-                    }
                 } else {
-                    // Draw normal cable with theme color
                     draw_cable(
                         &painter,
                         from_pos.position,
@@ -1105,6 +1087,14 @@ impl PatchEditor {
                         color,
                         module_rects,
                     );
+                }
+
+                // Open context menu on right-click
+                if is_hovered
+                    && right_clicked
+                    && let Some(pos) = pointer_pos
+                {
+                    self.cable_context_menu = Some((*connection, pos));
                 }
 
                 // Animated flow particles on all cables
@@ -1119,8 +1109,57 @@ impl PatchEditor {
                 );
             }
         }
+    }
 
-        to_remove
+    /// Draw the cable right-click context menu and handle its actions.
+    fn draw_cable_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
+        let Some((connection, menu_pos)) = self.cable_context_menu else {
+            return;
+        };
+
+        let menu_id = egui::Id::new("cable_context_menu");
+        let mut close_menu = false;
+
+        let area_resp = egui::Area::new(menu_id)
+            .order(Order::Foreground)
+            .fixed_pos(menu_pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(theme().colors.bg_panel)
+                    .show(ui, |ui| {
+                        ui.set_min_width(160.0);
+
+                        if ui.button("Ta bort sladd").clicked() {
+                            self.connections.retain(|c| c != &connection);
+                            result.connections_to_remove.push(connection);
+                            self.calculate_connectivity();
+                            close_menu = true;
+                        }
+
+                        if ui.button("Stoppa in Signal Monitor").clicked() {
+                            // Remove the old cable and request a monitor insertion
+                            self.connections.retain(|c| c != &connection);
+                            result.connections_to_remove.push(connection);
+                            result.insert_signal_monitor_at.push(connection);
+                            self.calculate_connectivity();
+                            close_menu = true;
+                        }
+                    });
+            });
+
+        // Close on click outside the menu area, or after an action
+        let menu_rect = area_resp.response.rect;
+        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+        let any_click = ui.input(|i| {
+            i.pointer.button_clicked(egui::PointerButton::Primary)
+                || i.pointer.button_clicked(egui::PointerButton::Secondary)
+        });
+        let clicked_outside =
+            any_click && pointer_pos.map(|p| !menu_rect.contains(p)).unwrap_or(false);
+
+        if close_menu || clicked_outside {
+            self.cable_context_menu = None;
+        }
     }
 
     fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
@@ -1385,6 +1424,9 @@ pub struct PatchEditorResult {
     /// Bypass state toggles (module_id, new_bypass_state).
     /// true = bypassed (module is off), false = active (module is on).
     pub bypass_toggles: Vec<(ModuleId, bool)>,
+    /// Connections where a Signal Monitor should be inserted.
+    /// The backend creates the module and rewires: from→monitor→to.
+    pub insert_signal_monitor_at: Vec<Connection>,
 }
 
 /// Simplified panel result for parameters only.

@@ -355,36 +355,27 @@ pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2
     draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
 }
 
-/// Draw a highlighted cable (hovered or selected) with glow effect.
+/// Draw a highlighted cable (hovered) with glow effect using the cable's own color.
 pub fn draw_cable_highlighted(
     painter: &eframe::egui::Painter,
     from: Pos2,
     to: Pos2,
+    color: Color32,
     obstacles: &[Rect],
 ) {
-    let highlight_color = theme().colors.accent_red;
     let points = calculate_route(from, to, obstacles);
 
     // Outer glow
-    let glow_color = Color32::from_rgba_unmultiplied(
-        highlight_color.r(),
-        highlight_color.g(),
-        highlight_color.b(),
-        60,
-    );
+    let glow_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
     draw_segments(painter, &points, Stroke::new(8.0, glow_color), false);
 
     // Inner glow
-    let inner_glow = Color32::from_rgba_unmultiplied(
-        highlight_color.r(),
-        highlight_color.g(),
-        highlight_color.b(),
-        120,
-    );
+    let inner_glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
     draw_segments(painter, &points, Stroke::new(5.0, inner_glow), false);
 
-    // Core cable
-    draw_segments(painter, &points, Stroke::new(2.5, highlight_color), true);
+    // Core cable (full brightness)
+    let core = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 220);
+    draw_segments(painter, &points, Stroke::new(2.5, core), true);
 }
 
 /// Draw animated flow particles along a cable.

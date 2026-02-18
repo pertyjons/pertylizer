@@ -1,5 +1,19 @@
 # Version History
 
+## [0.142.0] - 2026-02-18
+### Ny — Högerklicksmeny på kablar med Signal Monitor-insättning
+
+**Kabelmeny (högerklick):**
+- Högerklick på en kabel öppnar nu en kontextmeny istället för att direkt ta bort sladden
+- Menyval: "Ta bort sladd" — tar bort kabeln
+- Menyval: "Stoppa in Signal Monitor" — sätter in en Signal Monitor mellan de två modulerna
+- Kabeln lyser med sin egen färg (glow-effekt) vid hover istället för illröd
+
+**Automatisk Signal Monitor-insättning:**
+- Vid insättning skapas en ny Signal Monitor-modul placerad mitt emellan de två anslutna modulerna
+- Originalanslutningen tas bort och ersätts med: källa → Signal Monitor → destination
+- Visualiseringsbuffer kopplas automatiskt för realtidsvisning av vågformen
+
 ## [0.141.0] - 2026-02-16
 ### Ny — Signal Monitor (inline vågformsvisare)
 
