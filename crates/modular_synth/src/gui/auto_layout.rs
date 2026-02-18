@@ -278,9 +278,9 @@ fn sort_column_by_median(
                     .filter(|&&neighbor| {
                         let neighbor_col = depth.get(&neighbor).copied().unwrap_or(usize::MAX);
                         if use_incoming {
-                            neighbor_col + 1 == col
+                            neighbor_col.checked_add(1) == Some(col)
                         } else {
-                            col + 1 == neighbor_col
+                            col.checked_add(1) == Some(neighbor_col)
                         }
                     })
                     .filter_map(|&neighbor| row_of.get(&neighbor).copied())
