@@ -5,10 +5,14 @@
 //! anywhere in the voice graph to inspect the waveform.
 //!
 //! Uses rising-edge trigger detection for stable waveform display.
-//! Only one voice at a time can write to the visualization buffer —
-//! a shared atomic generation counter ensures that when a new voice
-//! triggers, the previous writer detects the generation mismatch
-//! and yields. This prevents garbled multi-voice overlap.
+//! Only one voice at a time can write to the visualization buffer.
+//!
+//! **Key design:** Sweep data is accumulated in a local pre-allocated
+//! buffer. Only when a sweep is *complete* does it get flushed to the
+//! shared visualization sink. A shared `AtomicU32` generation counter
+//! ensures that if another voice triggers mid-sweep, the old voice
+//! detects the generation mismatch and discards its partial data.
+//! This guarantees the GUI only ever sees clean, single-voice waveforms.
 //!
 //! The visualization buffer is injected from the GUI layer via
 //! `set_vis_sink()` since this crate cannot depend on `synth_engine`.
@@ -31,10 +35,8 @@ use synth_core::{
 /// Uses rising-edge trigger detection for a stable oscilloscope view.
 ///
 /// **Polyphony handling:** All voice clones share a `sweep_generation` counter.
-/// When a voice triggers a new sweep it bumps the generation and records
-/// the new value locally. On every process call, the writing voice checks
-/// whether the shared generation still matches its own — if another voice
-/// bumped it, the old writer stops immediately.
+/// Sweep data is buffered locally — only complete sweeps from the current
+/// generation owner are flushed to the shared visualization sink.
 pub struct SignalMonitor {
     /// Shared visualization sink (injected from GUI layer via Arc).
     /// All voice clones share the same sink via Arc.
@@ -44,7 +46,6 @@ pub struct SignalMonitor {
     /// current value is the sole writer.
     sweep_generation: Arc<AtomicU32>,
     /// The generation this voice claimed when it started its current sweep.
-    /// Compared against `sweep_generation` to detect takeover.
     my_sweep_gen: u32,
     /// Time scale — how many seconds of audio to display.
     time_scale: Seconds,
@@ -66,6 +67,11 @@ pub struct SignalMonitor {
     sample_rate: SampleRate,
     /// Pre-allocated output buffer.
     output_buffer: AudioBuffer,
+    /// Pre-allocated local sweep buffer. Accumulated during a sweep and
+    /// flushed to the vis sink only when the sweep completes AND this
+    /// voice still owns the current generation. No heap allocation during
+    /// process().
+    sweep_buffer: Vec<f32>,
 }
 
 impl SignalMonitor {
@@ -73,8 +79,10 @@ impl SignalMonitor {
     pub fn new() -> Self {
         let sample_rate = SampleRate::DVD_QUALITY;
         let time_scale = Seconds::new(0.01);
-        let display_samples =
-            SampleCount::new((time_scale.as_f32() * sample_rate.as_f32()) as usize);
+        let display_samples = (time_scale.as_f32() * sample_rate.as_f32()) as usize;
+
+        let mut sweep_buffer = Vec::new();
+        sweep_buffer.resize(display_samples.max(1), 0.0);
 
         Self {
             vis_sink: None,
@@ -87,9 +95,10 @@ impl SignalMonitor {
             prev_sample: BipolarValue::CENTER,
             triggered: false,
             capture_count: SampleCount::ZERO,
-            display_samples,
+            display_samples: SampleCount::new(display_samples.max(1)),
             sample_rate,
             output_buffer: AudioBuffer::new(256),
+            sweep_buffer,
         }
     }
 
@@ -105,6 +114,8 @@ impl SignalMonitor {
     fn update_display_samples(&mut self) {
         let samples = (self.time_scale.as_f32() * self.sample_rate.as_f32()) as usize;
         self.display_samples = SampleCount::new(samples.max(1));
+        // Ensure sweep_buffer has capacity (no allocation during process)
+        self.sweep_buffer.resize(samples.max(1), 0.0);
     }
 
     /// Check whether this voice still owns the current sweep.
@@ -134,10 +145,11 @@ impl Clone for SignalMonitor {
             frozen: self.frozen,
             prev_sample: self.prev_sample,
             triggered: false,
-            capture_count: self.capture_count,
+            capture_count: SampleCount::ZERO,
             display_samples: self.display_samples,
             sample_rate: self.sample_rate,
             output_buffer: self.output_buffer.clone(),
+            sweep_buffer: self.sweep_buffer.clone(),
         }
     }
 }
@@ -214,63 +226,58 @@ impl PolyModule for SignalMonitor {
         }
 
         // Capture samples for visualization (unless frozen or no sink)
-        if !self.frozen
-            && let Some(ref sink) = self.vis_sink
-        {
-            // Map trigger_level (0.0-1.0) to bipolar range (-1.0 to 1.0)
-            let threshold = self.trigger_level.as_f32() * 2.0 - 1.0;
-            let gain = self.gain.as_f32();
+        if self.frozen || self.vis_sink.is_none() {
+            return;
+        }
 
-            // Stack buffer for batching writes (no heap allocation)
-            let mut left_buf = [0.0_f32; 256];
-            let mut buf_pos = 0_usize;
+        let threshold = self.trigger_level.as_f32() * 2.0 - 1.0;
+        let gain = self.gain.as_f32();
+        let max_samples = self.display_samples.as_usize();
 
-            for i in 0..num_samples {
-                let sample = input.map_or(0.0, |buf| buf[i]);
+        for i in 0..num_samples {
+            let sample = input.map_or(0.0, |buf| buf[i]);
 
-                if !self.triggered {
-                    // Rising-edge detection
-                    let prev = self.prev_sample.as_f32();
-                    if prev < threshold && sample >= threshold {
-                        // Claim the sweep by bumping the shared generation counter.
-                        // fetch_add returns the OLD value, so our generation = old + 1.
-                        let new_gen = self
-                            .sweep_generation
-                            .fetch_add(1, Ordering::Relaxed)
-                            .wrapping_add(1);
-                        self.my_sweep_gen = new_gen;
-                        self.triggered = true;
-                        self.capture_count = SampleCount::ZERO;
-                    }
+            if !self.triggered {
+                // Rising-edge detection
+                let prev = self.prev_sample.as_f32();
+                if prev < threshold && sample >= threshold {
+                    // Claim the sweep by bumping the shared generation counter.
+                    let new_gen = self
+                        .sweep_generation
+                        .fetch_add(1, Ordering::Relaxed)
+                        .wrapping_add(1);
+                    self.my_sweep_gen = new_gen;
+                    self.triggered = true;
+                    self.capture_count = SampleCount::ZERO;
                 }
+            }
 
-                if self.triggered && self.i_own_sweep() {
-                    if self.capture_count.as_usize() < self.display_samples.as_usize() {
-                        left_buf[buf_pos] = sample * gain;
-                        buf_pos += 1;
-                        self.capture_count = SampleCount::new(self.capture_count.as_usize() + 1);
+            if self.triggered {
+                if !self.i_own_sweep() {
+                    // Another voice bumped the generation — discard our partial data
+                    self.triggered = false;
+                } else {
+                    let idx = self.capture_count.as_usize();
+                    if idx < max_samples && idx < self.sweep_buffer.len() {
+                        self.sweep_buffer[idx] = sample * gain;
+                        self.capture_count = SampleCount::new(idx + 1);
+                    }
 
-                        // Flush batch when buffer is full
-                        if buf_pos >= left_buf.len() {
-                            sink.write_vis_samples(&left_buf[..buf_pos], &left_buf[..buf_pos]);
-                            buf_pos = 0;
+                    if self.capture_count.as_usize() >= max_samples {
+                        // Sweep complete — flush entire buffer to vis sink at once
+                        if let Some(ref sink) = self.vis_sink {
+                            let count = max_samples.min(self.sweep_buffer.len());
+                            sink.write_vis_samples(
+                                &self.sweep_buffer[..count],
+                                &self.sweep_buffer[..count],
+                            );
                         }
-                    } else {
-                        // Sweep complete
                         self.triggered = false;
                     }
-                } else if self.triggered {
-                    // Another voice bumped the generation — we lost ownership, stop writing
-                    self.triggered = false;
                 }
-
-                self.prev_sample = BipolarValue::new(sample);
             }
 
-            // Flush remaining samples (only if we still own the sweep)
-            if buf_pos > 0 && self.i_own_sweep() {
-                sink.write_vis_samples(&left_buf[..buf_pos], &left_buf[..buf_pos]);
-            }
+            self.prev_sample = BipolarValue::new(sample);
         }
     }
 
@@ -353,7 +360,6 @@ mod tests {
         let mut outputs = HashMap::new();
         outputs.insert("out".to_string(), AudioBuffer::new(64));
 
-        // Create input with a known signal
         let mut input_buf = AudioBuffer::new(64);
         for i in 0..64 {
             input_buf[i] = (i as f32) / 64.0;
@@ -398,13 +404,18 @@ mod tests {
         // Both share the same generation counter
         assert!(Arc::ptr_eq(&sm.sweep_generation, &cloned.sweep_generation));
 
-        // Initially generation is 0, both have my_sweep_gen = 0
         // After first voice triggers, generation becomes 1
-        // so the clone's my_sweep_gen (0) no longer matches
+        // Clone's my_sweep_gen (0) no longer matches → can't write
         sm.sweep_generation.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(sm.sweep_generation.load(Ordering::Relaxed), 1);
-        assert_eq!(cloned.my_sweep_gen, 0);
-        assert!(!cloned.i_own_sweep()); // clone lost ownership
+        assert!(!cloned.i_own_sweep());
+    }
+
+    #[test]
+    fn test_sweep_buffer_preallocated() {
+        let sm = SignalMonitor::new();
+        // Buffer should be pre-allocated to display_samples size
+        assert_eq!(sm.sweep_buffer.len(), sm.display_samples.as_usize());
+        assert!(sm.sweep_buffer.len() > 0);
     }
 
     #[test]
