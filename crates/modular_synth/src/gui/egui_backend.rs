@@ -25,6 +25,7 @@ use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{
     EffectType, ModulePalette, PaletteSelection, PaletteVisualizerType, PatchEditor,
+    QuickAddRequest,
 };
 use crate::gui::theme::theme;
 use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
@@ -917,6 +918,17 @@ impl eframe::App for SynthApp {
                 }
             }
 
+            // Handle quick-add requests (right-click on port → add module)
+            for request in result.quick_add_requests {
+                Self::handle_quick_add(
+                    &mut self.handle,
+                    &mut self.instance_counters,
+                    active_id,
+                    patch_editor,
+                    request,
+                );
+            }
+
             // Handle auto-layout request
             if result.request_auto_layout
                 && let Some(canvas_rect) = result.canvas_rect
@@ -1341,6 +1353,407 @@ impl SynthApp {
             instrument_id: Some(self.active_instrument_id),
             id: next_id,
             module,
+        });
+    }
+
+    /// Handle a quick-add request: create module, place it, and auto-connect.
+    ///
+    /// Takes individual field references to avoid borrow conflicts with `patch_editor`.
+    #[allow(clippy::too_many_lines)]
+    fn handle_quick_add(
+        handle: &mut EngineHandle,
+        instance_counters: &mut HashMap<TypedModuleType, u16>,
+        instrument_id: InstrumentId,
+        editor: &mut PatchEditor,
+        request: QuickAddRequest,
+    ) {
+        use crate::gui::widgets::WidgetPortDirection;
+        use synth_core::PortDirection;
+
+        // Inline next_module_id to avoid &mut self borrow
+        let mut next_id_fn = |module_type: TypedModuleType| -> ModuleId {
+            let counter = instance_counters.entry(module_type).or_insert(0);
+            *counter += 1;
+            ModuleId::new(module_type, *counter)
+        };
+
+        // Step 1: Create the module (same logic as palette handling)
+        let (next_id, descriptor) = match request.selection {
+            PaletteSelection::Category(category) => {
+                let (module, desc, module_type, envelope_pos): (
+                    Box<dyn synth_core::PolyModule>,
+                    _,
+                    TypedModuleType,
+                    Option<std::sync::Arc<synth_modules::EnvelopePositionBuffer>>,
+                ) = match category {
+                    ModuleCategory::Oscillator => {
+                        let m = Oscillator::new();
+                        let d = m.descriptor();
+                        (Box::new(m), d, TypedModuleType::Oscillator, None)
+                    }
+                    ModuleCategory::Filter => {
+                        let m = Filter::new();
+                        let d = m.descriptor();
+                        (Box::new(m), d, TypedModuleType::Filter, None)
+                    }
+                    ModuleCategory::Envelope => {
+                        let m = Envelope::new();
+                        let d = m.descriptor();
+                        let pos_buf = m.position_buffer();
+                        (Box::new(m), d, TypedModuleType::Envelope, Some(pos_buf))
+                    }
+                    ModuleCategory::LFO => {
+                        let m = Lfo::new();
+                        let d = m.descriptor();
+                        (Box::new(m), d, TypedModuleType::Lfo, None)
+                    }
+                    ModuleCategory::Amplifier => {
+                        let m = Amplifier::new();
+                        let d = m.descriptor();
+                        (Box::new(m), d, TypedModuleType::Amplifier, None)
+                    }
+                    ModuleCategory::Mixer => {
+                        let m = Mixer::new();
+                        let d = m.descriptor();
+                        (Box::new(m), d, TypedModuleType::Mixer, None)
+                    }
+                    _ => return,
+                };
+                let id = next_id_fn(module_type);
+                let d = desc.clone();
+                editor.add_module_at(id, desc, request.position);
+                if let Some(pos_buf) = envelope_pos {
+                    editor.set_module_envelope_position(id, pos_buf);
+                }
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module,
+                });
+                (id, d)
+            }
+            PaletteSelection::MathOscillator => {
+                let m = MathOscillator::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::MathOscillator);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::SubOscillator => {
+                let m = SubOscillator::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::SubOscillator);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::Noise => {
+                let m = NoiseGenerator::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::Noise);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::WavetableOsc => {
+                let m = synth_modules::WavetableOsc::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::WavetableOsc);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::AdditiveOsc => {
+                let m = synth_modules::AdditiveOsc::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::AdditiveOsc);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::GranularOsc => {
+                let m = synth_modules::GranularOsc::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::GranularOsc);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::RingMod => {
+                let m = synth_modules::RingMod::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::RingMod);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::EnvelopeFollower => {
+                let m = synth_modules::EnvelopeFollower::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::EnvelopeFollower);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::Mseg => {
+                let m = synth_modules::Mseg::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::Mseg);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::KineticModulator => {
+                let m = synth_modules::KineticModulator::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::KineticModulator);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::Euclidean => {
+                let m = synth_modules::Euclidean::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::Euclidean);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::TuringMachine => {
+                let m = synth_modules::TuringMachine::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::TuringMachine);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::RandomGates => {
+                let m = synth_modules::RandomGates::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::RandomGates);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::SignalMonitor => {
+                let mut m = synth_modules::SignalMonitor::new();
+                let d = m.descriptor();
+                let id = next_id_fn(TypedModuleType::SignalMonitor);
+                let dc = d.clone();
+                editor.add_module_at(id, d, request.position);
+
+                let buffer =
+                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(id, buffer.clone());
+                m.set_vis_sink(buffer);
+
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+                (id, dc)
+            }
+            PaletteSelection::Effect(effect_type) => {
+                // Effects use AddEffectInstance, not AddModuleInstance
+                let (effect, desc, module_type): (
+                    Box<dyn synth_core::AudioEffect>,
+                    _,
+                    TypedModuleType,
+                ) = match effect_type {
+                    EffectType::Delay => {
+                        let e = Delay::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Delay)
+                    }
+                    EffectType::Reverb => {
+                        let e = Reverb::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Reverb)
+                    }
+                    EffectType::Distortion => {
+                        let e = Distortion::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Distortion)
+                    }
+                    EffectType::Chorus => {
+                        let e = Chorus::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Chorus)
+                    }
+                    EffectType::Phaser => {
+                        let e = Phaser::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Phaser)
+                    }
+                    EffectType::Flanger => {
+                        let e = Flanger::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Flanger)
+                    }
+                    EffectType::Compressor => {
+                        let e = Compressor::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Compressor)
+                    }
+                    EffectType::Eq => {
+                        let e = Eq::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Eq)
+                    }
+                    EffectType::Waveshaper => {
+                        let e = Waveshaper::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Waveshaper)
+                    }
+                    EffectType::MidSide => {
+                        let e = MidSide::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::MidSide)
+                    }
+                    EffectType::BbdDelay => {
+                        let e = BbdDelay::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::BbdDelay)
+                    }
+                    EffectType::Limiter => {
+                        let e = Limiter::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Limiter)
+                    }
+                    EffectType::Convolver => {
+                        let e = Convolver::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::Convolver)
+                    }
+                    EffectType::PhaseVocoder => {
+                        let e = PhaseVocoder::new();
+                        let d = e.descriptor();
+                        (Box::new(e), d, TypedModuleType::PhaseVocoder)
+                    }
+                };
+                let id = next_id_fn(module_type);
+                let dc = desc.clone();
+                editor.add_module_at(id, desc, request.position);
+                handle.send(EngineCommand::AddEffectInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    effect,
+                });
+                (id, dc)
+            }
+            // These don't make sense in quick-add context
+            PaletteSelection::ModMatrix
+            | PaletteSelection::Visualizer(_)
+            | PaletteSelection::StereoOutput
+            | PaletteSelection::KeyboardPanner
+            | PaletteSelection::BodyResonance
+            | PaletteSelection::MechanicalNoise => return,
+        };
+
+        // Step 2: Find matching port on the new module and create connection
+        let needed_dir = match request.target_direction {
+            WidgetPortDirection::Input => PortDirection::Output,
+            WidgetPortDirection::Output => PortDirection::Input,
+        };
+
+        let Some(new_port_name) = descriptor
+            .ports
+            .iter()
+            .find(|p| p.direction == needed_dir)
+            .map(|p| p.name.clone())
+        else {
+            return;
+        };
+
+        let connection = match request.target_direction {
+            // Target is an input → new module's output connects to target's input
+            WidgetPortDirection::Input => synth_engine::graph::Connection::new(
+                next_id,
+                new_port_name,
+                request.target_module,
+                request.target_port,
+            ),
+            // Target is an output → target's output connects to new module's input
+            WidgetPortDirection::Output => synth_engine::graph::Connection::new(
+                request.target_module,
+                request.target_port,
+                next_id,
+                new_port_name,
+            ),
+        };
+
+        editor.add_connection(connection);
+        handle.send(EngineCommand::Connect {
+            instrument_id: Some(instrument_id),
+            from: PortId::new(connection.from_module, connection.from_port),
+            to: PortId::new(connection.to_module, connection.to_port),
         });
     }
 

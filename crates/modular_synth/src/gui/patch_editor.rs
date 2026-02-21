@@ -110,6 +110,30 @@ pub struct PendingConnection {
     pub current_pos: Pos2,
 }
 
+/// State for a right-click context menu on a port.
+#[derive(Clone)]
+struct PortContextMenuState {
+    module_id: ModuleId,
+    port_name: String,
+    port_type: WidgetPortType,
+    direction: WidgetPortDirection,
+    menu_pos: Pos2,
+}
+
+/// Request to create a new module and auto-connect it to an existing port.
+#[derive(Debug, Clone)]
+pub struct QuickAddRequest {
+    /// What module to create.
+    pub selection: PaletteSelection,
+    /// The existing module/port to connect to.
+    pub target_module: ModuleId,
+    pub target_port: String,
+    /// Direction of the target port (determines connection direction).
+    pub target_direction: WidgetPortDirection,
+    /// Screen position for placing the new module near the port.
+    pub position: Pos2,
+}
+
 /// The main rack view state.
 #[derive(Clone)]
 pub struct PatchEditor {
@@ -142,6 +166,10 @@ pub struct PatchEditor {
     cable_context_menu: Option<(Connection, Pos2)>,
     /// Guards against the opening click also closing the menu on the same frame.
     cable_menu_just_opened: bool,
+    /// Right-click context menu on a port.
+    port_context_menu: Option<PortContextMenuState>,
+    /// Same-frame guard for port context menu.
+    port_menu_just_opened: bool,
 }
 
 impl PatchEditor {
@@ -161,6 +189,8 @@ impl PatchEditor {
             needs_initial_layout: true,
             cable_context_menu: None,
             cable_menu_just_opened: false,
+            port_context_menu: None,
+            port_menu_just_opened: false,
         }
     }
 
@@ -1090,8 +1120,9 @@ impl PatchEditor {
         let time = ui.input(|i| i.time);
         self.draw_connections_foreground(ui, time, &module_rects);
 
-        // Draw cable context menu and handle its actions
+        // Draw context menus and handle their actions
         self.draw_cable_context_menu(ui, &mut result);
+        self.draw_port_context_menu(ui, &mut result);
 
         // Draw pending connection in foreground (less sag for responsive feel)
         if let Some(ref pending) = self.pending_connection {
@@ -1109,10 +1140,11 @@ impl PatchEditor {
             self.selected_module = None;
         }
 
-        // Cancel pending connection with escape (not right click - that's for cable context menu now)
+        // Cancel pending connection / close context menus with escape
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
             self.cable_context_menu = None;
+            self.port_context_menu = None;
         }
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
@@ -1437,6 +1469,327 @@ impl PatchEditor {
         }
     }
 
+    /// Draw the port right-click context menu for quick-adding connected modules.
+    #[allow(clippy::too_many_lines)]
+    fn draw_port_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
+        let Some(ref state) = self.port_context_menu else {
+            self.port_menu_just_opened = false;
+            return;
+        };
+
+        let menu_id = egui::Id::new("port_context_menu");
+        let mut close_menu = false;
+
+        // Clone what we need before mutable borrow
+        let target_module = state.module_id;
+        let target_port = state.port_name.clone();
+        let target_direction = state.direction;
+        let port_type = state.port_type;
+        let menu_pos = state.menu_pos;
+
+        // Position: new module to the left of input ports, right of output ports
+        let offset_x = match target_direction {
+            WidgetPortDirection::Input => -220.0,
+            WidgetPortDirection::Output => 220.0,
+        };
+        let new_module_pos = Pos2::new(menu_pos.x + offset_x, menu_pos.y - 50.0);
+
+        let area_resp = egui::Area::new(menu_id)
+            .order(Order::Foreground)
+            .fixed_pos(menu_pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(theme().colors.bg_panel)
+                    .show(ui, |ui| {
+                        ui.set_min_width(160.0);
+
+                        let header = match target_direction {
+                            WidgetPortDirection::Input => "Lägg till källa",
+                            WidgetPortDirection::Output => "Lägg till mål",
+                        };
+                        ui.label(
+                            egui::RichText::new(header)
+                                .color(theme().colors.text_secondary)
+                                .size(11.0),
+                        );
+                        ui.separator();
+
+                        // Build menu items based on port type + direction
+                        match target_direction {
+                            WidgetPortDirection::Input => {
+                                // Input port: show source modules
+                                match port_type {
+                                    WidgetPortType::Audio => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "Oscillator",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Oscillator,
+                                                    ),
+                                                ),
+                                                ("Sub Osc", PaletteSelection::SubOscillator),
+                                                ("Wavetable", PaletteSelection::WavetableOsc),
+                                                ("Math Osc", PaletteSelection::MathOscillator),
+                                                ("Additive", PaletteSelection::AdditiveOsc),
+                                                ("Granular", PaletteSelection::GranularOsc),
+                                                ("Noise", PaletteSelection::Noise),
+                                                ("Ring Mod", PaletteSelection::RingMod),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Control => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "LFO",
+                                                    PaletteSelection::Category(ModuleCategory::LFO),
+                                                ),
+                                                (
+                                                    "Envelope",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Envelope,
+                                                    ),
+                                                ),
+                                                ("MSEG", PaletteSelection::Mseg),
+                                                ("Kinetic Mod", PaletteSelection::KineticModulator),
+                                                (
+                                                    "Envelope Follower",
+                                                    PaletteSelection::EnvelopeFollower,
+                                                ),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Gate => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                ("Euclidean", PaletteSelection::Euclidean),
+                                                ("Turing Machine", PaletteSelection::TuringMachine),
+                                                ("Random Gates", PaletteSelection::RandomGates),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Midi => {}
+                                }
+                            }
+                            WidgetPortDirection::Output => {
+                                // Output port: show destination modules
+                                match port_type {
+                                    WidgetPortType::Audio => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "Filter",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Filter,
+                                                    ),
+                                                ),
+                                                (
+                                                    "VCA",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Amplifier,
+                                                    ),
+                                                ),
+                                                (
+                                                    "Mixer",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Mixer,
+                                                    ),
+                                                ),
+                                                ("Signal Monitor", PaletteSelection::SignalMonitor),
+                                            ],
+                                        );
+                                        ui.separator();
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "Delay",
+                                                    PaletteSelection::Effect(EffectType::Delay),
+                                                ),
+                                                (
+                                                    "Reverb",
+                                                    PaletteSelection::Effect(EffectType::Reverb),
+                                                ),
+                                                (
+                                                    "Distortion",
+                                                    PaletteSelection::Effect(
+                                                        EffectType::Distortion,
+                                                    ),
+                                                ),
+                                                (
+                                                    "Chorus",
+                                                    PaletteSelection::Effect(EffectType::Chorus),
+                                                ),
+                                                (
+                                                    "Flanger",
+                                                    PaletteSelection::Effect(EffectType::Flanger),
+                                                ),
+                                                (
+                                                    "Phaser",
+                                                    PaletteSelection::Effect(EffectType::Phaser),
+                                                ),
+                                                (
+                                                    "Compressor",
+                                                    PaletteSelection::Effect(
+                                                        EffectType::Compressor,
+                                                    ),
+                                                ),
+                                                ("EQ", PaletteSelection::Effect(EffectType::Eq)),
+                                                (
+                                                    "Waveshaper",
+                                                    PaletteSelection::Effect(
+                                                        EffectType::Waveshaper,
+                                                    ),
+                                                ),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Control => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "VCA",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Amplifier,
+                                                    ),
+                                                ),
+                                                (
+                                                    "Filter",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Filter,
+                                                    ),
+                                                ),
+                                                (
+                                                    "Oscillator",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Oscillator,
+                                                    ),
+                                                ),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Gate => {
+                                        self.port_menu_items(
+                                            ui,
+                                            result,
+                                            &mut close_menu,
+                                            target_module,
+                                            &target_port,
+                                            target_direction,
+                                            new_module_pos,
+                                            &[
+                                                (
+                                                    "Envelope",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Envelope,
+                                                    ),
+                                                ),
+                                                (
+                                                    "VCA",
+                                                    PaletteSelection::Category(
+                                                        ModuleCategory::Amplifier,
+                                                    ),
+                                                ),
+                                            ],
+                                        );
+                                    }
+                                    WidgetPortType::Midi => {}
+                                }
+                            }
+                        }
+                    });
+            });
+
+        // Same-frame guard
+        if self.port_menu_just_opened {
+            self.port_menu_just_opened = false;
+            return;
+        }
+
+        // Close on click outside
+        let menu_rect = area_resp.response.rect;
+        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+        let any_click = ui.input(|i| {
+            i.pointer.button_clicked(egui::PointerButton::Primary)
+                || i.pointer.button_clicked(egui::PointerButton::Secondary)
+        });
+        let clicked_outside =
+            any_click && pointer_pos.map(|p| !menu_rect.contains(p)).unwrap_or(false);
+
+        if close_menu || clicked_outside {
+            self.port_context_menu = None;
+        }
+    }
+
+    /// Helper: render a list of menu buttons that push `QuickAddRequest`s.
+    #[allow(clippy::too_many_arguments)]
+    fn port_menu_items(
+        &self,
+        ui: &mut Ui,
+        result: &mut PatchEditorResult,
+        close_menu: &mut bool,
+        target_module: ModuleId,
+        target_port: &str,
+        target_direction: WidgetPortDirection,
+        position: Pos2,
+        items: &[(&str, PaletteSelection)],
+    ) {
+        for (label, selection) in items {
+            if ui.button(*label).clicked() {
+                result.quick_add_requests.push(QuickAddRequest {
+                    selection: *selection,
+                    target_module,
+                    target_port: target_port.to_owned(),
+                    target_direction,
+                    position,
+                });
+                *close_menu = true;
+            }
+        }
+    }
+
     fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
         let pointer_pos = ui.input(|i| i.pointer.interact_pos());
 
@@ -1482,6 +1835,18 @@ impl PatchEditor {
                             current_pos: pos,
                         });
                     }
+                }
+
+                // Right-click opens port context menu
+                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+                    self.port_context_menu = Some(PortContextMenuState {
+                        module_id: *module_id,
+                        port_name: port_name.clone(),
+                        port_type: port_pos.port_type,
+                        direction: port_pos.direction,
+                        menu_pos: pos,
+                    });
+                    self.port_menu_just_opened = true;
                 }
             }
         }
@@ -1702,6 +2067,8 @@ pub struct PatchEditorResult {
     /// Connections where a Signal Monitor should be inserted.
     /// The backend creates the module and rewires: from→monitor→to.
     pub insert_signal_monitor_at: Vec<Connection>,
+    /// Requests to create a new module and auto-connect to a port.
+    pub quick_add_requests: Vec<QuickAddRequest>,
 }
 
 /// Simplified panel result for parameters only.

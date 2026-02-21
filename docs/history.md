@@ -1,5 +1,27 @@
 # Version History
 
+## [0.145.0] - 2026-02-21
+### Högerklicka på port → Lägg till ny modul med auto-koppling
+
+**Snabb modulbyggnad direkt från portar:**
+- Högerklicka på valfri port öppnar en kontextmeny med relevanta moduler att lägga till
+- Ny modul skapas automatiskt och kopplas till den klickade porten
+- Menyn filtreras baserat på porttyp (Audio/Control/Gate) och riktning (Input/Output)
+
+**Input-portar visar källmoduler:**
+- Audio: Oscillator, Sub Osc, Wavetable, Math Osc, Additive, Granular, Noise, Ring Mod
+- Control: LFO, Envelope, MSEG, Kinetic Modulator, Envelope Follower
+- Gate: Euclidean, Turing Machine, Random Gates
+
+**Output-portar visar destinationsmoduler:**
+- Audio: Filter, VCA, Mixer, Signal Monitor + effekter (Delay, Reverb, Distortion, Chorus, m.fl.)
+- Control: VCA, Filter, Oscillator
+- Gate: Envelope, VCA
+
+**Smart placering:**
+- Nya moduler placeras till vänster om input-portar, till höger om output-portar
+- Escape eller klick utanför stänger menyn
+
 ## [0.144.0] - 2026-02-21
 ### Förbättrade port-beskrivningar med kopplingsförslag
 
