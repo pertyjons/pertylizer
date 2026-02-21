@@ -25,6 +25,23 @@ use super::widgets::{
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
 pub(crate) const GRID_SIZE: f32 = 50.0;
 
+/// Trim sweep data to the last rising-edge crossing so the display
+/// always shows complete waveform cycles (no visual gap at the end).
+///
+/// Scans backwards from the end to find the last point where the signal
+/// crosses `threshold` from below. Returns a slice up to that point.
+/// If no suitable crossing is found (e.g. sub-cycle data), returns all data.
+fn trim_sweep_to_complete_cycles(samples: &[f32], threshold: f32) -> &[f32] {
+    // Need at least a few samples, and don't trim more than 75%
+    let min_len = samples.len() / 4;
+    for i in (min_len.max(1)..samples.len()).rev() {
+        if samples[i - 1] < threshold && samples[i] >= threshold {
+            return &samples[..i];
+        }
+    }
+    samples
+}
+
 /// Snap a position to the nearest grid point.
 fn snap_to_grid(pos: Pos2) -> Pos2 {
     Pos2::new(
@@ -650,10 +667,12 @@ impl PatchEditor {
                                         })
                                         .collect()
                                 };
+                                let samples =
+                                    trim_sweep_to_complete_cycles(&samples, 0.0);
 
                                 super::widgets::draw_oscilloscope(
                                     ui,
-                                    &samples,
+                                    samples,
                                     scope_width,
                                     scope_height,
                                     1.0,
@@ -1935,13 +1954,15 @@ fn draw_module_panel_params(
                 })
                 .collect()
         };
+        let threshold = trigger_level * 2.0 - 1.0;
+        let samples = trim_sweep_to_complete_cycles(&samples, threshold);
 
         let width = ui.available_width().clamp(120.0, 300.0);
         let height = (width * 0.5).clamp(60.0, 120.0);
 
         super::widgets::draw_oscilloscope_with_trigger(
             ui,
-            &samples,
+            samples,
             width,
             height,
             gain,
