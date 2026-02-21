@@ -149,9 +149,9 @@ impl Describable for Lfo {
                     .default(0.0)
                     .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::gate_input("retrigger", "Retrig"))
-            .port(PortDescriptor::control_input("rate_cv", "Rate CV"))
-            .port(PortDescriptor::audio_output("out", "Out"))
+            .port(PortDescriptor::gate_input("retrigger", "Retrig").description("Återstartar LFO-cykeln. Koppla: Envelope Gate, annan LFO, Euclidean Gate"))
+            .port(PortDescriptor::control_input("rate_cv", "Rate CV").description("Modulerar LFO-hastighet. Koppla: annan LFO, Envelope, Kinetic Modulator"))
+            .port(PortDescriptor::audio_output("out", "Out").description("LFO-signal (±1). Koppla till: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV"))
     }
 }
 

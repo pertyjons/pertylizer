@@ -202,10 +202,14 @@ impl Describable for AdditiveOsc {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("freq_cv", "Freq CV")
-                    .description("Frequency CV (1V/oct)"),
+                PortDescriptor::control_input("freq_cv", "Freq CV").description(
+                    "Modulerar tonhöjden (1V/oct). Koppla: LFO, Envelope, Kinetic Modulator",
+                ),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Additive output"))
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Additiv output. Koppla till: Amplifier In, Filter In"),
+            )
     }
 }
 

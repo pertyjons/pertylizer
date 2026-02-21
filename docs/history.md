@@ -1,5 +1,22 @@
 # Version History
 
+## [0.144.0] - 2026-02-21
+### Förbättrade port-beskrivningar med kopplingsförslag
+
+**Informativa tooltips på alla portar:**
+- Alla modulers portar har nu beskrivningar med konkreta kopplingsförslag
+- Format: "Kort beskrivning. Koppla: Modul1, Modul2, Modul3"
+- Hjälper nya användare förstå vad som kan kopplas var
+
+**Uppdaterade moduler:**
+- Oscillator: FM, PM, PWM, X-Mod, Sync — förklarar vad varje ingång gör och föreslår modulationskällor
+- Envelope: Gate, Velocity, Out — med info om automatiska kopplingar och destinationer
+- LFO: Retrig, Rate CV, Out — med förslag på modulationskällor och destinationer
+- Amplifier (VCA): In, In L/R, CV, Pan CV, outputs — förslag på kopplingar
+- Mixer: In 1–8, Out — med förslag på ljudkällor
+- Filter (SVF + Ladder): In, Cutoff CV, Res CV, Out — föreslår Envelope/LFO
+- Kinetic Modulator, Sub Osc, Wavetable, Granular, Math Oscillator, Noise, Ring Mod, Signal Monitor, Additive Osc — alla med kopplingsförslag
+
 ## [0.143.0] - 2026-02-18
 ### Ny — Kompakt Inline Signal Monitor + Polyfoniskt sweep-lås
 

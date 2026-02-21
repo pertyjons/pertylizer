@@ -128,7 +128,10 @@ impl Describable for KineticModulator {
                 .default(1.0)
                 .widget(WidgetHint::Toggle),
             )
-            .port(PortDescriptor::audio_output("out", "Out"))
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Modulationssignal. Koppla till: Oscillator FM, Filter Cutoff CV"),
+            )
     }
 }
 

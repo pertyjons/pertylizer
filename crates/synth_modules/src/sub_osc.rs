@@ -124,7 +124,11 @@ impl Describable for SubOscillator {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
+            .port(
+                PortDescriptor::audio_output("out", "Out").description(
+                    "Sub-oscillator output. Koppla till: Amplifier In, Filter In, Mixer",
+                ),
+            )
     }
 }
 

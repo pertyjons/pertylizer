@@ -477,15 +477,21 @@ impl Describable for MathOscillator {
             )
             // Ports
             .port(
-                PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
+                PortDescriptor::control_input("fm", "FM")
+                    .description("Modulerar tonhöjden. Koppla: LFO, Envelope, annan Oscillator"),
             )
             .port(
-                PortDescriptor::control_input("param_a", "Mod A").description("Param A modulation"),
+                PortDescriptor::control_input("param_a", "Mod A")
+                    .description("Modulerar Param A. Koppla: LFO, Envelope, Kinetic Modulator"),
             )
             .port(
-                PortDescriptor::control_input("param_b", "Mod B").description("Param B modulation"),
+                PortDescriptor::control_input("param_b", "Mod B")
+                    .description("Modulerar Param B. Koppla: LFO, Envelope, Kinetic Modulator"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Audio output"))
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Audio output. Koppla till: Amplifier In, Filter In"),
+            )
     }
 }
 

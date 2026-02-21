@@ -102,14 +102,29 @@ impl Describable for Amplifier {
                 .default(0.0)
                 .widget(WidgetHint::Toggle),
             )
-            .port(PortDescriptor::audio_input("in", "In"))
-            .port(PortDescriptor::audio_input("in_l", "In L"))
-            .port(PortDescriptor::audio_input("in_r", "In R"))
-            .port(PortDescriptor::control_input("cv", "CV"))
-            .port(PortDescriptor::control_input("pan_cv", "Pan CV"))
-            .port(PortDescriptor::audio_output("left", "L"))
-            .port(PortDescriptor::audio_output("right", "R"))
-            .port(PortDescriptor::audio_output("out", "Out"))
+            .port(
+                PortDescriptor::audio_input("in", "In")
+                    .description("Mono-ingång. Koppla: Oscillator Out, Filter Out, annan modul"),
+            )
+            .port(
+                PortDescriptor::audio_input("in_l", "In L")
+                    .description("Vänster kanal. Koppla: Oscillator Out L"),
+            )
+            .port(
+                PortDescriptor::audio_input("in_r", "In R")
+                    .description("Höger kanal. Koppla: Oscillator Out R"),
+            )
+            .port(
+                PortDescriptor::control_input("cv", "CV")
+                    .description("Styr volymen. Koppla: Envelope för dynamik, LFO för tremolo"),
+            )
+            .port(
+                PortDescriptor::control_input("pan_cv", "Pan CV")
+                    .description("Styr panorering. Koppla: LFO för auto-pan, Envelope"),
+            )
+            .port(PortDescriptor::audio_output("left", "L").description("Vänster output"))
+            .port(PortDescriptor::audio_output("right", "R").description("Höger output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Mono output (L+R)"))
     }
 }
 
@@ -283,10 +298,10 @@ impl Describable for Mixer {
             .tag("mixer");
 
         for i in 1..=8 {
-            desc = desc.port(PortDescriptor::audio_input(
-                format!("in{i}"),
-                format!("In {i}"),
-            ));
+            desc = desc.port(
+                PortDescriptor::audio_input(format!("in{i}"), format!("In {i}"))
+                    .description("Audio-ingång. Koppla: Oscillator, Filter, eller annan ljudkälla"),
+            );
         }
 
         desc = desc
@@ -296,7 +311,7 @@ impl Describable for Mixer {
                     .default(1.0)
                     .widget(WidgetHint::Slider),
             )
-            .port(PortDescriptor::audio_output("out", "Out"));
+            .port(PortDescriptor::audio_output("out", "Out").description("Mixad output"));
 
         desc
     }

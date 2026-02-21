@@ -192,7 +192,10 @@ impl Describable for NoiseGenerator {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Noise output"))
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Noise output. Koppla till: Filter In, Amplifier In, Mixer"),
+            )
     }
 }
 

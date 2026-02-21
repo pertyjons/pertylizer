@@ -174,7 +174,10 @@ impl Describable for SignalMonitor {
                 .default(0.5)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
+            .port(
+                PortDescriptor::audio_input("in", "In")
+                    .description("Audio att visa. Koppla in valfri signal för att se vågformen"),
+            )
             .port(
                 PortDescriptor::audio_output("out", "Out")
                     .description("Audio output (pass-through)"),

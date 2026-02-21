@@ -322,13 +322,13 @@ impl Describable for Oscillator {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("fm", "FM").description("Frequency modulation input"),
+                PortDescriptor::control_input("fm", "FM").description("Modulerar tonhöjden. Koppla: LFO för vibrato, Envelope för pitch-sweep, annan Oscillator för FM-syntes"),
             )
-            .port(PortDescriptor::control_input("pm", "PM").description("Phase modulation input"))
-            .port(PortDescriptor::control_input("pwm", "PWM").description("Pulse width modulation"))
+            .port(PortDescriptor::control_input("pm", "PM").description("Modulerar fasen — ger FM-liknande ljud. Koppla: LFO, Envelope, annan Oscillator"))
+            .port(PortDescriptor::control_input("pwm", "PWM").description("Modulerar pulsbredd (square/pulse). Koppla: LFO för klassiskt PWM-ljud, Envelope"))
             .port(
                 PortDescriptor::control_input("cross_mod", "X-Mod")
-                    .description("Cross-modulation input from another oscillator"),
+                    .description("Korsmuterar frekvensen med en annan oscillator. Koppla: annan Oscillator för metalliska/klockljud"),
             )
             .parameter(
                 ParameterDescriptor::float(
@@ -340,7 +340,7 @@ impl Describable for Oscillator {
                 .default(0.0)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::gate_input("sync", "Sync").description("Hard sync input"))
+            .port(PortDescriptor::gate_input("sync", "Sync").description("Återställer fasen vid gate. Koppla: annan Oscillators output för hard sync-ljud"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))

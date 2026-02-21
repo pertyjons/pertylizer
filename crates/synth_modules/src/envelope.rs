@@ -395,9 +395,17 @@ impl Describable for Envelope {
                 .default(0.0)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::gate_input("gate", "Gate"))
-            .port(PortDescriptor::control_input("velocity", "Vel"))
-            .port(PortDescriptor::audio_output("out", "Out"))
+            .port(
+                PortDescriptor::gate_input("gate", "Gate")
+                    .description("Startar/släpper envelopet. Automatisk från tangentbord"),
+            )
+            .port(
+                PortDescriptor::control_input("velocity", "Vel")
+                    .description("Anslagsstyrka. Automatisk från tangentbord"),
+            )
+            .port(PortDescriptor::audio_output("out", "Out").description(
+                "Envelope-signal (0–1). Koppla till: Filter Cutoff CV, Amplifier CV, Oscillator FM",
+            ))
     }
 }
 

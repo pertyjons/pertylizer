@@ -290,16 +290,21 @@ impl Describable for Filter {
                     .default(1.0)
                     .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_input("in", "In").description("Audio input"))
             .port(
-                PortDescriptor::control_input("cutoff_cv", "Cutoff CV")
-                    .description("Cutoff modulation"),
+                PortDescriptor::audio_input("in", "In").description(
+                    "Audio att filtrera. Koppla: Oscillator Out, Noise Out, Mixer Out",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description(
+                    "Modulerar cutoff-frekvens. Koppla: Envelope för filter-sweep, LFO för wah-wah",
+                ),
             )
             .port(
                 PortDescriptor::control_input("res_cv", "Res CV")
-                    .description("Resonance modulation"),
+                    .description("Modulerar resonans. Koppla: LFO, Envelope"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Filtered output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Filtrerad output"))
     }
 }
 
@@ -543,9 +548,16 @@ impl Describable for LadderFilter {
                     .unit(ParameterUnit::None)
                     .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_input("in", "In"))
-            .port(PortDescriptor::control_input("cutoff_cv", "Cutoff CV"))
-            .port(PortDescriptor::audio_output("out", "Out"))
+            .port(
+                PortDescriptor::audio_input("in", "In")
+                    .description("Audio att filtrera. Koppla: Oscillator Out, Noise Out"),
+            )
+            .port(
+                PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description(
+                    "Modulerar cutoff-frekvens. Koppla: Envelope för filter-sweep, LFO för wah-wah",
+                ),
+            )
+            .port(PortDescriptor::audio_output("out", "Out").description("Filtrerad output"))
     }
 }
 

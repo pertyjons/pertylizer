@@ -354,7 +354,10 @@ impl Describable for GranularOsc {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Granular output"))
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Granulär output. Koppla till: Amplifier In, Filter In"),
+            )
     }
 }
 
