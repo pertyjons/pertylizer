@@ -641,13 +641,7 @@ impl PatchEditor {
                                 ui.set_width(scope_width);
                                 let vis_buffer = handle.get_visualization_buffer(module_id);
                                 let samples = if let Some(buffer) = vis_buffer {
-                                    let (left, _right) = buffer.read_samples();
-                                    let step = left.len().max(1) / 128;
-                                    if step > 0 {
-                                        left.into_iter().step_by(step.max(1)).take(128).collect()
-                                    } else {
-                                        left
-                                    }
+                                    buffer.read_sweep().unwrap_or_default()
                                 } else {
                                     (0..128)
                                         .map(|i| {
@@ -1932,13 +1926,7 @@ fn draw_module_panel_params(
         let trigger_level = state.param_values.get("Trig").copied().unwrap_or(0.5);
 
         let samples = if let Some(buffer) = vis_buffer {
-            let (left, _right) = buffer.read_samples();
-            let step = left.len().max(1) / 256;
-            if step > 0 {
-                left.into_iter().step_by(step.max(1)).take(256).collect()
-            } else {
-                left
-            }
+            buffer.read_sweep().unwrap_or_default()
         } else {
             (0..256)
                 .map(|i| {

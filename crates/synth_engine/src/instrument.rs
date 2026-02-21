@@ -22,7 +22,7 @@ use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
-    SampleCount, SampleRate, Seconds, Semitones, SoloState, Velocity,
+    SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState, Velocity,
 };
 use synth_dsp::oversampling::{Downsampler, OversamplingFactor};
 
@@ -913,8 +913,14 @@ impl Instrument {
                 temp_left.clear();
                 temp_right.clear();
 
+                // Create per-voice context with voice_start_time for sweep arbitration
+                let voice_context = ProcessContext {
+                    voice_start_time: voice.state.start_time().unwrap_or(SamplePosition::ZERO),
+                    ..os_context
+                };
+
                 // Process the voice signal chain at oversampled rate
-                voice.process_audio(&mut temp_left, &mut temp_right, &os_context);
+                voice.process_audio(&mut temp_left, &mut temp_right, &voice_context);
 
                 // Apply stealing fade-out if needed (at oversampled rate)
                 if let VoiceState::Stealing {
@@ -1005,8 +1011,14 @@ impl Instrument {
                 temp_left.clear();
                 temp_right.clear();
 
+                // Create per-voice context with voice_start_time for sweep arbitration
+                let voice_context = ProcessContext {
+                    voice_start_time: voice.state.start_time().unwrap_or(SamplePosition::ZERO),
+                    ..*context
+                };
+
                 // Process the voice signal chain
-                voice.process_audio(&mut temp_left, &mut temp_right, context);
+                voice.process_audio(&mut temp_left, &mut temp_right, &voice_context);
 
                 // Apply stealing fade-out if needed
                 if let VoiceState::Stealing {

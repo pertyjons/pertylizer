@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use crate::params::{ModuleType, Param};
 pub use crate::types::{
-    BeatPosition, Bpm, MidiNote, NormalizedValue, SampleCount, SampleRate, ValueRange, Velocity,
+    BeatPosition, Bpm, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
+    ValueRange, Velocity,
 };
 
 // ============================================================================
@@ -225,6 +226,8 @@ pub struct ProcessContext {
     pub is_playing: bool,
     /// Current position in beats (type-safe).
     pub position_beats: BeatPosition,
+    /// Start time of the voice that is processing (for sweep arbitration).
+    pub voice_start_time: SamplePosition,
 }
 
 impl Default for ProcessContext {
@@ -235,6 +238,7 @@ impl Default for ProcessContext {
             tempo: Bpm::DEFAULT,
             is_playing: false,
             position_beats: BeatPosition::ZERO,
+            voice_start_time: SamplePosition::ZERO,
         }
     }
 }
@@ -975,4 +979,14 @@ pub trait VisualizationSink: Send + Sync {
     ///
     /// Must be non-blocking from the audio thread (use `try_lock` internally).
     fn write_vis_samples(&self, left: &[f32], right: &[f32]);
+
+    /// Write a complete sweep for triggered oscilloscope display.
+    ///
+    /// The `voice_start_time` is used for arbitration: only the most recently
+    /// started voice wins. Returns `true` if the sweep was accepted.
+    ///
+    /// Must be non-blocking from the audio thread (use `try_lock` internally).
+    fn write_sweep(&self, _samples: &[f32], _voice_start_time: u64) -> bool {
+        false
+    }
 }

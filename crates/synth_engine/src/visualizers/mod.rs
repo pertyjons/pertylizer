@@ -13,7 +13,7 @@ pub use spectrum_analyzer::SpectrumAnalyzer;
 
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Atomic float wrapper for lock-free level sharing.
 #[derive(Debug)]
@@ -58,6 +58,16 @@ pub struct VisualizationBuffer {
     snapshot_l: parking_lot::Mutex<Vec<f32>>,
     snapshot_r: parking_lot::Mutex<Vec<f32>>,
 
+    // Sweep data for triggered oscilloscope display (SignalMonitor)
+    /// Pre-allocated sweep buffer. Written by audio thread (try_lock),
+    /// read by GUI thread (blocking lock).
+    sweep_data: parking_lot::Mutex<Vec<f32>>,
+    /// Generation counter bumped on each successful sweep write.
+    sweep_generation: AtomicU32,
+    /// `voice_start_time` of the last voice that wrote a sweep.
+    /// Used for "newest voice wins" arbitration.
+    sweep_last_writer: AtomicU64,
+
     // Sample playback visualization data (lock-free)
     /// Normalized playback position (0.0-1.0).
     sample_position: AtomicF32,
@@ -97,6 +107,10 @@ impl VisualizationBuffer {
             rms_r: AtomicF32::new(0.0),
             snapshot_l: parking_lot::Mutex::new(vec![0.0; size]),
             snapshot_r: parking_lot::Mutex::new(vec![0.0; size]),
+            // Sweep buffer pre-allocated with generous capacity
+            sweep_data: parking_lot::Mutex::new(Vec::with_capacity(8192)),
+            sweep_generation: AtomicU32::new(0),
+            sweep_last_writer: AtomicU64::new(0),
             // Sample playback visualization defaults
             sample_position: AtomicF32::new(0.0),
             sample_loop_start: AtomicF32::new(0.0),
@@ -312,6 +326,20 @@ impl VisualizationBuffer {
     pub fn get_sample_position(&self) -> f32 {
         self.sample_position.load()
     }
+
+    /// Read the latest sweep data (called from GUI thread).
+    ///
+    /// Returns `None` if no sweep has been written yet.
+    /// Blocking lock is OK here — only the GUI thread calls this.
+    #[must_use]
+    pub fn read_sweep(&self) -> Option<Vec<f32>> {
+        let data = self.sweep_data.lock();
+        if data.is_empty() {
+            None
+        } else {
+            Some(data.clone())
+        }
+    }
 }
 
 impl Default for VisualizationBuffer {
@@ -324,12 +352,43 @@ impl Default for VisualizationBuffer {
 // but we can create a new buffer with the same size
 impl Clone for VisualizationBuffer {
     fn clone(&self) -> Self {
-        Self::new(self.size)
+        let new = Self::new(self.size);
+        // Copy sweep data if any
+        if let Some(data) = self.sweep_data.try_lock()
+            && let Some(mut new_data) = new.sweep_data.try_lock()
+        {
+            new_data.clear();
+            new_data.extend_from_slice(&data);
+        }
+        new
     }
 }
 
 impl synth_core::VisualizationSink for VisualizationBuffer {
     fn write_vis_samples(&self, left: &[f32], right: &[f32]) {
         self.write_samples(left, right);
+    }
+
+    fn write_sweep(&self, samples: &[f32], voice_start_time: u64) -> bool {
+        // "Newest voice wins": only accept if this voice started at or after
+        // the last writer. Uses Relaxed ordering — exact ordering between
+        // concurrent voices is not critical for visualization.
+        let last = self.sweep_last_writer.load(Ordering::Relaxed);
+        if voice_start_time < last {
+            return false;
+        }
+
+        // try_lock: RT-safe, never blocks the audio thread
+        if let Some(mut data) = self.sweep_data.try_lock() {
+            self.sweep_last_writer
+                .store(voice_start_time, Ordering::Relaxed);
+            // clear + extend reuses existing capacity (no allocation)
+            data.clear();
+            data.extend_from_slice(samples);
+            self.sweep_generation.fetch_add(1, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
 }

@@ -1657,6 +1657,7 @@ impl AudioProcessor for SynthEngine {
             tempo: Bpm::new(self.state.transport.get_tempo()),
             is_playing: self.state.transport.is_playing(),
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
+            voice_start_time: synth_core::SamplePosition::ZERO,
         };
 
         // Process sequencer events

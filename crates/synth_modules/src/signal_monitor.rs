@@ -5,21 +5,19 @@
 //! anywhere in the voice graph to inspect the waveform.
 //!
 //! Uses rising-edge trigger detection for stable waveform display.
-//! Only one voice at a time can write to the visualization buffer.
 //!
-//! **Key design:** Sweep data is accumulated in a local pre-allocated
-//! buffer. Only when a sweep is *complete* does it get flushed to the
-//! shared visualization sink. A shared `AtomicU32` generation counter
-//! ensures that if another voice triggers mid-sweep, the old voice
-//! detects the generation mismatch and discards its partial data.
-//! This guarantees the GUI only ever sees clean, single-voice waveforms.
+//! **Key design:** Each voice independently captures sweeps into a
+//! local pre-allocated buffer. When a sweep completes, it is flushed
+//! via `write_sweep()` which uses "newest voice wins" arbitration
+//! based on `voice_start_time` from the `ProcessContext`. This avoids
+//! the polyphony collision problem where multi-block sweeps were
+//! discarded due to generation counter bumps from other voices.
 //!
 //! The visualization buffer is injected from the GUI layer via
 //! `set_vis_sink()` since this crate cannot depend on `synth_engine`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, InputPorts, ModuleCategory, ModuleDescriptor,
@@ -31,22 +29,16 @@ use synth_core::{
 /// Signal Monitor — inline waveform visualizer for the voice graph.
 ///
 /// Pass-through module: copies input to output without modification.
-/// Captures gain-scaled samples to a shared visualization sink for GUI display.
+/// Captures samples to a shared visualization sink for GUI display.
 /// Uses rising-edge trigger detection for a stable oscilloscope view.
 ///
-/// **Polyphony handling:** All voice clones share a `sweep_generation` counter.
-/// Sweep data is buffered locally — only complete sweeps from the current
-/// generation owner are flushed to the shared visualization sink.
+/// **Polyphony handling:** Each voice captures sweeps independently.
+/// At flush time, `write_sweep()` uses `voice_start_time` for
+/// "newest voice wins" arbitration — no shared generation counter needed.
 pub struct SignalMonitor {
     /// Shared visualization sink (injected from GUI layer via Arc).
     /// All voice clones share the same sink via Arc.
     vis_sink: Option<Arc<dyn VisualizationSink>>,
-    /// Shared sweep generation counter — incremented each time any voice
-    /// starts a new sweep. The voice whose `my_sweep_gen` matches the
-    /// current value is the sole writer.
-    sweep_generation: Arc<AtomicU32>,
-    /// The generation this voice claimed when it started its current sweep.
-    my_sweep_gen: u32,
     /// Time scale — how many seconds of audio to display.
     time_scale: Seconds,
     /// Vertical gain for the display.
@@ -86,8 +78,6 @@ impl SignalMonitor {
 
         Self {
             vis_sink: None,
-            sweep_generation: Arc::new(AtomicU32::new(0)),
-            my_sweep_gen: 0,
             time_scale,
             gain: Gain::UNITY,
             trigger_level: NormalizedValue::CENTER,
@@ -117,12 +107,6 @@ impl SignalMonitor {
         // Ensure sweep_buffer has capacity (no allocation during process)
         self.sweep_buffer.resize(samples.max(1), 0.0);
     }
-
-    /// Check whether this voice still owns the current sweep.
-    #[inline]
-    fn i_own_sweep(&self) -> bool {
-        self.my_sweep_gen == self.sweep_generation.load(Ordering::Relaxed)
-    }
 }
 
 impl Default for SignalMonitor {
@@ -134,11 +118,8 @@ impl Default for SignalMonitor {
 impl Clone for SignalMonitor {
     fn clone(&self) -> Self {
         Self {
-            // Arc clone: all voice clones share the same sink and generation counter
+            // Arc clone: all voice clones share the same sink
             vis_sink: self.vis_sink.clone(),
-            sweep_generation: self.sweep_generation.clone(),
-            // Generation 0 will never match after any voice has triggered
-            my_sweep_gen: 0,
             time_scale: self.time_scale,
             gain: self.gain,
             trigger_level: self.trigger_level,
@@ -231,7 +212,6 @@ impl PolyModule for SignalMonitor {
         }
 
         let threshold = self.trigger_level.as_f32() * 2.0 - 1.0;
-        let gain = self.gain.as_f32();
         let max_samples = self.display_samples.as_usize();
 
         for i in 0..num_samples {
@@ -241,39 +221,29 @@ impl PolyModule for SignalMonitor {
                 // Rising-edge detection
                 let prev = self.prev_sample.as_f32();
                 if prev < threshold && sample >= threshold {
-                    // Claim the sweep by bumping the shared generation counter.
-                    let new_gen = self
-                        .sweep_generation
-                        .fetch_add(1, Ordering::Relaxed)
-                        .wrapping_add(1);
-                    self.my_sweep_gen = new_gen;
                     self.triggered = true;
                     self.capture_count = SampleCount::ZERO;
                 }
             }
 
             if self.triggered {
-                if !self.i_own_sweep() {
-                    // Another voice bumped the generation — discard our partial data
-                    self.triggered = false;
-                } else {
-                    let idx = self.capture_count.as_usize();
-                    if idx < max_samples && idx < self.sweep_buffer.len() {
-                        self.sweep_buffer[idx] = sample * gain;
-                        self.capture_count = SampleCount::new(idx + 1);
-                    }
+                let idx = self.capture_count.as_usize();
+                if idx < max_samples && idx < self.sweep_buffer.len() {
+                    // Store raw sample — gain is applied in the GUI
+                    self.sweep_buffer[idx] = sample;
+                    self.capture_count = SampleCount::new(idx + 1);
+                }
 
-                    if self.capture_count.as_usize() >= max_samples {
-                        // Sweep complete — flush entire buffer to vis sink at once
-                        if let Some(ref sink) = self.vis_sink {
-                            let count = max_samples.min(self.sweep_buffer.len());
-                            sink.write_vis_samples(
-                                &self.sweep_buffer[..count],
-                                &self.sweep_buffer[..count],
-                            );
-                        }
-                        self.triggered = false;
+                if self.capture_count.as_usize() >= max_samples {
+                    // Sweep complete — flush via write_sweep (newest voice wins)
+                    if let Some(ref sink) = self.vis_sink {
+                        let count = max_samples.min(self.sweep_buffer.len());
+                        sink.write_sweep(
+                            &self.sweep_buffer[..count],
+                            context.voice_start_time.as_u64(),
+                        );
                     }
+                    self.triggered = false;
                 }
             }
 
@@ -394,20 +364,6 @@ mod tests {
 
         let params = sm.get_params();
         assert_eq!(params.len(), 4);
-    }
-
-    #[test]
-    fn test_sweep_generation_prevents_concurrent_writes() {
-        let sm = SignalMonitor::new();
-        let cloned = sm.clone();
-
-        // Both share the same generation counter
-        assert!(Arc::ptr_eq(&sm.sweep_generation, &cloned.sweep_generation));
-
-        // After first voice triggers, generation becomes 1
-        // Clone's my_sweep_gen (0) no longer matches → can't write
-        sm.sweep_generation.fetch_add(1, Ordering::Relaxed);
-        assert!(!cloned.i_own_sweep());
     }
 
     #[test]
