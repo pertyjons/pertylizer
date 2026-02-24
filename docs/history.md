@@ -1,5 +1,15 @@
 # Version History
 
+## [0.150.0] - 2026-02-24
+### Fixa buggar i exempelpatchar
+
+**10 patchar fixade** via MCP-driven testning (alla 44 passerar nu utan fel):
+
+- **8 patchar med redundant modulering:** Tog bort kablar som dubblerade ModMatrix-routing (env/lfo → filter cutoff_cv). Berörda: Fluid Keys, Acid Bass, Screamer Lead, Waveshaper Lead, Unison Supersaw, Glitch Pad, Fluid Pad, Unison Sync Lead
+- **Unison Sync Lead:** Waveshaper är effektkedjemodul — kan inte kopplas inline i voice graph. Fixat: osc→flt direkt, waveshaper appliceras automatiskt via effektkedjan
+- **FM Bell:** Oscillator har ingen "cv"-port. Fixat: lade till amp-2 som envelopperar modulatorsignalen (osc-2 → amp-1 → osc-1 fm), korrekt FM-djupskontroll med env-1
+- **Warm Evolving:** lfo-2 var definierad men aldrig kopplad. Fixat: lfo-2 → flt-1 cutoff_cv (morph_cv finns inte som filterport)
+
 ## [0.149.0] - 2026-02-24
 ### MCP: Exempelpatchar + UI-snapshot
 

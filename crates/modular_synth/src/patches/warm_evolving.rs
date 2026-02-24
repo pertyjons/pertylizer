@@ -24,7 +24,7 @@ coloring the sound too much. Deep reverb creates an immersive space.
 
 MODULATION:
 - LFO 1 -> Wavetable Position CV (very slow timbral drift)
-- LFO 2 -> Filter Morph (subtle filter movement)
+- LFO 2 -> Filter Cutoff CV (subtle filter movement)
 - Env 1 -> Amplifier (very slow fade in/out)
 
 TRY: Hold long notes and listen to the slow evolution.
@@ -122,6 +122,7 @@ Layer multiple notes for rich ambient textures.
     // Connections
     patch.add_connection("wtb-1", "out", "flt-1", "in");
     patch.add_connection("lfo-1", "out", "wtb-1", "pos_cv");
+    patch.add_connection("lfo-2", "out", "flt-1", "cutoff_cv");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");

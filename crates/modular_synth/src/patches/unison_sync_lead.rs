@@ -14,7 +14,7 @@ pub fn patch_unison_sync_lead() -> Patch {
         r#"
 SIGNAL FLOW:
 Osc 1 (Slave, 3-voice unison saw) --sync from--> Osc 2 (Master, square)
-  -> Waveshaper (Soft Clip) -> Filter (Lowpass) -> Amplifier -> Output
+  -> Filter (Lowpass) -> Amplifier -> Waveshaper (effect chain) -> Output
 
 TECHNIQUE:
 Hard sync locks the slave oscillator's phase to the master. The slave
@@ -22,8 +22,8 @@ Hard sync locks the slave oscillator's phase to the master. The slave
 (mono). This creates a thick, focused sync tone without stereo widening
 — perfect for a cutting mono lead.
 
-The waveshaper adds soft-clip saturation for extra grit, and the
-envelope-modulated filter sweeps the sync harmonic content.
+The waveshaper in the effect chain adds soft-clip saturation for extra
+grit, and the envelope-modulated filter sweeps the sync harmonic content.
 
 Osc 2 runs at a slightly different frequency to create the characteristic
 sync sweep. The Mod Matrix routes the filter envelope to osc-1 frequency
@@ -141,12 +141,12 @@ Increase unison detune for a rougher, more aggressive texture.
     );
 
     // Connections
+    // Note: Waveshaper is an effect chain module — post-processing applied automatically.
+    // Note: env-2 -> filter cutoff is routed via Mod Matrix, no cable needed.
     patch.add_connection("osc-2", "out", "osc-1", "sync"); // Hard sync
-    patch.add_connection("osc-1", "out", "wsh-1", "in");
-    patch.add_connection("wsh-1", "out", "flt-1", "in");
+    patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 

@@ -124,7 +124,8 @@
       "Bash(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}\\\\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\\\\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\\\\n' | timeout 5 target/debug/synth-mcp-bridge 2>&1)",
       "Bash(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}\\\\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\\\\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"note_on\",\"arguments\":{\"note\":60,\"velocity\":100}}}\\\\n' | timeout 3 target/debug/synth-mcp-bridge 2>&1)",
       "Bash(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}\\\\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\\\\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"note_on\",\"arguments\":{\"note\":60,\"velocity\":100}}}\\\\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"note_on\",\"arguments\":{\"note\":64,\"velocity\":100}}}\\\\n{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"note_on\",\"arguments\":{\"note\":67,\"velocity\":100}}}\\\\n' | timeout 3 target/debug/synth-mcp-bridge 2>&1)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(which mold:*)"
     ],
     "deny": [],
     "ask": []

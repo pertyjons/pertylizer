@@ -16,9 +16,10 @@ frequency of another (the carrier), creating complex harmonics.
 
 FM BASICS:
 - Carrier (OSC1): Sine wave - the sound you actually hear
-- Modulator (OSC2): Sine wave - modulates OSC1's frequency
-- When OSC2's output connects to OSC1's FM input, the carrier's
-  frequency wobbles, creating sidebands (new harmonics)
+- Modulator (OSC2): Sine wave - modulates OSC1's frequency via AMP1
+- AMP1 envelopes the modulator signal (ENV1 controls FM depth decay)
+- When the enveloped modulator connects to OSC1's FM input,
+  the carrier's frequency wobbles, creating sidebands (new harmonics)
 
 BELL CHARACTER:
 Bells have inharmonic partials (frequencies that aren't simple
@@ -85,9 +86,17 @@ more "chime-like", lower notes more "gong-like".
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Modulator Amplifier - Envelopes FM depth (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::Amplifier)
+            .position(150.0, 50.0)
+            .param_f("level", 0.8)
+            .build(),
+    );
+
+    // Carrier Amplifier (amp-2)
+    patch.add_module(
+        ModuleBuilder::new(2, PatchModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -121,12 +130,14 @@ more "chime-like", lower notes more "gong-like".
     );
 
     // Connections (using string IDs: type-instance)
-    patch.add_connection("osc-2", "out", "osc-1", "fm");
-    patch.add_connection("env-1", "out", "osc-2", "cv"); // Envelope controls modulator level
-    patch.add_connection("osc-1", "out", "amp-1", "in");
-    patch.add_connection("env-2", "out", "amp-1", "cv");
-    // Voice output: amp -> stereo output (effects handled via effect chain)
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    // FM routing: osc-2 -> amp-1 (envelope controls FM depth) -> osc-1 fm input
+    patch.add_connection("osc-2", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "out", "osc-1", "fm");
+    // Carrier -> output amp -> stereo output (effects handled via effect chain)
+    patch.add_connection("osc-1", "out", "amp-2", "in");
+    patch.add_connection("env-2", "out", "amp-2", "cv");
+    patch.add_connection("amp-2", "left", "out-1", "in_l");
+    patch.add_connection("amp-2", "right", "out-1", "in_r");
     patch
 }

@@ -9,14 +9,16 @@ Start the modular synth with MCP support enabled.
 
 ## Steps
 
-1. Check if port 9850 is already in use:
+1. Check if a synth is already running on port 9850 and kill it:
    ```bash
-   ss -tlnp | grep 9850
+   PID=$(ss -tlnp | grep 9850 | grep -oP 'pid=\K\d+')
+   if [ -n "$PID" ]; then
+     kill "$PID"
+     sleep 1
+   fi
    ```
 
-2. If a synth is already running on port 9850, ask the user if they want to kill it and restart.
-
-3. Build and run with MCP feature:
+2. Build and run with MCP feature:
    ```bash
    cargo run --features mcp
    ```

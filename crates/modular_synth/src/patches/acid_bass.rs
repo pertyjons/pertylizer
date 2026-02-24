@@ -112,10 +112,10 @@ Switch filter type to BP for a thinner, more nasal acid sound.
     );
 
     // Connections
+    // Note: env-2 -> filter cutoff is routed via Mod Matrix, no cable needed.
     patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 
