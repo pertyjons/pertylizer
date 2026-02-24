@@ -214,7 +214,13 @@ impl SynthBridge for AppSynthBridge {
                 .iter()
                 .any(|c| c.from_module.to_string() == id_str);
 
-            if !has_input && !has_output {
+            // ModMatrix and KineticModulator work via parameters, not cables
+            let works_via_params = matches!(
+                module.id.module_type,
+                synth_core::ModuleType::ModMatrix | synth_core::ModuleType::KineticModulator
+            );
+
+            if !has_input && !has_output && !works_via_params {
                 diagnostics.push(GraphDiagnostic {
                     severity: DiagnosticSeverity::Warning,
                     module_id: Some(id_str.clone()),
