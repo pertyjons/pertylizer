@@ -146,9 +146,7 @@ synth_mcp (crate)              modular_synth
 
 ## Kända begränsningar
 
-- `signal_level` i kopplingar är alltid 0.0 — infrastrukturen finns men populeras inte ännu
 - Bara ett instrument (ID 0) exponeras — multi-instrument kräver ytterligare shared state
-- `effect_count` är alltid 0 — effektkedjan exponeras inte via MCP
 
 ## Fas 2: Topologiändring (planerad)
 

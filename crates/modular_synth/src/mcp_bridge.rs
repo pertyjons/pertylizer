@@ -145,7 +145,6 @@ impl SynthBridge for AppSynthBridge {
                 from_port: c.from_port,
                 to_module: c.to_module.to_string(),
                 to_port: c.to_port,
-                signal_level: c.signal_level,
             })
             .collect())
     }

@@ -60,8 +60,6 @@ pub struct ConnectionInfo {
     pub to_module: String,
     /// Destination port name.
     pub to_port: String,
-    /// Current signal level (0.0-1.0).
-    pub signal_level: f32,
 }
 
 /// Engine status information.

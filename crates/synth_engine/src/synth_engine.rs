@@ -1563,20 +1563,16 @@ impl SynthEngine {
             }
         }
 
-        // Build connection snapshots with signal levels
+        // Build connection snapshots
         let connections: Vec<ConnectionSnapshot> = graph
             .connections()
             .map(|c| {
-                let mut snap = ConnectionSnapshot::new(
+                ConnectionSnapshot::new(
                     c.from_module,
                     c.from_port.as_str().to_string(),
                     c.to_module,
                     c.to_port.as_str().to_string(),
-                );
-                if let Some(level) = graph.get_output_peak(c.from_module, c.from_port.as_str()) {
-                    snap.signal_level = level;
-                }
-                snap
+                )
             })
             .collect();
         shared.set_connections(connections);

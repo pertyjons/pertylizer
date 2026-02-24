@@ -244,8 +244,6 @@ pub struct ConnectionSnapshot {
     pub to_module: ModuleId,
     /// Destination port name.
     pub to_port: String,
-    /// Current signal level through this connection (for animated cables).
-    pub signal_level: f32,
 }
 
 impl ConnectionSnapshot {
@@ -261,7 +259,6 @@ impl ConnectionSnapshot {
             from_port,
             to_module,
             to_port,
-            signal_level: 0.0,
         }
     }
 }
@@ -435,28 +432,6 @@ impl SharedGraphState {
             module.output_levels.insert(port, level);
             // Don't bump version for level updates (too frequent)
         }
-    }
-
-    /// Update a connection's signal level.
-    pub fn update_connection_level(
-        &self,
-        from_module: ModuleId,
-        from_port: &str,
-        to_module: ModuleId,
-        to_port: &str,
-        level: f32,
-    ) {
-        for conn in self.connections.write().iter_mut() {
-            if conn.from_module == from_module
-                && conn.from_port == from_port
-                && conn.to_module == to_module
-                && conn.to_port == to_port
-            {
-                conn.signal_level = level;
-                break;
-            }
-        }
-        // Don't bump version for level updates (too frequent)
     }
 }
 

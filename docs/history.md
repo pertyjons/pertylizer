@@ -15,8 +15,10 @@
 **Ny delad state:** `PendingMcpOp` — kö för MCP→GUI-operationer (AddModule, RemoveModule, Connect, Disconnect), pollas varje frame av GUI.
 
 **Buggfixar:**
-- `signal_level` i `ConnectionSnapshot` populeras nu från output-bufferns peak-nivå (var alltid 0.0)
 - `effect_count` i `InstrumentInfo` läser nu från `EngineState` (var hårdkodat till 0)
+
+**Borttaget:**
+- `signal_level` fältet i `ConnectionSnapshot` och `ConnectionInfo` (GUI använder separat `CableVisualState`-system, MCP-fältet var redundant och alltid 0 under uppspelning)
 
 **Nya bridge-typer:** `ModuleTypeInfo`, `PendingMcpOp`, `InvalidModuleType`-felvariant
 
