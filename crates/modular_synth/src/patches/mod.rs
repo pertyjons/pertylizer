@@ -26,6 +26,7 @@ mod karplus_guitar;
 mod kinetic_pad;
 mod kinetic_pluck;
 mod metallic_bell;
+mod moog_resonant_sweep;
 mod noise_sweep;
 mod pluck_synth;
 mod punchy_stab;
@@ -71,6 +72,7 @@ pub use karplus_guitar::patch_karplus_guitar;
 pub use kinetic_pad::patch_kinetic_pad;
 pub use kinetic_pluck::patch_kinetic_pluck;
 pub use metallic_bell::patch_metallic_bell;
+pub use moog_resonant_sweep::patch_moog_resonant_sweep;
 pub use noise_sweep::patch_noise_sweep;
 pub use pluck_synth::patch_pluck_synth;
 pub use punchy_stab::patch_punchy_stab;
@@ -135,6 +137,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             "\u{1f3b5} Lead",
             vec![
                 patch_vintage_lead(),
+                patch_moog_resonant_sweep(),
                 patch_expressive_lead(),
                 patch_waveshaper_lead(),
                 patch_screamer_lead(),

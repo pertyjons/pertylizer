@@ -1,5 +1,16 @@
 # Version History
 
+## [0.155.0] - 2026-02-25
+### Ny exempelpatch: Moog Resonant Sweep
+
+**Ny patch:** "Moog Resonant Sweep" — fat Moog-inspirerad lead/bass med:
+- Dubbla detunade sågtandsosc + sub-osc en oktav ner
+- Ladder-filter med hög resonans (0.55), 6000Hz envelope-sweep, drive 1.8
+- LFO-wobble på filtret (1.8Hz triangle)
+- Chorus + reverb-effekter
+
+Tillagd i Lead-kategorin i patch-browsern.
+
 ## [0.154.0] - 2026-02-25
 ### MCP: Portvalidering i connect/disconnect
 
