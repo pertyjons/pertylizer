@@ -1,12 +1,11 @@
 //! Cable drawing utilities with orthogonal routing and animated flow particles.
 //!
 //! Cables are drawn as right-angle lines (horizontal→vertical→horizontal)
-//! matching the left-to-right signal flow of the auto-layout. The routing
-//! algorithm avoids crossing module rectangles by placing vertical segments
-//! in the gaps between module columns. Animated particles along the cables
-//! show signal direction and activity.
+//! matching the left-to-right signal flow of the auto-layout. Cables are
+//! rendered behind modules and take the shortest orthogonal path.
+//! Animated particles along the cables show signal direction and activity.
 
-use eframe::egui::{Color32, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{Color32, Pos2, Stroke, Vec2};
 
 use super::port::WidgetPortType;
 use crate::gui::theme::theme;
@@ -23,6 +22,9 @@ const STRAIGHT_THRESHOLD: f32 = 8.0;
 /// Vertical margin above/below modules when routing around them.
 const BYPASS_MARGIN: f32 = 20.0;
 
+/// Spacing between parallel cables (pixels per spread unit).
+pub const CABLE_SPREAD: f32 = 8.0;
+
 /// Get cable color from theme based on port type.
 #[must_use]
 pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
@@ -35,14 +37,16 @@ pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
 }
 
-/// Calculate orthogonal route waypoints from output port to input port,
-/// avoiding all module rectangles.
+/// Calculate orthogonal route waypoints from output port to input port.
 ///
-/// Output always exits RIGHT, input always enters from LEFT. The vertical
-/// cable segment is placed in a gap between module columns so it never
-/// crosses a module.
+/// Output always exits RIGHT, input always enters from LEFT. Cables take
+/// the shortest orthogonal path (they render behind modules so no obstacle
+/// avoidance is needed).
+///
+/// `spread` offsets the vertical segment so parallel cables don't overlap.
+/// Positive values shift right (forward) or lower (backward).
 #[must_use]
-fn calculate_route(from: Pos2, to: Pos2, obstacles: &[Rect]) -> Vec<Pos2> {
+fn calculate_route(from: Pos2, to: Pos2, spread: f32) -> Vec<Pos2> {
     let x_after_out = from.x + CLEARANCE;
     let x_before_in = to.x - CLEARANCE;
 
@@ -53,31 +57,14 @@ fn calculate_route(from: Pos2, to: Pos2, obstacles: &[Rect]) -> Vec<Pos2> {
             return vec![from, to];
         }
 
-        // Find a clear x for the vertical segment in the gap between modules.
-        let preferred_x = (x_after_out + x_before_in) * 0.5;
-        let y_min = from.y.min(to.y);
-        let y_max = from.y.max(to.y);
-        let turn_x = find_clear_x(
-            preferred_x,
-            x_after_out,
-            x_before_in,
-            y_min,
-            y_max,
-            obstacles,
-        );
-
-        if let Some(x) = turn_x {
-            vec![from, Pos2::new(x, from.y), Pos2::new(x, to.y), to]
-        } else {
-            // No clear vertical gap — route above all intermediate modules.
-            route_over_obstacles(from, to, x_after_out, x_before_in, obstacles)
-        }
+        // Vertical segment at midpoint, offset by spread.
+        let mid_x = (x_after_out + x_before_in) * 0.5 + spread;
+        vec![from, Pos2::new(mid_x, from.y), Pos2::new(mid_x, to.y), to]
     } else {
-        // Backward or overlapping: route around both modules above.
-        let right_x = from.x + CLEARANCE;
-        let left_x = to.x - CLEARANCE;
-        let y_min = from.y.min(to.y);
-        let bypass_y = find_bypass_y_above(left_x, right_x, y_min, obstacles);
+        // Backward or overlapping: U-shape above both endpoints.
+        let right_x = from.x + CLEARANCE + spread;
+        let left_x = to.x - CLEARANCE + spread;
+        let bypass_y = from.y.min(to.y) - BYPASS_MARGIN - spread.abs();
 
         vec![
             from,
@@ -88,114 +75,6 @@ fn calculate_route(from: Pos2, to: Pos2, obstacles: &[Rect]) -> Vec<Pos2> {
             to,
         ]
     }
-}
-
-/// Find an x-coordinate in `[x_min, x_max]` for a vertical cable segment
-/// that doesn't cross any obstacle in the y-range `[y_min, y_max]`.
-///
-/// Starts from `preferred` and searches outward. Returns `None` if the
-/// entire x-range is blocked.
-fn find_clear_x(
-    preferred: f32,
-    x_min: f32,
-    x_max: f32,
-    y_min: f32,
-    y_max: f32,
-    obstacles: &[Rect],
-) -> Option<f32> {
-    // Collect obstacles that overlap the cable's y-range and x-range
-    let blocking: Vec<&Rect> = obstacles
-        .iter()
-        .filter(|r| {
-            r.top() <= y_max && r.bottom() >= y_min && r.left() < x_max && r.right() > x_min
-        })
-        .collect();
-
-    if blocking.is_empty() {
-        return Some(preferred);
-    }
-
-    // Check if preferred x is clear
-    if !is_x_blocked(preferred, &blocking) {
-        return Some(preferred);
-    }
-
-    // Build sorted list of gap intervals between blocking rects
-    let mut edges: Vec<f32> = Vec::new();
-    edges.push(x_min);
-    for r in &blocking {
-        edges.push(r.left());
-        edges.push(r.right());
-    }
-    edges.push(x_max);
-    edges.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    edges.dedup();
-
-    // Find gaps (intervals where no blocking rect covers)
-    let mut best: Option<f32> = None;
-    let mut best_dist = f32::MAX;
-
-    for pair in edges.windows(2) {
-        let mid = (pair[0] + pair[1]) * 0.5;
-        if mid < x_min || mid > x_max {
-            continue;
-        }
-        if !is_x_blocked(mid, &blocking) {
-            let dist = (mid - preferred).abs();
-            if dist < best_dist {
-                best_dist = dist;
-                best = Some(mid);
-            }
-        }
-    }
-
-    best
-}
-
-/// Check if a vertical line at `x` is blocked by any of the given rects.
-fn is_x_blocked(x: f32, rects: &[&Rect]) -> bool {
-    rects.iter().any(|r| x >= r.left() && x <= r.right())
-}
-
-/// Route a cable over all intermediate obstacles using an inverted-U shape.
-///
-/// Goes up from the source, across above all obstacles, then down to the
-/// destination.
-fn route_over_obstacles(
-    from: Pos2,
-    to: Pos2,
-    x_after_out: f32,
-    x_before_in: f32,
-    obstacles: &[Rect],
-) -> Vec<Pos2> {
-    let bypass_y = find_bypass_y_above(x_after_out, x_before_in, from.y.min(to.y), obstacles);
-
-    vec![
-        from,
-        Pos2::new(x_after_out, from.y),
-        Pos2::new(x_after_out, bypass_y),
-        Pos2::new(x_before_in, bypass_y),
-        Pos2::new(x_before_in, to.y),
-        to,
-    ]
-}
-
-/// Find a y-coordinate above all obstacles in the x-range `[x_min, x_max]`
-/// that is also above `y_ref`.
-fn find_bypass_y_above(x_min: f32, x_max: f32, y_ref: f32, obstacles: &[Rect]) -> f32 {
-    let (lo, hi) = if x_min < x_max {
-        (x_min, x_max)
-    } else {
-        (x_max, x_min)
-    };
-
-    let min_top = obstacles
-        .iter()
-        .filter(|r| r.right() > lo && r.left() < hi)
-        .map(|r| r.top())
-        .fold(y_ref, f32::min);
-
-    min_top - BYPASS_MARGIN
 }
 
 // ── Drawing helpers ──────────────────────────────────────────────────
@@ -321,16 +200,15 @@ fn draw_corner_arc(
 
 // ── Public API ───────────────────────────────────────────────────────
 
-/// Draw a cable between two points with orthogonal routing, shadow, and highlight.
-/// Avoids crossing any module in `obstacles`.
+/// Draw a cable between two points with orthogonal routing and shadow.
 pub fn draw_cable(
     painter: &eframe::egui::Painter,
     from: Pos2,
     to: Pos2,
     color: Color32,
-    obstacles: &[Rect],
+    spread: f32,
 ) {
-    let points = calculate_route(from, to, obstacles);
+    let points = calculate_route(from, to, spread);
 
     // Shadow
     let shadow_offset = Vec2::new(1.0, 2.0);
@@ -348,9 +226,9 @@ pub fn draw_cable(
     draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
 }
 
-/// Draw a cable being dragged (simpler, no shadow, no obstacle avoidance).
+/// Draw a cable being dragged (simpler, no shadow).
 pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
-    let points = calculate_route(from, to, &[]);
+    let points = calculate_route(from, to, 0.0);
     let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160);
     draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
 }
@@ -361,9 +239,9 @@ pub fn draw_cable_highlighted(
     from: Pos2,
     to: Pos2,
     color: Color32,
-    obstacles: &[Rect],
+    spread: f32,
 ) {
-    let points = calculate_route(from, to, obstacles);
+    let points = calculate_route(from, to, spread);
 
     // Outer glow
     let glow_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
@@ -386,9 +264,9 @@ pub fn draw_flow_particles(
     color: Color32,
     port_type: WidgetPortType,
     time: f64,
-    obstacles: &[Rect],
+    spread: f32,
 ) {
-    let points = calculate_route(from, to, obstacles);
+    let points = calculate_route(from, to, spread);
     let total_len = path_length(&points);
     if total_len < 1.0 {
         return;
@@ -425,14 +303,8 @@ pub fn draw_flow_particles(
 
 /// Check if a point is near an orthogonal cable (for hit testing).
 #[must_use]
-pub fn point_near_cable(
-    point: Pos2,
-    from: Pos2,
-    to: Pos2,
-    threshold: f32,
-    obstacles: &[Rect],
-) -> bool {
-    let points = calculate_route(from, to, obstacles);
+pub fn point_near_cable(point: Pos2, from: Pos2, to: Pos2, threshold: f32, spread: f32) -> bool {
+    let points = calculate_route(from, to, spread);
 
     for w in points.windows(2) {
         if point_to_segment_distance(point, w[0], w[1]) < threshold {
@@ -444,8 +316,8 @@ pub fn point_near_cable(
 
 /// Find the closest point on an orthogonal cable to a given point.
 #[must_use]
-pub fn closest_point_on_cable(point: Pos2, from: Pos2, to: Pos2, obstacles: &[Rect]) -> Pos2 {
-    let points = calculate_route(from, to, obstacles);
+pub fn closest_point_on_cable(point: Pos2, from: Pos2, to: Pos2, spread: f32) -> Pos2 {
+    let points = calculate_route(from, to, spread);
     let mut best = from;
     let mut best_dist = f32::MAX;
 

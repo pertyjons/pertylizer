@@ -4,7 +4,7 @@
 //! connections are drawn, and modules can be added/removed.
 //!
 //! Modules are rendered as draggable, resizable windows with z-order support.
-//! Cables are rendered in a foreground layer so they appear above modules.
+//! Cables are rendered behind modules; hovered cables pop to the foreground.
 
 use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
@@ -18,8 +18,8 @@ use synth_engine::{EngineHandle, ModuleId};
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable, draw_cable,
-    draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
+    CABLE_SPREAD, WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable,
+    draw_cable, draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -465,8 +465,13 @@ impl PatchEditor {
         // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
         let visible_rect = ui.available_rect_before_wrap();
 
-        // Phase 1: ScrollArea for scrollbars and grid background
+        // Phase 1: ScrollArea for scrollbars and grid background.
+        // We also capture the scroll area's layer_id — painting on that layer
+        // later will render BEHIND module Areas (same Order::Background, but
+        // the scroll layer is allocated first).
         let mut canvas_response = None;
+        let mut scroll_layer_id = None;
+        let mut scroll_clip_rect = None;
         let scroll_output = egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -477,6 +482,10 @@ impl PatchEditor {
 
                 // Draw grid
                 self.draw_grid(ui, scroll_rect);
+
+                // Save scroll area layer + clip rect for cable drawing (behind modules)
+                scroll_layer_id = Some(ui.layer_id());
+                scroll_clip_rect = Some(ui.clip_rect());
 
                 scroll_rect
             });
@@ -494,7 +503,30 @@ impl PatchEditor {
             self.apply_auto_layout(scroll_rect);
         }
 
-        // Clear port positions for this frame
+        // Collect module screen rects from egui memory (persisted from previous frame)
+        let module_rects: Vec<Rect> = self
+            .panels
+            .keys()
+            .filter_map(|mid| {
+                let wid = Id::new((instrument_id, "module_window", mid.to_string()));
+                ui.ctx().memory(|mem| mem.area_rect(wid))
+            })
+            .collect();
+
+        // Draw cables on the scroll area's layer BEFORE module Areas are created.
+        // This uses the previous frame's port_positions — one frame delay is
+        // imperceptible in an immediate-mode GUI.
+        let time = ui.input(|i| i.time);
+        if let Some(layer_id) = scroll_layer_id {
+            let clip = scroll_clip_rect.unwrap_or(visible_rect);
+            self.draw_connections(ui, time, layer_id, clip, &module_rects);
+        }
+
+        // Draw context menus (Foreground) — must happen after hover detection above
+        self.draw_cable_context_menu(ui, &mut result);
+        self.draw_port_context_menu(ui, &mut result);
+
+        // Now clear port positions so modules can repopulate them for next frame
         self.port_positions.clear();
 
         // Build patch analysis for display names and mod matrix filtering
@@ -1111,24 +1143,6 @@ impl PatchEditor {
         // Handle port interactions for connections
         self.handle_port_interactions(ui, &mut result);
 
-        // Collect module screen rects for cable obstacle avoidance
-        let module_rects: Vec<Rect> = self
-            .panels
-            .keys()
-            .filter_map(|mid| {
-                let wid = Id::new((instrument_id, "module_window", mid.to_string()));
-                ui.ctx().memory(|mem| mem.area_rect(wid))
-            })
-            .collect();
-
-        // Draw connections in foreground layer (hover highlight + right-click context menu)
-        let time = ui.input(|i| i.time);
-        self.draw_connections_foreground(ui, time, &module_rects);
-
-        // Draw context menus and handle their actions
-        self.draw_cable_context_menu(ui, &mut result);
-        self.draw_port_context_menu(ui, &mut result);
-
         // Draw pending connection in foreground (less sag for responsive feel)
         if let Some(ref pending) = self.pending_connection {
             let color = cable_color(pending.from_type, 180);
@@ -1309,12 +1323,20 @@ impl PatchEditor {
         }
     }
 
-    /// Draw connections in a foreground layer so they appear above modules.
-    /// Right-clicking a cable opens a context menu instead of removing directly.
-    fn draw_connections_foreground(&mut self, ui: &Ui, time: f64, module_rects: &[Rect]) {
-        let painter = ui
+    /// Draw cables behind modules (on the scroll area's layer). Hovered cables
+    /// are drawn in the foreground layer so they appear above modules with glow.
+    fn draw_connections(
+        &mut self,
+        ui: &Ui,
+        time: f64,
+        bg_layer: LayerId,
+        clip_rect: Rect,
+        module_rects: &[Rect],
+    ) {
+        let bg_painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
+        let fg_painter = ui
             .ctx()
-            .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
+            .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables_fg")));
 
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
         let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
@@ -1322,7 +1344,20 @@ impl PatchEditor {
         // Track which cable the context menu targets so we highlight it
         let menu_target = self.cable_context_menu.as_ref().map(|(c, _)| *c);
 
+        // Compute spread offsets: group cables by destination module,
+        // then spread cables within each group so they don't overlap.
+        let mut dest_count: HashMap<ModuleId, usize> = HashMap::new();
+        for c in &self.connections {
+            *dest_count.entry(c.to_module).or_default() += 1;
+        }
+        let mut dest_index: HashMap<ModuleId, usize> = HashMap::new();
+
         for connection in &self.connections {
+            let idx = dest_index.entry(connection.to_module).or_default();
+            let n = dest_count.get(&connection.to_module).copied().unwrap_or(1);
+            let spread = (*idx as f32 - (n as f32 - 1.0) / 2.0) * CABLE_SPREAD;
+            *dest_index.get_mut(&connection.to_module).unwrap_or(&mut 0) += 1;
+
             let from_key = (
                 connection.from_module,
                 connection.from_port.as_str().to_string(),
@@ -1338,42 +1373,53 @@ impl PatchEditor {
             ) {
                 let color = cable_color(from_pos.port_type, 180);
 
-                // Check if mouse is near this cable (20px threshold for easy targeting)
-                let is_hovered = pointer_pos
+                // Don't detect cable hover when pointer is over a module,
+                // UNLESS the pointer is near one of this cable's ports.
+                let over_module = pointer_pos
+                    .map(|p| module_rects.iter().any(|r| r.contains(p)))
+                    .unwrap_or(false);
+                let near_port = pointer_pos
                     .map(|p| {
-                        point_near_cable(p, from_pos.position, to_pos.position, 20.0, module_rects)
+                        let to_from = (p - from_pos.position).length();
+                        let to_to = (p - to_pos.position).length();
+                        to_from < 15.0 || to_to < 15.0
                     })
                     .unwrap_or(false);
+
+                // Check if mouse is near this cable (20px threshold for easy targeting)
+                let is_hovered = (near_port || !over_module)
+                    && pointer_pos
+                        .map(|p| {
+                            point_near_cable(p, from_pos.position, to_pos.position, 20.0, spread)
+                        })
+                        .unwrap_or(false);
 
                 // Highlight if hovered or if context menu is open for this cable
                 let show_highlight = is_hovered || menu_target.as_ref() == Some(connection);
 
                 if show_highlight {
+                    // Highlighted cable in foreground (above modules)
                     draw_cable_highlighted(
-                        &painter,
+                        &fg_painter,
                         from_pos.position,
                         to_pos.position,
                         color,
-                        module_rects,
+                        spread,
                     );
 
                     // Draw a small menu icon on the cable near the pointer
                     if is_hovered && let Some(p) = pointer_pos {
-                        let snap = closest_point_on_cable(
-                            p,
-                            from_pos.position,
-                            to_pos.position,
-                            module_rects,
-                        );
+                        let snap =
+                            closest_point_on_cable(p, from_pos.position, to_pos.position, spread);
                         let icon_pos = snap + Vec2::new(10.0, -10.0);
                         // Background pill
                         let pill = Rect::from_center_size(icon_pos, Vec2::new(20.0, 16.0));
-                        painter.rect_filled(
+                        fg_painter.rect_filled(
                             pill,
                             4.0,
                             Color32::from_rgba_unmultiplied(30, 30, 30, 200),
                         );
-                        painter.text(
+                        fg_painter.text(
                             icon_pos,
                             egui::Align2::CENTER_CENTER,
                             "\u{2630}",
@@ -1382,12 +1428,13 @@ impl PatchEditor {
                         );
                     }
                 } else {
+                    // Normal cable behind modules
                     draw_cable(
-                        &painter,
+                        &bg_painter,
                         from_pos.position,
                         to_pos.position,
                         color,
-                        module_rects,
+                        spread,
                     );
                 }
 
@@ -1400,15 +1447,15 @@ impl PatchEditor {
                     self.cable_menu_just_opened = true;
                 }
 
-                // Animated flow particles on all cables
+                // Animated flow particles behind modules
                 draw_flow_particles(
-                    &painter,
+                    &bg_painter,
                     from_pos.position,
                     to_pos.position,
                     color,
                     from_pos.port_type,
                     time,
-                    module_rects,
+                    spread,
                 );
             }
         }

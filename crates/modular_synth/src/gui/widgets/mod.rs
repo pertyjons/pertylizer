@@ -19,8 +19,8 @@ pub use super::theme::{Theme, set_theme, theme, with_theme_mut};
 
 // Re-export all widgets
 pub use cable::{
-    cable_color, closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
-    draw_flow_particles, point_near_cable,
+    CABLE_SPREAD, cable_color, closest_point_on_cable, draw_cable, draw_cable_dragging,
+    draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::module_frame;
