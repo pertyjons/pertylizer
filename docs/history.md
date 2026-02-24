@@ -1,5 +1,13 @@
 # Version History
 
+## [0.154.0] - 2026-02-25
+### MCP: Portvalidering i connect/disconnect
+
+**Buggfix:**
+- `connect`/`disconnect` validerar nu modul-ID:n och portnamn mot `ModuleDescriptor` innan operationen köas. Returnerar `PortNotFound`-fel med modul och portnamn om porten inte existerar (istället för tyst "OK").
+
+**Ny felvariant:** `McpBridgeError::PortNotFound { module, port }` i `synth_mcp::error`.
+
 ## [0.153.0] - 2026-02-25
 ### MCP: Effektmoduler via add_module/remove_module
 

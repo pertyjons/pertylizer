@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use synth_core::{MidiNote, Param, Velocity};
+use synth_core::{MidiNote, Param, PortDirection, Velocity};
+use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand};
@@ -38,6 +39,43 @@ impl AppSynthBridge {
             command_sender,
             shared,
         }
+    }
+}
+
+impl AppSynthBridge {
+    /// Validate that a module exists and has the given port in the expected direction.
+    fn validate_port(
+        &self,
+        module_str: &str,
+        port: &str,
+        direction: PortDirection,
+    ) -> Result<(), McpBridgeError> {
+        let mid: ModuleId = module_str
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
+
+        if !self.state.shared_graph.has_module(mid) {
+            return Err(McpBridgeError::ModuleNotFound(module_str.to_string()));
+        }
+
+        let descriptor =
+            crate::gui::module_factory::get_descriptor(mid.module_type).ok_or_else(|| {
+                McpBridgeError::ModuleNotFound(format!("{module_str} (unknown type)"))
+            })?;
+
+        let has_port = descriptor
+            .ports
+            .iter()
+            .any(|p| p.name == port && p.direction == direction);
+
+        if !has_port {
+            return Err(McpBridgeError::PortNotFound {
+                module: module_str.to_string(),
+                port: port.to_string(),
+            });
+        }
+
+        Ok(())
     }
 }
 
@@ -491,6 +529,9 @@ impl SynthBridge for AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
 
+        self.validate_port(from_module, from_port, PortDirection::Output)?;
+        self.validate_port(to_module, to_port, PortDirection::Input)?;
+
         if let Ok(mut ops) = self.shared.pending_ops.lock() {
             ops.push(crate::mcp_shared::PendingMcpOp::Connect {
                 from_module: from_module.to_string(),
@@ -514,6 +555,9 @@ impl SynthBridge for AppSynthBridge {
         if instrument_id != 0 {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
+
+        self.validate_port(from_module, from_port, PortDirection::Output)?;
+        self.validate_port(to_module, to_port, PortDirection::Input)?;
 
         if let Ok(mut ops) = self.shared.pending_ops.lock() {
             ops.push(crate::mcp_shared::PendingMcpOp::Disconnect {
