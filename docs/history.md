@@ -1,5 +1,25 @@
 # Version History
 
+## [0.151.0] - 2026-02-24
+### MCP: Modulhantering + buggfixar
+
+**5 nya MCP-verktyg (totalt 20):**
+- `list_module_types` — Listar alla tillgängliga modultyper med portar och parametrar
+- `add_module` — Lägger till en modul i voice graph (syns i GUI nästa frame)
+- `remove_module` — Tar bort en modul och alla dess kablar
+- `connect` — Kopplar ihop två modulportar med en kabel
+- `disconnect` — Tar bort en kabel mellan två modulportar
+
+**Ny modulfabrik:** `module_factory.rs` centraliserar skapande av modulinstanser från `ModuleType` (25 voice-moduler + 14 effekter + 3 visualiserare).
+
+**Ny delad state:** `PendingMcpOp` — kö för MCP→GUI-operationer (AddModule, RemoveModule, Connect, Disconnect), pollas varje frame av GUI.
+
+**Buggfixar:**
+- `signal_level` i `ConnectionSnapshot` populeras nu från output-bufferns peak-nivå (var alltid 0.0)
+- `effect_count` i `InstrumentInfo` läser nu från `EngineState` (var hårdkodat till 0)
+
+**Nya bridge-typer:** `ModuleTypeInfo`, `PendingMcpOp`, `InvalidModuleType`-felvariant
+
 ## [0.150.0] - 2026-02-24
 ### Fixa buggar i exempelpatchar
 

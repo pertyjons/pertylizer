@@ -77,6 +77,9 @@ pub mod awe_view;
 #[cfg(feature = "gui-egui")]
 pub mod panels;
 
+#[cfg(feature = "gui-egui")]
+pub mod module_factory;
+
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;
 use synth_engine::{AllocatorConfig, EngineHandle, SynthEngine};

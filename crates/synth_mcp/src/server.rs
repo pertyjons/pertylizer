@@ -79,6 +79,30 @@ pub struct LoadExamplePatchParam {
     pub name: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddModuleParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Module type key from list_module_types, e.g. 'oscillator', 'filter', 'amplifier'"
+    )]
+    pub module_type: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Source module ID, e.g. 'osc-1'")]
+    pub from_module: String,
+    #[schemars(description = "Source port name, e.g. 'output'")]
+    pub from_port: String,
+    #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
+    pub to_module: String,
+    #[schemars(description = "Destination port name, e.g. 'input'")]
+    pub to_port: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -270,6 +294,79 @@ impl SynthMcpServer {
         match self.bridge.get_ui_snapshot(params.0.instrument_id) {
             Ok(snapshot) => serde_json::to_string_pretty(&snapshot)
                 .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List all available module types with their ports and parameters. Use the type_key to add modules with add_module."
+    )]
+    async fn list_module_types(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_module_types() {
+            Ok(types) => serde_json::to_string_pretty(&types)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add a new module to the instrument's voice graph. The module appears in the GUI on the next frame. Use list_modules to discover the assigned module ID."
+    )]
+    async fn add_module(&self, params: Parameters<AddModuleParam>) -> String {
+        match self
+            .bridge
+            .add_module(params.0.instrument_id, &params.0.module_type)
+        {
+            Ok(msg) => msg,
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Remove a module from the instrument's voice graph and disconnect all its cables."
+    )]
+    async fn remove_module(&self, params: Parameters<ModuleParam>) -> String {
+        match self
+            .bridge
+            .remove_module(params.0.instrument_id, &params.0.module_id)
+        {
+            Ok(()) => format!("OK: removed {}", params.0.module_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Connect two module ports with a cable. Use list_modules or get_module_info to discover port names."
+    )]
+    async fn connect(&self, params: Parameters<ConnectParam>) -> String {
+        match self.bridge.connect(
+            params.0.instrument_id,
+            &params.0.from_module,
+            &params.0.from_port,
+            &params.0.to_module,
+            &params.0.to_port,
+        ) {
+            Ok(()) => format!(
+                "OK: connected {}:{} → {}:{}",
+                params.0.from_module, params.0.from_port, params.0.to_module, params.0.to_port
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Disconnect a cable between two module ports.")]
+    async fn disconnect(&self, params: Parameters<ConnectParam>) -> String {
+        match self.bridge.disconnect(
+            params.0.instrument_id,
+            &params.0.from_module,
+            &params.0.from_port,
+            &params.0.to_module,
+            &params.0.to_port,
+        ) {
+            Ok(()) => format!(
+                "OK: disconnected {}:{} → {}:{}",
+                params.0.from_module, params.0.from_port, params.0.to_module, params.0.to_port
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

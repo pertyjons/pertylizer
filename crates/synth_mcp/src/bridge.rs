@@ -7,7 +7,7 @@
 use crate::error::McpBridgeError;
 use crate::types::{
     ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo,
-    ParameterInfo, UiSnapshot,
+    ModuleTypeInfo, ParameterInfo, UiSnapshot,
 };
 
 /// Bridge between the MCP server and the synth engine.
@@ -80,4 +80,35 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Get a snapshot of the current UI layout (module positions, sizes, connections).
     fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError>;
+
+    // === Module management ===
+
+    /// List all available module types with their ports and parameters.
+    fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError>;
+
+    /// Add a module to an instrument's voice graph. Returns confirmation message.
+    fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError>;
+
+    /// Remove a module from an instrument's voice graph.
+    fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError>;
+
+    /// Connect two module ports.
+    fn connect(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Disconnect two module ports.
+    fn disconnect(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), McpBridgeError>;
 }

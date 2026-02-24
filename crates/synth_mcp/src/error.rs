@@ -22,4 +22,8 @@ pub enum McpBridgeError {
     /// Example patch not found.
     #[error("example patch not found: {0}")]
     PatchNotFound(String),
+
+    /// Invalid module type.
+    #[error("invalid module type: {0}")]
+    InvalidModuleType(String),
 }

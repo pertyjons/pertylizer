@@ -499,6 +499,26 @@ impl ModuleGraph {
             .unwrap_or(0.0)
     }
 
+    /// Get the peak output level for a specific port on a module.
+    ///
+    /// Reads the output buffer and returns the absolute peak value.
+    /// Used to populate `ConnectionSnapshot.signal_level` for animated cables.
+    pub fn get_output_peak(&self, module_id: ModuleId, port: &str) -> Option<f32> {
+        self.nodes
+            .get(&module_id)
+            .and_then(|n| n.outputs.get(port))
+            .map(|buf| {
+                let mut peak: f32 = 0.0;
+                for &sample in buf.as_slice() {
+                    let abs = sample.abs();
+                    if abs > peak {
+                        peak = abs;
+                    }
+                }
+                peak
+            })
+    }
+
     /// Check if the graph is empty.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()

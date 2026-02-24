@@ -173,6 +173,23 @@ pub struct UiConnectionInfo {
     pub to_port: String,
 }
 
+/// Information about an available module type.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleTypeInfo {
+    /// Type key to pass to add_module (e.g. "oscillator", "filter").
+    pub type_key: String,
+    /// Display name (e.g. "Oscillator", "Math Oscillator").
+    pub name: String,
+    /// Category: "voice", "effect", or "visualizer".
+    pub category: String,
+    /// Input port names (from descriptor).
+    pub input_ports: Vec<String>,
+    /// Output port names (from descriptor).
+    pub output_ports: Vec<String>,
+    /// Parameter names (from descriptor).
+    pub parameters: Vec<String>,
+}
+
 /// Two modules that overlap in the UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct UiOverlap {

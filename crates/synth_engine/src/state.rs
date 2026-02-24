@@ -267,6 +267,8 @@ pub struct EngineState {
     pub master_scope: VisualizationBuffer,
     /// Shared graph state for MCP and multi-GUI access.
     pub shared_graph: SharedGraphState,
+    /// Number of effects in the focused instrument's effect chain.
+    pub effect_count: AtomicU32,
 }
 
 impl EngineState {
@@ -281,6 +283,7 @@ impl EngineState {
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
+            effect_count: AtomicU32::new(0),
         })
     }
 
@@ -314,6 +317,7 @@ impl Default for EngineState {
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
+            effect_count: AtomicU32::new(0),
         }
     }
 }

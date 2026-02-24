@@ -403,6 +403,25 @@ impl eframe::App for SynthApp {
             }
         }
 
+        // Poll MCP pending operations (add/remove module, connect/disconnect)
+        #[cfg(feature = "mcp")]
+        {
+            let ops = self
+                .mcp_shared
+                .as_ref()
+                .and_then(|shared| {
+                    shared
+                        .pending_ops
+                        .lock()
+                        .ok()
+                        .map(|mut ops| std::mem::take(&mut *ops))
+                })
+                .unwrap_or_default();
+            for op in ops {
+                self.handle_mcp_op(op);
+            }
+        }
+
         // Handle keyboard input
         self.process_keyboard_input(ctx);
 
@@ -2437,6 +2456,105 @@ impl SynthApp {
         } else {
             self.awe_enabled = false;
             self.awe_ui = crate::gui::awe_view::AweUiState::default();
+        }
+    }
+
+    /// Handle a pending MCP operation (add/remove module, connect/disconnect).
+    #[cfg(feature = "mcp")]
+    fn handle_mcp_op(&mut self, op: crate::mcp_shared::PendingMcpOp) {
+        use crate::gui::module_factory::create_voice_module;
+        use crate::mcp_shared::PendingMcpOp;
+
+        let active_id = self.active_instrument_id;
+        let Some(patch_editor) = self
+            .instruments
+            .iter_mut()
+            .find(|i| i.id == active_id)
+            .map(|i| &mut i.patch_editor)
+        else {
+            return;
+        };
+
+        match op {
+            PendingMcpOp::AddModule { module_type } => {
+                if module_type.is_voice_module() {
+                    if let Some((module, descriptor)) = create_voice_module(module_type) {
+                        let counter = self.instance_counters.entry(module_type).or_insert(0);
+                        *counter += 1;
+                        let module_id = ModuleId::new(module_type, *counter);
+
+                        // Place at a default position (will be auto-laid out)
+                        let position = eframe::egui::Pos2::new(100.0, 100.0);
+                        patch_editor.add_module_at(module_id, descriptor, position);
+                        self.handle.send(EngineCommand::AddModuleInstance {
+                            instrument_id: Some(active_id),
+                            id: module_id,
+                            module,
+                        });
+                    }
+                }
+                // Effects/visualizers via MCP not supported in this version
+            }
+            PendingMcpOp::RemoveModule { module_id } => {
+                let Ok(mid) = module_id.parse::<ModuleId>() else {
+                    return;
+                };
+                patch_editor.remove_module(mid);
+                self.handle.send(EngineCommand::RemoveModule {
+                    instrument_id: Some(active_id),
+                    id: mid,
+                });
+            }
+            PendingMcpOp::Connect {
+                from_module,
+                from_port,
+                to_module,
+                to_port,
+            } => {
+                let Ok(from_id) = from_module.parse::<ModuleId>() else {
+                    return;
+                };
+                let Ok(to_id) = to_module.parse::<ModuleId>() else {
+                    return;
+                };
+                let conn = synth_engine::graph::Connection::new(
+                    from_id,
+                    from_port.as_str(),
+                    to_id,
+                    to_port.as_str(),
+                );
+                patch_editor.add_connection(conn);
+                self.handle.send(EngineCommand::Connect {
+                    instrument_id: Some(active_id),
+                    from: synth_engine::commands::PortId::new(from_id, from_port),
+                    to: synth_engine::commands::PortId::new(to_id, to_port),
+                });
+            }
+            PendingMcpOp::Disconnect {
+                from_module,
+                from_port,
+                to_module,
+                to_port,
+            } => {
+                let Ok(from_id) = from_module.parse::<ModuleId>() else {
+                    return;
+                };
+                let Ok(to_id) = to_module.parse::<ModuleId>() else {
+                    return;
+                };
+                let conn = synth_engine::graph::Connection::new(
+                    from_id,
+                    from_port.as_str(),
+                    to_id,
+                    to_port.as_str(),
+                );
+                patch_editor.remove_connection(&conn);
+                self.handle.send(EngineCommand::Disconnect {
+                    instrument_id: Some(active_id),
+                    from: synth_engine::commands::PortId::new(from_id, from_port),
+                    to: synth_engine::commands::PortId::new(to_id, to_port),
+                });
+            }
         }
     }
 

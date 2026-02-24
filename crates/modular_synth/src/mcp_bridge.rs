@@ -13,8 +13,8 @@ use synth_mcp::bridge::SynthBridge;
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InstrumentInfo, ModuleInfo, ParameterInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
-    UiSnapshot,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, ParameterInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -51,7 +51,7 @@ impl SynthBridge for AppSynthBridge {
             midi_channel: 1,
             enabled: true,
             module_count: self.state.shared_graph.module_count(),
-            effect_count: 0,
+            effect_count: self.state.effect_count.load() as usize,
         }])
     }
 
@@ -65,7 +65,7 @@ impl SynthBridge for AppSynthBridge {
             midi_channel: 1,
             enabled: true,
             module_count: self.state.shared_graph.module_count(),
-            effect_count: 0,
+            effect_count: self.state.effect_count.load() as usize,
         })
     }
 
@@ -404,6 +404,128 @@ impl SynthBridge for AppSynthBridge {
             window_size: layout.window_size,
             overlaps,
         })
+    }
+
+    fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
+        use crate::gui::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+        use synth_core::PortDirection;
+
+        let mut result = Vec::new();
+        for &mt in ALL_MODULE_TYPES {
+            if let Some(desc) = get_descriptor(mt) {
+                let category = if mt.is_voice_module() {
+                    "voice"
+                } else if mt.is_effect() {
+                    "effect"
+                } else {
+                    "visualizer"
+                };
+
+                let input_ports = desc
+                    .ports
+                    .iter()
+                    .filter(|p| p.direction == PortDirection::Input)
+                    .map(|p| p.id.to_string())
+                    .collect();
+                let output_ports = desc
+                    .ports
+                    .iter()
+                    .filter(|p| p.direction == PortDirection::Output)
+                    .map(|p| p.id.to_string())
+                    .collect();
+                let parameters = desc.params.iter().map(|p| p.name().to_string()).collect();
+
+                result.push(ModuleTypeInfo {
+                    type_key: mt.prefix().to_string(),
+                    name: mt.name().to_string(),
+                    category: category.to_string(),
+                    input_ports,
+                    output_ports,
+                    parameters,
+                });
+            }
+        }
+        Ok(result)
+    }
+
+    fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        let mt = synth_core::ModuleType::from_prefix(module_type)
+            .ok_or_else(|| McpBridgeError::InvalidModuleType(module_type.to_string()))?;
+
+        if let Ok(mut ops) = self.shared.pending_ops.lock() {
+            ops.push(crate::mcp_shared::PendingMcpOp::AddModule { module_type: mt });
+        }
+
+        Ok(format!(
+            "OK: {} queued for adding (use list_modules to see assigned ID)",
+            mt.name()
+        ))
+    }
+
+    fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        if let Ok(mut ops) = self.shared.pending_ops.lock() {
+            ops.push(crate::mcp_shared::PendingMcpOp::RemoveModule {
+                module_id: module_id.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn connect(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        if let Ok(mut ops) = self.shared.pending_ops.lock() {
+            ops.push(crate::mcp_shared::PendingMcpOp::Connect {
+                from_module: from_module.to_string(),
+                from_port: from_port.to_string(),
+                to_module: to_module.to_string(),
+                to_port: to_port.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn disconnect(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<(), McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        if let Ok(mut ops) = self.shared.pending_ops.lock() {
+            ops.push(crate::mcp_shared::PendingMcpOp::Disconnect {
+                from_module: from_module.to_string(),
+                from_port: from_port.to_string(),
+                to_module: to_module.to_string(),
+                to_port: to_port.to_string(),
+            });
+        }
+
+        Ok(())
     }
 }
 

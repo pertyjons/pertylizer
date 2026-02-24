@@ -1378,6 +1378,8 @@ impl SynthEngine {
                         effect,
                         SampleRate::new(self.sample_rate),
                     );
+                    let count = count_effects(instrument);
+                    self.state.effect_count.store(count);
                 }
             }
             None => {
@@ -1392,6 +1394,8 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.effect_chain_mut().remove_effect(id);
+                    let count = count_effects(instrument);
+                    self.state.effect_count.store(count);
                 }
             }
             None => {
@@ -1559,16 +1563,20 @@ impl SynthEngine {
             }
         }
 
-        // Build connection snapshots
+        // Build connection snapshots with signal levels
         let connections: Vec<ConnectionSnapshot> = graph
             .connections()
             .map(|c| {
-                ConnectionSnapshot::new(
+                let mut snap = ConnectionSnapshot::new(
                     c.from_module,
                     c.from_port.as_str().to_string(),
                     c.to_module,
                     c.to_port.as_str().to_string(),
-                )
+                );
+                if let Some(level) = graph.get_output_peak(c.from_module, c.from_port.as_str()) {
+                    snap.signal_level = level;
+                }
+                snap
             })
             .collect();
         shared.set_connections(connections);
@@ -1686,6 +1694,17 @@ impl Default for SynthEngine {
     fn default() -> Self {
         Self::new().0
     }
+}
+
+/// Count the number of effects (excluding visualizers) in an instrument's effect chain.
+#[allow(clippy::cast_possible_truncation)]
+fn count_effects(instrument: &Instrument) -> u32 {
+    instrument
+        .effect_chain()
+        .slots()
+        .iter()
+        .filter(|s| matches!(s, crate::effect_chain::ChainSlot::Effect(_)))
+        .count() as u32
 }
 
 /// Route sequencer events to the appropriate instruments.
