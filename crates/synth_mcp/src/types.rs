@@ -110,3 +110,76 @@ pub enum DiagnosticSeverity {
     /// Definite problem.
     Error,
 }
+
+/// Information about an example patch.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExamplePatchInfo {
+    /// Patch name.
+    pub name: String,
+    /// Category (e.g. "Bass", "Lead").
+    pub category: String,
+    /// Short description.
+    pub description: String,
+    /// Tags for searching.
+    pub tags: Vec<String>,
+    /// Number of modules.
+    pub module_count: usize,
+    /// Number of connections.
+    pub connection_count: usize,
+}
+
+/// Snapshot of the current UI layout.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiSnapshot {
+    /// Name of the loaded patch.
+    pub patch_name: String,
+    /// All visible modules with position and size.
+    pub modules: Vec<UiModuleInfo>,
+    /// All connections between modules.
+    pub connections: Vec<UiConnectionInfo>,
+    /// Window size (width, height).
+    pub window_size: (f32, f32),
+    /// Module pairs that overlap each other.
+    pub overlaps: Vec<UiOverlap>,
+}
+
+/// UI information about a single module.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiModuleInfo {
+    /// Module ID string (e.g. "osc-1").
+    pub id: String,
+    /// Module type (e.g. "Oscillator").
+    pub module_type: String,
+    /// Display name.
+    pub name: String,
+    /// Position (x, y) in the workspace.
+    pub position: (f32, f32),
+    /// Size (width, height).
+    pub size: (f32, f32),
+    /// Parameters as (name, display_value) pairs.
+    pub parameters: Vec<(String, String)>,
+}
+
+/// Connection in the UI snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiConnectionInfo {
+    /// Source module ID.
+    pub from_module: String,
+    /// Source port name.
+    pub from_port: String,
+    /// Destination module ID.
+    pub to_module: String,
+    /// Destination port name.
+    pub to_port: String,
+}
+
+/// Two modules that overlap in the UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiOverlap {
+    /// First module ID.
+    pub module_a: String,
+    /// Second module ID.
+    pub module_b: String,
+    /// Area of overlap in square pixels.
+    pub overlap_area: f32,
+}

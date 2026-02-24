@@ -71,6 +71,14 @@ pub struct NoteOffParam {
     pub channel: Option<u8>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct LoadExamplePatchParam {
+    #[schemars(
+        description = "Name of the example patch to load (case-insensitive), e.g. 'Acid Bass', 'Grand Piano'"
+    )]
+    pub name: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -230,6 +238,38 @@ impl SynthMcpServer {
         let channel = params.0.channel.unwrap_or(1);
         match self.bridge.note_off(params.0.note, channel) {
             Ok(()) => format!("Note {} off (ch={})", params.0.note, channel),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List all available example patches with their categories, descriptions, and tags"
+    )]
+    async fn list_example_patches(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_example_patches() {
+            Ok(patches) => serde_json::to_string_pretty(&patches)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Load an example patch by name. The GUI will update on the next frame. Use list_example_patches to see available patches."
+    )]
+    async fn load_example_patch(&self, params: Parameters<LoadExamplePatchParam>) -> String {
+        match self.bridge.load_example_patch(&params.0.name) {
+            Ok(msg) => msg,
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get a snapshot of the current UI layout: module positions, sizes, connections, and overlap analysis for debugging"
+    )]
+    async fn get_ui_snapshot(&self, params: Parameters<InstrumentIdParam>) -> String {
+        match self.bridge.get_ui_snapshot(params.0.instrument_id) {
+            Ok(snapshot) => serde_json::to_string_pretty(&snapshot)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
             Err(e) => format!("Error: {e}"),
         }
     }

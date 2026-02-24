@@ -85,7 +85,7 @@ use synth_engine::{AllocatorConfig, EngineHandle, SynthEngine};
 pub type GuiResult<T> = Result<T, Box<dyn Error>>;
 
 /// Configuration for the synthesizer GUI.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SynthGuiConfig {
     /// Window title.
     pub title: String,
@@ -97,6 +97,9 @@ pub struct SynthGuiConfig {
     pub allocator_config: AllocatorConfig,
     /// Audio stream configuration.
     pub stream_config: StreamConfig,
+    /// Shared MCP state (if MCP feature enabled).
+    #[cfg(feature = "mcp")]
+    pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
 }
 
 impl Default for SynthGuiConfig {
@@ -107,6 +110,8 @@ impl Default for SynthGuiConfig {
             height: 800,
             allocator_config: AllocatorConfig::default(),
             stream_config: StreamConfig::default(),
+            #[cfg(feature = "mcp")]
+            mcp_shared: None,
         }
     }
 }

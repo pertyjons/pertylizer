@@ -264,6 +264,11 @@ impl PatchEditor {
         ))
     }
 
+    /// Get the rendered size of a module panel.
+    pub fn module_panel_size(&self, id: ModuleId) -> Option<Vec2> {
+        self.panels.get(&id).map(|p| p.size)
+    }
+
     /// Set envelope position buffer for a module (used for Envelope visualization).
     pub fn set_module_envelope_position(
         &mut self,

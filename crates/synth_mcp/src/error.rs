@@ -18,4 +18,8 @@ pub enum McpBridgeError {
     /// Command failed to send.
     #[error("command send failed")]
     CommandSendFailed,
+
+    /// Example patch not found.
+    #[error("example patch not found: {0}")]
+    PatchNotFound(String),
 }

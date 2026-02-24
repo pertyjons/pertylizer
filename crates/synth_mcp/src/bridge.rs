@@ -6,7 +6,8 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ConnectionInfo, EngineStatus, GraphDiagnostic, InstrumentInfo, ModuleInfo, ParameterInfo,
+    ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo,
+    ParameterInfo, UiSnapshot,
 };
 
 /// Bridge between the MCP server and the synth engine.
@@ -68,4 +69,15 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Send a MIDI note off.
     fn note_off(&self, note: u8, channel: u8) -> Result<(), McpBridgeError>;
+
+    // === Example patches ===
+
+    /// List all available example patches grouped by category.
+    fn list_example_patches(&self) -> Result<Vec<ExamplePatchInfo>, McpBridgeError>;
+
+    /// Queue an example patch for loading (GUI picks it up next frame).
+    fn load_example_patch(&self, name: &str) -> Result<String, McpBridgeError>;
+
+    /// Get a snapshot of the current UI layout (module positions, sizes, connections).
+    fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError>;
 }

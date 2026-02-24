@@ -229,13 +229,18 @@ struct SynthApp {
     // AWE state
     awe_enabled: bool,
     awe_ui: crate::gui::awe_view::AweUiState,
+
+    // MCP shared state
+    #[cfg(feature = "mcp")]
+    mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
 }
 
 impl SynthApp {
+    #[allow(unused_variables)]
     fn new(
         mut handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
-        _config: SynthGuiConfig,
+        config: SynthGuiConfig,
         latency: std::time::Duration,
     ) -> Self {
         // IMPORTANT: We use a startup patch instead of manually building GUI state.
@@ -308,6 +313,8 @@ impl SynthApp {
             active_view: AppView::default(),
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
+            #[cfg(feature = "mcp")]
+            mcp_shared: config.mcp_shared,
         }
     }
 
@@ -376,6 +383,23 @@ impl eframe::App for SynthApp {
                 }
                 // Other events (meters, etc.) are handled elsewhere
                 _ => {}
+            }
+        }
+
+        // Poll MCP pending patch
+        #[cfg(feature = "mcp")]
+        {
+            let pending_patch = self.mcp_shared.as_ref().and_then(|shared| {
+                shared
+                    .pending_patch
+                    .lock()
+                    .ok()
+                    .and_then(|mut pending| pending.take())
+            });
+            if let Some((patch, name)) = pending_patch {
+                self.current_patch_name = name;
+                self.current_patch_path = None;
+                self.load_patch_data(&patch);
             }
         }
 
@@ -950,6 +974,10 @@ impl eframe::App for SynthApp {
 
         // Dialogs
         self.show_dialogs(ctx);
+
+        // Write current UI layout to MCP shared state
+        #[cfg(feature = "mcp")]
+        self.write_mcp_layout(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -2409,6 +2437,61 @@ impl SynthApp {
         } else {
             self.awe_enabled = false;
             self.awe_ui = crate::gui::awe_view::AweUiState::default();
+        }
+    }
+
+    /// Write the current UI layout to MCP shared state (called each frame).
+    #[cfg(feature = "mcp")]
+    fn write_mcp_layout(&self, ctx: &egui::Context) {
+        let Some(shared) = &self.mcp_shared else {
+            return;
+        };
+        let Some(patch_editor) = self.active_patch_editor_ref() else {
+            return;
+        };
+
+        let rect = ctx.input(|i| i.viewport_rect());
+        let window_size = (rect.width(), rect.height());
+
+        let mut modules = Vec::new();
+        for module_id in patch_editor.module_ids() {
+            if let Some((descriptor, pos, param_values)) = patch_editor.get_module_data(module_id) {
+                let panel_size = patch_editor
+                    .module_panel_size(module_id)
+                    .unwrap_or(egui::Vec2::new(250.0, 200.0));
+                let params: Vec<(String, String)> = param_values
+                    .iter()
+                    .map(|(name, val)| (name.clone(), format!("{val:.3}")))
+                    .collect();
+                modules.push(crate::mcp_shared::ModuleLayout {
+                    id: module_id.to_string(),
+                    module_type: descriptor.type_id.0.clone(),
+                    name: descriptor.name.clone(),
+                    position: (pos.x, pos.y),
+                    size: (panel_size.x, panel_size.y),
+                    parameters: params,
+                });
+            }
+        }
+
+        let connections: Vec<crate::mcp_shared::ConnectionLayout> = patch_editor
+            .connections()
+            .iter()
+            .map(|c| crate::mcp_shared::ConnectionLayout {
+                from_module: c.from_module.to_string(),
+                from_port: c.from_port.to_string(),
+                to_module: c.to_module.to_string(),
+                to_port: c.to_port.to_string(),
+            })
+            .collect();
+
+        if let Ok(mut layout) = shared.ui_layout.lock() {
+            *layout = crate::mcp_shared::UiLayoutData {
+                patch_name: self.current_patch_name.clone(),
+                modules,
+                connections,
+                window_size,
+            };
         }
     }
 

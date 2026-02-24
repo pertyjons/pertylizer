@@ -21,6 +21,8 @@ pub mod gui;
 pub mod io;
 #[cfg(feature = "mcp")]
 pub mod mcp_bridge;
+#[cfg(feature = "mcp")]
+pub mod mcp_shared;
 pub mod patch;
 pub mod patches;
 

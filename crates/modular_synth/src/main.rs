@@ -79,10 +79,12 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
 
     // Start MCP TCP server in background (if feature enabled)
     #[cfg(feature = "mcp")]
-    {
+    let mcp_shared = {
+        let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::new());
         let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
             std::sync::Arc::clone(&handle.state),
             handle.command_sender(),
+            std::sync::Arc::clone(&shared),
         ));
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new()
@@ -93,7 +95,8 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         });
-    }
+        shared
+    };
 
     // Create audio host
     let host: Box<dyn AudioHostTrait> = match audio::default_host() {
@@ -122,6 +125,8 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
         height: 800,
         allocator_config,
         stream_config,
+        #[cfg(feature = "mcp")]
+        mcp_shared: Some(mcp_shared),
     };
 
     // Create and run the selected GUI backend
@@ -164,9 +169,11 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     let _stream_info = host.start_output(None, &stream_config, Box::new(engine))?;
     eprintln!("✓ Audio stream started");
 
+    let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::new());
     let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
         std::sync::Arc::clone(&handle.state),
         handle.command_sender(),
+        shared,
     ));
 
     // Run MCP on stdio (blocking)

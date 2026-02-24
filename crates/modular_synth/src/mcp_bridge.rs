@@ -12,22 +12,31 @@ use synth_engine::{CommandSender, EngineCommand};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    ConnectionInfo, DiagnosticSeverity, EngineStatus, GraphDiagnostic, InstrumentInfo, ModuleInfo,
-    ParameterInfo,
+    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    InstrumentInfo, ModuleInfo, ParameterInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
+    UiSnapshot,
 };
+
+use crate::mcp_shared::McpSharedState;
 
 /// Bridge implementation for the modular_synth application.
 pub struct AppSynthBridge {
     state: Arc<EngineState>,
     command_sender: CommandSender,
+    shared: Arc<McpSharedState>,
 }
 
 impl AppSynthBridge {
-    /// Create a new bridge with access to the engine state and command sender.
-    pub fn new(state: Arc<EngineState>, command_sender: CommandSender) -> Self {
+    /// Create a new bridge with access to the engine state, command sender, and shared MCP state.
+    pub fn new(
+        state: Arc<EngineState>,
+        command_sender: CommandSender,
+        shared: Arc<McpSharedState>,
+    ) -> Self {
         Self {
             state,
             command_sender,
+            shared,
         }
     }
 }
@@ -305,6 +314,124 @@ impl SynthBridge for AppSynthBridge {
             Err(McpBridgeError::CommandSendFailed)
         }
     }
+
+    fn list_example_patches(&self) -> Result<Vec<ExamplePatchInfo>, McpBridgeError> {
+        let categories = crate::patches::categorized_patches();
+        let mut result = Vec::new();
+        for (category, patches) in categories {
+            for patch in patches {
+                result.push(ExamplePatchInfo {
+                    name: patch.name.clone(),
+                    category: category.to_string(),
+                    description: patch.description.clone().unwrap_or_default(),
+                    tags: patch.tags.clone(),
+                    module_count: patch.modules.len(),
+                    connection_count: patch.connections.len(),
+                });
+            }
+        }
+        Ok(result)
+    }
+
+    fn load_example_patch(&self, name: &str) -> Result<String, McpBridgeError> {
+        let categories = crate::patches::categorized_patches();
+        let name_lower = name.to_ascii_lowercase();
+
+        for (_category, patches) in categories {
+            for patch in patches {
+                if patch.name.to_ascii_lowercase() == name_lower {
+                    let patch_name = patch.name.clone();
+                    if let Ok(mut pending) = self.shared.pending_patch.lock() {
+                        *pending = Some((patch, patch_name.clone()));
+                    }
+                    return Ok(format!("OK: {patch_name} queued for loading"));
+                }
+            }
+        }
+
+        Err(McpBridgeError::PatchNotFound(name.to_string()))
+    }
+
+    fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        let layout = self
+            .shared
+            .ui_layout
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        let modules: Vec<UiModuleInfo> = layout
+            .modules
+            .iter()
+            .map(|m| UiModuleInfo {
+                id: m.id.clone(),
+                module_type: m.module_type.clone(),
+                name: m.name.clone(),
+                position: m.position,
+                size: m.size,
+                parameters: m.parameters.clone(),
+            })
+            .collect();
+
+        let connections: Vec<UiConnectionInfo> = layout
+            .connections
+            .iter()
+            .map(|c| UiConnectionInfo {
+                from_module: c.from_module.clone(),
+                from_port: c.from_port.clone(),
+                to_module: c.to_module.clone(),
+                to_port: c.to_port.clone(),
+            })
+            .collect();
+
+        // Compute overlaps between module pairs
+        let overlaps = compute_overlaps(&layout.modules);
+
+        Ok(UiSnapshot {
+            patch_name: layout.patch_name,
+            modules,
+            connections,
+            window_size: layout.window_size,
+            overlaps,
+        })
+    }
+}
+
+/// Compute overlapping module pairs from their positions and sizes.
+fn compute_overlaps(modules: &[crate::mcp_shared::ModuleLayout]) -> Vec<UiOverlap> {
+    let mut overlaps = Vec::new();
+    for i in 0..modules.len() {
+        for j in (i + 1)..modules.len() {
+            let a = &modules[i];
+            let b = &modules[j];
+            // Rectangle intersection
+            let ax1 = a.position.0;
+            let ay1 = a.position.1;
+            let ax2 = ax1 + a.size.0;
+            let ay2 = ay1 + a.size.1;
+            let bx1 = b.position.0;
+            let by1 = b.position.1;
+            let bx2 = bx1 + b.size.0;
+            let by2 = by1 + b.size.1;
+
+            let overlap_x = (ax2.min(bx2) - ax1.max(bx1)).max(0.0);
+            let overlap_y = (ay2.min(by2) - ay1.max(by1)).max(0.0);
+            let area = overlap_x * overlap_y;
+
+            if area > 0.0 {
+                overlaps.push(UiOverlap {
+                    module_a: a.id.clone(),
+                    module_b: b.id.clone(),
+                    overlap_area: area,
+                });
+            }
+        }
+    }
+    overlaps
 }
 
 /// Format a parameter value for human-readable display.

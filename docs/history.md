@@ -1,5 +1,20 @@
 # Version History
 
+## [0.149.0] - 2026-02-24
+### MCP: Exempelpatchar + UI-snapshot
+
+**3 nya MCP-verktyg (totalt 15):**
+- `list_example_patches` — Listar alla 45 exempelpatchar med kategori, beskrivning, taggar, antal moduler/kopplingar
+- `load_example_patch` — Laddar en exempelpatch via namn (case-insensitive), GUI uppdateras nästa frame
+- `get_ui_snapshot` — Returnerar modulpositioner, storlekar, parametrar, kopplingar och överlappningsanalys
+
+**Ny delad state: `McpSharedState`**
+- `pending_patch: Mutex<Option<(Patch, String)>>` — MCP skriver, GUI pollar varje frame
+- `ui_layout: Mutex<UiLayoutData>` — GUI skriver varje frame, MCP läser vid begäran
+- Delas via `Arc` mellan `AppSynthBridge` och `SynthApp`
+
+**Nya MCP-typer:** `ExamplePatchInfo`, `UiSnapshot`, `UiModuleInfo`, `UiConnectionInfo`, `UiOverlap`
+
 ## [0.148.0] - 2026-02-24
 ### MCP-bugfixar och förbättrad dokumentation
 
