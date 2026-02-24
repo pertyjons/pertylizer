@@ -425,15 +425,15 @@ impl SynthBridge for AppSynthBridge {
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Input)
-                    .map(|p| p.id.to_string())
+                    .map(|p| p.name.clone())
                     .collect();
                 let output_ports = desc
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Output)
-                    .map(|p| p.id.to_string())
+                    .map(|p| p.name.clone())
                     .collect();
-                let parameters = desc.params.iter().map(|p| p.name().to_string()).collect();
+                let parameters = desc.parameters.iter().map(|p| p.name.clone()).collect();
 
                 result.push(ModuleTypeInfo {
                     type_key: mt.prefix().to_string(),

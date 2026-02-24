@@ -2477,21 +2477,21 @@ impl SynthApp {
 
         match op {
             PendingMcpOp::AddModule { module_type } => {
-                if module_type.is_voice_module() {
-                    if let Some((module, descriptor)) = create_voice_module(module_type) {
-                        let counter = self.instance_counters.entry(module_type).or_insert(0);
-                        *counter += 1;
-                        let module_id = ModuleId::new(module_type, *counter);
+                if module_type.is_voice_module()
+                    && let Some((module, descriptor)) = create_voice_module(module_type)
+                {
+                    let counter = self.instance_counters.entry(module_type).or_insert(0);
+                    *counter += 1;
+                    let module_id = ModuleId::new(module_type, *counter);
 
-                        // Place at a default position (will be auto-laid out)
-                        let position = eframe::egui::Pos2::new(100.0, 100.0);
-                        patch_editor.add_module_at(module_id, descriptor, position);
-                        self.handle.send(EngineCommand::AddModuleInstance {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                            module,
-                        });
-                    }
+                    // Place at a default position (will be auto-laid out)
+                    let position = eframe::egui::Pos2::new(100.0, 100.0);
+                    patch_editor.add_module_at(module_id, descriptor, position);
+                    self.handle.send(EngineCommand::AddModuleInstance {
+                        instrument_id: Some(active_id),
+                        id: module_id,
+                        module,
+                    });
                 }
                 // Effects/visualizers via MCP not supported in this version
             }
