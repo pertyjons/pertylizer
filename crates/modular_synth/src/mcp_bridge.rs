@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use synth_core::{MidiNote, ModuleType, Param, Velocity};
+use synth_core::{MidiNote, Param, Velocity};
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand};
@@ -71,7 +71,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(modules
             .into_iter()
             .map(|m| {
-                let id_str = format!("{:?}", m.id);
+                let id_str = m.id.to_string();
                 let input_ports: Vec<String> = m.input_connection_counts.keys().cloned().collect();
                 let output_ports: Vec<String> =
                     m.output_connection_counts.keys().cloned().collect();
@@ -81,12 +81,10 @@ impl SynthBridge for AppSynthBridge {
                 let mut outputs = output_ports;
 
                 for conn in &connections {
-                    if format!("{:?}", conn.to_module) == id_str && !inputs.contains(&conn.to_port)
-                    {
+                    if conn.to_module.to_string() == id_str && !inputs.contains(&conn.to_port) {
                         inputs.push(conn.to_port.clone());
                     }
-                    if format!("{:?}", conn.from_module) == id_str
-                        && !outputs.contains(&conn.from_port)
+                    if conn.from_module.to_string() == id_str && !outputs.contains(&conn.from_port)
                     {
                         outputs.push(conn.from_port.clone());
                     }
@@ -94,7 +92,7 @@ impl SynthBridge for AppSynthBridge {
 
                 ModuleInfo {
                     id: id_str,
-                    module_type: format!("{:?}", m.module_type),
+                    module_type: m.module_type.name().to_string(),
                     name: m.name,
                     bypassed: m.bypass_state == synth_core::BypassState::Bypassed,
                     parameters: m
@@ -134,9 +132,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(connections
             .into_iter()
             .map(|c| ConnectionInfo {
-                from_module: format!("{:?}", c.from_module),
+                from_module: c.from_module.to_string(),
                 from_port: c.from_port,
-                to_module: format!("{:?}", c.to_module),
+                to_module: c.to_module.to_string(),
                 to_port: c.to_port,
                 signal_level: c.signal_level,
             })
@@ -199,13 +197,13 @@ impl SynthBridge for AppSynthBridge {
 
         // Check for disconnected modules
         for module in &modules {
-            let id_str = format!("{:?}", module.id);
+            let id_str = module.id.to_string();
             let has_input = connections
                 .iter()
-                .any(|c| format!("{:?}", c.to_module) == id_str);
+                .any(|c| c.to_module.to_string() == id_str);
             let has_output = connections
                 .iter()
-                .any(|c| format!("{:?}", c.from_module) == id_str);
+                .any(|c| c.from_module.to_string() == id_str);
 
             if !has_input && !has_output {
                 diagnostics.push(GraphDiagnostic {
@@ -214,8 +212,8 @@ impl SynthBridge for AppSynthBridge {
                     message: format!("Module {} ({}) has no connections", id_str, module.name),
                 });
             } else if !has_output
-                && module.module_type != ModuleType::StereoOutput
-                && module.module_type != ModuleType::Amplifier
+                && module.id.module_type != synth_core::ModuleType::StereoOutput
+                && module.id.module_type != synth_core::ModuleType::Amplifier
             {
                 diagnostics.push(GraphDiagnostic {
                     severity: DiagnosticSeverity::Warning,
@@ -260,7 +258,7 @@ impl SynthBridge for AppSynthBridge {
             .shared_graph
             .get_all_modules()
             .into_iter()
-            .find(|m| format!("{:?}", m.id) == module_id)
+            .find(|m| m.id.to_string() == module_id)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
         // Find matching param and create a new one with updated value
@@ -312,26 +310,30 @@ impl SynthBridge for AppSynthBridge {
 /// Format a parameter value for human-readable display.
 fn format_param_display(param: &Param) -> String {
     let value = param.as_f32();
-    let name = param.name();
+    let name_lower = param.name().to_ascii_lowercase();
 
     // Add units based on parameter type
-    if name.contains("frequency") || name.contains("cutoff") {
+    if name_lower.contains("frequency") || name_lower.contains("cutoff") || name_lower == "rate" {
         if value >= 1000.0 {
             format!("{:.1} kHz", value / 1000.0)
         } else {
             format!("{value:.1} Hz")
         }
-    } else if name.contains("time")
-        || name.contains("attack")
-        || name.contains("release")
-        || name.contains("decay")
+    } else if name_lower.contains("time")
+        || name_lower.contains("attack")
+        || name_lower.contains("release")
+        || name_lower.contains("decay")
     {
         if value >= 1.0 {
             format!("{value:.2} s")
         } else {
             format!("{:.1} ms", value * 1000.0)
         }
-    } else if name.contains("volume") || name.contains("gain") || name.contains("level") {
+    } else if name_lower.contains("volume")
+        || name_lower.contains("gain")
+        || name_lower.contains("level")
+        || name_lower.contains("master")
+    {
         format!("{value:.2}")
     } else {
         format!("{value:.3}")

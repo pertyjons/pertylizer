@@ -13,6 +13,10 @@ use crate::bridge::SynthBridge;
 
 // === Parameter structs for tool inputs ===
 
+/// Empty parameter struct for tools that take no arguments.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NoParams {}
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentIdParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
@@ -103,7 +107,7 @@ impl ServerHandler for SynthMcpServer {
 #[tool_router]
 impl SynthMcpServer {
     #[tool(description = "List all instruments in the synth engine with their basic settings")]
-    async fn list_instruments(&self, _params: Parameters<()>) -> String {
+    async fn list_instruments(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_instruments() {
             Ok(instruments) => serde_json::to_string_pretty(&instruments)
                 .unwrap_or_else(|e| format!("Serialization error: {e}")),
@@ -170,7 +174,7 @@ impl SynthMcpServer {
     }
 
     #[tool(description = "Get engine status: CPU usage, voice count, meters, transport state")]
-    async fn get_engine_status(&self, _params: Parameters<()>) -> String {
+    async fn get_engine_status(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_engine_status() {
             Ok(status) => serde_json::to_string_pretty(&status)
                 .unwrap_or_else(|e| format!("Serialization error: {e}")),

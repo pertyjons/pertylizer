@@ -1,5 +1,17 @@
 # Version History
 
+## [0.148.0] - 2026-02-24
+### MCP-bugfixar och förbättrad dokumentation
+
+**5 bugfixar:**
+- `list_instruments` och `get_engine_status` fungerar nu (Parameters<()> → NoParams-struct)
+- Modul-ID:n använder Display-format (`osc-1`) istället för Debug (`ModuleId { module_type: Oscillator, instance: 1 }`)
+- `format_param_display()` matchar nu case-insensitivt — enheter visas korrekt (`"2.0 kHz"`, `"440.0 Hz"`)
+- `get_graph_diagnostics` rapporterar inte längre StereoOutput som "signal dead-end"
+- `module_type` i ModuleInfo använder `ModuleType::name()` istället för Debug-format
+
+**Dokumentation:** Uppdaterad `docs/MCP.md` med exempelsession, kända begränsningar, fas 2/3-planering, och kreativa användningsfall
+
 ## [0.147.0] - 2026-02-24
 ### MCP-stöd (Model Context Protocol) för AI-agent-integration
 
