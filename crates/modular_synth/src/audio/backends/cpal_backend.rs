@@ -126,7 +126,6 @@ impl CpalBackend {
     }
 }
 
-
 impl AudioBackend for CpalBackend {
     fn name(&self) -> &str {
         "cpal"

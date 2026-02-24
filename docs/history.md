@@ -1,5 +1,20 @@
 # Version History
 
+## [0.147.0] - 2026-02-24
+### MCP-stöd (Model Context Protocol) för AI-agent-integration
+
+**Ny crate: `synth_mcp`** — MCP-server som låter AI-agenter inspektera och styra synthen:
+- 11 verktyg: list_instruments, list_modules, get_module_info, get_connections, get_parameter, get_engine_status, get_graph_diagnostics, set_parameter, note_on, note_off
+- `SynthBridge` trait för ren separation mellan MCP-protokoll och synth-engine
+- TCP-server på port 9850 (GUI + MCP samtidigt) och stdio-läge (`--mcp` headless)
+- Stdio↔TCP bridge-binär (`synth-mcp-bridge`) för Claude Code-integration
+
+**SharedGraphState kopplad till EngineState:**
+- `EngineState.shared_graph` uppdateras vid topologiändringar och parameterändringar
+- Snapshot byggs från `Instrument.voice_graph()` vid AddModule, RemoveModule, Connect, Disconnect, SetModuleParameter, SetVoiceParameter
+
+**Feature flag:** `mcp` — bakom feature flag, default-builds opåverkade
+
 ## [0.146.0] - 2026-02-24
 ### Öka AudioBuffer-startstorlek till 1024 samples
 

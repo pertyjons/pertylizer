@@ -13,6 +13,12 @@
 //! # Run with console interface
 //! cargo run -- --gui console
 //!
+//! # Run with GUI + MCP server on port 9850
+//! cargo run --features mcp
+//!
+//! # Run headless MCP server (stdio)
+//! cargo run --features mcp -- --mcp
+//!
 //! # Or compile with only console support
 //! cargo run --no-default-features --features gui-console
 //! ```
@@ -32,7 +38,14 @@ enum CliAction {
     RunGui(GuiType),
     /// List available backends and exit.
     ListBackends,
+    /// Run headless MCP server on stdio (no GUI).
+    #[cfg(feature = "mcp")]
+    HeadlessMcp,
 }
+
+/// Default MCP TCP port.
+#[cfg(feature = "mcp")]
+const MCP_PORT: u16 = 9850;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -45,6 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         CliAction::RunGui(gui_type) => {
             run_gui(gui_type)?;
+        }
+        #[cfg(feature = "mcp")]
+        CliAction::HeadlessMcp => {
+            run_headless_mcp()?;
         }
     }
 
@@ -59,6 +76,24 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let (engine, handle) = SynthEngine::with_config(allocator_config.clone());
+
+    // Start MCP TCP server in background (if feature enabled)
+    #[cfg(feature = "mcp")]
+    {
+        let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
+            std::sync::Arc::clone(&handle.state),
+            handle.command_sender(),
+        ));
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new()
+                .unwrap_or_else(|e| panic!("Failed to create tokio runtime: {e}"));
+            rt.block_on(async {
+                if let Err(e) = synth_mcp::serve_tcp(bridge, MCP_PORT).await {
+                    eprintln!("MCP server error: {e}");
+                }
+            });
+        });
+    }
 
     // Create audio host
     let host: Box<dyn AudioHostTrait> = match audio::default_host() {
@@ -98,6 +133,52 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Run headless MCP server on stdio (no GUI, audio still plays).
+#[cfg(feature = "mcp")]
+fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
+    let allocator_config = AllocatorConfig {
+        max_voices: VoiceCount::OCTO,
+        mode: AllocationMode::Polyphonic,
+        ..Default::default()
+    };
+    let (engine, handle) = SynthEngine::with_config(allocator_config);
+
+    // Start audio
+    let mut host: Box<dyn AudioHostTrait> = match audio::default_host() {
+        Ok(h) => {
+            eprintln!("✓ Audio backend: {}", h.backend_name());
+            Box::new(h)
+        }
+        Err(e) => {
+            eprintln!("⚠ Could not initialize audio: {e}");
+            Box::new(audio::null_host())
+        }
+    };
+
+    let stream_config = StreamConfig {
+        sample_rate: SampleRate::DVD_QUALITY,
+        buffer_size: BufferSize::MEDIUM,
+        channels: ChannelCount::Stereo,
+    };
+
+    let _stream_info = host.start_output(None, &stream_config, Box::new(engine))?;
+    eprintln!("✓ Audio stream started");
+
+    let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
+        std::sync::Arc::clone(&handle.state),
+        handle.command_sender(),
+    ));
+
+    // Run MCP on stdio (blocking)
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(synth_mcp::serve_stdio(bridge))?;
+
+    // Keep host alive until MCP exits
+    host.stop()?;
+
+    Ok(())
+}
+
 fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> {
     let mut gui_type: Option<GuiType> = None;
 
@@ -126,6 +207,10 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
             }
             "--console" | "-c" => {
                 gui_type = Some(GuiType::Console);
+            }
+            #[cfg(feature = "mcp")]
+            "--mcp" => {
+                return Ok(CliAction::HeadlessMcp);
             }
             _ => {
                 if args[i].starts_with('-') {
@@ -166,6 +251,8 @@ fn print_help() {
     println!("OPTIONS:");
     println!("    -g, --gui <TYPE>       Select GUI backend (egui, console)");
     println!("    -c, --console          Shortcut for --gui console");
+    #[cfg(feature = "mcp")]
+    println!("    --mcp                  Run headless MCP server on stdio");
     println!("    --list-backends        List available GUI backends");
     println!("    -h, --help             Print this help message");
     println!();
@@ -178,4 +265,6 @@ fn print_help() {
     println!("EXAMPLES:");
     println!("    modular-synth                      # Run with graphical interface");
     println!("    modular-synth --gui console        # Run with text interface");
+    #[cfg(feature = "mcp")]
+    println!("    modular-synth --mcp                # Run headless MCP server");
 }

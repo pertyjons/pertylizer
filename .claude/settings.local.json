@@ -112,7 +112,11 @@
       "Bash(git -C /home/per/Dokument/rust-projects/modular-synth log --oneline -5)",
       "Bash(git stash:*)",
       "Bash(claude:*)",
-      "Bash(npm view:*)"
+      "Bash(npm view:*)",
+      "WebFetch(domain:www.merge.dev)",
+      "WebFetch(domain:www.shuttle.dev)",
+      "Bash(git checkout:*)",
+      "Bash(tail:*)"
     ],
     "deny": [],
     "ask": []

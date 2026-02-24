@@ -18,6 +18,7 @@ use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::metering::MeteringSystem;
 use crate::sequencer_engine::SequencerEngine;
+use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
@@ -685,6 +686,7 @@ impl SynthEngine {
                 param,
             } => {
                 self.handle_set_voice_param(instrument_id, target, param);
+                self.update_shared_graph(Some(instrument_id));
             }
             EngineCommand::SetModuleParameter {
                 instrument_id,
@@ -692,6 +694,7 @@ impl SynthEngine {
                 param,
             } => {
                 self.handle_set_module_param(instrument_id, module_id, param);
+                self.update_shared_graph(instrument_id);
             }
 
             // Reset/clear
@@ -700,6 +703,12 @@ impl SynthEngine {
             }
             EngineCommand::ClearAllModules => {
                 self.handle_clear_all_modules();
+                // Clear shared graph state too
+                self.state.shared_graph.set_connections(Vec::new());
+                self.state.shared_graph.set_processing_order(Vec::new());
+                for m in self.state.shared_graph.get_all_modules() {
+                    self.state.shared_graph.remove_module(m.id);
+                }
             }
 
             // Effects
@@ -749,9 +758,11 @@ impl SynthEngine {
                 module,
             } => {
                 self.handle_add_module_instance(instrument_id, id, module);
+                self.update_shared_graph(instrument_id);
             }
             EngineCommand::RemoveModule { instrument_id, id } => {
                 self.handle_remove_module(instrument_id, id);
+                self.update_shared_graph(instrument_id);
             }
             EngineCommand::Connect {
                 instrument_id,
@@ -759,6 +770,7 @@ impl SynthEngine {
                 to,
             } => {
                 self.handle_connect(instrument_id, from, to);
+                self.update_shared_graph(instrument_id);
             }
             EngineCommand::Disconnect {
                 instrument_id,
@@ -766,12 +778,14 @@ impl SynthEngine {
                 to,
             } => {
                 self.handle_disconnect(instrument_id, from, to);
+                self.update_shared_graph(instrument_id);
             }
             EngineCommand::DisconnectAll {
                 instrument_id,
                 module,
             } => {
                 self.handle_disconnect_all(instrument_id, module);
+                self.update_shared_graph(instrument_id);
             }
 
             // Transport control
@@ -1492,6 +1506,75 @@ impl SynthEngine {
                 self.module_graph.disconnect_all(module);
             }
         }
+    }
+
+    // ========================================================================
+    // Shared graph state update
+    // ========================================================================
+
+    /// Update shared graph state after a graph-changing command.
+    ///
+    /// Dispatches to the appropriate instrument or ignores global graph (not exposed via MCP yet).
+    fn update_shared_graph(&self, instrument_id: Option<InstrumentId>) {
+        if let Some(inst_id) = instrument_id
+            && let Some(instrument) = self.instruments.iter().find(|i| i.id() == inst_id)
+        {
+            self.update_shared_graph_for_instrument(instrument);
+        }
+        // Global module graph (instrument_id == None) is not exposed yet
+    }
+
+    /// Update the shared graph state from an instrument's voice graph.
+    ///
+    /// Called after topology-changing commands (add/remove module, connect/disconnect)
+    /// and parameter changes. Allocates (Vec, String) but only at user-interaction
+    /// rate, not per-sample.
+    fn update_shared_graph_for_instrument(&self, instrument: &Instrument) {
+        let graph = instrument.voice_graph();
+        let shared = &self.state.shared_graph;
+
+        // Build module snapshots from the voice graph
+        let mut module_ids: Vec<ModuleId> = graph.module_ids().collect();
+        module_ids.sort_by_key(|id| format!("{id:?}"));
+
+        // Clear and rebuild all modules for this instrument
+        // (simpler than tracking individual changes)
+        let existing = shared.get_all_modules();
+        for m in &existing {
+            shared.remove_module(m.id);
+        }
+
+        for &id in &module_ids {
+            if let Some(module) = graph.get_module(id) {
+                let descriptor = module.descriptor();
+                let mut snapshot =
+                    ModuleStateSnapshot::new(id, module.module_type(), descriptor.name.to_string());
+                snapshot.parameters = module.get_params();
+                snapshot.bypass_state = if graph.is_bypassed(id) {
+                    synth_core::BypassState::Bypassed
+                } else {
+                    synth_core::BypassState::Active
+                };
+                shared.set_module(snapshot);
+            }
+        }
+
+        // Build connection snapshots
+        let connections: Vec<ConnectionSnapshot> = graph
+            .connections()
+            .map(|c| {
+                ConnectionSnapshot::new(
+                    c.from_module,
+                    c.from_port.as_str().to_string(),
+                    c.to_module,
+                    c.to_port.as_str().to_string(),
+                )
+            })
+            .collect();
+        shared.set_connections(connections);
+
+        // Update processing order
+        shared.set_processing_order(graph.processing_order().to_vec());
     }
 
     /// Process all active voices across all instruments and mix.

@@ -19,6 +19,8 @@ pub mod debug;
 #[cfg(feature = "gui-egui")]
 pub mod gui;
 pub mod io;
+#[cfg(feature = "mcp")]
+pub mod mcp_bridge;
 pub mod patch;
 pub mod patches;
 

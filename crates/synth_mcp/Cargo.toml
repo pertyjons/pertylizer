@@ -1,0 +1,22 @@
+[package]
+name = "synth_mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "MCP server for modular-synth remote inspection and control"
+authors = ["Per"]
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+rmcp = { workspace = true }
+tokio = { workspace = true }
+schemars = { workspace = true }

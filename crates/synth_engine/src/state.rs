@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
+use crate::shared_state::SharedGraphState;
 use crate::visualizers::VisualizationBuffer;
 
 /// Atomic float for thread-safe parameter sharing.
@@ -264,6 +265,8 @@ pub struct EngineState {
     pub focused_instrument: AtomicU32,
     /// Master output waveform buffer for oscilloscope display.
     pub master_scope: VisualizationBuffer,
+    /// Shared graph state for MCP and multi-GUI access.
+    pub shared_graph: SharedGraphState,
 }
 
 impl EngineState {
@@ -277,6 +280,7 @@ impl EngineState {
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
+            shared_graph: SharedGraphState::new(),
         })
     }
 
@@ -309,6 +313,7 @@ impl Default for EngineState {
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
+            shared_graph: SharedGraphState::new(),
         }
     }
 }
