@@ -4,7 +4,7 @@
 //! Used by MCP bridge (add_module) and could replace duplicated creation
 //! logic in `patch_bridge.rs` and `egui_backend.rs`.
 
-use synth_core::{Describable, ModuleDescriptor, ModuleType, PolyModule};
+use synth_core::{AudioEffect, Describable, ModuleDescriptor, ModuleType, PolyModule};
 
 /// Create a voice module instance from its type.
 ///
@@ -144,6 +144,86 @@ pub fn create_voice_module(
     }
 }
 
+/// Create an effect instance from its type.
+///
+/// Returns `None` for voice modules, visualizers, and other non-effect types.
+#[must_use]
+pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, ModuleDescriptor)> {
+    match module_type {
+        ModuleType::Delay => {
+            let e = synth_modules::effects::Delay::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Reverb => {
+            let e = synth_modules::effects::Reverb::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Distortion => {
+            let e = synth_modules::effects::Distortion::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Chorus => {
+            let e = synth_modules::effects::Chorus::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Phaser => {
+            let e = synth_modules::effects::Phaser::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Flanger => {
+            let e = synth_modules::effects::Flanger::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Compressor => {
+            let e = synth_modules::effects::Compressor::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Eq => {
+            let e = synth_modules::effects::Eq::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Waveshaper => {
+            let e = synth_modules::effects::Waveshaper::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::BbdDelay => {
+            let e = synth_modules::effects::BbdDelay::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::MidSide => {
+            let e = synth_modules::effects::MidSide::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Limiter => {
+            let e = synth_modules::effects::Limiter::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Convolver => {
+            let e = synth_modules::effects::Convolver::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::PhaseVocoder => {
+            let e = synth_modules::effects::PhaseVocoder::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        _ => None,
+    }
+}
+
 /// Get the descriptor for any supported module type (voice, effect, or visualizer).
 ///
 /// Creates a temporary instance just to call `.descriptor()`.
@@ -154,23 +234,13 @@ pub fn get_descriptor(module_type: ModuleType) -> Option<ModuleDescriptor> {
         return Some(desc);
     }
 
-    // Effects
+    // Try effects
+    if let Some((_, desc)) = create_effect(module_type) {
+        return Some(desc);
+    }
+
+    // Visualizers
     match module_type {
-        ModuleType::Delay => Some(synth_modules::effects::Delay::new().descriptor()),
-        ModuleType::Reverb => Some(synth_modules::effects::Reverb::new().descriptor()),
-        ModuleType::Distortion => Some(synth_modules::effects::Distortion::new().descriptor()),
-        ModuleType::Chorus => Some(synth_modules::effects::Chorus::new().descriptor()),
-        ModuleType::Phaser => Some(synth_modules::effects::Phaser::new().descriptor()),
-        ModuleType::Flanger => Some(synth_modules::effects::Flanger::new().descriptor()),
-        ModuleType::Compressor => Some(synth_modules::effects::Compressor::new().descriptor()),
-        ModuleType::Eq => Some(synth_modules::effects::Eq::new().descriptor()),
-        ModuleType::Waveshaper => Some(synth_modules::effects::Waveshaper::new().descriptor()),
-        ModuleType::BbdDelay => Some(synth_modules::effects::BbdDelay::new().descriptor()),
-        ModuleType::MidSide => Some(synth_modules::effects::MidSide::new().descriptor()),
-        ModuleType::Limiter => Some(synth_modules::effects::Limiter::new().descriptor()),
-        ModuleType::Convolver => Some(synth_modules::effects::Convolver::new().descriptor()),
-        ModuleType::PhaseVocoder => Some(synth_modules::effects::PhaseVocoder::new().descriptor()),
-        // Visualizers
         ModuleType::Oscilloscope => {
             Some(synth_engine::visualizers::Oscilloscope::new().descriptor())
         }

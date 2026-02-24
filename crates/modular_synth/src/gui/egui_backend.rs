@@ -2462,7 +2462,7 @@ impl SynthApp {
     /// Handle a pending MCP operation (add/remove module, connect/disconnect).
     #[cfg(feature = "mcp")]
     fn handle_mcp_op(&mut self, op: crate::mcp_shared::PendingMcpOp) {
-        use crate::gui::module_factory::create_voice_module;
+        use crate::gui::module_factory::{create_effect, create_voice_module};
         use crate::mcp_shared::PendingMcpOp;
 
         let active_id = self.active_instrument_id;
@@ -2484,7 +2484,6 @@ impl SynthApp {
                     *counter += 1;
                     let module_id = ModuleId::new(module_type, *counter);
 
-                    // Place at a default position (will be auto-laid out)
                     let position = eframe::egui::Pos2::new(100.0, 100.0);
                     patch_editor.add_module_at(module_id, descriptor, position);
                     self.handle.send(EngineCommand::AddModuleInstance {
@@ -2492,18 +2491,49 @@ impl SynthApp {
                         id: module_id,
                         module,
                     });
+                } else if module_type.is_effect()
+                    && let Some((effect, descriptor)) = create_effect(module_type)
+                {
+                    let counter = self.instance_counters.entry(module_type).or_insert(0);
+                    *counter += 1;
+                    let module_id = ModuleId::new(module_type, *counter);
+
+                    let position = eframe::egui::Pos2::new(100.0, 100.0);
+                    patch_editor.add_module_at(module_id, descriptor, position);
+                    self.handle.send(EngineCommand::AddEffectInstance {
+                        instrument_id: Some(active_id),
+                        id: module_id,
+                        effect,
+                    });
                 }
-                // Effects/visualizers via MCP not supported in this version
             }
             PendingMcpOp::RemoveModule { module_id } => {
                 let Ok(mid) = module_id.parse::<ModuleId>() else {
                     return;
                 };
+                let category = patch_editor.module_descriptor(mid).map(|d| d.category);
                 patch_editor.remove_module(mid);
-                self.handle.send(EngineCommand::RemoveModule {
-                    instrument_id: Some(active_id),
-                    id: mid,
-                });
+                match category {
+                    Some(synth_core::ModuleCategory::Effect) => {
+                        self.handle.send(EngineCommand::RemoveEffect {
+                            instrument_id: Some(active_id),
+                            id: mid,
+                        });
+                    }
+                    Some(synth_core::ModuleCategory::Visualizer) => {
+                        self.handle.send(EngineCommand::RemoveVisualizer {
+                            instrument_id: Some(active_id),
+                            id: mid,
+                        });
+                        self.handle.remove_visualization_buffer(mid);
+                    }
+                    _ => {
+                        self.handle.send(EngineCommand::RemoveModule {
+                            instrument_id: Some(active_id),
+                            id: mid,
+                        });
+                    }
+                }
             }
             PendingMcpOp::Connect {
                 from_module,

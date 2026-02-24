@@ -1,5 +1,14 @@
 # Version History
 
+## [0.153.0] - 2026-02-25
+### MCP: Effektmoduler via add_module/remove_module
+
+**Förbättringar:**
+- `add_module` stödjer nu effektmoduler (chr, rev, dly, dist, phs, fln, comp, eq, ws, bbd, ms, lim, conv, pvoc) — inte bara voice-moduler
+- `remove_module` skickar nu rätt `EngineCommand` beroende på modulkategori (Effect → `RemoveEffect`, Visualizer → `RemoveVisualizer`, annars `RemoveModule`)
+
+**Ny fabriksfunktion:** `create_effect(ModuleType)` i `module_factory.rs` — skapar effektinstanser (`Box<dyn AudioEffect>` + `ModuleDescriptor`), parallell till `create_voice_module`. `get_descriptor()` förenklas att använda den.
+
 ## [0.152.0] - 2026-02-24
 ### MCP: clear_graph + städning
 
