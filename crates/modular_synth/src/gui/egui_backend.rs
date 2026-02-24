@@ -2555,6 +2555,37 @@ impl SynthApp {
                     to: synth_engine::commands::PortId::new(to_id, to_port),
                 });
             }
+            PendingMcpOp::ClearGraph => {
+                // Remove all modules from the engine (same pattern as load_patch)
+                for module_id in patch_editor.module_ids() {
+                    let category = patch_editor
+                        .module_descriptor(module_id)
+                        .map(|d| d.category);
+                    match category {
+                        Some(synth_core::ModuleCategory::Effect) => {
+                            self.handle.send(EngineCommand::RemoveEffect {
+                                instrument_id: Some(active_id),
+                                id: module_id,
+                            });
+                        }
+                        Some(synth_core::ModuleCategory::Visualizer) => {
+                            self.handle.send(EngineCommand::RemoveVisualizer {
+                                instrument_id: Some(active_id),
+                                id: module_id,
+                            });
+                            self.handle.remove_visualization_buffer(module_id);
+                        }
+                        _ => {
+                            self.handle.send(EngineCommand::RemoveModule {
+                                instrument_id: Some(active_id),
+                                id: module_id,
+                            });
+                        }
+                    }
+                }
+                patch_editor.clear();
+                self.instance_counters.clear();
+            }
         }
     }
 

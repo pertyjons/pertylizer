@@ -1,5 +1,14 @@
 # Version History
 
+## [0.152.0] - 2026-02-24
+### MCP: clear_graph + städning
+
+**Nytt MCP-verktyg (totalt 21):**
+- `clear_graph` — Rensar hela voice graph:en för ett instrument (tar bort alla moduler, effekter, visualiserare och kablar). Användbart för att börja från scratch.
+
+**Borttaget:**
+- `signal_level` fältet i `ConnectionSnapshot` och `ConnectionInfo` (GUI använder separat `CableVisualState`-system, MCP-fältet var redundant)
+
 ## [0.151.0] - 2026-02-24
 ### MCP: Modulhantering + buggfixar
 
@@ -16,9 +25,6 @@
 
 **Buggfixar:**
 - `effect_count` i `InstrumentInfo` läser nu från `EngineState` (var hårdkodat till 0)
-
-**Borttaget:**
-- `signal_level` fältet i `ConnectionSnapshot` och `ConnectionInfo` (GUI använder separat `CableVisualState`-system, MCP-fältet var redundant och alltid 0 under uppspelning)
 
 **Nya bridge-typer:** `ModuleTypeInfo`, `PendingMcpOp`, `InvalidModuleType`-felvariant
 

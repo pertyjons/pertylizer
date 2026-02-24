@@ -354,6 +354,16 @@ impl SynthMcpServer {
         }
     }
 
+    #[tool(
+        description = "Clear the entire voice graph for an instrument, removing all modules and connections. Use this to start from scratch."
+    )]
+    async fn clear_graph(&self, params: Parameters<InstrumentIdParam>) -> String {
+        match self.bridge.clear_graph(params.0.instrument_id) {
+            Ok(()) => "OK: graph cleared".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
     #[tool(description = "Disconnect a cable between two module ports.")]
     async fn disconnect(&self, params: Parameters<ConnectParam>) -> String {
         match self.bridge.disconnect(

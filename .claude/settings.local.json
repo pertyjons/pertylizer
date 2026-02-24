@@ -133,7 +133,8 @@
       "Bash(RUSTFLAGS=\"-D warnings\" cargo build --features mcp 2>&1 && cargo clippy --all-targets --features mcp 2>&1 && cargo test 2>&1 | tail -5 && cargo fmt --check 2>&1)",
       "Bash(head:*)",
       "Bash(kill 342395:*)",
-      "Bash(kill 347507:*)"
+      "Bash(kill 347507:*)",
+      "Bash(RUSTFLAGS=\"-D warnings\" cargo build --features mcp 2>&1 && cargo fmt --check 2>&1)"
     ],
     "deny": [],
     "ask": []

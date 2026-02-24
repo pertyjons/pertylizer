@@ -526,6 +526,18 @@ impl SynthBridge for AppSynthBridge {
 
         Ok(())
     }
+
+    fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
+        if instrument_id != 0 {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+
+        if let Ok(mut ops) = self.shared.pending_ops.lock() {
+            ops.push(crate::mcp_shared::PendingMcpOp::ClearGraph);
+        }
+
+        Ok(())
+    }
 }
 
 /// Compute overlapping module pairs from their positions and sizes.

@@ -111,4 +111,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), McpBridgeError>;
+
+    /// Clear the entire voice graph for an instrument (remove all modules and connections).
+    fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
 }

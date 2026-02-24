@@ -39,6 +39,8 @@ pub enum PendingMcpOp {
         to_module: String,
         to_port: String,
     },
+    /// Clear the entire voice graph (remove all modules and connections).
+    ClearGraph,
 }
 
 impl McpSharedState {
