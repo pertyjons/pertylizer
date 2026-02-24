@@ -126,14 +126,6 @@ impl CpalBackend {
     }
 }
 
-impl Default for CpalBackend {
-    /// # Panics
-    /// Panics if CPAL backend cannot be initialized.
-    #[allow(clippy::expect_used)]
-    fn default() -> Self {
-        Self::new().expect("Failed to create CPAL backend")
-    }
-}
 
 impl AudioBackend for CpalBackend {
     fn name(&self) -> &str {

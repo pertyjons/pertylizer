@@ -53,8 +53,8 @@ impl RandomGates {
             burst_remaining: 0,
             cv_value: 0.0,
 
-            gate_buffer: AudioBuffer::new(256),
-            cv_buffer: AudioBuffer::new(256),
+            gate_buffer: AudioBuffer::new(1024),
+            cv_buffer: AudioBuffer::new(1024),
         }
     }
 

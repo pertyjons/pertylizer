@@ -95,9 +95,9 @@ impl Oscillator {
             prev_sync: 0.0,
             mod_offset_pitch: 0.0,
             mod_offset_level: 0.0,
-            output_buffer: AudioBuffer::new(256),
-            output_buffer_left: AudioBuffer::new(256),
-            output_buffer_right: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
+            output_buffer_left: AudioBuffer::new(1024),
+            output_buffer_right: AudioBuffer::new(1024),
         }
     }
 

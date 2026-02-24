@@ -57,7 +57,7 @@ impl NoiseGenerator {
             blue_prev: FilterState::ZERO,
             violet_prev: [FilterState::ZERO; 2],
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

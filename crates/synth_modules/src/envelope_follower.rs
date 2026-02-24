@@ -42,7 +42,7 @@ impl EnvelopeFollower {
             sensitivity: NormalizedValue::new(0.5),
             envelope: FilterState::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

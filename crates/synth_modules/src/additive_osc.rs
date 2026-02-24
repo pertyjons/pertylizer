@@ -58,7 +58,7 @@ impl AdditiveOsc {
             sample_rate: SampleRate::DVD_QUALITY,
             amplitudes_dirty: true,
 
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

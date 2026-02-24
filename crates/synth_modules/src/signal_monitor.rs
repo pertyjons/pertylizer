@@ -87,7 +87,7 @@ impl SignalMonitor {
             capture_count: SampleCount::ZERO,
             display_samples: SampleCount::new(display_samples.max(1)),
             sample_rate,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
             sweep_buffer,
         }
     }

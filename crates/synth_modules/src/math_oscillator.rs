@@ -81,7 +81,7 @@ impl MathOscillator {
             write_pos: BufferIndex::ZERO,
             burst_remaining: FrameCount::ZERO,
             time_counter: 0,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

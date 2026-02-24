@@ -40,8 +40,8 @@ impl Amplifier {
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offset_level: 0.0,
             mod_offset_pan: 0.0,
-            output_left: AudioBuffer::new(256),
-            output_right: AudioBuffer::new(256),
+            output_left: AudioBuffer::new(1024),
+            output_right: AudioBuffer::new(1024),
         }
     }
 
@@ -279,7 +279,7 @@ impl Mixer {
             master_level: Gain::UNITY,
             mute_state: MuteState::Unmuted,
             limit_mode: LimitMode::Disabled,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 }

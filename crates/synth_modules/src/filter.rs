@@ -77,7 +77,7 @@ impl Filter {
             acid: AcidFilter::default(),
             mod_offset_cutoff: 0.0,
             mod_offset_resonance: 0.0,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 
@@ -446,7 +446,7 @@ impl LadderFilter {
             sample_rate: SampleRate::DVD_QUALITY,
             stage: [FilterState::ZERO; 4],
             delay: [FilterState::ZERO; 4],
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

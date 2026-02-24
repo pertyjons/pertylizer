@@ -147,7 +147,7 @@ impl GranularOsc {
             rng: Xorshift32::new(42),
             source_dirty: true,
 
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

@@ -53,7 +53,7 @@ impl RingMod {
             carrier_phase: Phase::ZERO,
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

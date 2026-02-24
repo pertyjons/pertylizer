@@ -53,7 +53,7 @@ impl WavetableOsc {
             phase: Phase::ZERO,
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 
@@ -289,7 +289,7 @@ mod tests {
         wt.note_on(MidiNote::new(69), Velocity::new(100.0)); // A4
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(256));
+        outputs.insert("out".to_string(), AudioBuffer::new(1024));
 
         let context = ProcessContext {
             samples: synth_core::SampleCount::new(256),

@@ -61,8 +61,8 @@ impl TuringMachine {
 
             rng_state: 12345,
 
-            pitch_buffer: AudioBuffer::new(256),
-            gate_buffer: AudioBuffer::new(256),
+            pitch_buffer: AudioBuffer::new(1024),
+            gate_buffer: AudioBuffer::new(1024),
         }
     }
 

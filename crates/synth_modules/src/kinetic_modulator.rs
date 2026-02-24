@@ -64,7 +64,7 @@ impl KineticModulator {
             output_pos: 0.0,
             output_vel: 0.0,
             output_acc: 0.0,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 }

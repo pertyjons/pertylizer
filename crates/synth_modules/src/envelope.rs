@@ -159,7 +159,7 @@ impl Envelope {
             velocity: NormalizedValue::MAX,
             sample_rate: SampleRate::DVD_QUALITY,
             target_level: NormalizedValue::MIN,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
             time_in_stage: 0.0,
             position_buffer: Arc::new(EnvelopePositionBuffer::new()),
             prev_gate: 0.0,

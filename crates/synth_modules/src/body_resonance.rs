@@ -48,7 +48,7 @@ impl BodyResonance {
             filter3_state: [FilterState::ZERO; 2],
 
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

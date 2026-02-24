@@ -128,7 +128,7 @@ impl Mseg {
             prev_gate: 0.0,
             prev_trigger: 0.0,
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

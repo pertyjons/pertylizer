@@ -1,5 +1,12 @@
 # Version History
 
+## [0.146.0] - 2026-02-24
+### Öka AudioBuffer-startstorlek till 1024 samples
+
+- Alla modulers `AudioBuffer::new()` ändrade från 256 till 1024 samples
+- Matchar cpal-backendens faktiska bufferstorlek och undviker onödig reallokering vid första audio-callback
+- Ta bort oanvänd `Default`-impl för `CpalBackend`
+
 ## [0.145.0] - 2026-02-21
 ### Högerklicka på port → Lägg till ny modul med auto-koppling
 

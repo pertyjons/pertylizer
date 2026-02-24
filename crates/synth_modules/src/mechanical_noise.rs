@@ -55,7 +55,7 @@ impl MechanicalNoise {
             current_velocity: 0.0,
 
             sample_rate: SampleRate::DVD_QUALITY,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

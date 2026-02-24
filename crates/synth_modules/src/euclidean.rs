@@ -52,8 +52,8 @@ impl Euclidean {
             samples_per_step: 5512.5, // 120 BPM, 16th notes
             sample_counter: 0.0,
 
-            gate_buffer: AudioBuffer::new(256),
-            accent_buffer: AudioBuffer::new(256),
+            gate_buffer: AudioBuffer::new(1024),
+            accent_buffer: AudioBuffer::new(1024),
         };
         s.rebuild_pattern();
         s

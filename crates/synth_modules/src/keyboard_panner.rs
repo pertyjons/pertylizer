@@ -46,8 +46,8 @@ impl KeyboardPanner {
             current_pan: StereoBalance::CENTER,
 
             sample_rate: SampleRate::DVD_QUALITY,
-            output_left: AudioBuffer::new(256),
-            output_right: AudioBuffer::new(256),
+            output_left: AudioBuffer::new(1024),
+            output_right: AudioBuffer::new(1024),
         }
     }
 

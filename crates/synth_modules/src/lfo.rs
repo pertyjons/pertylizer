@@ -62,7 +62,7 @@ impl Lfo {
             prev_retrigger: 0.0,
             mod_offset_rate: 0.0,
             mod_offset_depth: 0.0,
-            output_buffer: AudioBuffer::new(256),
+            output_buffer: AudioBuffer::new(1024),
         }
     }
 

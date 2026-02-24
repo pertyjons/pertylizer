@@ -434,7 +434,7 @@ impl SynthEngine {
             sample_rate: 48000.0,
             master_volume: 1.0,
             mix_buffer: AudioBuffer::new(512),
-            graph_output: AudioBuffer::new(256),
+            graph_output: AudioBuffer::new(1024),
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
