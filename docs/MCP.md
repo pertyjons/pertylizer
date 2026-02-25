@@ -77,6 +77,20 @@ Alternativt med socat (utan bridge-binären):
 | `get_engine_status` | CPU, röster, meters, transport | inga |
 | `get_graph_diagnostics` | Hitta problem i grafen | `instrument_id` |
 
+### Instrumentverktyg
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `create_instrument` | Skapa nytt instrument | `name` |
+| `delete_instrument` | Ta bort instrument (ej ID 0) | `instrument_id` |
+| `rename_instrument` | Byt namn på instrument | `instrument_id`, `name` |
+| `set_instrument_volume` | Ställ volym (0.0–2.0) | `instrument_id`, `volume` |
+| `set_instrument_pan` | Ställ pan (-1.0–1.0) | `instrument_id`, `pan` |
+| `set_instrument_mute` | Muta/avmuta | `instrument_id`, `muted` |
+| `set_instrument_solo` | Solo/avsolo | `instrument_id`, `solo` |
+| `set_instrument_midi_channel` | Ställ MIDI-kanal (1–16) | `instrument_id`, `channel` |
+| `set_instrument_enabled` | Aktivera/avaktivera | `instrument_id`, `enabled` |
+
 ### Skrivverktyg
 
 | Verktyg | Beskrivning | Parametrar |
@@ -140,29 +154,15 @@ synth_mcp (crate)              modular_synth
   Claude Code
 ```
 
-**SynthBridge** — trait med 11 metoder som abstraherar bort synth_engine.
+**SynthBridge** — trait som abstraherar bort synth_engine.
 **AppSynthBridge** — impl som läser `EngineState.shared_graph` (RwLock) och skickar kommandon via `CommandSender` (lock-free ring buffer).
 **SynthMcpServer** — rmcp `ServerHandler` som delegerar till bridge.
 
 ## Kända begränsningar
 
-- Bara ett instrument (ID 0) exponeras — multi-instrument kräver ytterligare shared state
+- Inga kända begränsningar för multi-instrument
 
-## Fas 2: Topologiändring (planerad)
-
-Verktyg som ändrar grafen — kräver modulfabrik och topologikommandon:
-
-| Verktyg | Beskrivning |
-|---------|-------------|
-| `add_module` | Skapa ny modul (typ, namn) |
-| `remove_module` | Ta bort modul och dess kopplingar |
-| `connect` | Koppla en port till en annan |
-| `disconnect` | Koppla bort en kabel |
-| `list_module_types` | Lista tillgängliga modultyper |
-| `save_patch` / `load_patch` | Spara/ladda patch-filer |
-| `set_tempo` / `play` / `stop` | Transportkontroll |
-
-## Fas 3: MCP Resources & Prompts
+## MCP Resources & Prompts (planerad)
 
 | Feature | Beskrivning |
 |---------|-------------|

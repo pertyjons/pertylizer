@@ -11,8 +11,16 @@ pub struct InstrumentInfo {
     pub name: String,
     /// MIDI channel (1-16).
     pub midi_channel: u8,
-    /// Whether the instrument is enabled.
+    /// Volume (0.0-2.0).
+    pub volume: f32,
+    /// Pan (-1.0 to 1.0).
+    pub pan: f32,
+    /// Whether the instrument is enabled (not muted).
     pub enabled: bool,
+    /// Whether the instrument is muted.
+    pub muted: bool,
+    /// Whether the instrument is soloed.
+    pub solo: bool,
     /// Number of modules in the voice graph.
     pub module_count: usize,
     /// Number of effects in the chain.

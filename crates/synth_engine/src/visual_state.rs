@@ -427,6 +427,7 @@ mod tests {
         state.update_from_snapshot(
             &ModuleStateSnapshot::new(
                 crate::commands::ModuleId::new(synth_core::ModuleType::Oscillator, 1),
+                crate::instrument::InstrumentId::FIRST,
                 synth_core::ModuleType::Oscillator,
                 "Test".to_string(),
             ),

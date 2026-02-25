@@ -1,5 +1,33 @@
 # Version History
 
+## [0.159.0] - 2026-02-25
+### MCP: Multi-instrument-stöd
+
+**9 nya MCP-verktyg för instrumenthantering (totalt 56):**
+
+- `create_instrument` — Skapa nytt instrument med namn
+- `delete_instrument` — Ta bort instrument (ej standard-instrumentet ID 0)
+- `rename_instrument` — Byt namn på instrument
+- `set_instrument_volume` — Ställ volym (0.0–2.0)
+- `set_instrument_pan` — Ställ pan (-1.0–1.0)
+- `set_instrument_mute` — Muta/avmuta
+- `set_instrument_solo` — Solo/avsolo
+- `set_instrument_midi_channel` — MIDI-kanal (1–16)
+- `set_instrument_enabled` — Aktivera/avaktivera
+
+**Arkitekturändringar:**
+
+- `SharedGraphState` taggar snapshots med `instrument_id` — moduler/kopplingar per instrument
+- `InstrumentSnapshot` i `EngineState` — namn, kanal, volym, pan, mute, solo
+- `SynthSession` — instrumentlivscykel (add/remove/rename/configure) + per-instrument modulregister
+- `SynthBridge` trait utökat med 9 nya instrumentmetoder
+- `AppSynthBridge` — alla `instrument_id != 0`-guarder borttagna, validerar via snapshots
+- GUI-rekonciliering filtrerar på aktivt instrument
+- `InstrumentInfo` utökad med volume, pan, muted, solo-fält
+- Engine uppdaterar instrument-snapshots vid varje instrumentförändring
+
+**Begränsning borttagen:** "Bara ett instrument (ID 0) exponeras" — nu stöds flertal instrument via MCP.
+
 ## [0.158.0] - 2026-02-25
 ### SynthSession — gemensamt kontrollager för GUI och MCP
 

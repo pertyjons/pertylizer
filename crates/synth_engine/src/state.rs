@@ -6,7 +6,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
-use crate::shared_state::SharedGraphState;
+use parking_lot::RwLock;
+
+use crate::shared_state::{InstrumentSnapshot, SharedGraphState};
 use crate::visualizers::VisualizationBuffer;
 
 /// Atomic float for thread-safe parameter sharing.
@@ -269,6 +271,8 @@ pub struct EngineState {
     pub shared_graph: SharedGraphState,
     /// Number of effects in the focused instrument's effect chain.
     pub effect_count: AtomicU32,
+    /// Instrument metadata snapshots for MCP and multi-GUI access.
+    pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
 }
 
 impl EngineState {
@@ -284,6 +288,7 @@ impl EngineState {
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
+            instrument_snapshots: RwLock::new(Vec::new()),
         })
     }
 
@@ -318,6 +323,7 @@ impl Default for EngineState {
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
+            instrument_snapshots: RwLock::new(Vec::new()),
         }
     }
 }

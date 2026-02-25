@@ -53,8 +53,8 @@ pub use instrument::{Instrument, InstrumentId, MidiChannel};
 pub use metering::*;
 pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use shared_state::{
-    AtomicF32, ConnectionSnapshot, ModuleStateSnapshot, SharedEngineState, SharedGraphState,
-    SharedMeterState, SharedTransportState,
+    AtomicF32, ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, SharedEngineState,
+    SharedGraphState, SharedMeterState, SharedTransportState,
 };
 pub use state::*;
 pub use synth_engine::{CommandSender, EngineHandle, SynthEngine};

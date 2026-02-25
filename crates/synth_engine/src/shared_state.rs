@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
+use super::instrument::InstrumentId;
 use synth_core::{BypassState, MuteState, SoloState};
 use synth_core::{ModuleType, Param};
 
@@ -173,6 +174,8 @@ impl Default for SharedTransportState {
 pub struct ModuleStateSnapshot {
     /// Module ID.
     pub id: ModuleId,
+    /// Which instrument this module belongs to.
+    pub instrument_id: InstrumentId,
     /// Module type.
     pub module_type: ModuleType,
     /// Module name.
@@ -199,9 +202,15 @@ pub struct ModuleStateSnapshot {
 
 impl ModuleStateSnapshot {
     /// Create a new module state snapshot.
-    pub fn new(id: ModuleId, module_type: ModuleType, name: String) -> Self {
+    pub fn new(
+        id: ModuleId,
+        instrument_id: InstrumentId,
+        module_type: ModuleType,
+        name: String,
+    ) -> Self {
         Self {
             id,
+            instrument_id,
             module_type,
             name,
             bypass_state: BypassState::Active,
@@ -236,6 +245,8 @@ impl ModuleStateSnapshot {
 /// Snapshot of a connection for GUI display.
 #[derive(Debug, Clone)]
 pub struct ConnectionSnapshot {
+    /// Which instrument this connection belongs to.
+    pub instrument_id: InstrumentId,
     /// Source module.
     pub from_module: ModuleId,
     /// Source port name.
@@ -249,18 +260,45 @@ pub struct ConnectionSnapshot {
 impl ConnectionSnapshot {
     /// Create a new connection snapshot.
     pub fn new(
+        instrument_id: InstrumentId,
         from_module: ModuleId,
         from_port: String,
         to_module: ModuleId,
         to_port: String,
     ) -> Self {
         Self {
+            instrument_id,
             from_module,
             from_port,
             to_module,
             to_port,
         }
     }
+}
+
+/// Snapshot of an instrument's metadata for MCP/GUI access.
+#[derive(Debug, Clone)]
+pub struct InstrumentSnapshot {
+    /// Instrument ID.
+    pub id: InstrumentId,
+    /// Instrument name.
+    pub name: String,
+    /// MIDI channel (1-indexed).
+    pub midi_channel: u8,
+    /// Volume (0.0-2.0).
+    pub volume: f32,
+    /// Pan (-1.0 to 1.0).
+    pub pan: f32,
+    /// Whether the instrument is enabled (not muted).
+    pub enabled: bool,
+    /// Whether the instrument is muted.
+    pub muted: bool,
+    /// Whether the instrument is soloed.
+    pub solo: bool,
+    /// Number of modules in the voice graph.
+    pub module_count: usize,
+    /// Number of effects in the chain.
+    pub effect_count: usize,
 }
 
 /// Thread-safe snapshot of graph topology.
@@ -353,6 +391,56 @@ impl SharedGraphState {
     /// Get all live modules.
     pub fn get_live_modules(&self) -> HashSet<ModuleId> {
         self.live_modules.read().clone()
+    }
+
+    // === Per-instrument query methods ===
+
+    /// Get modules belonging to a specific instrument.
+    pub fn get_modules_for_instrument(&self, id: InstrumentId) -> Vec<ModuleStateSnapshot> {
+        self.modules
+            .read()
+            .values()
+            .filter(|m| m.instrument_id == id)
+            .cloned()
+            .collect()
+    }
+
+    /// Get connections belonging to a specific instrument.
+    pub fn get_connections_for_instrument(&self, id: InstrumentId) -> Vec<ConnectionSnapshot> {
+        self.connections
+            .read()
+            .iter()
+            .filter(|c| c.instrument_id == id)
+            .cloned()
+            .collect()
+    }
+
+    /// Count modules belonging to a specific instrument.
+    pub fn module_count_for_instrument(&self, id: InstrumentId) -> usize {
+        self.modules
+            .read()
+            .values()
+            .filter(|m| m.instrument_id == id)
+            .count()
+    }
+
+    /// Remove all modules belonging to a specific instrument.
+    pub fn remove_modules_for_instrument(&self, id: InstrumentId) {
+        self.modules.write().retain(|_, m| m.instrument_id != id);
+        self.bump_version();
+    }
+
+    /// Replace all connections for a specific instrument, keeping connections for other instruments.
+    pub fn set_connections_for_instrument(
+        &self,
+        id: InstrumentId,
+        connections: Vec<ConnectionSnapshot>,
+    ) {
+        let mut all = self.connections.write();
+        all.retain(|c| c.instrument_id != id);
+        all.extend(connections);
+        drop(all);
+        self.bump_version();
     }
 
     // === Update methods (called from main thread after receiving engine events) ===
@@ -454,6 +542,8 @@ pub struct SharedEngineState {
     pub transport: SharedTransportState,
     /// Graph topology.
     pub graph: SharedGraphState,
+    /// Instrument metadata snapshots.
+    pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
     /// Global version counter for any state change.
     pub version: AtomicU64,
 }
@@ -467,6 +557,7 @@ impl SharedEngineState {
             cpu_usage: AtomicF32::new(0.0),
             transport: SharedTransportState::new(),
             graph: SharedGraphState::new(),
+            instrument_snapshots: RwLock::new(Vec::new()),
             version: AtomicU64::new(0),
         }
     }
@@ -532,10 +623,13 @@ mod tests {
 
     #[test]
     fn test_shared_graph_state() {
+        use super::super::instrument::InstrumentId;
+
         let graph = SharedGraphState::new();
 
         let module = ModuleStateSnapshot::new(
             ModuleId::new(ModuleType::Oscillator, 1),
+            InstrumentId::FIRST,
             ModuleType::Oscillator,
             "Osc 1".to_string(),
         );
@@ -560,10 +654,13 @@ mod tests {
 
     #[test]
     fn test_version_tracking() {
+        use super::super::instrument::InstrumentId;
+
         let graph = SharedGraphState::new();
         let v1 = graph.version();
 
         graph.add_connection(ConnectionSnapshot::new(
+            InstrumentId::FIRST,
             ModuleId::new(ModuleType::Oscillator, 1),
             "out".to_string(),
             ModuleId::new(ModuleType::Filter, 1),

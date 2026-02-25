@@ -103,6 +103,70 @@ pub struct ConnectParam {
     pub to_port: String,
 }
 
+// === Instrument lifecycle parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateInstrumentParam {
+    #[schemars(description = "Name for the new instrument")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameInstrumentParam {
+    #[schemars(description = "Instrument ID to rename")]
+    pub instrument_id: u64,
+    #[schemars(description = "New name for the instrument")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentVolumeParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Volume level (0.0 = silent, 1.0 = unity, 2.0 = max)")]
+    pub volume: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentPanParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
+    pub pan: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentMuteParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Whether the instrument should be muted")]
+    pub muted: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentSoloParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Whether the instrument should be soloed")]
+    pub solo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentMidiChannelParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "MIDI channel (1-16)")]
+    pub channel: u8,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentEnabledParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Whether the instrument should be enabled")]
+    pub enabled: bool,
+}
+
 // === Sequencer parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -610,6 +674,143 @@ impl SynthMcpServer {
     async fn clear_graph(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.clear_graph(params.0.instrument_id) {
             Ok(()) => "OK: graph cleared".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Instrument lifecycle ===
+
+    #[tool(
+        description = "Create a new instrument. Returns the instrument info with its assigned ID."
+    )]
+    async fn create_instrument(&self, params: Parameters<CreateInstrumentParam>) -> String {
+        match self.bridge.create_instrument(&params.0.name) {
+            Ok(info) => serde_json::to_string_pretty(&info)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Delete an instrument and all its modules. Cannot delete the default instrument (ID 0)."
+    )]
+    async fn delete_instrument(&self, params: Parameters<InstrumentIdParam>) -> String {
+        match self.bridge.delete_instrument(params.0.instrument_id) {
+            Ok(()) => format!("OK: deleted instrument {}", params.0.instrument_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Rename an instrument.")]
+    async fn rename_instrument(&self, params: Parameters<RenameInstrumentParam>) -> String {
+        match self
+            .bridge
+            .rename_instrument(params.0.instrument_id, &params.0.name)
+        {
+            Ok(()) => format!(
+                "OK: renamed instrument {} to '{}'",
+                params.0.instrument_id, params.0.name
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the volume of an instrument (0.0 = silent, 1.0 = unity gain, 2.0 = max)."
+    )]
+    async fn set_instrument_volume(&self, params: Parameters<SetInstrumentVolumeParam>) -> String {
+        match self
+            .bridge
+            .set_instrument_volume(params.0.instrument_id, params.0.volume)
+        {
+            Ok(()) => format!(
+                "OK: instrument {} volume set to {}",
+                params.0.instrument_id, params.0.volume
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the pan position of an instrument (-1.0 = left, 0.0 = center, 1.0 = right)."
+    )]
+    async fn set_instrument_pan(&self, params: Parameters<SetInstrumentPanParam>) -> String {
+        match self
+            .bridge
+            .set_instrument_pan(params.0.instrument_id, params.0.pan)
+        {
+            Ok(()) => format!(
+                "OK: instrument {} pan set to {}",
+                params.0.instrument_id, params.0.pan
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Mute or unmute an instrument.")]
+    async fn set_instrument_mute(&self, params: Parameters<SetInstrumentMuteParam>) -> String {
+        match self
+            .bridge
+            .set_instrument_mute(params.0.instrument_id, params.0.muted)
+        {
+            Ok(()) => {
+                let state = if params.0.muted { "muted" } else { "unmuted" };
+                format!("OK: instrument {} {state}", params.0.instrument_id)
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Solo or unsolo an instrument. When any instrument is soloed, only soloed instruments produce sound."
+    )]
+    async fn set_instrument_solo(&self, params: Parameters<SetInstrumentSoloParam>) -> String {
+        match self
+            .bridge
+            .set_instrument_solo(params.0.instrument_id, params.0.solo)
+        {
+            Ok(()) => {
+                let state = if params.0.solo { "soloed" } else { "unsoloed" };
+                format!("OK: instrument {} {state}", params.0.instrument_id)
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set the MIDI channel for an instrument (1-16).")]
+    async fn set_instrument_midi_channel(
+        &self,
+        params: Parameters<SetInstrumentMidiChannelParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_instrument_midi_channel(params.0.instrument_id, params.0.channel)
+        {
+            Ok(()) => format!(
+                "OK: instrument {} MIDI channel set to {}",
+                params.0.instrument_id, params.0.channel
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Enable or disable an instrument.")]
+    async fn set_instrument_enabled(
+        &self,
+        params: Parameters<SetInstrumentEnabledParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_instrument_enabled(params.0.instrument_id, params.0.enabled)
+        {
+            Ok(()) => {
+                let state = if params.0.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                format!("OK: instrument {} {state}", params.0.instrument_id)
+            }
             Err(e) => format!("Error: {e}"),
         }
     }

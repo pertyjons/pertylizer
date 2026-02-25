@@ -443,6 +443,11 @@ impl SynthEngine {
             callback_count: 0,
         };
 
+        // Initialize instrument snapshots so MCP/GUI see the default instrument
+        engine.update_shared_instruments();
+        // Initialize shared graph for default instrument
+        engine.update_shared_graph_for_instrument(&engine.instruments[0]);
+
         let handle = EngineHandle {
             command_sender: CommandSender::new(command_producer),
             event_consumer,
@@ -709,6 +714,7 @@ impl SynthEngine {
                 for m in self.state.shared_graph.get_all_modules() {
                     self.state.shared_graph.remove_module(m.id);
                 }
+                self.update_shared_instruments();
             }
 
             // Effects
@@ -910,6 +916,7 @@ impl SynthEngine {
 
     fn handle_add_instrument(&mut self, instrument: Box<Instrument>) {
         self.instruments.push(instrument);
+        self.update_shared_instruments();
     }
 
     fn handle_remove_instrument(&mut self, instrument_id: InstrumentId) {
@@ -918,8 +925,17 @@ impl SynthEngine {
             .iter()
             .position(|p| p.id() == instrument_id)
         {
+            // Clean up shared graph data for this instrument
+            self.state
+                .shared_graph
+                .remove_modules_for_instrument(instrument_id);
+            self.state
+                .shared_graph
+                .set_connections_for_instrument(instrument_id, Vec::new());
+
             let instrument = self.instruments.swap_remove(idx);
             let _ = self.instrument_return_producer.try_push(instrument);
+            self.update_shared_instruments();
         }
     }
 
@@ -961,6 +977,7 @@ impl SynthEngine {
             InstrumentParam::LearnState(state) => instrument.set_learn_state(state),
             InstrumentParam::OversamplingFactor(factor) => instrument.set_oversampling(factor),
         }
+        self.update_shared_instruments();
     }
 
     fn handle_set_instrument_channel(&mut self, instrument_id: InstrumentId, channel: MidiChannel) {
@@ -971,6 +988,7 @@ impl SynthEngine {
         {
             instrument.set_midi_channel(channel);
         }
+        self.update_shared_instruments();
     }
 
     fn handle_set_instrument_enabled(&mut self, instrument_id: InstrumentId, enabled: bool) {
@@ -981,6 +999,7 @@ impl SynthEngine {
         {
             instrument.set_enabled(enabled);
         }
+        self.update_shared_instruments();
     }
 
     fn handle_set_instrument_solo(&mut self, instrument_id: InstrumentId, solo: bool) {
@@ -991,6 +1010,7 @@ impl SynthEngine {
         {
             instrument.set_solo(solo);
         }
+        self.update_shared_instruments();
     }
 
     // ========================================================================
@@ -1534,6 +1554,7 @@ impl SynthEngine {
     /// and parameter changes. Allocates (Vec, String) but only at user-interaction
     /// rate, not per-sample.
     fn update_shared_graph_for_instrument(&self, instrument: &Instrument) {
+        let instrument_id = instrument.id();
         let graph = instrument.voice_graph();
         let shared = &self.state.shared_graph;
 
@@ -1541,18 +1562,18 @@ impl SynthEngine {
         let mut module_ids: Vec<ModuleId> = graph.module_ids().collect();
         module_ids.sort_by_key(|id| format!("{id:?}"));
 
-        // Clear and rebuild all modules for this instrument
-        // (simpler than tracking individual changes)
-        let existing = shared.get_all_modules();
-        for m in &existing {
-            shared.remove_module(m.id);
-        }
+        // Clear and rebuild only modules for THIS instrument
+        shared.remove_modules_for_instrument(instrument_id);
 
         for &id in &module_ids {
             if let Some(module) = graph.get_module(id) {
                 let descriptor = module.descriptor();
-                let mut snapshot =
-                    ModuleStateSnapshot::new(id, module.module_type(), descriptor.name.to_string());
+                let mut snapshot = ModuleStateSnapshot::new(
+                    id,
+                    instrument_id,
+                    module.module_type(),
+                    descriptor.name.to_string(),
+                );
                 snapshot.parameters = module.get_params();
                 snapshot.bypass_state = if graph.is_bypassed(id) {
                     synth_core::BypassState::Bypassed
@@ -1563,11 +1584,12 @@ impl SynthEngine {
             }
         }
 
-        // Build connection snapshots
+        // Build connection snapshots for this instrument
         let connections: Vec<ConnectionSnapshot> = graph
             .connections()
             .map(|c| {
                 ConnectionSnapshot::new(
+                    instrument_id,
                     c.from_module,
                     c.from_port.as_str().to_string(),
                     c.to_module,
@@ -1575,10 +1597,31 @@ impl SynthEngine {
                 )
             })
             .collect();
-        shared.set_connections(connections);
+        shared.set_connections_for_instrument(instrument_id, connections);
 
         // Update processing order
         shared.set_processing_order(graph.processing_order().to_vec());
+    }
+
+    /// Build and write instrument metadata snapshots to shared state.
+    fn update_shared_instruments(&self) {
+        let snapshots: Vec<crate::shared_state::InstrumentSnapshot> = self
+            .instruments
+            .iter()
+            .map(|inst| crate::shared_state::InstrumentSnapshot {
+                id: inst.id(),
+                name: inst.name().to_string(),
+                midi_channel: inst.midi_channel().as_one_indexed(),
+                volume: inst.volume().as_f32(),
+                pan: inst.pan().as_f32(),
+                enabled: inst.is_enabled(),
+                muted: !inst.is_enabled(),
+                solo: inst.is_solo(),
+                module_count: inst.voice_graph().len(),
+                effect_count: inst.effect_chain().slots().len(),
+            })
+            .collect();
+        *self.state.instrument_snapshots.write() = snapshots;
     }
 
     /// Process all active voices across all instruments and mix.

@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use synth_core::{ModuleCategory, ModuleDescriptor, ModuleType};
+use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType};
 use synth_engine::commands::PortId;
-use synth_engine::instrument::InstrumentId;
+use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
+use synth_engine::shared_state::InstrumentSnapshot;
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand, ModuleId};
 
@@ -25,11 +26,20 @@ pub enum SessionError {
     #[error("module not found: {0}")]
     ModuleNotFound(String),
 
+    #[error("instrument not found: {0}")]
+    InstrumentNotFound(u64),
+
     #[error("visualizer modules require GUI (VisualizationBuffer)")]
     VisualizerRequiresGui,
 
     #[error("failed to send engine command")]
     SendFailed,
+}
+
+/// Registry entry tracking which instrument a module belongs to.
+struct RegistryEntry {
+    instrument_id: InstrumentId,
+    descriptor: ModuleDescriptor,
 }
 
 /// Thread-safe session that owns the module lifecycle.
@@ -43,7 +53,9 @@ pub struct SynthSession {
     /// Instance counters for ID generation (module_type → next instance number).
     counters: Mutex<HashMap<ModuleType, u16>>,
     /// Registry of all modules currently managed by this session.
-    registry: Mutex<HashMap<ModuleId, ModuleDescriptor>>,
+    registry: Mutex<HashMap<ModuleId, RegistryEntry>>,
+    /// Next instrument ID (starts at 1 since 0 is the default).
+    instrument_counter: Mutex<u64>,
 }
 
 impl SynthSession {
@@ -54,7 +66,181 @@ impl SynthSession {
             state,
             counters: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
+            instrument_counter: Mutex::new(1), // 0 is reserved for default
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Instrument lifecycle
+    // ------------------------------------------------------------------
+
+    /// Create a new instrument and send it to the engine.
+    /// Returns the assigned `InstrumentId`.
+    pub fn add_instrument(&self, name: &str) -> Result<InstrumentId, SessionError> {
+        let id = {
+            let mut counter = self
+                .instrument_counter
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let id = InstrumentId::new(*counter);
+            *counter += 1;
+            id
+        };
+
+        let instrument = Box::new(Instrument::new(id, name));
+
+        if !self
+            .command_sender
+            .send(EngineCommand::AddInstrument { instrument })
+        {
+            return Err(SessionError::SendFailed);
+        }
+
+        Ok(id)
+    }
+
+    /// Remove an instrument from the engine.
+    pub fn remove_instrument(&self, instrument_id: InstrumentId) -> Result<(), SessionError> {
+        // Remove all modules belonging to this instrument from the registry
+        {
+            let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            registry.retain(|_, entry| entry.instrument_id != instrument_id);
+        }
+
+        if !self
+            .command_sender
+            .send(EngineCommand::RemoveInstrument { instrument_id })
+        {
+            return Err(SessionError::SendFailed);
+        }
+
+        Ok(())
+    }
+
+    /// Rename an instrument. Name is stored directly in shared state
+    /// (no engine command needed since name doesn't affect audio).
+    pub fn rename_instrument(
+        &self,
+        instrument_id: InstrumentId,
+        name: &str,
+    ) -> Result<(), SessionError> {
+        let mut snapshots = self.state.instrument_snapshots.write();
+        if let Some(snap) = snapshots.iter_mut().find(|s| s.id == instrument_id) {
+            snap.name = name.to_string();
+            Ok(())
+        } else {
+            Err(SessionError::InstrumentNotFound(instrument_id.as_u64()))
+        }
+    }
+
+    /// Set instrument volume.
+    pub fn set_instrument_volume(
+        &self,
+        instrument_id: InstrumentId,
+        volume: f32,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::Volume(Gain::new(volume)),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Set instrument pan.
+    pub fn set_instrument_pan(
+        &self,
+        instrument_id: InstrumentId,
+        pan: f32,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::Pan(BipolarValue::new(pan)),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Set instrument mute state.
+    pub fn set_instrument_mute(
+        &self,
+        instrument_id: InstrumentId,
+        muted: bool,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentEnabled {
+                instrument_id,
+                enabled: !muted,
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Set instrument enabled state.
+    pub fn set_instrument_enabled(
+        &self,
+        instrument_id: InstrumentId,
+        enabled: bool,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentEnabled {
+                instrument_id,
+                enabled,
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Set instrument solo state.
+    pub fn set_instrument_solo(
+        &self,
+        instrument_id: InstrumentId,
+        solo: bool,
+    ) -> Result<(), SessionError> {
+        if !self.command_sender.send(EngineCommand::SetInstrumentSolo {
+            instrument_id,
+            solo,
+        }) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Set instrument MIDI channel.
+    pub fn set_instrument_midi_channel(
+        &self,
+        instrument_id: InstrumentId,
+        channel: MidiChannel,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentMidiChannel {
+                instrument_id,
+                channel,
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// List all instruments from shared state.
+    pub fn list_instruments(&self) -> Vec<InstrumentSnapshot> {
+        self.state.instrument_snapshots.read().clone()
     }
 
     // ------------------------------------------------------------------
@@ -119,7 +305,7 @@ impl SynthSession {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             registry
                 .remove(&module_id)
-                .map(|d| d.category)
+                .map(|e| e.descriptor.category)
                 .ok_or_else(|| SessionError::ModuleNotFound(module_id.to_string()))?
         };
 
@@ -187,13 +373,14 @@ impl SynthSession {
         Ok(())
     }
 
-    /// Clear the entire graph for an instrument — removes all modules.
+    /// Clear the entire graph for an instrument — removes only modules for that instrument.
     pub fn clear_graph(&self, instrument_id: InstrumentId) -> Result<(), SessionError> {
         let modules: Vec<(ModuleId, ModuleCategory)> = {
             let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             registry
                 .iter()
-                .map(|(id, desc)| (*id, desc.category))
+                .filter(|(_, entry)| entry.instrument_id == instrument_id)
+                .map(|(id, entry)| (*id, entry.descriptor.category))
                 .collect()
         };
 
@@ -215,11 +402,11 @@ impl SynthSession {
             self.command_sender.send(cmd);
         }
 
-        // Clear internal state
-        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry.clear();
-        let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-        counters.clear();
+        // Clear registry entries for this instrument
+        {
+            let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            registry.retain(|_, entry| entry.instrument_id != instrument_id);
+        }
 
         Ok(())
     }
@@ -237,13 +424,29 @@ impl SynthSession {
     /// Get the descriptor for a module.
     pub fn module_descriptor(&self, module_id: ModuleId) -> Option<ModuleDescriptor> {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry.get(&module_id).cloned()
+        registry.get(&module_id).map(|e| e.descriptor.clone())
     }
 
-    /// Get all modules currently in the session.
+    /// Get all modules currently in the session (across all instruments).
     pub fn all_modules(&self) -> HashMap<ModuleId, ModuleDescriptor> {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry.clone()
+        registry
+            .iter()
+            .map(|(id, entry)| (*id, entry.descriptor.clone()))
+            .collect()
+    }
+
+    /// Get modules belonging to a specific instrument.
+    pub fn all_modules_for_instrument(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> HashMap<ModuleId, ModuleDescriptor> {
+        let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        registry
+            .iter()
+            .filter(|(_, entry)| entry.instrument_id == instrument_id)
+            .map(|(id, entry)| (*id, entry.descriptor.clone()))
+            .collect()
     }
 
     /// Read-access to the shared engine state (meters, transport, etc.).
@@ -255,6 +458,15 @@ impl SynthSession {
     /// (note_on, set_tempo, etc.).
     pub fn command_sender(&self) -> CommandSender {
         self.command_sender.clone()
+    }
+
+    /// Check if an instrument exists in the shared snapshots.
+    pub fn instrument_exists(&self, instrument_id: InstrumentId) -> bool {
+        self.state
+            .instrument_snapshots
+            .read()
+            .iter()
+            .any(|s| s.id == instrument_id)
     }
 
     // ------------------------------------------------------------------
@@ -299,7 +511,13 @@ impl SynthSession {
             }
 
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.insert(module_id, descriptor.clone());
+            registry.insert(
+                module_id,
+                RegistryEntry {
+                    instrument_id,
+                    descriptor: descriptor.clone(),
+                },
+            );
             return Ok(descriptor);
         }
 
@@ -319,7 +537,13 @@ impl SynthSession {
             }
 
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.insert(module_id, descriptor.clone());
+            registry.insert(
+                module_id,
+                RegistryEntry {
+                    instrument_id,
+                    descriptor: descriptor.clone(),
+                },
+            );
             return Ok(descriptor);
         }
 

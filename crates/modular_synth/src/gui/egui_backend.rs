@@ -1890,9 +1890,14 @@ impl SynthApp {
     /// - Modules in editor but not in session → remove from editor.
     #[cfg(feature = "mcp")]
     fn reconcile_with_session(&mut self) {
-        // Gather data from session and engine before taking &mut patch_editor
-        let session_modules = self.session.all_modules();
-        let engine_connections = self.session.state().shared_graph.get_connections();
+        // Gather data from session and engine for the ACTIVE instrument only
+        let active_id = self.active_instrument_id;
+        let session_modules = self.session.all_modules_for_instrument(active_id);
+        let engine_connections = self
+            .session
+            .state()
+            .shared_graph
+            .get_connections_for_instrument(active_id);
 
         let Some(patch_editor) = self.active_patch_editor() else {
             return;

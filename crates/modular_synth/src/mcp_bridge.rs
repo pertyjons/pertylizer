@@ -69,44 +69,57 @@ impl AppSynthBridge {
 
         Ok(())
     }
+
+    /// Validate that an instrument exists in the shared snapshots.
+    fn validate_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
+        if !self
+            .session
+            .instrument_exists(InstrumentId::new(instrument_id))
+        {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+        }
+        Ok(())
+    }
+
+    /// Convert an `InstrumentSnapshot` to an `InstrumentInfo`.
+    fn snapshot_to_info(snap: &synth_engine::shared_state::InstrumentSnapshot) -> InstrumentInfo {
+        InstrumentInfo {
+            id: snap.id.as_u64(),
+            name: snap.name.clone(),
+            midi_channel: snap.midi_channel,
+            volume: snap.volume,
+            pan: snap.pan,
+            enabled: snap.enabled,
+            muted: snap.muted,
+            solo: snap.solo,
+            module_count: snap.module_count,
+            effect_count: snap.effect_count,
+        }
+    }
 }
 
 impl SynthBridge for AppSynthBridge {
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError> {
-        let state = self.session.state();
-        Ok(vec![InstrumentInfo {
-            id: 0,
-            name: "Default".to_string(),
-            midi_channel: 1,
-            enabled: true,
-            module_count: state.shared_graph.module_count(),
-            effect_count: state.effect_count.load() as usize,
-        }])
+        let snapshots = self.session.list_instruments();
+        Ok(snapshots.iter().map(Self::snapshot_to_info).collect())
     }
 
     fn get_instrument_info(&self, instrument_id: u64) -> Result<InstrumentInfo, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
-        let state = self.session.state();
-        Ok(InstrumentInfo {
-            id: 0,
-            name: "Default".to_string(),
-            midi_channel: 1,
-            enabled: true,
-            module_count: state.shared_graph.module_count(),
-            effect_count: state.effect_count.load() as usize,
-        })
+        let snapshots = self.session.list_instruments();
+        snapshots
+            .iter()
+            .find(|s| s.id.as_u64() == instrument_id)
+            .map(Self::snapshot_to_info)
+            .ok_or(McpBridgeError::InstrumentNotFound(instrument_id))
     }
 
     fn list_modules(&self, instrument_id: u64) -> Result<Vec<ModuleInfo>, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         let state = self.session.state();
-        let modules = state.shared_graph.get_all_modules();
-        let connections = state.shared_graph.get_connections();
+        let inst_id = InstrumentId::new(instrument_id);
+        let modules = state.shared_graph.get_modules_for_instrument(inst_id);
+        let connections = state.shared_graph.get_connections_for_instrument(inst_id);
 
         Ok(modules
             .into_iter()
@@ -164,11 +177,13 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn get_connections(&self, instrument_id: u64) -> Result<Vec<ConnectionInfo>, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
-        let connections = self.session.state().shared_graph.get_connections();
+        let connections = self
+            .session
+            .state()
+            .shared_graph
+            .get_connections_for_instrument(InstrumentId::new(instrument_id));
         Ok(connections
             .into_iter()
             .map(|c| ConnectionInfo {
@@ -210,7 +225,7 @@ impl SynthBridge for AppSynthBridge {
             master_volume: state.master_volume.load(),
             tempo: state.transport.get_tempo(),
             is_playing: state.transport.is_playing(),
-            instrument_count: 1,
+            instrument_count: state.instrument_snapshots.read().len(),
         })
     }
 
@@ -218,14 +233,13 @@ impl SynthBridge for AppSynthBridge {
         &self,
         instrument_id: u64,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         let mut diagnostics = Vec::new();
         let state = self.session.state();
-        let modules = state.shared_graph.get_all_modules();
-        let connections = state.shared_graph.get_connections();
+        let inst_id = InstrumentId::new(instrument_id);
+        let modules = state.shared_graph.get_modules_for_instrument(inst_id);
+        let connections = state.shared_graph.get_connections_for_instrument(inst_id);
 
         if modules.is_empty() {
             diagnostics.push(GraphDiagnostic {
@@ -288,6 +302,99 @@ impl SynthBridge for AppSynthBridge {
         Ok(diagnostics)
     }
 
+    // === Instrument lifecycle ===
+
+    fn create_instrument(&self, name: &str) -> Result<InstrumentInfo, McpBridgeError> {
+        let id = self
+            .session
+            .add_instrument(name)
+            .map_err(|_| McpBridgeError::CommandSendFailed)?;
+
+        // Return basic info — the engine will update the snapshots asynchronously
+        Ok(InstrumentInfo {
+            id: id.as_u64(),
+            name: name.to_string(),
+            midi_channel: 1,
+            volume: 1.0,
+            pan: 0.0,
+            enabled: true,
+            muted: false,
+            solo: false,
+            module_count: 0,
+            effect_count: 0,
+        })
+    }
+
+    fn delete_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
+        if instrument_id == 0 {
+            return Err(McpBridgeError::Other(
+                "cannot delete the default instrument".to_string(),
+            ));
+        }
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .remove_instrument(InstrumentId::new(instrument_id))
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .rename_instrument(InstrumentId::new(instrument_id), name)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_volume(InstrumentId::new(instrument_id), volume)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_pan(InstrumentId::new(instrument_id), pan)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_mute(&self, instrument_id: u64, muted: bool) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_mute(InstrumentId::new(instrument_id), muted)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_solo(&self, instrument_id: u64, solo: bool) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_solo(InstrumentId::new(instrument_id), solo)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_midi_channel(
+        &self,
+        instrument_id: u64,
+        channel: u8,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
+        self.session
+            .set_instrument_midi_channel(InstrumentId::new(instrument_id), midi_channel)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_enabled(
+        &self,
+        instrument_id: u64,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_enabled(InstrumentId::new(instrument_id), enabled)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
     fn set_parameter(
         &self,
         instrument_id: u64,
@@ -295,16 +402,14 @@ impl SynthBridge for AppSynthBridge {
         param_name: &str,
         value: f32,
     ) -> Result<(), McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         // Find the module and its current parameter to construct the correct Param variant
         let module_snapshot = self
             .session
             .state()
             .shared_graph
-            .get_all_modules()
+            .get_modules_for_instrument(InstrumentId::new(instrument_id))
             .into_iter()
             .find(|m| m.id.to_string() == module_id)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -396,9 +501,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         let layout = self
             .shared
@@ -486,9 +589,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         let mt = synth_core::ModuleType::from_prefix(module_type)
             .ok_or_else(|| McpBridgeError::InvalidModuleType(module_type.to_string()))?;
@@ -502,9 +603,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         let mid: ModuleId = module_id
             .parse()
@@ -523,9 +622,7 @@ impl SynthBridge for AppSynthBridge {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         self.validate_port(from_module, from_port, PortDirection::Output)?;
         self.validate_port(to_module, to_port, PortDirection::Input)?;
@@ -556,9 +653,7 @@ impl SynthBridge for AppSynthBridge {
         to_module: &str,
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         self.validate_port(from_module, from_port, PortDirection::Output)?;
         self.validate_port(to_module, to_port, PortDirection::Input)?;
@@ -582,9 +677,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
-        if instrument_id != 0 {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
-        }
+        self.validate_instrument(instrument_id)?;
 
         self.session
             .clear_graph(InstrumentId::new(instrument_id))

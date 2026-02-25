@@ -46,4 +46,8 @@ pub enum McpBridgeError {
     /// Song lock poisoned.
     #[error("song lock poisoned")]
     SongLockPoisoned,
+
+    /// Generic error.
+    #[error("{0}")]
+    Other(String),
 }

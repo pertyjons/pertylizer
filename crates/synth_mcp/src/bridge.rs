@@ -120,6 +120,43 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: u64,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError>;
 
+    // === Instrument lifecycle ===
+
+    /// Create a new instrument. Returns info about the created instrument.
+    fn create_instrument(&self, name: &str) -> Result<InstrumentInfo, McpBridgeError>;
+
+    /// Delete an instrument.
+    fn delete_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
+
+    /// Rename an instrument.
+    fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Set instrument volume (0.0-2.0).
+    fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError>;
+
+    /// Set instrument pan (-1.0 to 1.0).
+    fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError>;
+
+    /// Set instrument mute state.
+    fn set_instrument_mute(&self, instrument_id: u64, muted: bool) -> Result<(), McpBridgeError>;
+
+    /// Set instrument solo state.
+    fn set_instrument_solo(&self, instrument_id: u64, solo: bool) -> Result<(), McpBridgeError>;
+
+    /// Set instrument MIDI channel (1-16).
+    fn set_instrument_midi_channel(
+        &self,
+        instrument_id: u64,
+        channel: u8,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set instrument enabled state.
+    fn set_instrument_enabled(
+        &self,
+        instrument_id: u64,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError>;
+
     // === Write operations ===
 
     /// Set a module parameter by name.
