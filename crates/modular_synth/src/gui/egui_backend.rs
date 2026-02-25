@@ -953,7 +953,7 @@ impl eframe::App for SynthApp {
                 );
             }
             AppView::Sequencer => {
-                crate::gui::sequencer::draw_sequencer_view(ctx, &self.song);
+                crate::gui::sequencer::draw_sequencer_view(ctx, &mut self.handle, &self.song);
             }
         }
 

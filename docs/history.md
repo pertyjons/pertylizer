@@ -1,5 +1,16 @@
 # Version History
 
+## [0.170.0] - 2026-02-25
+### Sequencer GUI — Transport & Läs-vy (Fas 1)
+- Transport-bar med Play/Pause/Stop-knappar, Go to Start
+- Position display: Bar:Beat:Tick (1-baserat, monospace, uppdateras i realtid)
+- Tempo DragValue (20-300 BPM) — skickar `EngineCommand::SetTempo`
+- Taktart-visning från Song
+- Statusindikatorer: PLAYING (grön) / PAUSED (gul) / STOPPED (grå)
+- Song-info: namn, tracks (med färg/mute/solo), patterns (namn, noter, längd)
+- `ctx.request_repaint()` under playback för smooth position-uppdateringar
+- Transport läser atomära värden från `TransportState` (lock-free)
+
 ## [0.169.0] - 2026-02-25
 ### Sequencer GUI — Koppling och RT-säkerhet (Fas 0)
 - Song alltid tillgänglig i GUI (inte bara med MCP-feature) — `SynthGuiConfig.song`
