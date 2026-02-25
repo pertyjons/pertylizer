@@ -1,5 +1,16 @@
 # Version History
 
+## [0.162.0] - 2026-02-25
+### 4 nya moduler: Frequency Shifter, Vector Mixer, LA Synth, Pitch Tracker
+
+**Nya effektmoduler:**
+- **Frequency Shifter** (`fsf`) — Bode frekvensskiftning med Hilbert-transformpar (all-pass kedjor). Tre lägen: Up-shift, Down-shift, Stereo (up L / down R). Parametrar: Shift (-1000 till +1000 Hz), Mix, Mode.
+
+**Nya röstmoduler:**
+- **Vector Mixer** (`vec`) — 4-hörns XY-vektormixning med equal-power bilineär interpolation. 4 audio-ingångar (A/B/C/D), X/Y CV-modulering.
+- **LA Synth** (`las`) — Linear Arithmetic syntes (Roland-stil). Genererar attack-transienter (click, noise burst, pluck, hammer) som crossfadas till sustain-ingången. Parametrar: Attack Type, Attack Time, Attack Level, X-Fade Time, Brightness.
+- **Pitch Tracker** (`ptr`) — Autokorrelationsbaserad pitch-detektion. Outputs: 1V/oktav pitch CV och gate-signal. Pre-allokerad ringbuffer (2048 samples), analys var 512:e sample.
+
 ## [0.160.0] - 2026-02-25
 ### GUI-rekonciliering för MCP-instrumentändringar
 

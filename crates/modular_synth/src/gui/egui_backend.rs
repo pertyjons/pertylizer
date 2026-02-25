@@ -1986,8 +1986,7 @@ impl SynthApp {
             if !gui_ids.contains(&snap.id) {
                 let channel =
                     MidiChannel::from_one_indexed(snap.midi_channel).unwrap_or(MidiChannel::CH1);
-                let mut ui_inst =
-                    InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
+                let mut ui_inst = InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
                 ui_inst.volume = Gain::new(snap.volume);
                 ui_inst.pan = BipolarValue::new(snap.pan);
                 ui_inst.muted = snap.muted;

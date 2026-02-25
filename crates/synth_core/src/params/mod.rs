@@ -17,9 +17,11 @@ mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
+mod frequency_shifter;
 mod generative;
 mod granular;
 mod kinetic;
+mod la_synth;
 mod lfo;
 mod mod_matrix;
 mod modules;
@@ -28,10 +30,12 @@ mod noise;
 mod oscillators;
 mod phase_vocoder;
 mod physical;
+mod pitch_tracker;
 mod ring_mod;
 mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
+mod vector_mixer;
 mod waveshaper;
 mod wavetable;
 
@@ -47,12 +51,14 @@ pub use effects::{
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
+pub use frequency_shifter::FrequencyShifterParam;
 pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
 pub use granular::{GrainSource, GrainWindow, GranularParam};
 pub use kinetic::{
     EasingCurve, KineticLoopMode, KineticParam, easing_acceleration, easing_position,
     easing_velocity,
 };
+pub use la_synth::LaSynthParam;
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
@@ -65,10 +71,12 @@ pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
 };
+pub use pitch_tracker::PitchTrackerParam;
 pub use ring_mod::RingModParam;
 pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
+pub use vector_mixer::VectorMixerParam;
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
 pub use wavetable::{WavetableParam, WavetableSelect};
 
@@ -132,6 +140,13 @@ pub enum ModuleType {
     KineticModulator,
     // Signal monitor (inline voice-level visualizer)
     SignalMonitor,
+    // Spectral effects (continued)
+    FrequencyShifter,
+    // Synthesis
+    VectorMixer,
+    LaSynth,
+    // Utility
+    PitchTracker,
 }
 
 impl ModuleType {
@@ -178,6 +193,11 @@ impl ModuleType {
                 | Self::KineticModulator
                 // Signal monitor (inline visualizer in voice graph)
                 | Self::SignalMonitor
+                // Synthesis
+                | Self::VectorMixer
+                | Self::LaSynth
+                // Utility
+                | Self::PitchTracker
         )
     }
 
@@ -203,6 +223,7 @@ impl ModuleType {
                 | Self::Limiter
                 | Self::Convolver
                 | Self::PhaseVocoder
+                | Self::FrequencyShifter
         )
     }
 
@@ -279,6 +300,10 @@ impl ModuleType {
             Self::PhaseVocoder => "Phase Vocoder",
             Self::KineticModulator => "Kinetic Mod",
             Self::SignalMonitor => "Signal Monitor",
+            Self::FrequencyShifter => "Freq Shifter",
+            Self::VectorMixer => "Vector Mixer",
+            Self::LaSynth => "LA Synth",
+            Self::PitchTracker => "Pitch Tracker",
         }
     }
 
@@ -331,6 +356,10 @@ impl ModuleType {
             Self::PhaseVocoder => "pvc",
             Self::KineticModulator => "kin",
             Self::SignalMonitor => "smn",
+            Self::FrequencyShifter => "fsf",
+            Self::VectorMixer => "vec",
+            Self::LaSynth => "las",
+            Self::PitchTracker => "ptr",
         }
     }
 
@@ -383,6 +412,10 @@ impl ModuleType {
             "pvc" => Some(Self::PhaseVocoder),
             "kin" => Some(Self::KineticModulator),
             "smn" => Some(Self::SignalMonitor),
+            "fsf" => Some(Self::FrequencyShifter),
+            "vec" => Some(Self::VectorMixer),
+            "las" => Some(Self::LaSynth),
+            "ptr" => Some(Self::PitchTracker),
             _ => None,
         }
     }
@@ -454,6 +487,13 @@ pub enum Param {
     Kinetic(KineticParam),
     // Signal monitor
     SignalMonitor(SignalMonitorParam),
+    // Spectral effects (continued)
+    FrequencyShifter(FrequencyShifterParam),
+    // Synthesis
+    VectorMixer(VectorMixerParam),
+    LaSynth(LaSynthParam),
+    // Utility
+    PitchTracker(PitchTrackerParam),
 }
 
 impl Param {
@@ -514,6 +554,10 @@ impl Param {
             (Self::PhaseVocoder(a), Self::PhaseVocoder(b)) => a.same_kind(b),
             (Self::Kinetic(a), Self::Kinetic(b)) => a.same_kind(b),
             (Self::SignalMonitor(a), Self::SignalMonitor(b)) => a.same_kind(b),
+            (Self::FrequencyShifter(a), Self::FrequencyShifter(b)) => a.same_kind(b),
+            (Self::VectorMixer(a), Self::VectorMixer(b)) => a.same_kind(b),
+            (Self::LaSynth(a), Self::LaSynth(b)) => a.same_kind(b),
+            (Self::PitchTracker(a), Self::PitchTracker(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -566,6 +610,10 @@ impl Param {
             Self::PhaseVocoder(_) => ModuleType::PhaseVocoder,
             Self::Kinetic(_) => ModuleType::KineticModulator,
             Self::SignalMonitor(_) => ModuleType::SignalMonitor,
+            Self::FrequencyShifter(_) => ModuleType::FrequencyShifter,
+            Self::VectorMixer(_) => ModuleType::VectorMixer,
+            Self::LaSynth(_) => ModuleType::LaSynth,
+            Self::PitchTracker(_) => ModuleType::PitchTracker,
         }
     }
 
@@ -617,6 +665,10 @@ impl Param {
             Self::PhaseVocoder(p) => p.name(),
             Self::Kinetic(p) => p.name(),
             Self::SignalMonitor(p) => p.name(),
+            Self::FrequencyShifter(p) => p.name(),
+            Self::VectorMixer(p) => p.name(),
+            Self::LaSynth(p) => p.name(),
+            Self::PitchTracker(p) => p.name(),
         }
     }
 
@@ -668,6 +720,10 @@ impl Param {
             Self::PhaseVocoder(p) => p.as_f32(),
             Self::Kinetic(p) => p.as_f32(),
             Self::SignalMonitor(p) => p.as_f32(),
+            Self::FrequencyShifter(p) => p.as_f32(),
+            Self::VectorMixer(p) => p.as_f32(),
+            Self::LaSynth(p) => p.as_f32(),
+            Self::PitchTracker(p) => p.as_f32(),
         }
     }
 
@@ -719,6 +775,10 @@ impl Param {
             Self::PhaseVocoder(p) => Self::PhaseVocoder(p.with_f32(value)),
             Self::Kinetic(p) => Self::Kinetic(p.with_f32(value)),
             Self::SignalMonitor(p) => Self::SignalMonitor(p.with_f32(value)),
+            Self::FrequencyShifter(p) => Self::FrequencyShifter(p.with_f32(value)),
+            Self::VectorMixer(p) => Self::VectorMixer(p.with_f32(value)),
+            Self::LaSynth(p) => Self::LaSynth(p.with_f32(value)),
+            Self::PitchTracker(p) => Self::PitchTracker(p.with_f32(value)),
         }
     }
 }

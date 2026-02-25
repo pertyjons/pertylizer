@@ -123,13 +123,10 @@ impl SynthSession {
         instrument_id: InstrumentId,
         name: &str,
     ) -> Result<(), SessionError> {
-        if !self
-            .command_sender
-            .send(EngineCommand::RenameInstrument {
-                instrument_id,
-                name: name.to_string(),
-            })
-        {
+        if !self.command_sender.send(EngineCommand::RenameInstrument {
+            instrument_id,
+            name: name.to_string(),
+        }) {
             return Err(SessionError::SendFailed);
         }
         Ok(())

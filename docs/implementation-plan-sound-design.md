@@ -17,12 +17,12 @@
 
 | Kategori | Implementerad | Delvis | Saknas | Totalt |
 |----------|:---:|:---:|:---:|:---:|
-| Del 1: Ljudgenerering | 12 | 3 | 5 | 20 |
-| Del 2: Effekter | 15 | 0 | 5 | 20 |
-| Del 3: Hemliga ingredienser | 16 | 2 | 2 | 20 |
-| **Totalt** | **43** | **5** | **12** | **60** |
+| Del 1: Ljudgenerering | 16 | 2 | 2 | 20 |
+| Del 2: Effekter | 16 | 0 | 4 | 20 |
+| Del 3: Hemliga ingredienser | 17 | 1 | 2 | 20 |
+| **Totalt** | **49** | **3** | **8** | **60** |
 
-**72% fullt implementerade, 8% delvis, 20% saknas**
+**82% fullt implementerade, 5% delvis, 13% saknas**
 
 ---
 
@@ -38,13 +38,13 @@
 | 6 | **Wavetable** | KLAR | WavetableOsc med 6 inbyggda banker (Basic/Harmonics/PWM/Formant/Digital/Warm), scanbar position, FM, detune, octave |
 | 7 | **Granular** | KLAR | GranularOsc med 32 grains, 5 källor (Saw/Sine/Square/Triangle/Noise), 3 fönster (Hann/Gaussian/Trapezoid), freeze, RT-säker PRNG |
 | 8 | **Physical Modeling** | DELVIS | Body Resonance + Mechanical Noise, men inga fullständiga modeller (strängar, rör) |
-| 9 | **Vector Synthesis** | SAKNAS | Ingen 2D-mixning mellan 4 källor |
+| 9 | **Vector Synthesis** | KLAR | VectorMixer-modul med 4 audio-ingångar, XY-position, equal-power bilineär interpolation, CV-modulering |
 | 10 | **Phase Distortion** | KLAR | PhaseDist-algoritm i Math Oscillator (Casio CZ-stil) |
 | 11 | **Formant** | KLAR | Formant-algoritm i Math Oscillator |
-| 12 | **LA (Linear Arithmetic)** | SAKNAS | Ingen PCM-attack + syntetisk sustain |
+| 12 | **LA (Linear Arithmetic)** | KLAR | LaSynth-modul med 4 attack-typer (click/noise/pluck/hammer), crossfade till sustain, brightness-filter |
 | 13 | **Cellular Automata** | SAKNAS | Ingen cellulär automat-syntes |
-| 14 | **Stochastic** | DELVIS | Logistic chaos map i Math Oscillator, men inte fullständig stokastisk syntes |
-| 15 | **Frequency Shifting** | SAKNAS | Ingen frekvensskiftning (kräver Hilbert Transform) |
+| 14 | **Stochastic** | KLAR | StochasticCloud (Xenakis-stil random walk) + ChuaCircuit (kaotisk dubbel-scroll) i Math Oscillator |
+| 15 | **Frequency Shifting** | KLAR | FrequencyShifter-effekt med Bode/Hilbert-transform, up/down/stereo-lägen, mix-kontroll |
 | 16 | **Waveshaping** | KLAR | WaveFolder i Math Oscillator + Waveshaper-effekt med 6 kurvor |
 | 17 | **Vosim** | SAKNAS | Ingen pulsbaserad vokalsyntes |
 | 18 | **Scanned Synthesis** | DELVIS | Karplus-Strong kan ses som enkel fysisk modell, men ingen fullständig scanned synthesis |
@@ -70,7 +70,7 @@
 | 31 | **Chorus** | KLAR | Chorus-effekt med LFO-modulerade delays och stereobreddning |
 | 32 | **Flanging** | KLAR | Flanger-effekt med modulerad delay och feedback |
 | 33 | **Sidechaining** | KLAR | Sidechain-input på Compressor med HPF-filter (20-500 Hz), extern detektionskälla |
-| 34 | **Auto-correlation** | SAKNAS | Ingen pitch-tracking |
+| 34 | **Auto-correlation** | KLAR | PitchTracker-modul med autokorrelation, 1V/oct CV-output, gate, ringbuffer 2048 samples |
 | 35 | **Spectral Subtraction** | SAKNAS | Ingen spektral brusborttagning |
 | 36 | **Wavelet Transform** | SAKNAS | Ingen wavelet-analys |
 | 37 | **Adaptive Filtering** | SAKNAS | Inga adaptiva filter |

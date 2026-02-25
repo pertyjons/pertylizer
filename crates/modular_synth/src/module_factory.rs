@@ -139,6 +139,21 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::VectorMixer => {
+            let m = synth_modules::VectorMixer::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::LaSynth => {
+            let m = synth_modules::LaSynth::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::PitchTracker => {
+            let m = synth_modules::PitchTracker::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }
@@ -220,6 +235,11 @@ pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, M
             let d = e.descriptor();
             Some((Box::new(e), d))
         }
+        ModuleType::FrequencyShifter => {
+            let e = synth_modules::effects::FrequencyShifter::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
         _ => None,
     }
 }
@@ -280,6 +300,9 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::GranularOsc,
     ModuleType::KineticModulator,
     ModuleType::SignalMonitor,
+    ModuleType::VectorMixer,
+    ModuleType::LaSynth,
+    ModuleType::PitchTracker,
     // Effects
     ModuleType::Delay,
     ModuleType::Reverb,
@@ -295,6 +318,7 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::Limiter,
     ModuleType::Convolver,
     ModuleType::PhaseVocoder,
+    ModuleType::FrequencyShifter,
     // Visualizers
     ModuleType::Oscilloscope,
     ModuleType::LevelMeter,
