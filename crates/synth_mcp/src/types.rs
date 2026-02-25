@@ -198,3 +198,82 @@ pub struct UiOverlap {
     /// Area of overlap in square pixels.
     pub overlap_area: f32,
 }
+
+// === Sequencer types ===
+
+/// Information about the current song.
+#[derive(Debug, Clone, Serialize)]
+pub struct SongInfo {
+    /// Song name.
+    pub name: String,
+    /// Song author.
+    pub author: String,
+    /// Default tempo in BPM.
+    pub tempo: f32,
+    /// Time signature as "numerator/denominator".
+    pub time_signature: String,
+    /// Total song length in seconds.
+    pub length_seconds: f64,
+    /// Number of patterns.
+    pub pattern_count: usize,
+    /// Number of tracks.
+    pub track_count: usize,
+}
+
+/// Information about a pattern.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatternInfo {
+    /// Pattern ID.
+    pub id: u32,
+    /// Pattern name.
+    pub name: String,
+    /// Length in beats.
+    pub length_beats: f32,
+    /// Number of notes.
+    pub note_count: usize,
+}
+
+/// Information about a note in a pattern.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteInfo {
+    /// Note ID.
+    pub id: u64,
+    /// MIDI pitch (0-127).
+    pub pitch: u8,
+    /// Human-readable pitch name (e.g. "C4", "A#3").
+    pub pitch_name: String,
+    /// Start position in beats.
+    pub start_beat: f32,
+    /// Duration in beats.
+    pub duration_beats: f32,
+    /// Velocity (0-127).
+    pub velocity: u8,
+}
+
+/// Information about a sequencer track.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackInfo {
+    /// Track ID.
+    pub id: u16,
+    /// Track name.
+    pub name: String,
+    /// Instrument ID (if assigned).
+    pub instrument_id: Option<u16>,
+    /// Volume (0.0-1.0).
+    pub volume: f32,
+    /// Whether the track is muted.
+    pub mute: bool,
+    /// Whether the track is soloed.
+    pub solo: bool,
+}
+
+/// Information about a pattern placement in the arrangement.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlacementInfo {
+    /// Pattern ID.
+    pub pattern_id: u32,
+    /// Track ID.
+    pub track_id: u16,
+    /// Start position in beats.
+    pub start_beat: f32,
+}

@@ -3,10 +3,11 @@
 //! `McpSharedState` is created in `main.rs` and shared via `Arc` to both
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::patch::Patch;
 use synth_core::ModuleType;
+use synth_sequencer::Song;
 
 /// Shared state for communication between MCP bridge and GUI.
 pub struct McpSharedState {
@@ -16,6 +17,8 @@ pub struct McpSharedState {
     pub ui_layout: Mutex<UiLayoutData>,
     /// Pending MCP operations (consumed by GUI each frame).
     pub pending_ops: Mutex<Vec<PendingMcpOp>>,
+    /// Shared song data for sequencer (read/written by MCP, read by engine).
+    pub song: Arc<RwLock<Song>>,
 }
 
 /// A pending MCP operation to be executed by the GUI thread.
@@ -50,6 +53,7 @@ impl McpSharedState {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),
             pending_ops: Mutex::new(Vec::new()),
+            song: Arc::new(RwLock::new(Song::new("Untitled"))),
         }
     }
 }

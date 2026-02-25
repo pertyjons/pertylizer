@@ -1,5 +1,48 @@
 # Version History
 
+## [0.156.0] - 2026-02-25
+### MCP: Sequencer-verktyg — Song, Pattern, Note, Track, Transport
+
+**Ny delad Song via `McpSharedState`:**
+- `Arc<RwLock<Song>>` skapas i `McpSharedState` och skickas till engine via `SetSong` vid uppstart
+- MCP redigerar Song direkt via RwLock, SequencerEngine läser den i process-loopen
+
+**17 nya MCP-verktyg (totalt 39):**
+
+*Song:*
+- `get_song_info` — Namn, tempo, taktart, längd, antal patterns/tracks
+- `set_song_tempo` — Ändra tempo (BPM)
+- `set_song_name` — Ändra songnamn
+
+*Patterns:*
+- `list_patterns` — Lista alla patterns med längd och antal noter
+- `create_pattern` — Skapa nytt pattern (namn, längd i beats)
+- `delete_pattern` — Ta bort pattern (och alla dess placements)
+
+*Notes:*
+- `list_notes` — Lista alla noter i ett pattern
+- `add_note` — Lägg till not (pitch, start_beat, duration_beats, velocity)
+- `remove_note` — Ta bort not
+- `update_note` — Uppdatera not (valfria fält: pitch, start, duration, velocity)
+
+*Tracks:*
+- `list_tracks` — Lista alla spår med instrument, volym, mute/solo
+- `create_track` — Skapa nytt spår (namn, valfritt instrument)
+
+*Arrangement:*
+- `place_pattern` — Placera pattern på spår vid beat-position
+- `remove_placement` — Ta bort placement
+- `list_arrangement` — Lista alla placements
+
+*Transport:*
+- `seq_play` — Starta sequencer-uppspelning
+- `seq_stop` — Stoppa sequencer
+- `seq_seek` — Hoppa till beat-position
+
+**Tidskonvertering:** MCP API:t använder beats (float) — internt: `beat × 960 = tick`.
+
+**Nya feltyper:** `PatternNotFound`, `NoteNotFound`, `TrackNotFound`, `SongLockPoisoned`.
+
 ## [0.155.0] - 2026-02-25
 ### Ny exempelpatch: Moog Resonant Sweep
 

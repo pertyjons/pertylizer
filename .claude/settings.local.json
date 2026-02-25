@@ -139,7 +139,10 @@
       "Bash(echo exit: $?:*)",
       "Bash(/home/per/Dokument/rust-projects/modular-synth/.claude/skills/start-synth/mcp-call.py list_instruments:*)",
       "Bash(.claude/skills/start-synth/mcp-call.py list_instruments:*)",
-      "Bash(.claude/skills/start-synth/mcp-call.py connect:*)"
+      "Bash(.claude/skills/start-synth/mcp-call.py connect:*)",
+      "Bash(.claude/skills/start-synth/mcp-call.py get_graph_diagnostics:*)",
+      "Bash(.claude/skills/start-synth/mcp-call.py get_connections:*)",
+      "Bash(.claude/skills/start-synth/mcp-call.py get_instrument_info:*)"
     ],
     "deny": [],
     "ask": []

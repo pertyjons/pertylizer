@@ -81,6 +81,12 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "mcp")]
     let mcp_shared = {
         let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::new());
+        // Send the shared Song to the engine so sequencer and MCP share the same instance
+        let _ = handle
+            .command_sender()
+            .send(modular_synth::synth_engine::EngineCommand::SetSong {
+                song: std::sync::Arc::clone(&shared.song),
+            });
         let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
             std::sync::Arc::clone(&handle.state),
             handle.command_sender(),
@@ -170,10 +176,16 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("✓ Audio stream started");
 
     let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::new());
+    // Send the shared Song to the engine so sequencer and MCP share the same instance
+    handle
+        .command_sender()
+        .send(modular_synth::synth_engine::EngineCommand::SetSong {
+            song: std::sync::Arc::clone(&shared.song),
+        });
     let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
         std::sync::Arc::clone(&handle.state),
         handle.command_sender(),
-        shared,
+        std::sync::Arc::clone(&shared),
     ));
 
     // Run MCP on stdio (blocking)

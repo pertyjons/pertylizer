@@ -7,7 +7,8 @@
 use crate::error::McpBridgeError;
 use crate::types::{
     ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo,
-    ModuleTypeInfo, ParameterInfo, UiSnapshot,
+    ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SongInfo, TrackInfo,
+    UiSnapshot,
 };
 
 /// Bridge between the MCP server and the synth engine.
@@ -114,4 +115,95 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Clear the entire voice graph for an instrument (remove all modules and connections).
     fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
+
+    // === Sequencer: Song ===
+
+    /// Get song info (name, tempo, length, pattern/track counts).
+    fn get_song_info(&self) -> Result<SongInfo, McpBridgeError>;
+
+    /// Set the song tempo in BPM.
+    fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError>;
+
+    /// Set the song name.
+    fn set_song_name(&self, name: &str) -> Result<(), McpBridgeError>;
+
+    // === Sequencer: Patterns ===
+
+    /// List all patterns in the song.
+    fn list_patterns(&self) -> Result<Vec<PatternInfo>, McpBridgeError>;
+
+    /// Create a new pattern with the given name and length in beats.
+    fn create_pattern(&self, name: &str, length_beats: f32) -> Result<u32, McpBridgeError>;
+
+    /// Delete a pattern by ID.
+    fn delete_pattern(&self, pattern_id: u32) -> Result<(), McpBridgeError>;
+
+    // === Sequencer: Notes ===
+
+    /// List all notes in a pattern.
+    fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
+
+    /// Add a note to a pattern. Returns the new note ID.
+    fn add_note(
+        &self,
+        pattern_id: u32,
+        pitch: u8,
+        start_beat: f32,
+        duration_beats: f32,
+        velocity: u8,
+    ) -> Result<u64, McpBridgeError>;
+
+    /// Remove a note from a pattern.
+    fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError>;
+
+    /// Update a note's properties (only provided fields are changed).
+    fn update_note(
+        &self,
+        pattern_id: u32,
+        note_id: u64,
+        pitch: Option<u8>,
+        start_beat: Option<f32>,
+        duration_beats: Option<f32>,
+        velocity: Option<u8>,
+    ) -> Result<(), McpBridgeError>;
+
+    // === Sequencer: Tracks ===
+
+    /// List all tracks in the song.
+    fn list_tracks(&self) -> Result<Vec<TrackInfo>, McpBridgeError>;
+
+    /// Create a new track. Returns the track ID.
+    fn create_track(&self, name: &str, instrument_id: Option<u16>) -> Result<u16, McpBridgeError>;
+
+    // === Sequencer: Arrangement ===
+
+    /// Place a pattern on a track at a given beat position.
+    fn place_pattern(
+        &self,
+        pattern_id: u32,
+        track_id: u16,
+        start_beat: f32,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Remove a pattern placement.
+    fn remove_placement(
+        &self,
+        pattern_id: u32,
+        track_id: u16,
+        start_beat: f32,
+    ) -> Result<(), McpBridgeError>;
+
+    /// List all pattern placements in the arrangement.
+    fn list_arrangement(&self) -> Result<Vec<PlacementInfo>, McpBridgeError>;
+
+    // === Sequencer: Transport ===
+
+    /// Start sequencer playback.
+    fn seq_play(&self) -> Result<(), McpBridgeError>;
+
+    /// Stop sequencer playback.
+    fn seq_stop(&self) -> Result<(), McpBridgeError>;
+
+    /// Seek to a beat position.
+    fn seq_seek(&self, beat: f32) -> Result<(), McpBridgeError>;
 }
