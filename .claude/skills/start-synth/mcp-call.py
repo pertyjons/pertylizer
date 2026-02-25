@@ -4,26 +4,36 @@
 Usage:
     mcp-call.py <tool_name> [key=value ...]
 
+Values starting with [ or { are parsed as JSON (for arrays/objects).
+Other values are auto-detected as int, float, or string.
+Output is the raw JSON text from the tool response.
+Exit code 0 on success, 1 on error.
+
 Examples:
     # Synth engine
     mcp-call.py list_modules instrument_id=0
     mcp-call.py note_on channel=1 note=60 velocity=100
     mcp-call.py set_parameter instrument_id=0 module_id=osc-1 param_name=Level value=0.8
 
-    # Sequencer
+    # Sequencer (single-item)
     mcp-call.py get_song_info
     mcp-call.py set_song_tempo bpm=140
     mcp-call.py create_pattern name=Verse length_beats=4.0
     mcp-call.py add_note pattern_id=0 pitch=60 start_beat=0.0 duration_beats=1.0 velocity=100
     mcp-call.py create_track name=Lead instrument_id=0
     mcp-call.py place_pattern pattern_id=0 track_id=0 start_beat=0.0
+
+    # Sequencer (batch) — use JSON for array values
+    mcp-call.py add_notes pattern_id=0 'notes=[{"pitch":60,"start_beat":0.0,"duration_beats":1.0},{"pitch":64,"start_beat":1.0,"duration_beats":1.0}]'
+    mcp-call.py clear_pattern pattern_id=0
+    mcp-call.py create_patterns 'patterns=[{"name":"Verse","length_beats":4.0,"notes":[{"pitch":60,"start_beat":0.0,"duration_beats":1.0}]}]'
+    mcp-call.py create_tracks 'tracks=[{"name":"Lead"},{"name":"Bass","instrument_id":0}]'
+    mcp-call.py place_patterns 'placements=[{"pattern_id":0,"track_id":0,"start_beat":0.0}]'
+
+    # Transport
     mcp-call.py seq_play
     mcp-call.py seq_stop
     mcp-call.py seq_seek beat=4.0
-
-Values are auto-detected as int, float, or string.
-Output is the raw JSON text from the tool response.
-Exit code 0 on success, 1 on error.
 """
 
 import socket
@@ -33,7 +43,12 @@ import time
 
 
 def parse_value(v):
-    """Auto-detect int, float, or string."""
+    """Auto-detect JSON, int, float, or string."""
+    if v.startswith("[") or v.startswith("{"):
+        try:
+            return json.loads(v)
+        except json.JSONDecodeError:
+            pass
     try:
         return int(v)
     except ValueError:

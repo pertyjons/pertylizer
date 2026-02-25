@@ -96,4 +96,69 @@ $MCP seq_stop
 $MCP seq_seek beat=4.0
 ```
 
-For batch operations (building a full patch), use a Python script that imports `socket` directly to avoid repeated handshakes. See `mcp-call.py` for the protocol details.
+## Batch Operations (Sequencer)
+
+Use JSON arrays for batch parameters. Quote the JSON value with single quotes in bash.
+
+```bash
+MCP=".claude/skills/start-synth/mcp-call.py"
+
+# Add multiple notes to a pattern in one call
+$MCP add_notes pattern_id=0 'notes=[{"pitch":60,"start_beat":0.0,"duration_beats":1.0},{"pitch":64,"start_beat":1.0,"duration_beats":0.5,"velocity":110}]'
+
+# Update multiple notes (only provided fields are changed)
+$MCP update_notes pattern_id=0 'updates=[{"note_id":0,"pitch":62},{"note_id":1,"velocity":80}]'
+
+# Replace all notes in a pattern (clear + add)
+$MCP replace_notes pattern_id=0 'notes=[{"pitch":60,"start_beat":0.0,"duration_beats":1.0}]'
+
+# Clear all notes from a pattern
+$MCP clear_pattern pattern_id=0
+
+# Create multiple patterns (with optional inline notes)
+$MCP create_patterns 'patterns=[{"name":"Verse","length_beats":4.0,"notes":[{"pitch":60,"start_beat":0.0,"duration_beats":1.0}]},{"name":"Chorus","length_beats":8.0}]'
+
+# Create multiple tracks
+$MCP create_tracks 'tracks=[{"name":"Lead","instrument_id":0},{"name":"Bass"}]'
+
+# Place multiple patterns in the arrangement
+$MCP place_patterns 'placements=[{"pattern_id":0,"track_id":0,"start_beat":0.0},{"pattern_id":1,"track_id":1,"start_beat":4.0}]'
+
+# Build a full song in one call (replaces current song)
+# Placements use array indices: pattern_index/track_index refer to position in the arrays
+$MCP set_song 'name=My Song' tempo=140 \
+  'patterns=[{"name":"Verse","length_beats":4.0,"notes":[{"pitch":60,"start_beat":0.0,"duration_beats":1.0},{"pitch":64,"start_beat":1.0,"duration_beats":1.0}]},{"name":"Chorus","length_beats":8.0,"notes":[{"pitch":67,"start_beat":0.0,"duration_beats":2.0}]}]' \
+  'tracks=[{"name":"Lead","instrument_id":0},{"name":"Bass"}]' \
+  'placements=[{"pattern_index":0,"track_index":0,"start_beat":0.0},{"pattern_index":1,"track_index":0,"start_beat":4.0}]'
+```
+
+### Batch response format
+
+Batch operations return per-item results (partial success, no rollback):
+
+```json
+{
+  "total": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "items": [
+    {"index": 0, "success": true, "id": 0, "error": null},
+    {"index": 1, "success": true, "id": 1, "error": null},
+    {"index": 2, "success": false, "id": null, "error": "note not found: 99"}
+  ]
+}
+```
+
+`set_song` returns a summary with assigned IDs:
+
+```json
+{
+  "patterns_created": 2,
+  "tracks_created": 2,
+  "notes_added": 5,
+  "placements_created": 3,
+  "pattern_ids": [0, 1],
+  "track_ids": [0, 1],
+  "errors": []
+}
+```
