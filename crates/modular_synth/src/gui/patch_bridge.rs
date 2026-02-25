@@ -253,7 +253,9 @@ fn load_signal_monitor(
     // Update session counter so future IDs don't collide
     {
         let mut counters = session.counters_lock();
-        let counter = counters.entry(module_id.module_type).or_insert(0);
+        let counter = counters
+            .entry((instrument_id, module_id.module_type))
+            .or_insert(0);
         if module_id.instance > *counter {
             *counter = module_id.instance;
         }
@@ -301,7 +303,9 @@ fn load_inline_signal_monitor(
     // Update session counter
     {
         let mut counters = session.counters_lock();
-        let counter = counters.entry(module_id.module_type).or_insert(0);
+        let counter = counters
+            .entry((instrument_id, module_id.module_type))
+            .or_insert(0);
         if module_id.instance > *counter {
             *counter = module_id.instance;
         }
@@ -335,7 +339,9 @@ fn load_visualizer(
     // Update session counter
     {
         let mut counters = session.counters_lock();
-        let counter = counters.entry(module_id.module_type).or_insert(0);
+        let counter = counters
+            .entry((instrument_id, module_id.module_type))
+            .or_insert(0);
         if module_id.instance > *counter {
             *counter = module_id.instance;
         }
@@ -558,6 +564,9 @@ pub fn get_effect_type_from_module(
         "mid_side" => Some(EffectType::MidSide),
         "bbd_delay" => Some(EffectType::BbdDelay),
         "limiter" => Some(EffectType::Limiter),
+        "convolver" => Some(EffectType::Convolver),
+        "phase_vocoder" => Some(EffectType::PhaseVocoder),
+        "frequency_shifter" => Some(EffectType::FrequencyShifter),
         _ => None,
     }
 }

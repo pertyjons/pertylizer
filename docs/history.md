@@ -1,5 +1,19 @@
 # Version History
 
+## [0.163.0] - 2026-02-25
+### Per-instrument modul-ID:n och GUI-rekonciliering för alla instrument
+
+**Buggfixar:**
+- **Per-instrument modul-ID:n** — Varje instrument har nu egna räknare per modultyp. Instrument 0 kan ha `osc-1` och instrument 1 kan också ha `osc-1` (tidigare var ID:n globala: `osc-1`, `osc-2`, `osc-3` oavsett instrument).
+- **GUI-rekonciliering för alla instrument** — `reconcile_with_session()` synkroniserar nu moduler och kopplingar för ALLA instrument, inte bara det aktiva. Moduler och kablar skapade via MCP på icke-aktivt instrument syns direkt vid instrumentbyte.
+
+**Tekniska ändringar:**
+- `SynthSession.counters` ändrad från `HashMap<ModuleType, u16>` till `HashMap<(InstrumentId, ModuleType), u16>`
+- `SynthSession.registry` ändrad från `HashMap<ModuleId, RegistryEntry>` till `HashMap<(InstrumentId, ModuleId), ModuleDescriptor>`
+- `InstrumentId::MASTER` sentinel-konstant för master bus-effekter
+- `validate_port()` i MCP-bridge tar nu `instrument_id` för korrekt modul-lookup
+- Clippy-fixar: `collapsible_if`, `map_or` → `is_some_and`
+
 ## [0.162.0] - 2026-02-25
 ### 4 nya moduler: Frequency Shifter, Vector Mixer, LA Synth, Pitch Tracker
 

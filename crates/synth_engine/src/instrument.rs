@@ -138,6 +138,9 @@ impl InstrumentId {
     /// The default/first instrument ID.
     pub const FIRST: Self = Self(0);
 
+    /// Sentinel ID for master bus effects (not a real instrument).
+    pub const MASTER: Self = Self(u64::MAX);
+
     /// Create a new instrument ID.
     #[inline]
     pub const fn new(id: u64) -> Self {

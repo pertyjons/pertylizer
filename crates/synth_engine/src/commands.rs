@@ -558,6 +558,7 @@ pub enum EffectType {
     Limiter,
     Convolver,
     PhaseVocoder,
+    FrequencyShifter,
 }
 
 impl EffectType {
@@ -579,6 +580,7 @@ impl EffectType {
             MT::Limiter => Some(Self::Limiter),
             MT::Convolver => Some(Self::Convolver),
             MT::PhaseVocoder => Some(Self::PhaseVocoder),
+            MT::FrequencyShifter => Some(Self::FrequencyShifter),
             _ => None,
         }
     }
@@ -603,6 +605,7 @@ impl EffectType {
             Self::Limiter => MT::Limiter,
             Self::Convolver => MT::Convolver,
             Self::PhaseVocoder => MT::PhaseVocoder,
+            Self::FrequencyShifter => MT::FrequencyShifter,
         }
     }
 }

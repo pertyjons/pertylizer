@@ -47,8 +47,8 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_modules::effects::{
-    BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, Limiter, MidSide,
-    PhaseVocoder, Phaser, Reverb, Waveshaper,
+    BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, FrequencyShifter,
+    Limiter, MidSide, PhaseVocoder, Phaser, Reverb, Waveshaper,
 };
 
 /// Egui-based GUI backend.
@@ -896,7 +896,7 @@ impl eframe::App for SynthApp {
                 let monitor_id = {
                     let mut counters = self.session.counters_lock();
                     let counter = counters
-                        .entry(synth_core::ModuleType::SignalMonitor)
+                        .entry((self.active_instrument_id, synth_core::ModuleType::SignalMonitor))
                         .or_insert(0);
                     *counter += 1;
                     ModuleId::new(TypedModuleType::SignalMonitor, *counter)
@@ -1112,7 +1112,9 @@ impl SynthApp {
         let next_id = {
             use synth_core::ModuleType;
             let mut counters = self.session.counters_lock();
-            let counter = counters.entry(ModuleType::SignalMonitor).or_insert(0);
+            let counter = counters
+                .entry((self.active_instrument_id, ModuleType::SignalMonitor))
+                .or_insert(0);
             *counter += 1;
             ModuleId::new(TypedModuleType::SignalMonitor, *counter)
         };
@@ -1182,6 +1184,7 @@ impl SynthApp {
                 EffectType::Limiter => TypedModuleType::Limiter,
                 EffectType::Convolver => TypedModuleType::Convolver,
                 EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
+                EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
             }),
             PaletteSelection::SignalMonitor => {
                 // SignalMonitor needs GUI-specific VisualizationBuffer
@@ -1190,7 +1193,7 @@ impl SynthApp {
                 let id = {
                     let mut counters = session.counters_lock();
                     let counter = counters
-                        .entry(synth_core::ModuleType::SignalMonitor)
+                        .entry((instrument_id, synth_core::ModuleType::SignalMonitor))
                         .or_insert(0);
                     *counter += 1;
                     ModuleId::new(TypedModuleType::SignalMonitor, *counter)
@@ -1303,6 +1306,7 @@ impl SynthApp {
             EffectType::Limiter => TypedModuleType::Limiter,
             EffectType::Convolver => TypedModuleType::Convolver,
             EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
+            EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
         };
 
         let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
@@ -1338,7 +1342,7 @@ impl SynthApp {
                 PaletteVisualizerType::SpectrumAnalyzer => ModuleType::SpectrumAnalyzer,
             };
             let mut counters = self.session.counters_lock();
-            let counter = counters.entry(mt).or_insert(0);
+            let counter = counters.entry((self.active_instrument_id, mt)).or_insert(0);
             *counter += 1;
             ModuleId::new(module_type, *counter)
         };
@@ -1412,12 +1416,18 @@ impl SynthApp {
                 EffectType::PhaseVocoder => {
                     (Box::new(PhaseVocoder::new()), TypedModuleType::PhaseVocoder)
                 }
+                EffectType::FrequencyShifter => (
+                    Box::new(FrequencyShifter::new()),
+                    TypedModuleType::FrequencyShifter,
+                ),
             };
 
         // Master effects use session counters for ID but send directly (instrument_id: None)
         let next_id = {
             let mut counters = self.session.counters_lock();
-            let counter = counters.entry(module_type).or_insert(0);
+            let counter = counters
+                .entry((InstrumentId::MASTER, module_type))
+                .or_insert(0);
             *counter += 1;
             ModuleId::new(module_type, *counter)
         };
@@ -1665,6 +1675,7 @@ impl SynthApp {
                         (EffectType::MidSide, "Mid/Side"),
                         (EffectType::BbdDelay, "BBD Delay"),
                         (EffectType::Limiter, "Limiter"),
+                        (EffectType::FrequencyShifter, "Freq Shifter"),
                     ];
 
                     for (effect_type, name) in effect_types {
@@ -1887,85 +1898,93 @@ impl SynthApp {
 
     /// Reconcile GUI state with session: detect modules added/removed by MCP.
     ///
-    /// Compares the session's module registry with the patch editor's modules.
-    /// - Modules in session but not in editor → add to editor with auto-position.
-    /// - Modules in editor but not in session → remove from editor.
+    /// Loops over ALL instruments (not just the active one) so that modules
+    /// and connections created by MCP on any instrument appear immediately
+    /// when the user switches to that instrument.
     #[cfg(feature = "mcp")]
     fn reconcile_with_session(&mut self) {
         // --- Instrument-level reconciliation ---
         // Detect instruments added/removed/changed by MCP.
         self.reconcile_instruments();
 
-        // --- Module-level reconciliation (active instrument only) ---
-        let active_id = self.active_instrument_id;
-        let session_modules = self.session.all_modules_for_instrument(active_id);
-        let engine_connections = self
-            .session
-            .state()
-            .shared_graph
-            .get_connections_for_instrument(active_id);
+        // --- Module-level reconciliation (all instruments) ---
+        let instrument_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
 
-        let Some(patch_editor) = self.active_patch_editor() else {
-            return;
-        };
+        for inst_id in instrument_ids {
+            let session_modules = self.session.all_modules_for_instrument(inst_id);
+            let engine_connections = self
+                .session
+                .state()
+                .shared_graph
+                .get_connections_for_instrument(inst_id);
 
-        let editor_ids: std::collections::HashSet<ModuleId> =
-            patch_editor.module_ids().into_iter().collect();
-        let session_ids: std::collections::HashSet<ModuleId> =
-            session_modules.keys().copied().collect();
+            let Some(patch_editor) = self
+                .instruments
+                .iter_mut()
+                .find(|i| i.id == inst_id)
+                .map(|i| &mut i.patch_editor)
+            else {
+                continue;
+            };
 
-        // Modules added by MCP (in session but not in editor)
-        let to_add: Vec<(ModuleId, synth_core::ModuleDescriptor)> = session_ids
-            .difference(&editor_ids)
-            .filter_map(|id| session_modules.get(id).map(|d| (*id, d.clone())))
-            .collect();
+            let editor_ids: std::collections::HashSet<ModuleId> =
+                patch_editor.module_ids().into_iter().collect();
+            let session_ids: std::collections::HashSet<ModuleId> =
+                session_modules.keys().copied().collect();
 
-        // Modules removed by MCP (in editor but not in session)
-        let to_remove: Vec<ModuleId> = editor_ids
-            .difference(&session_ids)
-            .copied()
-            // Skip visualizers — they are GUI-only and not tracked by session
-            .filter(|id| {
-                patch_editor.module_descriptor(*id).map_or(true, |d| {
-                    d.category != synth_core::ModuleCategory::Visualizer
+            // Modules added by MCP (in session but not in editor)
+            let to_add: Vec<(ModuleId, synth_core::ModuleDescriptor)> = session_ids
+                .difference(&editor_ids)
+                .filter_map(|id| session_modules.get(id).map(|d| (*id, d.clone())))
+                .collect();
+
+            // Modules removed by MCP (in editor but not in session)
+            let to_remove: Vec<ModuleId> = editor_ids
+                .difference(&session_ids)
+                .copied()
+                // Skip visualizers — they are GUI-only and not tracked by session
+                .filter(|id| {
+                    !patch_editor
+                        .module_descriptor(*id)
+                        .is_some_and(|d| d.category == synth_core::ModuleCategory::Visualizer)
                 })
-            })
-            .collect();
+                .collect();
 
-        // Check connections too
-        let editor_connections = patch_editor.connections().to_vec();
-        let new_connections: Vec<synth_engine::graph::Connection> = engine_connections
-            .iter()
-            .filter_map(|snap| {
-                let conn = synth_engine::graph::Connection::new(
-                    snap.from_module,
-                    &snap.from_port,
-                    snap.to_module,
-                    &snap.to_port,
-                );
-                if !editor_connections.contains(&conn) {
-                    Some(conn)
-                } else {
-                    None
-                }
-            })
-            .collect();
+            // Check connections too
+            let editor_connections = patch_editor.connections().to_vec();
+            let new_connections: Vec<synth_engine::graph::Connection> = engine_connections
+                .iter()
+                .filter_map(|snap| {
+                    let conn = synth_engine::graph::Connection::new(
+                        snap.from_module,
+                        &snap.from_port,
+                        snap.to_module,
+                        &snap.to_port,
+                    );
+                    if !editor_connections.contains(&conn) {
+                        Some(conn)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-        if to_add.is_empty() && to_remove.is_empty() && new_connections.is_empty() {
-            return;
-        }
+            if to_add.is_empty() && to_remove.is_empty() && new_connections.is_empty() {
+                continue;
+            }
 
-        for (module_id, descriptor) in to_add {
-            let position = eframe::egui::Pos2::new(100.0, 100.0);
-            patch_editor.add_module_at(module_id, descriptor, position);
-        }
+            for (module_id, descriptor) in to_add {
+                let position = eframe::egui::Pos2::new(100.0, 100.0);
+                patch_editor.add_module_at(module_id, descriptor, position);
+            }
 
-        for module_id in to_remove {
-            patch_editor.remove_module(module_id);
-        }
+            for module_id in to_remove {
+                patch_editor.remove_module(module_id);
+            }
 
-        for conn in new_connections {
-            patch_editor.add_connection(conn);
+            for conn in new_connections {
+                patch_editor.add_connection(conn);
+            }
         }
     }
 
@@ -2011,12 +2030,11 @@ impl SynthApp {
             .instruments
             .iter()
             .any(|i| i.id == self.active_instrument_id)
+            && let Some(first) = self.instruments.first()
         {
-            if let Some(first) = self.instruments.first() {
-                self.active_instrument_id = first.id;
-                self.handle
-                    .set_focused_instrument(Some(self.active_instrument_id));
-            }
+            self.active_instrument_id = first.id;
+            self.handle
+                .set_focused_instrument(Some(self.active_instrument_id));
         }
 
         // Update metadata for existing instruments (name, volume, pan, mute, solo)
@@ -3873,6 +3891,77 @@ fn draw_effect_params(
                         param_changes.push((
                             effect_type,
                             Param::PhaseVocoder(synth_core::PhaseVocoderParam::Mix(
+                                NormalizedValue::new(val),
+                            )),
+                        ));
+                    }
+                }
+            }
+            MasterEffectParams::FrequencyShifter {
+                shift,
+                mode: _,
+                mix,
+            } => {
+                let effect = &mut effects[idx];
+                if let MasterEffectParams::FrequencyShifter {
+                    shift: sh,
+                    mode: _md,
+                    mix: mx,
+                } = &mut effect.params
+                {
+                    // Shift
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Shift")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:+.1}Hz", shift))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *shift;
+                    if ui
+                        .add(egui::Slider::new(&mut val, -1000.0..=1000.0).show_value(false))
+                        .changed()
+                    {
+                        *sh = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::FrequencyShifter(synth_core::FrequencyShifterParam::Shift(
+                                Hertz::new(val),
+                            )),
+                        ));
+                    }
+
+                    // Mix
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Mix")
+                                .color(theme().colors.text_dim)
+                                .size(9.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("{:.0}%", mix * 100.0))
+                                    .color(theme().colors.text_secondary)
+                                    .size(9.0),
+                            );
+                        });
+                    });
+                    let mut val = *mix;
+                    if ui
+                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
+                        .changed()
+                    {
+                        *mx = val;
+                        param_changes.push((
+                            effect_type,
+                            Param::FrequencyShifter(synth_core::FrequencyShifterParam::Mix(
                                 NormalizedValue::new(val),
                             )),
                         ));

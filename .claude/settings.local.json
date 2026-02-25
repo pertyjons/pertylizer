@@ -190,7 +190,9 @@
       "Bash(echo === $branch ===:*)",
       "Bash(for wt in .claude/worktrees/agent-*; do git worktree remove --force \"$wt\" 2>/dev/null; done && git worktree list 2>&1)",
       "WebFetch(domain:www.kvraudio.com)",
-      "WebFetch(domain:knobulism.com)"
+      "WebFetch(domain:knobulism.com)",
+      "Bash($MCP list_module_types:*)",
+      "Bash($MCP set_instrument_midi_channel:*)"
     ],
     "deny": [],
     "ask": []

@@ -94,6 +94,11 @@ pub enum MasterEffectParams {
         fft_size: usize, // 0=512, 1=1024, 2=2048, 3=4096
         mix: f32,        // 0-1
     },
+    FrequencyShifter {
+        shift: f32, // Hz: -1000 to 1000
+        mode: f32,  // 0-1 (0=Up, 0.5=Both, 1=Down)
+        mix: f32,   // 0-1
+    },
 }
 
 impl MasterEffectParams {
@@ -186,6 +191,11 @@ impl MasterEffectParams {
                 fft_size: 1,
                 mix: 1.0,
             },
+            EffectType::FrequencyShifter => Self::FrequencyShifter {
+                shift: 0.0,
+                mode: 0.0,
+                mix: 1.0,
+            },
         }
     }
 }
@@ -236,6 +246,7 @@ impl MasterEffectUiState {
             EffectType::Limiter => "Limiter",
             EffectType::Convolver => "Convolver",
             EffectType::PhaseVocoder => "Phase Vocoder",
+            EffectType::FrequencyShifter => "Freq Shifter",
         }
     }
 }

@@ -36,12 +36,6 @@ pub enum SessionError {
     SendFailed,
 }
 
-/// Registry entry tracking which instrument a module belongs to.
-struct RegistryEntry {
-    instrument_id: InstrumentId,
-    descriptor: ModuleDescriptor,
-}
-
 /// Thread-safe session that owns the module lifecycle.
 ///
 /// Both GUI and MCP call into this to add/remove modules and connections.
@@ -50,10 +44,14 @@ struct RegistryEntry {
 pub struct SynthSession {
     command_sender: CommandSender,
     state: Arc<EngineState>,
-    /// Instance counters for ID generation (module_type → next instance number).
-    counters: Mutex<HashMap<ModuleType, u16>>,
+    /// Per-instrument instance counters for ID generation.
+    /// Key: (instrument_id, module_type) → next instance number.
+    /// This means each instrument has its own counter per type,
+    /// so instrument 0 can have osc-1 and instrument 1 can also have osc-1.
+    counters: Mutex<HashMap<(InstrumentId, ModuleType), u16>>,
     /// Registry of all modules currently managed by this session.
-    registry: Mutex<HashMap<ModuleId, RegistryEntry>>,
+    /// Key: (instrument_id, module_id) → descriptor.
+    registry: Mutex<HashMap<(InstrumentId, ModuleId), ModuleDescriptor>>,
     /// Next instrument ID (starts at 1 since 0 is the default).
     instrument_counter: Mutex<u64>,
 }
@@ -104,7 +102,12 @@ impl SynthSession {
         // Remove all modules belonging to this instrument from the registry
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.retain(|_, entry| entry.instrument_id != instrument_id);
+            registry.retain(|&(inst_id, _), _| inst_id != instrument_id);
+        }
+        // Remove per-instrument counters
+        {
+            let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+            counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
         }
 
         if !self
@@ -260,7 +263,7 @@ impl SynthSession {
             return Err(SessionError::VisualizerRequiresGui);
         }
 
-        let module_id = self.next_module_id(module_type);
+        let module_id = self.next_module_id(instrument_id, module_type);
 
         let descriptor = self.create_and_send(instrument_id, module_id, module_type)?;
 
@@ -284,7 +287,7 @@ impl SynthSession {
         // Ensure counter is at least as high as this instance
         {
             let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-            let counter = counters.entry(module_type).or_insert(0);
+            let counter = counters.entry((instrument_id, module_type)).or_insert(0);
             if module_id.instance > *counter {
                 *counter = module_id.instance;
             }
@@ -303,8 +306,8 @@ impl SynthSession {
         let category = {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             registry
-                .remove(&module_id)
-                .map(|e| e.descriptor.category)
+                .remove(&(instrument_id, module_id))
+                .map(|d| d.category)
                 .ok_or_else(|| SessionError::ModuleNotFound(module_id.to_string()))?
         };
 
@@ -378,8 +381,8 @@ impl SynthSession {
             let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             registry
                 .iter()
-                .filter(|(_, entry)| entry.instrument_id == instrument_id)
-                .map(|(id, entry)| (*id, entry.descriptor.category))
+                .filter(|&(&(inst_id, _), _)| inst_id == instrument_id)
+                .map(|(&(_, mod_id), desc)| (mod_id, desc.category))
                 .collect()
         };
 
@@ -404,7 +407,7 @@ impl SynthSession {
         // Clear registry entries for this instrument
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.retain(|_, entry| entry.instrument_id != instrument_id);
+            registry.retain(|&(inst_id, _), _| inst_id != instrument_id);
         }
 
         Ok(())
@@ -414,25 +417,20 @@ impl SynthSession {
     // Queries
     // ------------------------------------------------------------------
 
-    /// Check if a module exists in the registry.
-    pub fn has_module(&self, module_id: ModuleId) -> bool {
+    /// Check if a module exists in the registry for a specific instrument.
+    pub fn has_module(&self, instrument_id: InstrumentId, module_id: ModuleId) -> bool {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry.contains_key(&module_id)
+        registry.contains_key(&(instrument_id, module_id))
     }
 
-    /// Get the descriptor for a module.
-    pub fn module_descriptor(&self, module_id: ModuleId) -> Option<ModuleDescriptor> {
+    /// Get the descriptor for a module in a specific instrument.
+    pub fn module_descriptor(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+    ) -> Option<ModuleDescriptor> {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry.get(&module_id).map(|e| e.descriptor.clone())
-    }
-
-    /// Get all modules currently in the session (across all instruments).
-    pub fn all_modules(&self) -> HashMap<ModuleId, ModuleDescriptor> {
-        let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        registry
-            .iter()
-            .map(|(id, entry)| (*id, entry.descriptor.clone()))
-            .collect()
+        registry.get(&(instrument_id, module_id)).cloned()
     }
 
     /// Get modules belonging to a specific instrument.
@@ -443,8 +441,8 @@ impl SynthSession {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         registry
             .iter()
-            .filter(|(_, entry)| entry.instrument_id == instrument_id)
-            .map(|(id, entry)| (*id, entry.descriptor.clone()))
+            .filter(|&(&(inst_id, _), _)| inst_id == instrument_id)
+            .map(|(&(_, mod_id), desc)| (mod_id, desc.clone()))
             .collect()
     }
 
@@ -474,14 +472,19 @@ impl SynthSession {
 
     /// Direct access to counters for GUI-only modules (visualizers, signal monitors)
     /// that cannot go through `add_module` because they need special setup.
-    pub fn counters_lock(&self) -> std::sync::MutexGuard<'_, HashMap<ModuleType, u16>> {
+    pub fn counters_lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<(InstrumentId, ModuleType), u16>> {
         self.counters.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Generate the next `ModuleId` for a given type.
-    fn next_module_id(&self, module_type: ModuleType) -> ModuleId {
+    /// Generate the next `ModuleId` for a given type within an instrument.
+    ///
+    /// Each instrument has its own counter per module type, so both instrument 0
+    /// and instrument 1 can have `osc-1`.
+    fn next_module_id(&self, instrument_id: InstrumentId, module_type: ModuleType) -> ModuleId {
         let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-        let counter = counters.entry(module_type).or_insert(0);
+        let counter = counters.entry((instrument_id, module_type)).or_insert(0);
         *counter += 1;
         ModuleId::new(module_type, *counter)
     }
@@ -510,13 +513,7 @@ impl SynthSession {
             }
 
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.insert(
-                module_id,
-                RegistryEntry {
-                    instrument_id,
-                    descriptor: descriptor.clone(),
-                },
-            );
+            registry.insert((instrument_id, module_id), descriptor.clone());
             return Ok(descriptor);
         }
 
@@ -536,13 +533,7 @@ impl SynthSession {
             }
 
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.insert(
-                module_id,
-                RegistryEntry {
-                    instrument_id,
-                    descriptor: descriptor.clone(),
-                },
-            );
+            registry.insert((instrument_id, module_id), descriptor.clone());
             return Ok(descriptor);
         }
 

@@ -3047,6 +3047,10 @@ impl ModulePalette {
                     selected = Some(PaletteSelection::Effect(EffectType::PhaseVocoder));
                     ui.close();
                 }
+                if ui.button("🔀 Freq Shifter").clicked() {
+                    selected = Some(PaletteSelection::Effect(EffectType::FrequencyShifter));
+                    ui.close();
+                }
             });
 
             // Visualizer submenu

@@ -42,6 +42,7 @@ impl AppSynthBridge {
     /// Validate that a module exists and has the given port in the expected direction.
     fn validate_port(
         &self,
+        instrument_id: InstrumentId,
         module_str: &str,
         port: &str,
         direction: PortDirection,
@@ -52,7 +53,7 @@ impl AppSynthBridge {
 
         let descriptor = self
             .session
-            .module_descriptor(mid)
+            .module_descriptor(instrument_id, mid)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
 
         let has_port = descriptor
@@ -623,9 +624,10 @@ impl SynthBridge for AppSynthBridge {
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
 
-        self.validate_port(from_module, from_port, PortDirection::Output)?;
-        self.validate_port(to_module, to_port, PortDirection::Input)?;
+        self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
 
         let from_id: ModuleId = from_module
             .parse()
@@ -636,7 +638,7 @@ impl SynthBridge for AppSynthBridge {
 
         self.session
             .connect(
-                InstrumentId::new(instrument_id),
+                inst_id,
                 from_id,
                 from_port.to_string(),
                 to_id,
@@ -654,9 +656,10 @@ impl SynthBridge for AppSynthBridge {
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
 
-        self.validate_port(from_module, from_port, PortDirection::Output)?;
-        self.validate_port(to_module, to_port, PortDirection::Input)?;
+        self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
 
         let from_id: ModuleId = from_module
             .parse()
