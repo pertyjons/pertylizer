@@ -1,5 +1,16 @@
 # Version History
 
+## [0.171.0] - 2026-02-25
+### Sequencer GUI — Arrangement-vy (Fas 2)
+- Grafisk arrangement-tidslinje med scrollbar
+- Track-panel (vänster): namn med färgindikator, M/S-flaggor
+- Tidslinje-ruler med taktnummer (1-baserat)
+- Grid-linjer: starka vid taktstreck, svaga vid slag
+- Pattern-placements som färgkodade rektanglar (track-färg) med namn och noträknare
+- Playhead-markör (vertikal linje + triangel i ruler) — rör sig i realtid under uppspelning
+- Culling: enbart synliga placements renderas
+- Data samlas i snapshot (kort read-lock) före rendering (RT-säkert)
+
 ## [0.170.0] - 2026-02-25
 ### Sequencer GUI — Transport & Läs-vy (Fas 1)
 - Transport-bar med Play/Pause/Stop-knappar, Go to Start

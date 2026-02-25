@@ -200,7 +200,8 @@
       "Bash($MCP get_connections:*)",
       "Bash(echo === LA Synth Pluck ===:*)",
       "Bash(echo === $patch ===:*)",
-      "Bash($MCP add_module:*)"
+      "Bash($MCP add_module:*)",
+      "Bash(kill %1:*)"
     ],
     "deny": [],
     "ask": []
