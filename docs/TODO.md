@@ -24,7 +24,8 @@
 
 5. **Sequencer GUI — Song-visualisering (Fas 3+)**
    * 👉 **Arkitektur & Plan:** [Läs `docs/sequencer_plan.md`](sequencer_plan.md)
-   * [ ] Piano Roll-vy: Visa/redigera noter i ett pattern
+   * [x] ~~Piano Roll läs-vy: Visa noter i ett pattern (dubbelklick på placement)~~ *(v0.172.0)*
+   * [ ] Piano Roll redigering: Lägg till/ta bort/flytta noter
    * [ ] Tracker-vy: Komplementerande vy för tangentbordsdrivet workflow
 
 3. **Spara & ladda Song**

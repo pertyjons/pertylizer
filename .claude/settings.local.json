@@ -205,5 +205,8 @@
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "synth"
+  ]
 }

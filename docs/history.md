@@ -1,5 +1,20 @@
 # Version History
 
+## [0.172.0] - 2026-02-25
+### Sequencer GUI — Piano Roll Läs-vy (Fas 3)
+- Piano roll öppnas vid dubbelklick på PatternPlacement i arrangemanget
+- `SequencerViewState` med `opened_pattern` — persisterar mellan frames
+- Dubbelklick-detektion via `allocate_painter` med `Sense::click()` + rect-hit-test
+- Data samlas i snapshot (`PianoRollData`) via kort read-lock (RT-säkert)
+- Keyboard-kolumn (vänster): tangenter med C-noter markerade, svarta/vita tangenter
+- Note grid: horisontella pitch-rader, vertikala beat/sub-beat-linjer, svarta tangenter mörkare
+- Noter som färgkodade rektanglar med alpha baserad på velocity
+- Open-ended noter (duration=None) ritas till pattern-slut med fade-indikator
+- Velocity-staplar (nedre zon) med färggradient grön→gul→röd
+- Playhead-markör (pattern-relativ position)
+- Resizable bottom panel (150-600px) med scroll i båda riktningar
+- Stäng-knapp (X) i toolbar
+
 ## [0.171.0] - 2026-02-25
 ### Sequencer GUI — Arrangement-vy (Fas 2)
 - Grafisk arrangement-tidslinje med scrollbar

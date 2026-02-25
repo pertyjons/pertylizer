@@ -222,6 +222,7 @@ struct SynthApp {
 
     // Sequencer state
     song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
+    sequencer_view_state: crate::gui::sequencer::SequencerViewState,
 
     // MCP shared state
     #[cfg(feature = "mcp")]
@@ -307,6 +308,7 @@ impl SynthApp {
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
             song,
+            sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
         }
@@ -953,7 +955,12 @@ impl eframe::App for SynthApp {
                 );
             }
             AppView::Sequencer => {
-                crate::gui::sequencer::draw_sequencer_view(ctx, &mut self.handle, &self.song);
+                crate::gui::sequencer::draw_sequencer_view(
+                    ctx,
+                    &mut self.handle,
+                    &self.song,
+                    &mut self.sequencer_view_state,
+                );
             }
         }
 
