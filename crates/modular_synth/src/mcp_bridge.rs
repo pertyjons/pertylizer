@@ -11,8 +11,8 @@ use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
-    BridgeConnectionDef, BridgeInstrumentDef, BridgeModuleDef, BridgeNoteData, BridgeNoteUpdate,
-    BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
+    BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate, BridgeParamValue, BridgePatternData,
+    BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
