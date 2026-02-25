@@ -82,9 +82,9 @@ dubstep, EDM, or any music needing powerful low end.
             .param_f("decay", 0.2)
             .param_f("sustain", 0.7)
             .param_f("release", 0.15)
-            .param_f("attack_curve", -0.7) // Fast punch
-            .param_f("decay_curve", -0.3) // Quick settle
-            .param_f("release_curve", -0.4) // Controlled release
+            .param_f("atk_curve", -0.7) // Fast punch
+            .param_f("dec_curve", -0.3) // Quick settle
+            .param_f("rel_curve", -0.4) // Controlled release
             .build(),
     );
 
@@ -96,9 +96,9 @@ dubstep, EDM, or any music needing powerful low end.
             .param_f("decay", 0.3)
             .param_f("sustain", 0.2)
             .param_f("release", 0.2)
-            .param_f("attack_curve", -0.8)
-            .param_f("decay_curve", -0.4)
-            .param_f("release_curve", -0.3)
+            .param_f("atk_curve", -0.8)
+            .param_f("dec_curve", -0.4)
+            .param_f("rel_curve", -0.3)
             .build(),
     );
 
@@ -133,7 +133,7 @@ dubstep, EDM, or any music needing powerful low end.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 100.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

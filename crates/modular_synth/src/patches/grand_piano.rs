@@ -115,10 +115,10 @@ PLAYING TIPS:
             .param_f("decay", 2.5) // Long natural decay
             .param_f("sustain", 0.0) // No sustain plateau (piano-like)
             .param_f("release", 0.35) // Release when key up
-            .param_f("velocity_sensitivity", 0.8) // Velocity affects amplitude
-            .param_f("attack_curve", -0.3)
-            .param_f("decay_curve", -0.4) // Natural exponential decay
-            .param_f("release_curve", -0.3)
+            .param_f("vel_sens", 0.8) // Velocity affects amplitude
+            .param_f("atk_curve", -0.3)
+            .param_f("dec_curve", -0.4) // Natural exponential decay
+            .param_f("rel_curve", -0.3)
             .build(),
     );
 
@@ -130,10 +130,10 @@ PLAYING TIPS:
             .param_f("decay", 0.2) // Quick decay for percussive feel
             .param_f("sustain", 0.0)
             .param_f("release", 0.15)
-            .param_f("velocity_sensitivity", 0.7) // Velocity opens filter more
-            .param_f("attack_curve", -0.5)
-            .param_f("decay_curve", -0.5)
-            .param_f("release_curve", -0.3)
+            .param_f("vel_sens", 0.7) // Velocity opens filter more
+            .param_f("atk_curve", -0.5)
+            .param_f("dec_curve", -0.5)
+            .param_f("rel_curve", -0.3)
             .build(),
     );
 
@@ -145,10 +145,10 @@ PLAYING TIPS:
             .param_f("decay", 0.012) // ~12ms click
             .param_f("sustain", 0.0)
             .param_f("release", 0.008)
-            .param_f("velocity_sensitivity", 0.6) // Harder = more click
-            .param_f("attack_curve", -0.8)
-            .param_f("decay_curve", -0.7)
-            .param_f("release_curve", -0.5)
+            .param_f("vel_sens", 0.6) // Harder = more click
+            .param_f("atk_curve", -0.8)
+            .param_f("dec_curve", -0.7)
+            .param_f("rel_curve", -0.5)
             .build(),
     );
 
@@ -163,8 +163,8 @@ PLAYING TIPS:
             .filter_mode("lowpass")
             .param_f("cutoff", 2000.0) // Base cutoff
             .param_f("resonance", 0.05) // Very low resonance (piano is not resonant)
-            .param_f("env_amount", 0.7) // Envelope opens filter for attack
-            .param_f("key_tracking", 0.6) // Higher notes = brighter
+            .param_f("cv_amt", 0.7) // Envelope opens filter for attack
+            .param_f("key_track", 0.6) // Higher notes = brighter
             .build(),
     );
 
@@ -184,7 +184,7 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::Mixer)
             .position(350.0, 350.0)
-            .param_f("level", 1.0)
+            .param_f("master", 1.0)
             .build(),
     );
 
@@ -215,7 +215,7 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(900.0, 200.0)
-            .param_f("master", 0.85)
+            .param_f("master level", 0.85)
             .build(),
     );
 

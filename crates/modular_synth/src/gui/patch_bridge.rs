@@ -457,6 +457,7 @@ pub fn create_patch_from_rack(
                         "ring_mod" => PatchModuleType::RingMod,
                         "wavetable_osc" => PatchModuleType::WavetableOsc,
                         "additive_osc" => PatchModuleType::AdditiveOsc,
+                        "la_synth" => PatchModuleType::LaSynth,
                         _ => PatchModuleType::Oscillator,
                     }
                 }
@@ -484,6 +485,7 @@ pub fn create_patch_from_rack(
                     "mid_side" => PatchModuleType::MidSide,
                     "bbd_delay" => PatchModuleType::BbdDelay,
                     "limiter" => PatchModuleType::Limiter,
+                    "frequency_shifter" => PatchModuleType::FrequencyShifter,
                     _ => PatchModuleType::Delay, // Fallback for other effects
                 },
                 ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
@@ -491,6 +493,8 @@ pub fn create_patch_from_rack(
                     "envelope_follower" => PatchModuleType::EnvelopeFollower,
                     "signal_monitor" => PatchModuleType::SignalMonitor,
                     "inline_signal_monitor" => PatchModuleType::InlineSignalMonitor,
+                    "vector_mixer" => PatchModuleType::VectorMixer,
+                    "pitch_tracker" => PatchModuleType::PitchTracker,
                     _ => continue,
                 },
                 ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {

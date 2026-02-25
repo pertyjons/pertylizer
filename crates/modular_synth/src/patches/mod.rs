@@ -25,6 +25,7 @@ mod harmonic_lead;
 mod karplus_guitar;
 mod kinetic_pad;
 mod kinetic_pluck;
+mod la_synth_pluck;
 mod metallic_bell;
 mod moog_resonant_sweep;
 mod noise_sweep;
@@ -35,12 +36,14 @@ mod ring_mod_drone;
 mod screamer_lead;
 mod shepard_riser;
 mod spacey_bass;
+mod spectral_drone;
 mod stereo_unison_pad;
 mod string_ensemble;
 mod sub_bass;
 mod unison_pwm_strings;
 mod unison_supersaw;
 mod unison_sync_lead;
+mod vector_pad;
 mod velocity_pad;
 mod vintage_lead;
 mod vocal_pad;
@@ -71,6 +74,7 @@ pub use harmonic_lead::patch_harmonic_lead;
 pub use karplus_guitar::patch_karplus_guitar;
 pub use kinetic_pad::patch_kinetic_pad;
 pub use kinetic_pluck::patch_kinetic_pluck;
+pub use la_synth_pluck::patch_la_synth_pluck;
 pub use metallic_bell::patch_metallic_bell;
 pub use moog_resonant_sweep::patch_moog_resonant_sweep;
 pub use noise_sweep::patch_noise_sweep;
@@ -81,12 +85,14 @@ pub use ring_mod_drone::patch_ring_mod_drone;
 pub use screamer_lead::patch_screamer_lead;
 pub use shepard_riser::patch_shepard_riser;
 pub use spacey_bass::patch_spacey_bass;
+pub use spectral_drone::patch_spectral_drone;
 pub use stereo_unison_pad::patch_stereo_unison_pad;
 pub use string_ensemble::patch_string_ensemble;
 pub use sub_bass::patch_sub_bass;
 pub use unison_pwm_strings::patch_unison_pwm_strings;
 pub use unison_supersaw::patch_unison_supersaw;
 pub use unison_sync_lead::patch_unison_sync_lead;
+pub use vector_pad::patch_vector_pad;
 pub use velocity_pad::patch_velocity_pad;
 pub use vintage_lead::patch_vintage_lead;
 pub use vocal_pad::patch_vocal_pad;
@@ -155,6 +161,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_fluid_pad(),
                 patch_stereo_unison_pad(),
                 patch_vocal_pad(),
+                patch_vector_pad(),
             ],
         ),
         (
@@ -183,6 +190,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_digital_chime(),
                 patch_kinetic_pluck(),
                 patch_kinetic_pad(),
+                patch_la_synth_pluck(),
             ],
         ),
         (
@@ -192,6 +200,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_noise_sweep(),
                 patch_ring_mod_drone(),
                 patch_warm_evolving(),
+                patch_spectral_drone(),
             ],
         ),
     ]

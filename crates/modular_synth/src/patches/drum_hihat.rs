@@ -69,9 +69,9 @@ for open hi-hats. The filter cutoff affects brightness.
             .param_f("decay", 0.05)
             .param_f("sustain", 0.0)
             .param_f("release", 0.03)
-            .param_f("attack_curve", -1.0) // Instant snap
-            .param_f("decay_curve", -0.5) // Quick fade
-            .param_f("release_curve", -0.6) // Tight cutoff
+            .param_f("atk_curve", -1.0) // Instant snap
+            .param_f("dec_curve", -0.5) // Quick fade
+            .param_f("rel_curve", -0.6) // Tight cutoff
             .build(),
     );
 
@@ -96,7 +96,7 @@ for open hi-hats. The filter cutoff affects brightness.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(850.0, 50.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

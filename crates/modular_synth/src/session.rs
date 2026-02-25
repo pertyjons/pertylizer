@@ -489,10 +489,15 @@ impl SynthSession {
             .module_descriptor(instrument_id, module_id)
             .ok_or_else(|| SessionError::ModuleNotFound(module_id.to_string()))?;
 
+        // Normalize: lowercase and replace underscores with spaces for fuzzy matching.
+        // This allows patch files to use snake_case ("key_tracking") while engine
+        // uses Title Case with spaces ("Key Tracking").
+        let normalize = |s: &str| s.to_lowercase().replace('_', " ");
+        let needle = normalize(param_name);
         let param_desc = descriptor
             .parameters
             .iter()
-            .find(|p| p.name.to_lowercase() == param_name.to_lowercase())
+            .find(|p| normalize(&p.name) == needle)
             .ok_or_else(|| SessionError::ParameterNotFound(param_name.to_string()))?;
 
         let f32_value = match value {

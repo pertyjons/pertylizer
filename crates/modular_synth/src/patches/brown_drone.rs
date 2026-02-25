@@ -81,9 +81,9 @@ sound design, and meditation soundscapes.
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
             .param_f("release", 2.0)
-            .param_f("attack_curve", 0.3) // Slow, gradual attack
-            .param_f("decay_curve", 0.0) // Linear decay
-            .param_f("release_curve", 0.5) // Long, natural fade
+            .param_f("atk_curve", 0.3) // Slow, gradual attack
+            .param_f("dec_curve", 0.0) // Linear decay
+            .param_f("rel_curve", 0.5) // Long, natural fade
             .build(),
     );
 
@@ -118,7 +118,7 @@ sound design, and meditation soundscapes.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
-            .param_f("master", 0.75)
+            .param_f("master level", 0.75)
             .build(),
     );
 

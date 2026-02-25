@@ -86,9 +86,9 @@ give each note maximum impact and punch.
             .param_f("decay", 0.15)
             .param_f("sustain", 0.3)
             .param_f("release", 0.1)
-            .param_f("attack_curve", -1.0) // Maximum instant punch
-            .param_f("decay_curve", -0.8) // Fast initial drop
-            .param_f("release_curve", -0.6) // Tight cutoff
+            .param_f("atk_curve", -1.0) // Maximum instant punch
+            .param_f("dec_curve", -0.8) // Fast initial drop
+            .param_f("rel_curve", -0.6) // Tight cutoff
             .build(),
     );
 
@@ -100,9 +100,9 @@ give each note maximum impact and punch.
             .param_f("decay", 0.1)
             .param_f("sustain", 0.1)
             .param_f("release", 0.08)
-            .param_f("attack_curve", -1.0) // Instant filter open
-            .param_f("decay_curve", -0.9) // Very fast filter close
-            .param_f("release_curve", -0.5)
+            .param_f("atk_curve", -1.0) // Instant filter open
+            .param_f("dec_curve", -0.9) // Very fast filter close
+            .param_f("rel_curve", -0.5)
             .build(),
     );
 
@@ -138,7 +138,7 @@ give each note maximum impact and punch.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 100.0)
-            .param_f("master", 0.75)
+            .param_f("master level", 0.75)
             .build(),
     );
 

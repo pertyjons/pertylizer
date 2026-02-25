@@ -115,7 +115,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(850.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master level", 0.7)
             .build(),
     );
 

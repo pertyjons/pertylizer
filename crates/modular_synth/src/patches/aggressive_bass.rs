@@ -77,9 +77,9 @@ style bass lines. Try different octaves for different characters.
             .param_f("decay", 0.15)
             .param_f("sustain", 0.6)
             .param_f("release", 0.1)
-            .param_f("attack_curve", -0.8) // Fast punch
-            .param_f("decay_curve", -0.4) // Quick initial drop
-            .param_f("release_curve", -0.3)
+            .param_f("atk_curve", -0.8) // Fast punch
+            .param_f("dec_curve", -0.4) // Quick initial drop
+            .param_f("rel_curve", -0.3)
             .build(),
     );
 
@@ -91,9 +91,9 @@ style bass lines. Try different octaves for different characters.
             .param_f("decay", 0.25)
             .param_f("sustain", 0.2)
             .param_f("release", 0.1)
-            .param_f("attack_curve", -0.9) // Instant filter open
-            .param_f("decay_curve", -0.5) // Quick sweep down
-            .param_f("release_curve", -0.3)
+            .param_f("atk_curve", -0.9) // Instant filter open
+            .param_f("dec_curve", -0.5) // Quick sweep down
+            .param_f("rel_curve", -0.3)
             .build(),
     );
 
@@ -129,7 +129,7 @@ style bass lines. Try different octaves for different characters.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

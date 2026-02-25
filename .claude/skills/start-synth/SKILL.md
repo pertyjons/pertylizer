@@ -107,6 +107,74 @@ $MCP seq_stop
 $MCP seq_seek beat=4.0
 ```
 
+## Build Instruments (v0.164.0)
+
+Build a complete instrument with modules, parameters and connections in ONE call.
+Connections use 0-based array indices into the `modules[]` array.
+Effects (dly, rev, dst, chr, etc.) are auto-routed — no connections needed.
+
+**CRITICAL: Port names are `out`/`in`/`cv` — NOT `output`/`input`/`gain`!**
+
+```bash
+MCP=".claude/skills/start-synth/mcp-call.py"
+
+# Build a complete subtractive synth
+$MCP build_instrument name="My Synth" midi_channel=1 \
+  'modules=[
+    {"module_type":"osc","params":{"Waveform":2.0}},
+    {"module_type":"flt","params":{"Cutoff":1200.0,"Resonance":0.4}},
+    {"module_type":"env","params":{"Attack":0.005,"Decay":0.3,"Sustain":0.4,"Release":0.5}},
+    {"module_type":"amp"},
+    {"module_type":"out"},
+    {"module_type":"rev","params":{"Mix":0.3}}
+  ]' \
+  'connections=[
+    {"from":0,"from_port":"out","to":1,"to_port":"in"},
+    {"from":1,"from_port":"out","to":3,"to_port":"in"},
+    {"from":2,"from_port":"out","to":3,"to_port":"cv"},
+    {"from":3,"from_port":"out","to":4,"to_port":"in"}
+  ]'
+
+# Build multiple instruments at once
+$MCP build_instruments 'instruments=[
+  {"name":"Lead","midi_channel":1,"modules":[{"module_type":"osc"},{"module_type":"amp"},{"module_type":"out"}],"connections":[{"from":0,"from_port":"out","to":1,"to_port":"in"},{"from":1,"from_port":"out","to":2,"to_port":"in"}]},
+  {"name":"Bass","midi_channel":2,"modules":[{"module_type":"osc","params":{"Waveform":2.0}},{"module_type":"flt"},{"module_type":"amp"},{"module_type":"out"}],"connections":[{"from":0,"from_port":"out","to":1,"to_port":"in"},{"from":1,"from_port":"out","to":2,"to_port":"in"},{"from":2,"from_port":"out","to":3,"to_port":"in"}]}
+]'
+
+# Load a named example patch (creates new instrument if no instrument_id given)
+$MCP apply_example_patch patch_name="Moog Resonant Sweep"
+
+# Load example patch into existing instrument (replaces current patch)
+$MCP apply_example_patch instrument_id=0 patch_name="Grand Piano"
+```
+
+### build_instrument response format
+
+```json
+{
+  "instrument_id": 1,
+  "module_ids": ["osc-1", "flt-1", "env-1", "amp-1", "out-1"],
+  "connection_count": 4,
+  "errors": []
+}
+```
+
+### apply_example_patch response format
+
+```json
+{
+  "instrument_id": 2,
+  "patch_name": "Moog Resonant Sweep",
+  "module_count": 7,
+  "connection_count": 5,
+  "errors": []
+}
+```
+
+### Envelope params are in SECONDS
+
+`Attack=0.005` means 5ms, `Decay=0.3` means 300ms, `Release=1.5` means 1500ms.
+
 ## Batch Operations (Sequencer)
 
 Use JSON arrays for batch parameters. Quote the JSON value with single quotes in bash.

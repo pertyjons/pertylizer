@@ -297,11 +297,31 @@ impl Describable for Mixer {
             .category(ModuleCategory::Mixer)
             .tag("mixer");
 
-        for i in 1..=8 {
-            desc = desc.port(
-                PortDescriptor::audio_input(format!("in{i}"), format!("In {i}"))
-                    .description("Audio-ingång. Koppla: Oscillator, Filter, eller annan ljudkälla"),
-            );
+        let input_params = [
+            MixerParam::Input1(Gain::UNITY),
+            MixerParam::Input2(Gain::UNITY),
+            MixerParam::Input3(Gain::UNITY),
+            MixerParam::Input4(Gain::UNITY),
+            MixerParam::Input5(Gain::UNITY),
+            MixerParam::Input6(Gain::UNITY),
+            MixerParam::Input7(Gain::UNITY),
+            MixerParam::Input8(Gain::UNITY),
+        ];
+
+        for (i, param) in input_params.into_iter().enumerate() {
+            let n = i + 1;
+            desc = desc
+                .port(
+                    PortDescriptor::audio_input(format!("in{n}"), format!("In {n}")).description(
+                        "Audio-ingång. Koppla: Oscillator, Filter, eller annan ljudkälla",
+                    ),
+                )
+                .parameter(
+                    ParameterDescriptor::float(Param::Mixer(param), format!("Input {n}"))
+                        .range(0.0, 2.0)
+                        .default(1.0)
+                        .widget(WidgetHint::Slider),
+                );
         }
 
         desc = desc

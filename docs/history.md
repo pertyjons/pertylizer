@@ -1,5 +1,29 @@
 # Version History
 
+## [0.165.0] - 2026-02-25
+### 3 nya exempelpatchar, PatchModuleType v0.162.0-stöd, parameterfix i alla 48 patchar
+
+**Nya exempelpatchar:**
+- **LA Synth Pluck** (Experimental) — Roland D-50-stil LA-syntes med perkussiv attack-transient som crossfadar till filtrerad saw.
+- **Vector Pad** (Pad) — 4 oscillatorer blandade via VectorMixer med dubbla LFO:er för ständigt evolverande timbre.
+- **Spectral Drone** (Ambient & Texture) — Detunade sågvågor genom FrequencyShifter för inharmoniskt metalliskt shimmer.
+
+**Nya `PatchModuleType`-varianter:**
+- `VectorMixer`, `LaSynth`, `PitchTracker`, `FrequencyShifter` — stöd i patch-serialisering, `to_module_type()`, `patch_bridge.rs`-mappning.
+
+**Buggfixar (parameternamn i alla 48 exempelpatchar):**
+- `filter_mode()` sparade `"filter_type"` → fixat till `"type"` (matchade inte filtrets riktiga parameter).
+- `distortion_mode()` sparade `"mode"` → fixat till `"type"` (Distortion-params heter `Type`, inte `Mode`).
+- StereoOutput `param_f("master")` → `"master level"` i alla patchar (matchade inte `"Master Level"`).
+- Mixer `param_f("level")` → `"master"` i 5 patchar (Mixer har `Master`, inte `Level`).
+- Envelope: `attack_curve`→`atk_curve`, `decay_curve`→`dec_curve`, `release_curve`→`rel_curve`, `velocity_sensitivity`/`velocity_sens`→`vel_sens`.
+- Filter: `key_tracking`→`key_track`, `cutoff_mod`/`env_amount`→`cv_amt`.
+
+**Förbättringar:**
+- **Fuzzy parameter-matchning** — `set_parameter()` normaliserar nu understreck till mellanslag vid namnmatchning (`input_1` matchar `Input 1`).
+- **Mixer-descriptor** — Lade till `Input 1`–`Input 8` parametrar som saknades i ModuleDescriptor. Fixar parameterinställning via `apply_patch` och MCP.
+- **48/48 exempelpatchar laddas nu utan varningar** via `apply_example_patch`.
+
 ## [0.164.0] - 2026-02-25
 ### MCP Batch-patchbygge: build_instrument, build_instruments, apply_example_patch
 

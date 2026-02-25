@@ -156,6 +156,22 @@ Alternativt med socat (utan bridge-binären):
 | `seq_stop` | Stoppa uppspelning | inga |
 | `seq_seek` | Hoppa till position | `beat` |
 
+### Batch-instrumentbygge (v0.164.0)
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `build_instrument` | Bygg komplett instrument i ett anrop | `name`, `midi_channel`?, `volume`?, `pan`?, `modules[]`, `connections[]` |
+| `build_instruments` | Bygg flera instrument i ett anrop | `instruments[]` (samma format som `build_instrument`) |
+| `apply_example_patch` | Ladda namngiven exempelpatch direkt | `patch_name`, `instrument_id`? |
+
+**`modules[]`:** Varje modul: `{ "module_type": "osc", "params": { "Waveform": 2.0, "Detune": 0.1 } }`
+
+**`connections[]`:** Använder 0-baserade index i `modules[]`: `{ "from": 0, "from_port": "out", "to": 1, "to_port": "in" }`
+
+**Effekter** (`dly`, `rev`, `dst`, `chr`, etc.) behöver inga connections — de auto-routas i effektkedjan.
+
+**Envelope-parametrar** anges i **sekunder**: `Attack=0.005` = 5ms, `Decay=0.3` = 300ms.
+
 ### Batch-operationer (Sequencer)
 
 | Verktyg | Beskrivning | Parametrar |
@@ -209,6 +225,26 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
 
 → delete_instrument(instrument_id=1)
   "OK"
+
+→ build_instrument(name="FM Bass", modules=[
+    {"module_type":"osc","params":{"Waveform":2}},
+    {"module_type":"osc","params":{"Waveform":0}},
+    {"module_type":"flt","params":{"Cutoff":600}},
+    {"module_type":"env","params":{"Attack":0.005,"Decay":0.3,"Sustain":0.4,"Release":0.5}},
+    {"module_type":"amp"},
+    {"module_type":"out"},
+    {"module_type":"rev","params":{"Mix":0.2}}
+  ], connections=[
+    {"from":1,"from_port":"out","to":0,"to_port":"fm"},
+    {"from":0,"from_port":"out","to":2,"to_port":"in"},
+    {"from":2,"from_port":"out","to":4,"to_port":"in"},
+    {"from":3,"from_port":"out","to":4,"to_port":"cv"},
+    {"from":4,"from_port":"out","to":5,"to_port":"in"}
+  ])
+  { instrument_id: 2, module_ids: ["osc-4","osc-5","flt-2","env-3","amp-2","out-2"], connection_count: 5, errors: [] }
+
+→ apply_example_patch(patch_name="Moog Resonant Sweep")
+  { instrument_id: 3, patch_name: "Moog Resonant Sweep", module_count: 7, connection_count: 5, errors: [] }
 ```
 
 ## Arkitektur
@@ -218,7 +254,7 @@ synth_mcp (crate)              modular_synth
 ┌─────────────────────┐       ┌──────────────────────┐
 │ SynthBridge trait    │◄──────│ AppSynthBridge impl  │
 │ MCP-server (rmcp)   │       │ Läser SharedGraphState│
-│ 56 tool-definitioner│       │ Skickar EngineCommand │
+│ 59 tool-definitioner│       │ Skickar EngineCommand │
 └──────┬──────────────┘       └──────┬───────────────┘
        │ TCP :9850                   │ ring buffer
        │                              ▼

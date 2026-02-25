@@ -68,7 +68,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::Mixer)
             .position(450.0, 100.0)
-            .param_f("level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 
@@ -80,9 +80,9 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
             .param_f("decay", 0.03)
             .param_f("sustain", 0.0)
             .param_f("release", 0.01)
-            .param_f("attack_curve", -0.9) // Instant snap
-            .param_f("decay_curve", -0.8) // Quick pitch drop
-            .param_f("release_curve", -0.5)
+            .param_f("atk_curve", -0.9) // Instant snap
+            .param_f("dec_curve", -0.8) // Quick pitch drop
+            .param_f("rel_curve", -0.5)
             .build(),
     );
 
@@ -94,9 +94,9 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
             .param_f("decay", 0.12)
             .param_f("sustain", 0.0)
             .param_f("release", 0.08)
-            .param_f("attack_curve", -1.0) // Instant transient
-            .param_f("decay_curve", -0.6) // Punchy body
-            .param_f("release_curve", -0.4)
+            .param_f("atk_curve", -1.0) // Instant transient
+            .param_f("dec_curve", -0.6) // Punchy body
+            .param_f("rel_curve", -0.4)
             .build(),
     );
 
@@ -121,7 +121,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 100.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

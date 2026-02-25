@@ -59,9 +59,9 @@ kick characters. Works well in the lowest octave.
             .param_f("decay", 0.05)
             .param_f("sustain", 0.0)
             .param_f("release", 0.01)
-            .param_f("attack_curve", -0.8) // Punchy, fast attack
-            .param_f("decay_curve", -0.6) // Quick punch decay
-            .param_f("release_curve", -0.5) // Tight release
+            .param_f("atk_curve", -0.8) // Punchy, fast attack
+            .param_f("dec_curve", -0.6) // Quick punch decay
+            .param_f("rel_curve", -0.5) // Tight release
             .build(),
     );
 
@@ -73,9 +73,9 @@ kick characters. Works well in the lowest octave.
             .param_f("decay", 0.15)
             .param_f("sustain", 0.0)
             .param_f("release", 0.05)
-            .param_f("attack_curve", -1.0) // Instant punch
-            .param_f("decay_curve", -0.7) // Fast initial drop for punch
-            .param_f("release_curve", -0.5) // Tight cutoff
+            .param_f("atk_curve", -1.0) // Instant punch
+            .param_f("dec_curve", -0.7) // Fast initial drop for punch
+            .param_f("rel_curve", -0.5) // Tight cutoff
             .build(),
     );
 
@@ -110,7 +110,7 @@ kick characters. Works well in the lowest octave.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(850.0, 50.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

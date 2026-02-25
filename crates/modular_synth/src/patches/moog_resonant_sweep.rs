@@ -96,9 +96,9 @@ bite. Works great for both bass lines and lead melodies.
             .filter_mode("lowpass")
             .param_f("cutoff", 500.0)
             .param_f("resonance", 0.55)
-            .param_f("key_tracking", 0.8)
+            .param_f("key_track", 0.8)
             .param_f("drive", 1.8)
-            .param_f("cutoff_mod", 6000.0)
+            .param_f("cv_amt", 6000.0)
             .build(),
     );
 
@@ -110,7 +110,7 @@ bite. Works great for both bass lines and lead melodies.
             .param_f("decay", 0.7)
             .param_f("sustain", 0.15)
             .param_f("release", 0.5)
-            .param_f("velocity_sens", 0.6)
+            .param_f("vel_sens", 0.6)
             .build(),
     );
 
@@ -122,7 +122,7 @@ bite. Works great for both bass lines and lead melodies.
             .param_f("decay", 0.3)
             .param_f("sustain", 0.85)
             .param_f("release", 0.5)
-            .param_f("velocity_sens", 0.7)
+            .param_f("vel_sens", 0.7)
             .build(),
     );
 
@@ -168,7 +168,7 @@ bite. Works great for both bass lines and lead melodies.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1250.0, 100.0)
-            .param_f("master", 0.75)
+            .param_f("master level", 0.75)
             .build(),
     );
 

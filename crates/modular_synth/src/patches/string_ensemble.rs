@@ -73,7 +73,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::Mixer)
             .position(250.0, 100.0)
-            .param_f("level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 
@@ -160,7 +160,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1450.0, 100.0)
-            .param_f("master", 0.8)
+            .param_f("master level", 0.8)
             .build(),
     );
 

@@ -126,6 +126,11 @@ pub enum PatchModuleType {
     SignalMonitor,
     // Inline signal monitor (compact 100×50px pass-through visualizer)
     InlineSignalMonitor,
+    // New modules (v0.162.0)
+    VectorMixer,
+    LaSynth,
+    PitchTracker,
+    FrequencyShifter,
 }
 
 impl PatchModuleType {
@@ -173,6 +178,10 @@ impl PatchModuleType {
             Self::KineticModulator => "kinetic_modulator",
             Self::SignalMonitor => "signal_monitor",
             Self::InlineSignalMonitor => "inline_signal_monitor",
+            Self::VectorMixer => "vector_mixer",
+            Self::LaSynth => "la_synth",
+            Self::PitchTracker => "pitch_tracker",
+            Self::FrequencyShifter => "frequency_shifter",
         }
     }
 
@@ -221,6 +230,10 @@ impl PatchModuleType {
             Self::KineticModulator => "kin",
             Self::SignalMonitor => "smn",
             Self::InlineSignalMonitor => "smn",
+            Self::VectorMixer => "vec",
+            Self::LaSynth => "las",
+            Self::PitchTracker => "ptr",
+            Self::FrequencyShifter => "fsf",
         }
     }
 
@@ -242,6 +255,7 @@ impl PatchModuleType {
                 | Self::Limiter
                 | Self::Convolver
                 | Self::PhaseVocoder
+                | Self::FrequencyShifter
         )
     }
 
@@ -294,6 +308,10 @@ impl PatchModuleType {
             Self::Convolver => Some(MT::Convolver),
             Self::PhaseVocoder => Some(MT::PhaseVocoder),
             Self::KineticModulator => Some(MT::KineticModulator),
+            Self::VectorMixer => Some(MT::VectorMixer),
+            Self::LaSynth => Some(MT::LaSynth),
+            Self::PitchTracker => Some(MT::PitchTracker),
+            Self::FrequencyShifter => Some(MT::FrequencyShifter),
             // GUI-only modules
             Self::Oscilloscope
             | Self::LevelMeter
@@ -512,7 +530,7 @@ impl ModuleBuilder {
 
     /// Convenience: set filter mode.
     pub fn filter_mode(self, mode: &str) -> Self {
-        self.param_choice("filter_type", mode)
+        self.param_choice("type", mode)
     }
 
     /// Convenience: set delay mode.
@@ -522,7 +540,7 @@ impl ModuleBuilder {
 
     /// Convenience: set distortion mode.
     pub fn distortion_mode(self, mode: &str) -> Self {
-        self.param_choice("mode", mode)
+        self.param_choice("type", mode)
     }
 
     /// Convenience: set filter model (standard, fluid, screamer, acid).

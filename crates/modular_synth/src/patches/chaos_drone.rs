@@ -114,7 +114,7 @@ different due to the chaotic nature of the algorithm.
     patch.add_module(
         ModuleBuilder::new(1, PatchModuleType::StereoOutput)
             .position(1050.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master level", 0.7)
             .build(),
     );
 

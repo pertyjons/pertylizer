@@ -192,7 +192,15 @@
       "WebFetch(domain:www.kvraudio.com)",
       "WebFetch(domain:knobulism.com)",
       "Bash($MCP list_module_types:*)",
-      "Bash($MCP set_instrument_midi_channel:*)"
+      "Bash($MCP set_instrument_midi_channel:*)",
+      "Bash(echo === Default instrument modules ===:*)",
+      "Bash(echo === $mid ===:*)",
+      "Bash(.claude/skills/start-synth/mcp-call.py list_example_patches:*)",
+      "Bash($MCP apply_example_patch:*)",
+      "Bash($MCP get_connections:*)",
+      "Bash(echo === LA Synth Pluck ===:*)",
+      "Bash(echo === $patch ===:*)",
+      "Bash($MCP add_module:*)"
     ],
     "deny": [],
     "ask": []
