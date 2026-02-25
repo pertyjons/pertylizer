@@ -64,6 +64,36 @@ $MCP load_example_patch name="Moog Resonant Sweep"
 # Play notes
 $MCP note_on channel=1 note=60 velocity=100
 $MCP note_off channel=1 note=60
+
+# Sequencer: Song
+$MCP get_song_info
+$MCP set_song_name name="My Song"
+$MCP set_song_tempo bpm=140
+
+# Sequencer: Patterns
+$MCP list_patterns
+$MCP create_pattern name="Verse" length_beats=4.0
+$MCP delete_pattern pattern_id=0
+
+# Sequencer: Notes (beats: 1.0=quarter, 0.5=eighth, 0.25=sixteenth)
+$MCP list_notes pattern_id=0
+$MCP add_note pattern_id=0 pitch=60 start_beat=0.0 duration_beats=1.0 velocity=100
+$MCP update_note pattern_id=0 note_id=0 pitch=62 velocity=110
+$MCP remove_note pattern_id=0 note_id=0
+
+# Sequencer: Tracks
+$MCP list_tracks
+$MCP create_track name="Lead" instrument_id=0
+
+# Sequencer: Arrangement
+$MCP list_arrangement
+$MCP place_pattern pattern_id=0 track_id=0 start_beat=0.0
+$MCP remove_placement pattern_id=0 track_id=0 start_beat=0.0
+
+# Sequencer: Transport
+$MCP seq_play
+$MCP seq_stop
+$MCP seq_seek beat=4.0
 ```
 
 For batch operations (building a full patch), use a Python script that imports `socket` directly to avoid repeated handshakes. See `mcp-call.py` for the protocol details.

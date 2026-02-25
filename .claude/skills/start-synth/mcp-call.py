@@ -3,9 +3,23 @@
 
 Usage:
     mcp-call.py <tool_name> [key=value ...]
+
+Examples:
+    # Synth engine
     mcp-call.py list_modules instrument_id=0
     mcp-call.py note_on channel=1 note=60 velocity=100
     mcp-call.py set_parameter instrument_id=0 module_id=osc-1 param_name=Level value=0.8
+
+    # Sequencer
+    mcp-call.py get_song_info
+    mcp-call.py set_song_tempo bpm=140
+    mcp-call.py create_pattern name=Verse length_beats=4.0
+    mcp-call.py add_note pattern_id=0 pitch=60 start_beat=0.0 duration_beats=1.0 velocity=100
+    mcp-call.py create_track name=Lead instrument_id=0
+    mcp-call.py place_pattern pattern_id=0 track_id=0 start_beat=0.0
+    mcp-call.py seq_play
+    mcp-call.py seq_stop
+    mcp-call.py seq_seek beat=4.0
 
 Values are auto-detected as int, float, or string.
 Output is the raw JSON text from the tool response.

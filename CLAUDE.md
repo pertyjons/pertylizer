@@ -73,8 +73,8 @@ Befintliga typer att använda:
 Innan en uppgift anses klar MÅSTE följande passera utan varningar eller fel:
 
 ```bash
-# Steg 1: Kompilera med alla varningar som fel
-RUSTFLAGS="-D warnings" cargo build
+# Steg 1: Kompilera (RUSTFLAGS="-D warnings" är konfigurerat i .cargo/config.toml)
+cargo build
 
 # Steg 2: Clippy med rimliga lints (konfigurerade i Cargo.toml)
 cargo clippy --all-targets
