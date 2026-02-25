@@ -254,6 +254,55 @@ impl PatchModuleType {
         )
     }
 
+    /// Convert to engine `ModuleType`. Returns `None` for visualizers and
+    /// signal monitors (they require GUI-specific setup).
+    #[must_use]
+    pub fn to_module_type(self) -> Option<synth_core::ModuleType> {
+        use synth_core::ModuleType as MT;
+        match self {
+            Self::Oscillator => Some(MT::Oscillator),
+            Self::MathOscillator => Some(MT::MathOscillator),
+            Self::SubOscillator => Some(MT::SubOscillator),
+            Self::Noise => Some(MT::Noise),
+            Self::Filter => Some(MT::Filter),
+            Self::Envelope => Some(MT::Envelope),
+            Self::Lfo => Some(MT::Lfo),
+            Self::Amplifier => Some(MT::Amplifier),
+            Self::Mixer => Some(MT::Mixer),
+            Self::StereoOutput => Some(MT::StereoOutput),
+            Self::Delay => Some(MT::Delay),
+            Self::Reverb => Some(MT::Reverb),
+            Self::Distortion => Some(MT::Distortion),
+            Self::Chorus => Some(MT::Chorus),
+            Self::Waveshaper => Some(MT::Waveshaper),
+            Self::MidSide => Some(MT::MidSide),
+            Self::ModMatrix => Some(MT::ModMatrix),
+            Self::RingMod => Some(MT::RingMod),
+            Self::EnvelopeFollower => Some(MT::EnvelopeFollower),
+            Self::WavetableOsc => Some(MT::WavetableOsc),
+            Self::KeyboardPanner => Some(MT::KeyboardPanner),
+            Self::BodyResonance => Some(MT::BodyResonance),
+            Self::MechanicalNoise => Some(MT::MechanicalNoise),
+            Self::Mseg => Some(MT::Mseg),
+            Self::AdditiveOsc => Some(MT::AdditiveOsc),
+            Self::BbdDelay => Some(MT::BbdDelay),
+            Self::Limiter => Some(MT::Limiter),
+            Self::Euclidean => Some(MT::Euclidean),
+            Self::TuringMachine => Some(MT::TuringMachine),
+            Self::RandomGates => Some(MT::RandomGates),
+            Self::GranularOsc => Some(MT::GranularOsc),
+            Self::Convolver => Some(MT::Convolver),
+            Self::PhaseVocoder => Some(MT::PhaseVocoder),
+            Self::KineticModulator => Some(MT::KineticModulator),
+            // GUI-only modules
+            Self::Oscilloscope
+            | Self::LevelMeter
+            | Self::SpectrumAnalyzer
+            | Self::SignalMonitor
+            | Self::InlineSignalMonitor => None,
+        }
+    }
+
     /// Returns true if this module doesn't need port connections in the UI.
     ///
     /// This includes effect chain modules (auto-processed) and visualizers (display only).

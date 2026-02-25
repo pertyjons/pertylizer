@@ -417,6 +417,101 @@ pub struct SetSongParam {
     pub placements: Vec<SongPlacementDef>,
 }
 
+// === Batch instrument building parameter structs ===
+
+/// A parameter value: number, string choice, or boolean.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum ParamValueInput {
+    /// Numeric value (e.g. 440.0 for frequency).
+    Number(f64),
+    /// Boolean value.
+    Bool(bool),
+    /// String choice (e.g. "sawtooth" for waveform).
+    Choice(String),
+}
+
+/// A module to create with optional parameters.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ModuleDefInput {
+    #[schemars(
+        description = "Module type key (prefix from list_module_types, e.g. 'osc', 'flt', 'amp', 'out', 'env', 'lfo', 'dly', 'rev')"
+    )]
+    pub module_type: String,
+    #[schemars(
+        description = "Parameters as {name: value}. Values can be numbers (440.0), strings for choices ('sawtooth'), or booleans. Use get_module_info to discover parameter names."
+    )]
+    pub params: Option<std::collections::HashMap<String, ParamValueInput>>,
+}
+
+/// A connection between modules using array indices.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectionDefInput {
+    #[schemars(description = "Index of the source module in the modules array (0-based)")]
+    pub from: usize,
+    #[schemars(description = "Source port name (e.g. 'output', 'out')")]
+    pub from_port: String,
+    #[schemars(description = "Index of the destination module in the modules array (0-based)")]
+    pub to: usize,
+    #[schemars(description = "Destination port name (e.g. 'input', 'in', 'cutoff_mod')")]
+    pub to_port: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BuildInstrumentParam {
+    #[schemars(description = "Instrument name")]
+    pub name: String,
+    #[schemars(description = "MIDI channel (1-16, optional)")]
+    pub midi_channel: Option<u8>,
+    #[schemars(description = "Volume (0.0-2.0, optional, default 1.0)")]
+    pub volume: Option<f32>,
+    #[schemars(description = "Pan (-1.0 to 1.0, optional, default 0.0)")]
+    pub pan: Option<f32>,
+    #[schemars(
+        description = "Modules to create. Order matters — connections reference modules by array index."
+    )]
+    pub modules: Vec<ModuleDefInput>,
+    #[schemars(
+        description = "Connections between modules. Use 'from'/'to' as 0-based indices into the modules array."
+    )]
+    pub connections: Option<Vec<ConnectionDefInput>>,
+}
+
+/// Single instrument definition for batch build.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct InstrumentDefInput {
+    #[schemars(description = "Instrument name")]
+    pub name: String,
+    #[schemars(description = "MIDI channel (1-16, optional)")]
+    pub midi_channel: Option<u8>,
+    #[schemars(description = "Volume (0.0-2.0, optional)")]
+    pub volume: Option<f32>,
+    #[schemars(description = "Pan (-1.0 to 1.0, optional)")]
+    pub pan: Option<f32>,
+    #[schemars(description = "Modules to create")]
+    pub modules: Vec<ModuleDefInput>,
+    #[schemars(description = "Connections between modules (array indices)")]
+    pub connections: Option<Vec<ConnectionDefInput>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BuildInstrumentsParam {
+    #[schemars(description = "Array of instruments to create")]
+    pub instruments: Vec<InstrumentDefInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ApplyExamplePatchParam {
+    #[schemars(
+        description = "Instrument ID to apply the patch to. If omitted, creates a new instrument."
+    )]
+    pub instrument_id: Option<u64>,
+    #[schemars(
+        description = "Name of the example patch (case-insensitive). Use list_example_patches to see available patches."
+    )]
+    pub patch_name: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -1251,5 +1346,126 @@ impl SynthMcpServer {
             Ok(()) => format!("OK: seeked to beat {}", params.0.beat),
             Err(e) => format!("Error: {e}"),
         }
+    }
+
+    // === Batch instrument building ===
+
+    #[tool(
+        description = "Build a complete instrument in ONE call: creates the instrument, adds all modules, sets parameters, and wires connections. \
+                       Modules are referenced by 0-based array index in connections. Returns instrument_id and module_ids. \
+                       Example: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'output',to:1,to_port:'input'},{from:1,from_port:'output',to:2,to_port:'input'}]"
+    )]
+    async fn build_instrument(&self, params: Parameters<BuildInstrumentParam>) -> String {
+        let p = params.0;
+        let spec = convert_instrument_def(
+            p.name,
+            p.midi_channel,
+            p.volume,
+            p.pan,
+            p.modules,
+            p.connections,
+        );
+        match self.bridge.build_instrument(&spec) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Build multiple instruments in one call. Each instrument has its own modules and connections. \
+                       Returns an array of results with instrument_id and module_ids per instrument."
+    )]
+    async fn build_instruments(&self, params: Parameters<BuildInstrumentsParam>) -> String {
+        let specs: Vec<_> = params
+            .0
+            .instruments
+            .into_iter()
+            .map(|i| {
+                convert_instrument_def(
+                    i.name,
+                    i.midi_channel,
+                    i.volume,
+                    i.pan,
+                    i.modules,
+                    i.connections,
+                )
+            })
+            .collect();
+        match self.bridge.build_instruments(&specs) {
+            Ok(results) => serde_json::to_string_pretty(&results)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Apply a named example patch directly to an instrument, creating all modules, parameters, and connections. \
+                       If instrument_id is omitted, creates a new instrument. Much faster than load_example_patch (no GUI queue). \
+                       Use list_example_patches to see available patches."
+    )]
+    async fn apply_example_patch(&self, params: Parameters<ApplyExamplePatchParam>) -> String {
+        match self
+            .bridge
+            .apply_example_patch(params.0.instrument_id, &params.0.patch_name)
+        {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+}
+
+/// Convert input structs to bridge-level types.
+fn convert_instrument_def(
+    name: String,
+    midi_channel: Option<u8>,
+    volume: Option<f32>,
+    pan: Option<f32>,
+    modules: Vec<ModuleDefInput>,
+    connections: Option<Vec<ConnectionDefInput>>,
+) -> crate::bridge::BridgeInstrumentDef {
+    use crate::bridge::{
+        BridgeConnectionDef, BridgeInstrumentDef, BridgeModuleDef, BridgeParamValue,
+    };
+
+    let bridge_modules = modules
+        .into_iter()
+        .map(|m| BridgeModuleDef {
+            module_type: m.module_type,
+            params: m
+                .params
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| {
+                    let bv = match v {
+                        ParamValueInput::Number(n) => BridgeParamValue::Number(n),
+                        ParamValueInput::Bool(b) => BridgeParamValue::Bool(b),
+                        ParamValueInput::Choice(s) => BridgeParamValue::Choice(s),
+                    };
+                    (k, bv)
+                })
+                .collect(),
+        })
+        .collect();
+
+    let bridge_connections = connections
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| BridgeConnectionDef {
+            from_index: c.from,
+            from_port: c.from_port,
+            to_index: c.to,
+            to_port: c.to_port,
+        })
+        .collect();
+
+    BridgeInstrumentDef {
+        name,
+        midi_channel,
+        volume,
+        pan,
+        modules: bridge_modules,
+        connections: bridge_connections,
     }
 }

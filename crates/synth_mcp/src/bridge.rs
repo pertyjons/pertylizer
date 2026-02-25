@@ -6,9 +6,9 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    BatchResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SetSongResult,
-    SongInfo, TrackInfo, UiSnapshot,
+    ApplyExamplePatchResult, BatchResult, BuildInstrumentResult, ConnectionInfo, EngineStatus,
+    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    ParameterInfo, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -75,6 +75,54 @@ pub struct BridgeSongPlacement {
     pub track_index: usize,
     /// Start position in beats.
     pub start_beat: f32,
+}
+
+// === Bridge-level data structures for batch instrument building ===
+
+/// Module definition for `build_instrument`.
+pub struct BridgeModuleDef {
+    /// Module type key (e.g. "osc", "flt", "dly").
+    pub module_type: String,
+    /// Parameters as (name, value) pairs.
+    pub params: Vec<(String, BridgeParamValue)>,
+}
+
+/// Parameter value for bridge-level batch operations.
+pub enum BridgeParamValue {
+    /// Numeric value (f32).
+    Number(f64),
+    /// Choice/enum value (e.g. "sawtooth", "lowpass").
+    Choice(String),
+    /// Boolean value.
+    Bool(bool),
+}
+
+/// Connection definition using array indices into the modules array.
+pub struct BridgeConnectionDef {
+    /// 0-based index of the source module in the modules array.
+    pub from_index: usize,
+    /// Source port name.
+    pub from_port: String,
+    /// 0-based index of the destination module in the modules array.
+    pub to_index: usize,
+    /// Destination port name.
+    pub to_port: String,
+}
+
+/// Complete instrument definition for `build_instrument`.
+pub struct BridgeInstrumentDef {
+    /// Instrument name.
+    pub name: String,
+    /// Optional MIDI channel (1-16).
+    pub midi_channel: Option<u8>,
+    /// Optional volume (0.0-2.0).
+    pub volume: Option<f32>,
+    /// Optional pan (-1.0 to 1.0).
+    pub pan: Option<f32>,
+    /// Modules to create.
+    pub modules: Vec<BridgeModuleDef>,
+    /// Connections between modules (using array indices).
+    pub connections: Vec<BridgeConnectionDef>,
 }
 
 /// Bridge between the MCP server and the synth engine.
@@ -360,4 +408,27 @@ pub trait SynthBridge: Send + Sync + 'static {
         tracks: &[BridgeTrackData],
         placements: &[BridgeSongPlacement],
     ) -> Result<SetSongResult, McpBridgeError>;
+
+    // === Batch instrument building ===
+
+    /// Build a complete instrument in one call: create instrument, add modules,
+    /// set parameters, and wire connections.
+    fn build_instrument(
+        &self,
+        spec: &BridgeInstrumentDef,
+    ) -> Result<BuildInstrumentResult, McpBridgeError>;
+
+    /// Build multiple instruments in one call.
+    fn build_instruments(
+        &self,
+        specs: &[BridgeInstrumentDef],
+    ) -> Result<Vec<BuildInstrumentResult>, McpBridgeError>;
+
+    /// Apply a named example patch directly (bypassing GUI queue).
+    /// If `instrument_id` is None, creates a new instrument.
+    fn apply_example_patch(
+        &self,
+        instrument_id: Option<u64>,
+        patch_name: &str,
+    ) -> Result<ApplyExamplePatchResult, McpBridgeError>;
 }

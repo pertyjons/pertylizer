@@ -9,13 +9,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType};
-use synth_engine::commands::PortId;
+use synth_engine::commands::{EffectType, PortId};
 use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use synth_engine::shared_state::InstrumentSnapshot;
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand, ModuleId};
 
 use crate::module_factory;
+use crate::patch::{ParamValue, Patch};
 
 /// Error type for session operations.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +32,9 @@ pub enum SessionError {
 
     #[error("visualizer modules require GUI (VisualizationBuffer)")]
     VisualizerRequiresGui,
+
+    #[error("parameter not found: {0}")]
+    ParameterNotFound(String),
 
     #[error("failed to send engine command")]
     SendFailed,
@@ -467,6 +471,186 @@ impl SynthSession {
     }
 
     // ------------------------------------------------------------------
+    // Parameter setting (GUI-independent)
+    // ------------------------------------------------------------------
+
+    /// Set a module parameter by name, resolving `ParamValue` to f32.
+    ///
+    /// Uses the same logic as `apply_module_parameters` in `patch_bridge.rs`
+    /// but without any GUI dependencies.
+    pub fn set_parameter(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        param_name: &str,
+        value: &ParamValue,
+    ) -> Result<(), SessionError> {
+        let descriptor = self
+            .module_descriptor(instrument_id, module_id)
+            .ok_or_else(|| SessionError::ModuleNotFound(module_id.to_string()))?;
+
+        let param_desc = descriptor
+            .parameters
+            .iter()
+            .find(|p| p.name.to_lowercase() == param_name.to_lowercase())
+            .ok_or_else(|| SessionError::ParameterNotFound(param_name.to_string()))?;
+
+        let f32_value = match value {
+            ParamValue::Float(f) => *f,
+            ParamValue::Int(i) => *i as f32,
+            ParamValue::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            ParamValue::Choice(s) => {
+                if let Some(ref choices) = param_desc.choices {
+                    choices
+                        .iter()
+                        .position(|c| c.id == *s)
+                        .map(|i| i as f32)
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                }
+            }
+        };
+
+        let param = param_desc.id.with_f32(f32_value);
+
+        let cmd = if let Some(effect_type) = EffectType::from_module_type(module_id.module_type) {
+            EngineCommand::SetEffectParameter {
+                instrument_id: Some(instrument_id),
+                effect_type,
+                param,
+            }
+        } else {
+            EngineCommand::SetModuleParameter {
+                instrument_id: Some(instrument_id),
+                module_id,
+                param,
+            }
+        };
+
+        if !self.command_sender.send(cmd) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Patch loading (GUI-independent)
+    // ------------------------------------------------------------------
+
+    /// Apply a patch to an instrument without GUI dependencies.
+    ///
+    /// Skips visualizer modules (Oscilloscope, SignalMonitor, etc.) since
+    /// they require `VisualizationBuffer`. The GUI picks up modules via
+    /// `reconcile_with_session()`.
+    pub fn apply_patch(&self, instrument_id: InstrumentId, patch: &Patch) -> ApplyPatchResult {
+        let mut result = ApplyPatchResult {
+            module_count: 0,
+            connection_count: 0,
+            module_ids: Vec::new(),
+            errors: Vec::new(),
+        };
+
+        // Clear existing modules
+        if let Err(e) = self.clear_graph(instrument_id) {
+            result.errors.push(format!("clear_graph failed: {e}"));
+            return result;
+        }
+
+        // Add modules
+        for module_state in &patch.modules {
+            let module_type = match module_state.module_type.to_module_type() {
+                Some(mt) => mt,
+                None => {
+                    // Visualizer/signal monitor — skip silently
+                    result.module_ids.push(None);
+                    continue;
+                }
+            };
+
+            let module_id: ModuleId = match module_state.id.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    result
+                        .errors
+                        .push(format!("invalid module ID: {}", module_state.id));
+                    result.module_ids.push(None);
+                    continue;
+                }
+            };
+
+            match self.add_module_with_id(instrument_id, module_id, module_type) {
+                Ok(descriptor) => {
+                    result.module_count += 1;
+                    result.module_ids.push(Some(module_id.to_string()));
+
+                    // Apply parameters
+                    for (param_name, value) in &module_state.parameters {
+                        if let Err(e) =
+                            self.set_parameter(instrument_id, module_id, param_name, value)
+                        {
+                            result
+                                .errors
+                                .push(format!("{} param '{}': {e}", module_id, param_name));
+                        }
+                    }
+                    drop(descriptor);
+                }
+                Err(e) => {
+                    result
+                        .errors
+                        .push(format!("add module {}: {e}", module_state.id));
+                    result.module_ids.push(None);
+                }
+            }
+        }
+
+        // Add connections
+        for conn in &patch.connections {
+            let from_id: ModuleId = match conn.from.0.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    result
+                        .errors
+                        .push(format!("invalid from module: {}", conn.from.0));
+                    continue;
+                }
+            };
+            let to_id: ModuleId = match conn.to.0.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    result
+                        .errors
+                        .push(format!("invalid to module: {}", conn.to.0));
+                    continue;
+                }
+            };
+
+            match self.connect(
+                instrument_id,
+                from_id,
+                conn.from.1.clone(),
+                to_id,
+                conn.to.1.clone(),
+            ) {
+                Ok(()) => result.connection_count += 1,
+                Err(e) => result.errors.push(format!(
+                    "connect {}:{} → {}:{}: {e}",
+                    conn.from.0, conn.from.1, conn.to.0, conn.to.1
+                )),
+            }
+        }
+
+        result
+    }
+
+    // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
 
@@ -541,4 +725,17 @@ impl SynthSession {
             module_type.name().to_string(),
         ))
     }
+}
+
+/// Result of applying a patch to an instrument.
+pub struct ApplyPatchResult {
+    /// Number of modules successfully created.
+    pub module_count: usize,
+    /// Number of connections successfully created.
+    pub connection_count: usize,
+    /// Module IDs in the same order as the patch's module array.
+    /// `None` for skipped modules (visualizers, invalid IDs).
+    pub module_ids: Vec<Option<String>>,
+    /// Non-fatal errors encountered during loading.
+    pub errors: Vec<String>,
 }

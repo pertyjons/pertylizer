@@ -1,5 +1,22 @@
 # Version History
 
+## [0.164.0] - 2026-02-25
+### MCP Batch-patchbygge: build_instrument, build_instruments, apply_example_patch
+
+**Nya MCP-verktyg:**
+- **`build_instrument`** — Bygg ett komplett instrument i ETT anrop: skapar instrument, lägger till moduler, sätter parametrar och kopplar kablar. Moduler refereras via 0-baserat arrayindex i connections.
+- **`build_instruments`** — Bygg FLERA instrument i ett enda anrop (batch).
+- **`apply_example_patch`** — Ladda en namngiven exempelpatch direkt utan GUI-kö. Skapar alla moduler, parametrar och kopplingar omedelbart. Skapar nytt instrument om inget instrument_id anges.
+
+**Buggfixar:**
+- **Effect parameter routing** — MCP `set_parameter` skickar nu korrekt `SetEffectParameter` för effektmoduler (Delay, Reverb, Chorus etc.) istället för att alltid använda `SetModuleParameter`.
+
+**Ny arkitektur:**
+- `SynthSession::set_parameter()` — GUI-oberoende parameterlogik med korrekt effect/voice-routing och `ParamValue::Choice` → f32 konvertering.
+- `SynthSession::apply_patch()` — GUI-oberoende patchladdning som skapar moduler, applicerar parametrar och kopplar. Skippar visualizers (Oscilloscope, SignalMonitor etc.).
+- `PatchModuleType::to_module_type()` — Ny konverteringsmetod från patch-format till engine `ModuleType`.
+- `ApplyPatchResult` — Resultattyp med module_count, connection_count, module_ids och errors.
+
 ## [0.163.0] - 2026-02-25
 ### Per-instrument modul-ID:n och GUI-rekonciliering för alla instrument
 

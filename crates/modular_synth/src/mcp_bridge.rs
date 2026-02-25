@@ -11,15 +11,15 @@ use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
-    BridgeNoteData, BridgeNoteUpdate, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
-    BridgeTrackData,
+    BridgeConnectionDef, BridgeInstrumentDef, BridgeModuleDef, BridgeNoteData, BridgeNoteUpdate,
+    BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    BatchItemResult, BatchResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    ParameterInfo, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
-    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    ApplyExamplePatchResult, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SetSongResult,
+    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -405,38 +405,28 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
-        // Find the module and its current parameter to construct the correct Param variant
-        let module_snapshot = self
-            .session
-            .state()
-            .shared_graph
-            .get_modules_for_instrument(InstrumentId::new(instrument_id))
-            .into_iter()
-            .find(|m| m.id.to_string() == module_id)
-            .ok_or_else(|| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
-        // Find matching param and create a new one with updated value
-        let param = module_snapshot
-            .parameters
-            .iter()
-            .find(|p| p.name() == param_name)
-            .ok_or_else(|| McpBridgeError::ParameterNotFound(param_name.to_string()))?;
-
-        let new_param = param.with_f32(value);
-
-        if self
-            .session
-            .command_sender()
-            .send(EngineCommand::SetModuleParameter {
-                instrument_id: Some(InstrumentId::new(instrument_id)),
-                module_id: module_snapshot.id,
-                param: new_param,
+        // Use session.set_parameter for correct effect/module routing
+        self.session
+            .set_parameter(
+                inst_id,
+                mid,
+                param_name,
+                &crate::patch::ParamValue::Float(value),
+            )
+            .map_err(|e| match e {
+                crate::session::SessionError::ModuleNotFound(s) => {
+                    McpBridgeError::ModuleNotFound(s)
+                }
+                crate::session::SessionError::ParameterNotFound(s) => {
+                    McpBridgeError::ParameterNotFound(s)
+                }
+                _ => McpBridgeError::CommandSendFailed,
             })
-        {
-            Ok(())
-        } else {
-            Err(McpBridgeError::CommandSendFailed)
-        }
     }
 
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
@@ -1407,6 +1397,183 @@ impl SynthBridge for AppSynthBridge {
         } else {
             Err(McpBridgeError::CommandSendFailed)
         }
+    }
+
+    fn build_instrument(
+        &self,
+        spec: &BridgeInstrumentDef,
+    ) -> Result<BuildInstrumentResult, McpBridgeError> {
+        use crate::patch::ParamValue;
+
+        // 1. Create instrument
+        let inst_id = self
+            .session
+            .add_instrument(&spec.name)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+
+        let mut errors = Vec::new();
+
+        // 2. Set optional instrument params
+        if let Some(ch) = spec.midi_channel {
+            let _ = self
+                .session
+                .set_instrument_midi_channel(
+                    inst_id,
+                    MidiChannel::from_one_indexed(ch).unwrap_or(MidiChannel::CH1),
+                )
+                .map_err(|e| errors.push(format!("midi_channel: {e}")));
+        }
+        if let Some(vol) = spec.volume {
+            let _ = self
+                .session
+                .set_instrument_volume(inst_id, vol)
+                .map_err(|e| errors.push(format!("volume: {e}")));
+        }
+        if let Some(pan) = spec.pan {
+            let _ = self
+                .session
+                .set_instrument_pan(inst_id, pan)
+                .map_err(|e| errors.push(format!("pan: {e}")));
+        }
+
+        // 3. Add modules
+        let mut module_ids: Vec<Option<ModuleId>> = Vec::with_capacity(spec.modules.len());
+        let mut module_id_strings: Vec<String> = Vec::with_capacity(spec.modules.len());
+
+        for module_def in &spec.modules {
+            let mt = match synth_core::ModuleType::from_prefix(&module_def.module_type) {
+                Some(mt) => mt,
+                None => {
+                    errors.push(format!("invalid module type: {}", module_def.module_type));
+                    module_ids.push(None);
+                    module_id_strings.push(String::new());
+                    continue;
+                }
+            };
+
+            match self.session.add_module(inst_id, mt) {
+                Ok((mid, _descriptor)) => {
+                    let mid_str = mid.to_string();
+
+                    // Set parameters
+                    for (param_name, value) in &module_def.params {
+                        let pv = match value {
+                            BridgeParamValue::Number(n) => ParamValue::Float(*n as f32),
+                            BridgeParamValue::Choice(s) => ParamValue::Choice(s.clone()),
+                            BridgeParamValue::Bool(b) => ParamValue::Bool(*b),
+                        };
+                        if let Err(e) = self.session.set_parameter(inst_id, mid, param_name, &pv) {
+                            errors.push(format!("{mid} param '{param_name}': {e}"));
+                        }
+                    }
+
+                    module_ids.push(Some(mid));
+                    module_id_strings.push(mid_str);
+                }
+                Err(e) => {
+                    errors.push(format!("add module '{}': {e}", module_def.module_type));
+                    module_ids.push(None);
+                    module_id_strings.push(String::new());
+                }
+            }
+        }
+
+        // 4. Wire connections
+        let mut connection_count = 0;
+        for conn in &spec.connections {
+            let from_mid = match module_ids.get(conn.from_index).and_then(|m| *m) {
+                Some(id) => id,
+                None => {
+                    errors.push(format!(
+                        "connection from_index {} has no module",
+                        conn.from_index
+                    ));
+                    continue;
+                }
+            };
+            let to_mid = match module_ids.get(conn.to_index).and_then(|m| *m) {
+                Some(id) => id,
+                None => {
+                    errors.push(format!(
+                        "connection to_index {} has no module",
+                        conn.to_index
+                    ));
+                    continue;
+                }
+            };
+
+            match self.session.connect(
+                inst_id,
+                from_mid,
+                conn.from_port.clone(),
+                to_mid,
+                conn.to_port.clone(),
+            ) {
+                Ok(()) => connection_count += 1,
+                Err(e) => errors.push(format!(
+                    "connect {}:{} → {}:{}: {e}",
+                    from_mid, conn.from_port, to_mid, conn.to_port
+                )),
+            }
+        }
+
+        Ok(BuildInstrumentResult {
+            instrument_id: inst_id.as_u64(),
+            module_ids: module_id_strings,
+            connection_count,
+            errors,
+        })
+    }
+
+    fn build_instruments(
+        &self,
+        specs: &[BridgeInstrumentDef],
+    ) -> Result<Vec<BuildInstrumentResult>, McpBridgeError> {
+        let mut results = Vec::with_capacity(specs.len());
+        for spec in specs {
+            results.push(self.build_instrument(spec)?);
+        }
+        Ok(results)
+    }
+
+    fn apply_example_patch(
+        &self,
+        instrument_id: Option<u64>,
+        patch_name: &str,
+    ) -> Result<ApplyExamplePatchResult, McpBridgeError> {
+        // Find the patch
+        let categories = crate::patches::categorized_patches();
+        let name_lower = patch_name.to_ascii_lowercase();
+
+        let patch = categories
+            .iter()
+            .flat_map(|(_cat, patches)| patches)
+            .find(|p| p.name.to_ascii_lowercase() == name_lower)
+            .ok_or_else(|| McpBridgeError::PatchNotFound(patch_name.to_string()))?
+            .clone();
+
+        // Create or reuse instrument
+        let inst_id = if let Some(id) = instrument_id {
+            let iid = InstrumentId::new(id);
+            if !self.session.instrument_exists(iid) {
+                return Err(McpBridgeError::InstrumentNotFound(id));
+            }
+            iid
+        } else {
+            self.session
+                .add_instrument(&patch.name)
+                .map_err(|e| McpBridgeError::Other(e.to_string()))?
+        };
+
+        let result = self.session.apply_patch(inst_id, &patch);
+
+        Ok(ApplyExamplePatchResult {
+            instrument_id: inst_id.as_u64(),
+            patch_name: patch.name,
+            module_count: result.module_count,
+            connection_count: result.connection_count,
+            errors: result.errors,
+        })
     }
 }
 

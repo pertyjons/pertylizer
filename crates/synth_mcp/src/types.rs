@@ -254,6 +254,36 @@ pub struct SetSongResult {
     pub errors: Vec<String>,
 }
 
+// === Batch instrument building types ===
+
+/// Result of building a single instrument via `build_instrument`.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildInstrumentResult {
+    /// Assigned instrument ID.
+    pub instrument_id: u64,
+    /// Module IDs in the same order as the input modules array.
+    pub module_ids: Vec<String>,
+    /// Number of connections successfully created.
+    pub connection_count: usize,
+    /// Non-fatal errors encountered.
+    pub errors: Vec<String>,
+}
+
+/// Result of applying an example patch via `apply_example_patch`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ApplyExamplePatchResult {
+    /// Instrument ID (created or reused).
+    pub instrument_id: u64,
+    /// Name of the patch that was applied.
+    pub patch_name: String,
+    /// Number of modules created.
+    pub module_count: usize,
+    /// Number of connections created.
+    pub connection_count: usize,
+    /// Non-fatal errors encountered.
+    pub errors: Vec<String>,
+}
+
 // === Sequencer types ===
 
 /// Information about the current song.
