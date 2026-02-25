@@ -11,11 +11,16 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand};
 use synth_mcp::bridge::SynthBridge;
+use synth_mcp::bridge::{
+    BridgeNoteData, BridgeNoteUpdate, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
+    BridgeTrackData,
+};
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo,
-    PlacementInfo, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    BatchItemResult, BatchResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
+    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    ParameterInfo, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
+    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -897,6 +902,381 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
+    // === Sequencer: Batch operations ===
+
+    fn add_notes(
+        &self,
+        pattern_id: u32,
+        notes: &[BridgeNoteData],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let mut items = Vec::with_capacity(notes.len());
+        let mut succeeded = 0usize;
+
+        for (i, n) in notes.iter().enumerate() {
+            let note_id = insert_note_into_pattern(pattern, n);
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: Some(note_id),
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total: notes.len(),
+            succeeded,
+            failed: notes.len() - succeeded,
+            items,
+        })
+    }
+
+    fn update_notes(
+        &self,
+        pattern_id: u32,
+        updates: &[BridgeNoteUpdate],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let mut items = Vec::with_capacity(updates.len());
+        let mut succeeded = 0usize;
+
+        for (i, u) in updates.iter().enumerate() {
+            let nid = synth_sequencer::NoteId(u.note_id);
+            if let Some(note) = pattern.note_mut(nid) {
+                if let Some(p) = u.pitch
+                    && let Some(new_pitch) = synth_sequencer::Pitch::new(p)
+                {
+                    note.pitch = new_pitch;
+                }
+                if let Some(s) = u.start_beat {
+                    note.start = synth_sequencer::PatternTick(beats_to_ticks(s));
+                }
+                if let Some(d) = u.duration_beats {
+                    note.duration = Some(synth_sequencer::Duration(beats_to_ticks(d)));
+                }
+                if let Some(v) = u.velocity {
+                    note.velocity = synth_core::Velocity::from_midi(v);
+                }
+                items.push(BatchItemResult {
+                    index: i,
+                    success: true,
+                    id: None,
+                    error: None,
+                });
+                succeeded += 1;
+            } else {
+                items.push(BatchItemResult {
+                    index: i,
+                    success: false,
+                    id: None,
+                    error: Some(format!("note not found: {}", u.note_id)),
+                });
+            }
+        }
+
+        Ok(BatchResult {
+            total: updates.len(),
+            succeeded,
+            failed: updates.len() - succeeded,
+            items,
+        })
+    }
+
+    fn replace_notes(
+        &self,
+        pattern_id: u32,
+        notes: &[BridgeNoteData],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        pattern.clear_notes();
+
+        let mut items = Vec::with_capacity(notes.len());
+        let mut succeeded = 0usize;
+
+        for (i, n) in notes.iter().enumerate() {
+            let note_id = insert_note_into_pattern(pattern, n);
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: Some(note_id),
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total: notes.len(),
+            succeeded,
+            failed: notes.len() - succeeded,
+            items,
+        })
+    }
+
+    fn clear_pattern(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        let count = pattern.note_count();
+        pattern.clear_notes();
+        Ok(count)
+    }
+
+    fn create_patterns(
+        &self,
+        patterns: &[BridgePatternData],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+        let mut items = Vec::with_capacity(patterns.len());
+        let mut succeeded = 0usize;
+
+        for (i, p) in patterns.iter().enumerate() {
+            let duration = synth_sequencer::Duration(beats_to_ticks(p.length_beats));
+            let id = song.create_pattern(duration);
+            if let Some(pattern) = song.pattern_mut(id) {
+                pattern.name = p.name.clone();
+                for n in &p.notes {
+                    insert_note_into_pattern(pattern, n);
+                }
+            }
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: Some(u64::from(id.0)),
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total: patterns.len(),
+            succeeded,
+            failed: patterns.len() - succeeded,
+            items,
+        })
+    }
+
+    fn create_tracks(&self, tracks: &[BridgeTrackData]) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+        let mut items = Vec::with_capacity(tracks.len());
+        let mut succeeded = 0usize;
+
+        for (i, t) in tracks.iter().enumerate() {
+            let id = song.create_track(&t.name);
+            if let Some(inst_id) = t.instrument_id
+                && let Some(track) = song.track_mut(id)
+            {
+                track.instrument = Some(synth_sequencer::SeqInstrumentId(inst_id));
+            }
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: Some(u64::from(id.0)),
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total: tracks.len(),
+            succeeded,
+            failed: tracks.len() - succeeded,
+            items,
+        })
+    }
+
+    fn place_patterns(
+        &self,
+        placements: &[BridgePlacementData],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+        let mut items = Vec::with_capacity(placements.len());
+        let mut succeeded = 0usize;
+
+        for (i, p) in placements.iter().enumerate() {
+            let pid = synth_sequencer::PatternId::new(p.pattern_id);
+            let tid = synth_sequencer::TrackId(p.track_id);
+            let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(p.start_beat)));
+
+            if song.pattern(pid).is_none() {
+                items.push(BatchItemResult {
+                    index: i,
+                    success: false,
+                    id: None,
+                    error: Some(format!("pattern not found: {}", p.pattern_id)),
+                });
+                continue;
+            }
+            if song.track(tid).is_none() {
+                items.push(BatchItemResult {
+                    index: i,
+                    success: false,
+                    id: None,
+                    error: Some(format!("track not found: {}", p.track_id)),
+                });
+                continue;
+            }
+
+            song.place_pattern(pid, tid, tick);
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: None,
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total: placements.len(),
+            succeeded,
+            failed: placements.len() - succeeded,
+            items,
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn set_song(
+        &self,
+        name: &str,
+        tempo: f32,
+        patterns: &[BridgePatternData],
+        tracks: &[BridgeTrackData],
+        placements: &[BridgeSongPlacement],
+    ) -> Result<SetSongResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+        // Replace the entire song
+        *song = synth_sequencer::Song::new(name).with_tempo(synth_core::Bpm::new(tempo));
+
+        let mut errors = Vec::new();
+        let mut total_notes = 0usize;
+
+        // Create patterns with notes
+        let mut pattern_ids: Vec<u32> = Vec::with_capacity(patterns.len());
+        for (i, p) in patterns.iter().enumerate() {
+            let duration = synth_sequencer::Duration(beats_to_ticks(p.length_beats));
+            let id = song.create_pattern(duration);
+            if let Some(pattern) = song.pattern_mut(id) {
+                pattern.name = p.name.clone();
+                for n in &p.notes {
+                    insert_note_into_pattern(pattern, n);
+                    total_notes += 1;
+                }
+            } else {
+                errors.push(format!("failed to access pattern[{i}] after creation"));
+            }
+            pattern_ids.push(id.0);
+        }
+
+        // Create tracks
+        let mut track_ids: Vec<u16> = Vec::with_capacity(tracks.len());
+        for t in tracks {
+            let id = song.create_track(&t.name);
+            if let Some(inst_id) = t.instrument_id
+                && let Some(track) = song.track_mut(id)
+            {
+                track.instrument = Some(synth_sequencer::SeqInstrumentId(inst_id));
+            }
+            track_ids.push(id.0);
+        }
+
+        // Create arrangement placements (index-based → real IDs)
+        let mut placements_created = 0usize;
+        for (i, pl) in placements.iter().enumerate() {
+            if pl.pattern_index >= pattern_ids.len() {
+                errors.push(format!(
+                    "placement[{i}]: pattern_index {} out of range (have {})",
+                    pl.pattern_index,
+                    pattern_ids.len()
+                ));
+                continue;
+            }
+            if pl.track_index >= track_ids.len() {
+                errors.push(format!(
+                    "placement[{i}]: track_index {} out of range (have {})",
+                    pl.track_index,
+                    track_ids.len()
+                ));
+                continue;
+            }
+
+            let pid = synth_sequencer::PatternId::new(pattern_ids[pl.pattern_index]);
+            let tid = synth_sequencer::TrackId(track_ids[pl.track_index]);
+            let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(pl.start_beat)));
+            song.place_pattern(pid, tid, tick);
+            placements_created += 1;
+        }
+
+        // Also update engine transport tempo
+        drop(song);
+        let _ = self
+            .command_sender
+            .send(EngineCommand::SetTempo(synth_core::Bpm::new(tempo)));
+
+        Ok(SetSongResult {
+            patterns_created: pattern_ids.len(),
+            tracks_created: track_ids.len(),
+            notes_added: total_notes,
+            placements_created,
+            pattern_ids,
+            track_ids,
+            errors,
+        })
+    }
+
     // === Sequencer: Transport ===
 
     fn seq_play(&self) -> Result<(), McpBridgeError> {
@@ -923,6 +1303,25 @@ impl SynthBridge for AppSynthBridge {
             Err(McpBridgeError::CommandSendFailed)
         }
     }
+}
+
+/// Insert a note from `BridgeNoteData` into a pattern. Returns the assigned note ID as u64.
+fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNoteData) -> u64 {
+    let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
+    let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
+    let vel = synth_core::Velocity::from_midi(n.velocity);
+    let instrument = synth_sequencer::SeqInstrumentId(0);
+
+    let note = synth_sequencer::Note::new(
+        synth_sequencer::NoteId(0), // reassigned by insert_note
+        start,
+        pitch,
+        vel,
+        instrument,
+    )
+    .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
+
+    pattern.insert_note(note).0
 }
 
 /// Convert beats (float) to ticks (u32). 1 beat = 960 ticks.

@@ -6,10 +6,76 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo,
-    ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SongInfo, TrackInfo,
-    UiSnapshot,
+    BatchResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SetSongResult,
+    SongInfo, TrackInfo, UiSnapshot,
 };
+
+// === Bridge-level data structures for batch operations ===
+
+/// Note data for batch add/replace operations.
+pub struct BridgeNoteData {
+    /// MIDI pitch (0-127).
+    pub pitch: u8,
+    /// Start position in beats.
+    pub start_beat: f32,
+    /// Duration in beats.
+    pub duration_beats: f32,
+    /// Velocity (0-127).
+    pub velocity: u8,
+}
+
+/// Note update for batch update operations.
+pub struct BridgeNoteUpdate {
+    /// Note ID to update.
+    pub note_id: u64,
+    /// New pitch, or None to keep current.
+    pub pitch: Option<u8>,
+    /// New start position in beats, or None to keep current.
+    pub start_beat: Option<f32>,
+    /// New duration in beats, or None to keep current.
+    pub duration_beats: Option<f32>,
+    /// New velocity, or None to keep current.
+    pub velocity: Option<u8>,
+}
+
+/// Pattern data for batch create operations.
+pub struct BridgePatternData {
+    /// Pattern name.
+    pub name: String,
+    /// Length in beats.
+    pub length_beats: f32,
+    /// Optional inline notes.
+    pub notes: Vec<BridgeNoteData>,
+}
+
+/// Track data for batch create operations.
+pub struct BridgeTrackData {
+    /// Track name.
+    pub name: String,
+    /// Optional instrument ID.
+    pub instrument_id: Option<u16>,
+}
+
+/// Placement data for batch arrange operations.
+pub struct BridgePlacementData {
+    /// Pattern ID.
+    pub pattern_id: u32,
+    /// Track ID.
+    pub track_id: u16,
+    /// Start position in beats.
+    pub start_beat: f32,
+}
+
+/// Placement using array indices (for `set_song` where IDs don't exist yet).
+pub struct BridgeSongPlacement {
+    /// Index into the patterns array.
+    pub pattern_index: usize,
+    /// Index into the tracks array.
+    pub track_index: usize,
+    /// Start position in beats.
+    pub start_beat: f32,
+}
 
 /// Bridge between the MCP server and the synth engine.
 ///
@@ -206,4 +272,55 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Seek to a beat position.
     fn seq_seek(&self, beat: f32) -> Result<(), McpBridgeError>;
+
+    // === Batch operations ===
+
+    /// Add multiple notes to a pattern in one call.
+    fn add_notes(
+        &self,
+        pattern_id: u32,
+        notes: &[BridgeNoteData],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Update multiple notes in a pattern in one call.
+    fn update_notes(
+        &self,
+        pattern_id: u32,
+        updates: &[BridgeNoteUpdate],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Replace all notes in a pattern (clear + add).
+    fn replace_notes(
+        &self,
+        pattern_id: u32,
+        notes: &[BridgeNoteData],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Clear all notes from a pattern. Returns the number of notes removed.
+    fn clear_pattern(&self, pattern_id: u32) -> Result<usize, McpBridgeError>;
+
+    /// Create multiple patterns (with optional inline notes).
+    fn create_patterns(
+        &self,
+        patterns: &[BridgePatternData],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Create multiple tracks.
+    fn create_tracks(&self, tracks: &[BridgeTrackData]) -> Result<BatchResult, McpBridgeError>;
+
+    /// Place multiple patterns in the arrangement.
+    fn place_patterns(
+        &self,
+        placements: &[BridgePlacementData],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Build a full song in one call (patterns + tracks + notes + arrangement).
+    fn set_song(
+        &self,
+        name: &str,
+        tempo: f32,
+        patterns: &[BridgePatternData],
+        tracks: &[BridgeTrackData],
+        placements: &[BridgeSongPlacement],
+    ) -> Result<SetSongResult, McpBridgeError>;
 }

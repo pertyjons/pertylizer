@@ -1,5 +1,35 @@
 # Version History
 
+## [0.157.0] - 2026-02-25
+### MCP: Batch-operationer för sequencern
+
+**8 nya batch-MCP-verktyg (totalt 47):**
+
+*Batch-noter:*
+- `add_notes` — Lägg till N noter i ett pattern i ett anrop
+- `update_notes` — Uppdatera N noter i ett pattern i ett anrop
+- `replace_notes` — Rensa + lägg till N noter (full overwrite)
+- `clear_pattern` — Rensa alla noter ur ett pattern
+
+*Batch-skapande:*
+- `create_patterns` — Skapa N patterns med valfria inline-noter
+- `create_tracks` — Skapa N tracks i ett anrop
+
+*Batch-arrangement:*
+- `place_patterns` — Placera N patterns i arrangemanget
+
+*Full song:*
+- `set_song` — Bygg en hel låt i ett anrop (patterns + tracks + noter + arrangement)
+
+**Designbeslut:**
+- Partial success: varje batch-resultat rapporterar per-item success/failure (ingen rollback)
+- `set_song` använder array-index (0-baserat) för placements, inte ID:n — returnerar mappning index → ID
+- Befintliga single-item-verktyg behålls
+
+**Nya typer:**
+- `BatchItemResult`, `BatchResult`, `SetSongResult` — response-typer
+- Bridge-structs: `BridgeNoteData`, `BridgeNoteUpdate`, `BridgePatternData`, `BridgeTrackData`, `BridgePlacementData`, `BridgeSongPlacement`
+
 ## [0.156.0] - 2026-02-25
 ### MCP: Sequencer-verktyg — Song, Pattern, Note, Track, Transport
 

@@ -193,6 +193,166 @@ pub struct SeqSeekParam {
     pub beat: f32,
 }
 
+// === Batch parameter structs ===
+
+/// A note to add in a batch operation.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NoteInput {
+    #[schemars(description = "MIDI pitch (0-127, where 60 = middle C)")]
+    pub pitch: u8,
+    #[schemars(description = "Start position in beats (0.0 = beginning of pattern)")]
+    pub start_beat: f32,
+    #[schemars(description = "Duration in beats (1.0 = quarter note, 0.5 = eighth note)")]
+    pub duration_beats: f32,
+    #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
+    pub velocity: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddNotesParam {
+    #[schemars(description = "Pattern ID to add notes to")]
+    pub pattern_id: u32,
+    #[schemars(description = "Array of notes to add")]
+    pub notes: Vec<NoteInput>,
+}
+
+/// A note update in a batch operation.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NoteUpdateInput {
+    #[schemars(description = "Note ID to update")]
+    pub note_id: u64,
+    #[schemars(description = "New MIDI pitch (0-127), or null to keep current")]
+    pub pitch: Option<u8>,
+    #[schemars(description = "New start position in beats, or null to keep current")]
+    pub start_beat: Option<f32>,
+    #[schemars(description = "New duration in beats, or null to keep current")]
+    pub duration_beats: Option<f32>,
+    #[schemars(description = "New velocity (0-127), or null to keep current")]
+    pub velocity: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UpdateNotesParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Array of note updates")]
+    pub updates: Vec<NoteUpdateInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReplaceNotesParam {
+    #[schemars(description = "Pattern ID to replace notes in (clears existing notes first)")]
+    pub pattern_id: u32,
+    #[schemars(description = "Array of new notes to insert")]
+    pub notes: Vec<NoteInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ClearPatternParam {
+    #[schemars(description = "Pattern ID to clear all notes from")]
+    pub pattern_id: u32,
+}
+
+/// A pattern to create in a batch operation.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PatternInput {
+    #[schemars(description = "Pattern name")]
+    pub name: String,
+    #[schemars(description = "Pattern length in beats (e.g. 4.0 for one bar in 4/4)")]
+    pub length_beats: f32,
+    #[schemars(description = "Optional array of notes to add immediately")]
+    pub notes: Option<Vec<NoteInput>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreatePatternsParam {
+    #[schemars(description = "Array of patterns to create")]
+    pub patterns: Vec<PatternInput>,
+}
+
+/// A track to create in a batch operation.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TrackInput {
+    #[schemars(description = "Track name")]
+    pub name: String,
+    #[schemars(description = "Instrument ID to assign (optional)")]
+    pub instrument_id: Option<u16>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateTracksParam {
+    #[schemars(description = "Array of tracks to create")]
+    pub tracks: Vec<TrackInput>,
+}
+
+/// A pattern placement in the arrangement.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PlacementInput {
+    #[schemars(description = "Pattern ID to place")]
+    pub pattern_id: u32,
+    #[schemars(description = "Track ID to place on")]
+    pub track_id: u16,
+    #[schemars(description = "Start position in beats")]
+    pub start_beat: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PlacePatternsParam {
+    #[schemars(description = "Array of placements to create")]
+    pub placements: Vec<PlacementInput>,
+}
+
+/// Pattern definition for set_song.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SongPatternDef {
+    #[schemars(description = "Pattern name")]
+    pub name: String,
+    #[schemars(description = "Pattern length in beats")]
+    pub length_beats: f32,
+    #[schemars(description = "Notes in this pattern")]
+    pub notes: Vec<NoteInput>,
+}
+
+/// Track definition for set_song.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SongTrackDef {
+    #[schemars(description = "Track name")]
+    pub name: String,
+    #[schemars(description = "Instrument ID to assign (optional)")]
+    pub instrument_id: Option<u16>,
+}
+
+/// Placement definition for set_song (uses array indices, not IDs).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SongPlacementDef {
+    #[schemars(
+        description = "Index into the patterns array (0-based, refers to the pattern at this position)"
+    )]
+    pub pattern_index: usize,
+    #[schemars(
+        description = "Index into the tracks array (0-based, refers to the track at this position)"
+    )]
+    pub track_index: usize,
+    #[schemars(description = "Start position in beats")]
+    pub start_beat: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSongParam {
+    #[schemars(description = "Song name")]
+    pub name: String,
+    #[schemars(description = "Tempo in BPM (default 120)")]
+    pub tempo: Option<f32>,
+    #[schemars(description = "Patterns to create (with their notes)")]
+    pub patterns: Vec<SongPatternDef>,
+    #[schemars(description = "Tracks to create")]
+    pub tracks: Vec<SongTrackDef>,
+    #[schemars(
+        description = "Arrangement: place patterns on tracks. Uses array indices (not IDs) for pattern_index and track_index."
+    )]
+    pub placements: Vec<SongPlacementDef>,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -656,6 +816,211 @@ impl SynthMcpServer {
     async fn list_arrangement(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_arrangement() {
             Ok(placements) => serde_json::to_string_pretty(&placements)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Sequencer: Batch operations ===
+
+    #[tool(
+        description = "Add multiple notes to a pattern in one call. Much faster than calling add_note repeatedly."
+    )]
+    async fn add_notes(&self, params: Parameters<AddNotesParam>) -> String {
+        let notes: Vec<_> = params
+            .0
+            .notes
+            .iter()
+            .map(|n| crate::bridge::BridgeNoteData {
+                pitch: n.pitch,
+                start_beat: n.start_beat,
+                duration_beats: n.duration_beats,
+                velocity: n.velocity.unwrap_or(100),
+            })
+            .collect();
+        match self.bridge.add_notes(params.0.pattern_id, &notes) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Update multiple notes in a pattern in one call. Only provided fields are changed per note."
+    )]
+    async fn update_notes(&self, params: Parameters<UpdateNotesParam>) -> String {
+        let updates: Vec<_> = params
+            .0
+            .updates
+            .iter()
+            .map(|u| crate::bridge::BridgeNoteUpdate {
+                note_id: u.note_id,
+                pitch: u.pitch,
+                start_beat: u.start_beat,
+                duration_beats: u.duration_beats,
+                velocity: u.velocity,
+            })
+            .collect();
+        match self.bridge.update_notes(params.0.pattern_id, &updates) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Replace all notes in a pattern: clears existing notes, then adds the new ones. Use for full pattern rewrites."
+    )]
+    async fn replace_notes(&self, params: Parameters<ReplaceNotesParam>) -> String {
+        let notes: Vec<_> = params
+            .0
+            .notes
+            .iter()
+            .map(|n| crate::bridge::BridgeNoteData {
+                pitch: n.pitch,
+                start_beat: n.start_beat,
+                duration_beats: n.duration_beats,
+                velocity: n.velocity.unwrap_or(100),
+            })
+            .collect();
+        match self.bridge.replace_notes(params.0.pattern_id, &notes) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Clear all notes from a pattern. Returns the number of notes removed.")]
+    async fn clear_pattern(&self, params: Parameters<ClearPatternParam>) -> String {
+        match self.bridge.clear_pattern(params.0.pattern_id) {
+            Ok(count) => format!(
+                "OK: cleared {count} notes from pattern {}",
+                params.0.pattern_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create multiple patterns in one call, optionally with inline notes. Returns per-pattern results with assigned IDs."
+    )]
+    async fn create_patterns(&self, params: Parameters<CreatePatternsParam>) -> String {
+        let patterns: Vec<_> = params
+            .0
+            .patterns
+            .into_iter()
+            .map(|p| crate::bridge::BridgePatternData {
+                name: p.name,
+                length_beats: p.length_beats,
+                notes: p
+                    .notes
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|n| crate::bridge::BridgeNoteData {
+                        pitch: n.pitch,
+                        start_beat: n.start_beat,
+                        duration_beats: n.duration_beats,
+                        velocity: n.velocity.unwrap_or(100),
+                    })
+                    .collect(),
+            })
+            .collect();
+        match self.bridge.create_patterns(&patterns) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create multiple tracks in one call. Returns per-track results with assigned IDs."
+    )]
+    async fn create_tracks(&self, params: Parameters<CreateTracksParam>) -> String {
+        let tracks: Vec<_> = params
+            .0
+            .tracks
+            .into_iter()
+            .map(|t| crate::bridge::BridgeTrackData {
+                name: t.name,
+                instrument_id: t.instrument_id,
+            })
+            .collect();
+        match self.bridge.create_tracks(&tracks) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Place multiple patterns in the arrangement in one call. Each placement specifies pattern_id, track_id, and start_beat."
+    )]
+    async fn place_patterns(&self, params: Parameters<PlacePatternsParam>) -> String {
+        let placements: Vec<_> = params
+            .0
+            .placements
+            .into_iter()
+            .map(|p| crate::bridge::BridgePlacementData {
+                pattern_id: p.pattern_id,
+                track_id: p.track_id,
+                start_beat: p.start_beat,
+            })
+            .collect();
+        match self.bridge.place_patterns(&placements) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Build a complete song in one call: creates patterns (with notes), tracks, and arrangement placements. \
+                       Replaces the current song. Placements use array indices (pattern_index, track_index) since IDs are assigned during creation. \
+                       Returns a summary with all assigned IDs."
+    )]
+    async fn set_song(&self, params: Parameters<SetSongParam>) -> String {
+        let p = params.0;
+        let patterns: Vec<_> = p
+            .patterns
+            .into_iter()
+            .map(|pat| crate::bridge::BridgePatternData {
+                name: pat.name,
+                length_beats: pat.length_beats,
+                notes: pat
+                    .notes
+                    .iter()
+                    .map(|n| crate::bridge::BridgeNoteData {
+                        pitch: n.pitch,
+                        start_beat: n.start_beat,
+                        duration_beats: n.duration_beats,
+                        velocity: n.velocity.unwrap_or(100),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let tracks: Vec<_> = p
+            .tracks
+            .into_iter()
+            .map(|t| crate::bridge::BridgeTrackData {
+                name: t.name,
+                instrument_id: t.instrument_id,
+            })
+            .collect();
+        let placements: Vec<_> = p
+            .placements
+            .into_iter()
+            .map(|pl| crate::bridge::BridgeSongPlacement {
+                pattern_index: pl.pattern_index,
+                track_index: pl.track_index,
+                start_beat: pl.start_beat,
+            })
+            .collect();
+        let tempo = p.tempo.unwrap_or(120.0);
+        match self
+            .bridge
+            .set_song(&p.name, tempo, &patterns, &tracks, &placements)
+        {
+            Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("Serialization error: {e}")),
             Err(e) => format!("Error: {e}"),
         }

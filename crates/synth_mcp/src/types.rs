@@ -199,6 +199,53 @@ pub struct UiOverlap {
     pub overlap_area: f32,
 }
 
+// === Batch operation types ===
+
+/// Result for a single item in a batch operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchItemResult {
+    /// Zero-based index of the item in the input array.
+    pub index: usize,
+    /// Whether this item succeeded.
+    pub success: bool,
+    /// Assigned ID on create, None on update/failure.
+    pub id: Option<u64>,
+    /// Error message if this item failed.
+    pub error: Option<String>,
+}
+
+/// Aggregate result for a batch operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchResult {
+    /// Total number of items in the batch.
+    pub total: usize,
+    /// Number of items that succeeded.
+    pub succeeded: usize,
+    /// Number of items that failed.
+    pub failed: usize,
+    /// Per-item results.
+    pub items: Vec<BatchItemResult>,
+}
+
+/// Result of a `set_song` operation that builds a full song in one call.
+#[derive(Debug, Clone, Serialize)]
+pub struct SetSongResult {
+    /// Number of patterns created.
+    pub patterns_created: usize,
+    /// Number of tracks created.
+    pub tracks_created: usize,
+    /// Number of notes added across all patterns.
+    pub notes_added: usize,
+    /// Number of arrangement placements created.
+    pub placements_created: usize,
+    /// Pattern IDs in the same order as the input array.
+    pub pattern_ids: Vec<u32>,
+    /// Track IDs in the same order as the input array.
+    pub track_ids: Vec<u16>,
+    /// Any errors that occurred during the operation.
+    pub errors: Vec<String>,
+}
+
 // === Sequencer types ===
 
 /// Information about the current song.

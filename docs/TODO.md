@@ -1,13 +1,13 @@
-# Master TODO - Modular Synth (v0.156.0)
+# Master TODO - Modular Synth (v0.157.0)
 
 ## Fas 0: Sequencer — MCP & GUI (Högsta prioritet)
 *Mål: Göra sequencern produktionsklar via MCP och GUI.*
 
 1. **Batch-operationer i MCP** (Kritiskt för workflow)
-   * [ ] `add_notes` — Lägg in flera noter i ett anrop (array av {pitch, start_beat, duration_beats, velocity})
-   * [ ] `create_tracks` — Skapa flera tracks i ett anrop
-   * [ ] `create_patterns` — Skapa flera patterns i ett anrop
-   * [ ] Minskar latens drastiskt vid låtbygge via MCP (en not i taget = oacceptabelt långsamt)
+   * [x] ~~`add_notes` — Lägg in flera noter i ett anrop~~ *(v0.157.0)*
+   * [x] ~~`create_tracks` — Skapa flera tracks i ett anrop~~ *(v0.157.0)*
+   * [x] ~~`create_patterns` — Skapa flera patterns i ett anrop~~ *(v0.157.0)*
+   * [x] ~~Minskar latens drastiskt vid låtbygge via MCP~~ *(v0.157.0: 8 batch-verktyg inkl. `set_song`)*
 
 2. **Sequencer GUI — Song-visualisering**
    * [ ] Arrangement-vy: Visa tracks, pattern-placements på en tidslinje
