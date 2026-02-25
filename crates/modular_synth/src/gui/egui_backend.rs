@@ -48,10 +48,6 @@ use synth_modules::effects::{
     BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, Limiter, MidSide,
     PhaseVocoder, Phaser, Reverb, Waveshaper,
 };
-use synth_modules::{
-    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
-    StereoOutput, SubOscillator,
-};
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -84,18 +80,22 @@ impl GuiBackend for EguiBackend {
         // Start audio before GUI
         let stream_info = host.start_output(None, &config.stream_config, Box::new(engine))?;
 
-        let app = SynthApp::new(handle, host, config.clone(), stream_info.output_latency);
+        let window_title = config.title.clone();
+        let window_width = config.width as f32;
+        let window_height = config.height as f32;
+
+        let app = SynthApp::new(handle, host, config, stream_info.output_latency);
 
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([config.width as f32, config.height as f32])
-                .with_title(&config.title)
+                .with_inner_size([window_width, window_height])
+                .with_title(&window_title)
                 .with_min_inner_size([800.0, 600.0]),
             ..Default::default()
         };
 
         eframe::run_native(
-            &config.title,
+            &window_title,
             options,
             Box::new(|cc| {
                 setup_custom_fonts(&cc.egui_ctx);
@@ -195,11 +195,11 @@ struct SynthApp {
     host: Option<Box<dyn AudioHostTrait>>,
     latency: std::time::Duration,
 
+    // Shared session for module lifecycle
+    session: std::sync::Arc<crate::session::SynthSession>,
+
     // MIDI input handler
     midi_handler: MidiHandler,
-
-    // Module ID generation - track instance counts per module type
-    instance_counters: HashMap<TypedModuleType, u16>,
 
     // Keyboard state
     keyboard: PianoKeyboard,
@@ -258,7 +258,7 @@ impl SynthApp {
         //
         // This guarantees GUI and Engine have exactly the same state.
 
-        let mut instance_counters = HashMap::new();
+        let session = config.session.clone();
         let mut keyboard = PianoKeyboard::new();
         let mut glide_time = 0.0;
 
@@ -277,7 +277,7 @@ impl SynthApp {
         patch_bridge::load_patch(
             &startup_patch,
             &mut default_instrument.patch_editor,
-            &mut instance_counters,
+            &session,
             &mut handle,
             &mut keyboard,
             &mut glide_time,
@@ -298,8 +298,8 @@ impl SynthApp {
             handle,
             host: Some(host),
             latency,
+            session,
             midi_handler,
-            instance_counters,
             keyboard,
             pressed_keys: HashMap::new(),
             dialog_state: DialogState::new(),
@@ -318,11 +318,17 @@ impl SynthApp {
         }
     }
 
-    /// Get the next ModuleId for a given module type.
-    fn next_module_id(&mut self, module_type: TypedModuleType) -> ModuleId {
-        let counter = self.instance_counters.entry(module_type).or_insert(0);
-        *counter += 1;
-        ModuleId::new(module_type, *counter)
+    /// Add a module via session and register it in the active patch editor.
+    /// Returns the assigned `ModuleId` and descriptor, or `None` on failure.
+    fn session_add_module(
+        &mut self,
+        module_type: TypedModuleType,
+    ) -> Option<(ModuleId, synth_core::ModuleDescriptor)> {
+        let result = self
+            .session
+            .add_module(self.active_instrument_id, module_type)
+            .ok()?;
+        Some(result)
     }
 
     /// Get the active instrument's patch editor.
@@ -403,24 +409,9 @@ impl eframe::App for SynthApp {
             }
         }
 
-        // Poll MCP pending operations (add/remove module, connect/disconnect)
+        // Reconcile with session: detect modules added/removed by MCP
         #[cfg(feature = "mcp")]
-        {
-            let ops = self
-                .mcp_shared
-                .as_ref()
-                .and_then(|shared| {
-                    shared
-                        .pending_ops
-                        .lock()
-                        .ok()
-                        .map(|mut ops| std::mem::take(&mut *ops))
-                })
-                .unwrap_or_default();
-            for op in ops {
-                self.handle_mcp_op(op);
-            }
-        }
+        self.reconcile_with_session();
 
         // Handle keyboard input
         self.process_keyboard_input(ctx);
@@ -900,12 +891,14 @@ impl eframe::App for SynthApp {
                 .port(synth_core::PortDescriptor::audio_input("in", "In"))
                 .port(synth_core::PortDescriptor::audio_output("out", "Out"));
 
-                let counter = self
-                    .instance_counters
-                    .entry(TypedModuleType::SignalMonitor)
-                    .or_insert(0);
-                *counter += 1;
-                let monitor_id = ModuleId::new(TypedModuleType::SignalMonitor, *counter);
+                let monitor_id = {
+                    let mut counters = self.session.counters_lock();
+                    let counter = counters
+                        .entry(synth_core::ModuleType::SignalMonitor)
+                        .or_insert(0);
+                    *counter += 1;
+                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
+                };
 
                 // Position between the two connected modules
                 let from_pos = patch_editor
@@ -964,8 +957,8 @@ impl eframe::App for SynthApp {
             // Handle quick-add requests (right-click on port → add module)
             for request in result.quick_add_requests {
                 Self::handle_quick_add(
+                    &self.session,
                     &mut self.handle,
-                    &mut self.instance_counters,
                     active_id,
                     patch_editor,
                     request,
@@ -1008,382 +1001,119 @@ impl eframe::App for SynthApp {
 }
 
 impl SynthApp {
-    /// Add a new module of the given category.
-    ///
-    /// Creates the module in the GUI thread and sends it via AddModuleInstance
-    /// for real-time safe addition to the audio engine.
+    /// Add a new module of the given category via session.
     fn add_module_of_category(&mut self, category: ModuleCategory) {
-        // Create module in GUI thread (real-time safe allocation)
-        let (module, descriptor, module_type, envelope_pos): (
-            Box<dyn synth_core::PolyModule>,
-            _,
-            TypedModuleType,
-            Option<std::sync::Arc<synth_modules::EnvelopePositionBuffer>>,
-        ) = match category {
-            ModuleCategory::Oscillator => {
-                let m = Oscillator::new();
-                let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Oscillator, None)
-            }
-            ModuleCategory::Filter => {
-                let m = Filter::new();
-                let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Filter, None)
-            }
-            ModuleCategory::Envelope => {
-                let m = Envelope::new();
-                let d = m.descriptor();
-                let pos_buf = m.position_buffer();
-                (Box::new(m), d, TypedModuleType::Envelope, Some(pos_buf))
-            }
-            ModuleCategory::LFO => {
-                let m = Lfo::new();
-                let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Lfo, None)
-            }
-            ModuleCategory::Amplifier => {
-                let m = Amplifier::new();
-                let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Amplifier, None)
-            }
-            ModuleCategory::Mixer => {
-                let m = Mixer::new();
-                let d = m.descriptor();
-                (Box::new(m), d, TypedModuleType::Mixer, None)
-            }
-            _ => return, // Effects handled separately
+        let module_type = match category {
+            ModuleCategory::Oscillator => TypedModuleType::Oscillator,
+            ModuleCategory::Filter => TypedModuleType::Filter,
+            ModuleCategory::Envelope => TypedModuleType::Envelope,
+            ModuleCategory::LFO => TypedModuleType::Lfo,
+            ModuleCategory::Amplifier => TypedModuleType::Amplifier,
+            ModuleCategory::Mixer => TypedModuleType::Mixer,
+            _ => return,
         };
 
-        let next_id = self.next_module_id(module_type);
+        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
+            return;
+        };
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
         editor.add_module(next_id, descriptor);
+    }
 
-        // Set envelope position buffer for visualization
-        if let Some(pos_buf) = envelope_pos {
-            editor.set_module_envelope_position(next_id, pos_buf);
-        }
-
-        // Send pre-created module to engine (active instrument's voice graph)
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+    /// Add a voice module of the given type via session.
+    fn add_voice_module_via_session(&mut self, module_type: TypedModuleType) {
+        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
+            return;
+        };
+        let Some(editor) = self.active_patch_editor() else {
+            return;
+        };
+        editor.add_module(next_id, descriptor);
     }
 
     fn add_math_oscillator_module(&mut self) {
-        let m = MathOscillator::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::MathOscillator);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::MathOscillator);
     }
 
     fn add_sub_oscillator_module(&mut self) {
-        let m = SubOscillator::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::SubOscillator);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::SubOscillator);
     }
 
     fn add_noise_module(&mut self) {
-        let m = NoiseGenerator::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::Noise);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::Noise);
     }
 
     fn add_mod_matrix_module(&mut self) {
-        let m = synth_modules::ModMatrix::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::ModMatrix);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::ModMatrix);
     }
 
     fn add_keyboard_panner_module(&mut self) {
-        let m = synth_modules::KeyboardPanner::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::KeyboardPanner);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::KeyboardPanner);
     }
 
     fn add_body_resonance_module(&mut self) {
-        let m = synth_modules::BodyResonance::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::BodyResonance);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::BodyResonance);
     }
 
     fn add_mechanical_noise_module(&mut self) {
-        let m = synth_modules::MechanicalNoise::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::MechanicalNoise);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::MechanicalNoise);
     }
 
     fn add_ring_mod_module(&mut self) {
-        let m = synth_modules::RingMod::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::RingMod);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::RingMod);
     }
 
     fn add_envelope_follower_module(&mut self) {
-        let m = synth_modules::EnvelopeFollower::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::EnvelopeFollower);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::EnvelopeFollower);
     }
 
     fn add_wavetable_osc_module(&mut self) {
-        let m = synth_modules::WavetableOsc::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::WavetableOsc);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::WavetableOsc);
     }
 
     fn add_mseg_module(&mut self) {
-        let m = synth_modules::Mseg::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::Mseg);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::Mseg);
     }
 
     fn add_additive_osc_module(&mut self) {
-        let m = synth_modules::AdditiveOsc::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::AdditiveOsc);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::AdditiveOsc);
     }
 
     fn add_euclidean_module(&mut self) {
-        let m = synth_modules::Euclidean::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::Euclidean);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::Euclidean);
     }
 
     fn add_turing_machine_module(&mut self) {
-        let m = synth_modules::TuringMachine::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::TuringMachine);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::TuringMachine);
     }
 
     fn add_random_gates_module(&mut self) {
-        let m = synth_modules::RandomGates::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::RandomGates);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::RandomGates);
     }
 
     fn add_granular_osc_module(&mut self) {
-        let m = synth_modules::GranularOsc::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::GranularOsc);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::GranularOsc);
     }
 
     fn add_kinetic_modulator_module(&mut self) {
-        let m = synth_modules::KineticModulator::new();
-        let descriptor = m.descriptor();
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-
-        let next_id = self.next_module_id(TypedModuleType::KineticModulator);
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
+        self.add_voice_module_via_session(TypedModuleType::KineticModulator);
     }
 
     fn add_signal_monitor_module(&mut self) {
+        // SignalMonitor needs GUI-specific VisualizationBuffer — create directly
         let mut m = synth_modules::SignalMonitor::new();
         let descriptor = m.descriptor();
 
-        let next_id = self.next_module_id(TypedModuleType::SignalMonitor);
+        // Use session for ID generation only (not add_module since it would create a second instance)
+        let next_id = {
+            use synth_core::ModuleType;
+            let mut counters = self.session.counters_lock();
+            let counter = counters.entry(ModuleType::SignalMonitor).or_insert(0);
+            *counter += 1;
+            ModuleId::new(TypedModuleType::SignalMonitor, *counter)
+        };
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
@@ -1403,255 +1133,66 @@ impl SynthApp {
         });
     }
 
-    /// Handle a quick-add request: create module, place it, and auto-connect.
-    ///
-    /// Takes individual field references to avoid borrow conflicts with `patch_editor`.
-    #[allow(clippy::too_many_lines)]
+    /// Handle a quick-add request: create module via session, place it, and auto-connect.
     fn handle_quick_add(
+        session: &crate::session::SynthSession,
         handle: &mut EngineHandle,
-        instance_counters: &mut HashMap<TypedModuleType, u16>,
         instrument_id: InstrumentId,
         editor: &mut PatchEditor,
         request: QuickAddRequest,
     ) {
-        use crate::gui::widgets::WidgetPortDirection;
-        use synth_core::PortDirection;
-
-        // Inline next_module_id to avoid &mut self borrow
-        let mut next_id_fn = |module_type: TypedModuleType| -> ModuleId {
-            let counter = instance_counters.entry(module_type).or_insert(0);
-            *counter += 1;
-            ModuleId::new(module_type, *counter)
-        };
-
-        // Step 1: Create the module (same logic as palette handling)
-        let (next_id, descriptor) = match request.selection {
-            PaletteSelection::Category(category) => {
-                let (module, desc, module_type, envelope_pos): (
-                    Box<dyn synth_core::PolyModule>,
-                    _,
-                    TypedModuleType,
-                    Option<std::sync::Arc<synth_modules::EnvelopePositionBuffer>>,
-                ) = match category {
-                    ModuleCategory::Oscillator => {
-                        let m = Oscillator::new();
-                        let d = m.descriptor();
-                        (Box::new(m), d, TypedModuleType::Oscillator, None)
-                    }
-                    ModuleCategory::Filter => {
-                        let m = Filter::new();
-                        let d = m.descriptor();
-                        (Box::new(m), d, TypedModuleType::Filter, None)
-                    }
-                    ModuleCategory::Envelope => {
-                        let m = Envelope::new();
-                        let d = m.descriptor();
-                        let pos_buf = m.position_buffer();
-                        (Box::new(m), d, TypedModuleType::Envelope, Some(pos_buf))
-                    }
-                    ModuleCategory::LFO => {
-                        let m = Lfo::new();
-                        let d = m.descriptor();
-                        (Box::new(m), d, TypedModuleType::Lfo, None)
-                    }
-                    ModuleCategory::Amplifier => {
-                        let m = Amplifier::new();
-                        let d = m.descriptor();
-                        (Box::new(m), d, TypedModuleType::Amplifier, None)
-                    }
-                    ModuleCategory::Mixer => {
-                        let m = Mixer::new();
-                        let d = m.descriptor();
-                        (Box::new(m), d, TypedModuleType::Mixer, None)
-                    }
-                    _ => return,
-                };
-                let id = next_id_fn(module_type);
-                let d = desc.clone();
-                editor.add_module_at(id, desc, request.position);
-                if let Some(pos_buf) = envelope_pos {
-                    editor.set_module_envelope_position(id, pos_buf);
-                }
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module,
-                });
-                (id, d)
-            }
-            PaletteSelection::MathOscillator => {
-                let m = MathOscillator::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::MathOscillator);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::SubOscillator => {
-                let m = SubOscillator::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::SubOscillator);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::Noise => {
-                let m = NoiseGenerator::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::Noise);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::WavetableOsc => {
-                let m = synth_modules::WavetableOsc::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::WavetableOsc);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::AdditiveOsc => {
-                let m = synth_modules::AdditiveOsc::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::AdditiveOsc);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::GranularOsc => {
-                let m = synth_modules::GranularOsc::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::GranularOsc);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::RingMod => {
-                let m = synth_modules::RingMod::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::RingMod);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::EnvelopeFollower => {
-                let m = synth_modules::EnvelopeFollower::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::EnvelopeFollower);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::Mseg => {
-                let m = synth_modules::Mseg::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::Mseg);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::KineticModulator => {
-                let m = synth_modules::KineticModulator::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::KineticModulator);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::Euclidean => {
-                let m = synth_modules::Euclidean::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::Euclidean);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::TuringMachine => {
-                let m = synth_modules::TuringMachine::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::TuringMachine);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
-            PaletteSelection::RandomGates => {
-                let m = synth_modules::RandomGates::new();
-                let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::RandomGates);
-                let dc = d.clone();
-                editor.add_module_at(id, d, request.position);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                (id, dc)
-            }
+        // Determine module type from selection
+        let module_type: Option<TypedModuleType> = match request.selection {
+            PaletteSelection::Category(category) => match category {
+                ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
+                ModuleCategory::Filter => Some(TypedModuleType::Filter),
+                ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
+                ModuleCategory::LFO => Some(TypedModuleType::Lfo),
+                ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
+                ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
+                _ => None,
+            },
+            PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
+            PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
+            PaletteSelection::Noise => Some(TypedModuleType::Noise),
+            PaletteSelection::WavetableOsc => Some(TypedModuleType::WavetableOsc),
+            PaletteSelection::AdditiveOsc => Some(TypedModuleType::AdditiveOsc),
+            PaletteSelection::GranularOsc => Some(TypedModuleType::GranularOsc),
+            PaletteSelection::RingMod => Some(TypedModuleType::RingMod),
+            PaletteSelection::EnvelopeFollower => Some(TypedModuleType::EnvelopeFollower),
+            PaletteSelection::Mseg => Some(TypedModuleType::Mseg),
+            PaletteSelection::KineticModulator => Some(TypedModuleType::KineticModulator),
+            PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
+            PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
+            PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
+            PaletteSelection::Effect(effect_type) => Some(match effect_type {
+                EffectType::Delay => TypedModuleType::Delay,
+                EffectType::Reverb => TypedModuleType::Reverb,
+                EffectType::Distortion => TypedModuleType::Distortion,
+                EffectType::Chorus => TypedModuleType::Chorus,
+                EffectType::Phaser => TypedModuleType::Phaser,
+                EffectType::Flanger => TypedModuleType::Flanger,
+                EffectType::Compressor => TypedModuleType::Compressor,
+                EffectType::Eq => TypedModuleType::Eq,
+                EffectType::Waveshaper => TypedModuleType::Waveshaper,
+                EffectType::MidSide => TypedModuleType::MidSide,
+                EffectType::BbdDelay => TypedModuleType::BbdDelay,
+                EffectType::Limiter => TypedModuleType::Limiter,
+                EffectType::Convolver => TypedModuleType::Convolver,
+                EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
+            }),
             PaletteSelection::SignalMonitor => {
+                // SignalMonitor needs GUI-specific VisualizationBuffer
                 let mut m = synth_modules::SignalMonitor::new();
                 let d = m.descriptor();
-                let id = next_id_fn(TypedModuleType::SignalMonitor);
+                let id = {
+                    let mut counters = session.counters_lock();
+                    let counter = counters
+                        .entry(synth_core::ModuleType::SignalMonitor)
+                        .or_insert(0);
+                    *counter += 1;
+                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
+                };
                 let dc = d.clone();
                 editor.add_module_at(id, d, request.position);
 
@@ -1665,106 +1206,46 @@ impl SynthApp {
                     id,
                     module: Box::new(m),
                 });
-                (id, dc)
+                // Continue to connection logic below
+                Self::quick_add_connect(session, handle, instrument_id, editor, &request, id, &dc);
+                return;
             }
-            PaletteSelection::Effect(effect_type) => {
-                // Effects use AddEffectInstance, not AddModuleInstance
-                let (effect, desc, module_type): (
-                    Box<dyn synth_core::AudioEffect>,
-                    _,
-                    TypedModuleType,
-                ) = match effect_type {
-                    EffectType::Delay => {
-                        let e = Delay::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Delay)
-                    }
-                    EffectType::Reverb => {
-                        let e = Reverb::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Reverb)
-                    }
-                    EffectType::Distortion => {
-                        let e = Distortion::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Distortion)
-                    }
-                    EffectType::Chorus => {
-                        let e = Chorus::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Chorus)
-                    }
-                    EffectType::Phaser => {
-                        let e = Phaser::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Phaser)
-                    }
-                    EffectType::Flanger => {
-                        let e = Flanger::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Flanger)
-                    }
-                    EffectType::Compressor => {
-                        let e = Compressor::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Compressor)
-                    }
-                    EffectType::Eq => {
-                        let e = Eq::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Eq)
-                    }
-                    EffectType::Waveshaper => {
-                        let e = Waveshaper::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Waveshaper)
-                    }
-                    EffectType::MidSide => {
-                        let e = MidSide::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::MidSide)
-                    }
-                    EffectType::BbdDelay => {
-                        let e = BbdDelay::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::BbdDelay)
-                    }
-                    EffectType::Limiter => {
-                        let e = Limiter::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Limiter)
-                    }
-                    EffectType::Convolver => {
-                        let e = Convolver::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::Convolver)
-                    }
-                    EffectType::PhaseVocoder => {
-                        let e = PhaseVocoder::new();
-                        let d = e.descriptor();
-                        (Box::new(e), d, TypedModuleType::PhaseVocoder)
-                    }
-                };
-                let id = next_id_fn(module_type);
-                let dc = desc.clone();
-                editor.add_module_at(id, desc, request.position);
-                handle.send(EngineCommand::AddEffectInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    effect,
-                });
-                (id, dc)
-            }
-            // These don't make sense in quick-add context
-            PaletteSelection::ModMatrix
-            | PaletteSelection::Visualizer(_)
-            | PaletteSelection::StereoOutput
-            | PaletteSelection::KeyboardPanner
-            | PaletteSelection::BodyResonance
-            | PaletteSelection::MechanicalNoise => return,
+            _ => None,
         };
 
-        // Step 2: Find matching port on the new module and create connection
+        let Some(module_type) = module_type else {
+            return;
+        };
+
+        let Ok((next_id, descriptor)) = session.add_module(instrument_id, module_type) else {
+            return;
+        };
+        editor.add_module_at(next_id, descriptor.clone(), request.position);
+
+        Self::quick_add_connect(
+            session,
+            handle,
+            instrument_id,
+            editor,
+            &request,
+            next_id,
+            &descriptor,
+        );
+    }
+
+    /// Create the auto-connection for a quick-add operation.
+    fn quick_add_connect(
+        session: &crate::session::SynthSession,
+        _handle: &mut EngineHandle,
+        instrument_id: InstrumentId,
+        editor: &mut PatchEditor,
+        request: &QuickAddRequest,
+        next_id: ModuleId,
+        descriptor: &synth_core::ModuleDescriptor,
+    ) {
+        use crate::gui::widgets::WidgetPortDirection;
+        use synth_core::PortDirection;
+
         let needed_dir = match request.target_direction {
             WidgetPortDirection::Input => PortDirection::Output,
             WidgetPortDirection::Output => PortDirection::Input,
@@ -1780,122 +1261,55 @@ impl SynthApp {
         };
 
         let connection = match request.target_direction {
-            // Target is an input → new module's output connects to target's input
             WidgetPortDirection::Input => synth_engine::graph::Connection::new(
                 next_id,
-                new_port_name,
+                &new_port_name,
                 request.target_module,
-                request.target_port,
+                &request.target_port,
             ),
-            // Target is an output → target's output connects to new module's input
             WidgetPortDirection::Output => synth_engine::graph::Connection::new(
                 request.target_module,
-                request.target_port,
+                &request.target_port,
                 next_id,
-                new_port_name,
+                &new_port_name,
             ),
         };
 
         editor.add_connection(connection);
-        handle.send(EngineCommand::Connect {
-            instrument_id: Some(instrument_id),
-            from: PortId::new(connection.from_module, connection.from_port),
-            to: PortId::new(connection.to_module, connection.to_port),
-        });
+        let _ = session.connect(
+            instrument_id,
+            connection.from_module,
+            connection.from_port.to_string(),
+            connection.to_module,
+            connection.to_port.to_string(),
+        );
     }
 
     fn add_effect_module(&mut self, effect_type: EffectType) {
-        // Create effect in GUI thread (real-time safe allocation)
-        let (effect, descriptor, module_type): (
-            Box<dyn synth_core::AudioEffect>,
-            _,
-            TypedModuleType,
-        ) = match effect_type {
-            EffectType::Delay => {
-                let e = Delay::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Delay)
-            }
-            EffectType::Reverb => {
-                let e = Reverb::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Reverb)
-            }
-            EffectType::Distortion => {
-                let e = Distortion::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Distortion)
-            }
-            EffectType::Chorus => {
-                let e = Chorus::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Chorus)
-            }
-            EffectType::Phaser => {
-                let e = Phaser::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Phaser)
-            }
-            EffectType::Flanger => {
-                let e = Flanger::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Flanger)
-            }
-            EffectType::Compressor => {
-                let e = Compressor::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Compressor)
-            }
-            EffectType::Eq => {
-                let e = Eq::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Eq)
-            }
-            EffectType::Waveshaper => {
-                let e = Waveshaper::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Waveshaper)
-            }
-            EffectType::MidSide => {
-                let e = MidSide::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::MidSide)
-            }
-            EffectType::BbdDelay => {
-                let e = BbdDelay::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::BbdDelay)
-            }
-            EffectType::Limiter => {
-                let e = Limiter::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Limiter)
-            }
-            EffectType::Convolver => {
-                let e = Convolver::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::Convolver)
-            }
-            EffectType::PhaseVocoder => {
-                let e = PhaseVocoder::new();
-                let d = e.descriptor();
-                (Box::new(e), d, TypedModuleType::PhaseVocoder)
-            }
+        let module_type = match effect_type {
+            EffectType::Delay => TypedModuleType::Delay,
+            EffectType::Reverb => TypedModuleType::Reverb,
+            EffectType::Distortion => TypedModuleType::Distortion,
+            EffectType::Chorus => TypedModuleType::Chorus,
+            EffectType::Phaser => TypedModuleType::Phaser,
+            EffectType::Flanger => TypedModuleType::Flanger,
+            EffectType::Compressor => TypedModuleType::Compressor,
+            EffectType::Eq => TypedModuleType::Eq,
+            EffectType::Waveshaper => TypedModuleType::Waveshaper,
+            EffectType::MidSide => TypedModuleType::MidSide,
+            EffectType::BbdDelay => TypedModuleType::BbdDelay,
+            EffectType::Limiter => TypedModuleType::Limiter,
+            EffectType::Convolver => TypedModuleType::Convolver,
+            EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
         };
 
-        let next_id = self.next_module_id(module_type);
-        // Effects are added to the active instrument's patch editor for visual display
+        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
+            return;
+        };
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
         editor.add_module(next_id, descriptor);
-
-        // Send pre-created effect to active instrument's effect chain
-        self.handle.send(EngineCommand::AddEffectInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            effect,
-        });
     }
 
     fn add_visualizer_module(&mut self, viz_type: PaletteVisualizerType) {
@@ -1913,8 +1327,19 @@ impl SynthApp {
             ),
         };
 
-        let next_id = self.next_module_id(module_type);
-        // Visualizers are added to the active instrument's patch editor for visual display
+        // Visualizers need GUI-specific VisualizationBuffer — use session for ID only
+        let next_id = {
+            use synth_core::ModuleType;
+            let mt = match viz_type {
+                PaletteVisualizerType::Oscilloscope => ModuleType::Oscilloscope,
+                PaletteVisualizerType::LevelMeter => ModuleType::LevelMeter,
+                PaletteVisualizerType::SpectrumAnalyzer => ModuleType::SpectrumAnalyzer,
+            };
+            let mut counters = self.session.counters_lock();
+            let counter = counters.entry(mt).or_insert(0);
+            *counter += 1;
+            ModuleId::new(module_type, *counter)
+        };
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
@@ -1948,20 +1373,14 @@ impl SynthApp {
     }
 
     fn add_stereo_output_module(&mut self) {
-        let output = StereoOutput::new();
-        let descriptor = output.descriptor();
-        let next_id = self.next_module_id(TypedModuleType::StereoOutput);
+        let Some((next_id, descriptor)) = self.session_add_module(TypedModuleType::StereoOutput)
+        else {
+            return;
+        };
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
         editor.add_module(next_id, descriptor);
-
-        // Send pre-created module to engine (active instrument's voice graph)
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module: Box::new(output),
-        });
     }
 
     /// Add an effect to the master bus.
@@ -1993,9 +1412,14 @@ impl SynthApp {
                 }
             };
 
-        let next_id = self.next_module_id(module_type);
+        // Master effects use session counters for ID but send directly (instrument_id: None)
+        let next_id = {
+            let mut counters = self.session.counters_lock();
+            let counter = counters.entry(module_type).or_insert(0);
+            *counter += 1;
+            ModuleId::new(module_type, *counter)
+        };
 
-        // Send to engine with instrument_id: None to target master bus
         self.handle.send(EngineCommand::AddEffectInstance {
             instrument_id: None, // Master bus!
             id: next_id,
@@ -2439,7 +1863,7 @@ impl SynthApp {
         patch_bridge::load_patch(
             patch,
             patch_editor,
-            &mut self.instance_counters,
+            &self.session,
             &mut self.handle,
             &mut self.keyboard,
             &mut self.glide_time,
@@ -2459,163 +1883,78 @@ impl SynthApp {
         }
     }
 
-    /// Handle a pending MCP operation (add/remove module, connect/disconnect).
+    /// Reconcile GUI state with session: detect modules added/removed by MCP.
+    ///
+    /// Compares the session's module registry with the patch editor's modules.
+    /// - Modules in session but not in editor → add to editor with auto-position.
+    /// - Modules in editor but not in session → remove from editor.
     #[cfg(feature = "mcp")]
-    fn handle_mcp_op(&mut self, op: crate::mcp_shared::PendingMcpOp) {
-        use crate::gui::module_factory::{create_effect, create_voice_module};
-        use crate::mcp_shared::PendingMcpOp;
+    fn reconcile_with_session(&mut self) {
+        // Gather data from session and engine before taking &mut patch_editor
+        let session_modules = self.session.all_modules();
+        let engine_connections = self.session.state().shared_graph.get_connections();
 
-        let active_id = self.active_instrument_id;
-        let Some(patch_editor) = self
-            .instruments
-            .iter_mut()
-            .find(|i| i.id == active_id)
-            .map(|i| &mut i.patch_editor)
-        else {
+        let Some(patch_editor) = self.active_patch_editor() else {
             return;
         };
 
-        match op {
-            PendingMcpOp::AddModule { module_type } => {
-                if module_type.is_voice_module()
-                    && let Some((module, descriptor)) = create_voice_module(module_type)
-                {
-                    let counter = self.instance_counters.entry(module_type).or_insert(0);
-                    *counter += 1;
-                    let module_id = ModuleId::new(module_type, *counter);
+        let editor_ids: std::collections::HashSet<ModuleId> =
+            patch_editor.module_ids().into_iter().collect();
+        let session_ids: std::collections::HashSet<ModuleId> =
+            session_modules.keys().copied().collect();
 
-                    let position = eframe::egui::Pos2::new(100.0, 100.0);
-                    patch_editor.add_module_at(module_id, descriptor, position);
-                    self.handle.send(EngineCommand::AddModuleInstance {
-                        instrument_id: Some(active_id),
-                        id: module_id,
-                        module,
-                    });
-                } else if module_type.is_effect()
-                    && let Some((effect, descriptor)) = create_effect(module_type)
-                {
-                    let counter = self.instance_counters.entry(module_type).or_insert(0);
-                    *counter += 1;
-                    let module_id = ModuleId::new(module_type, *counter);
+        // Modules added by MCP (in session but not in editor)
+        let to_add: Vec<(ModuleId, synth_core::ModuleDescriptor)> = session_ids
+            .difference(&editor_ids)
+            .filter_map(|id| session_modules.get(id).map(|d| (*id, d.clone())))
+            .collect();
 
-                    let position = eframe::egui::Pos2::new(100.0, 100.0);
-                    patch_editor.add_module_at(module_id, descriptor, position);
-                    self.handle.send(EngineCommand::AddEffectInstance {
-                        instrument_id: Some(active_id),
-                        id: module_id,
-                        effect,
-                    });
-                }
-            }
-            PendingMcpOp::RemoveModule { module_id } => {
-                let Ok(mid) = module_id.parse::<ModuleId>() else {
-                    return;
-                };
-                let category = patch_editor.module_descriptor(mid).map(|d| d.category);
-                patch_editor.remove_module(mid);
-                match category {
-                    Some(synth_core::ModuleCategory::Effect) => {
-                        self.handle.send(EngineCommand::RemoveEffect {
-                            instrument_id: Some(active_id),
-                            id: mid,
-                        });
-                    }
-                    Some(synth_core::ModuleCategory::Visualizer) => {
-                        self.handle.send(EngineCommand::RemoveVisualizer {
-                            instrument_id: Some(active_id),
-                            id: mid,
-                        });
-                        self.handle.remove_visualization_buffer(mid);
-                    }
-                    _ => {
-                        self.handle.send(EngineCommand::RemoveModule {
-                            instrument_id: Some(active_id),
-                            id: mid,
-                        });
-                    }
-                }
-            }
-            PendingMcpOp::Connect {
-                from_module,
-                from_port,
-                to_module,
-                to_port,
-            } => {
-                let Ok(from_id) = from_module.parse::<ModuleId>() else {
-                    return;
-                };
-                let Ok(to_id) = to_module.parse::<ModuleId>() else {
-                    return;
-                };
+        // Modules removed by MCP (in editor but not in session)
+        let to_remove: Vec<ModuleId> = editor_ids
+            .difference(&session_ids)
+            .copied()
+            // Skip visualizers — they are GUI-only and not tracked by session
+            .filter(|id| {
+                patch_editor.module_descriptor(*id).map_or(true, |d| {
+                    d.category != synth_core::ModuleCategory::Visualizer
+                })
+            })
+            .collect();
+
+        // Check connections too
+        let editor_connections = patch_editor.connections().to_vec();
+        let new_connections: Vec<synth_engine::graph::Connection> = engine_connections
+            .iter()
+            .filter_map(|snap| {
                 let conn = synth_engine::graph::Connection::new(
-                    from_id,
-                    from_port.as_str(),
-                    to_id,
-                    to_port.as_str(),
+                    snap.from_module,
+                    &snap.from_port,
+                    snap.to_module,
+                    &snap.to_port,
                 );
-                patch_editor.add_connection(conn);
-                self.handle.send(EngineCommand::Connect {
-                    instrument_id: Some(active_id),
-                    from: synth_engine::commands::PortId::new(from_id, from_port),
-                    to: synth_engine::commands::PortId::new(to_id, to_port),
-                });
-            }
-            PendingMcpOp::Disconnect {
-                from_module,
-                from_port,
-                to_module,
-                to_port,
-            } => {
-                let Ok(from_id) = from_module.parse::<ModuleId>() else {
-                    return;
-                };
-                let Ok(to_id) = to_module.parse::<ModuleId>() else {
-                    return;
-                };
-                let conn = synth_engine::graph::Connection::new(
-                    from_id,
-                    from_port.as_str(),
-                    to_id,
-                    to_port.as_str(),
-                );
-                patch_editor.remove_connection(&conn);
-                self.handle.send(EngineCommand::Disconnect {
-                    instrument_id: Some(active_id),
-                    from: synth_engine::commands::PortId::new(from_id, from_port),
-                    to: synth_engine::commands::PortId::new(to_id, to_port),
-                });
-            }
-            PendingMcpOp::ClearGraph => {
-                // Remove all modules from the engine (same pattern as load_patch)
-                for module_id in patch_editor.module_ids() {
-                    let category = patch_editor
-                        .module_descriptor(module_id)
-                        .map(|d| d.category);
-                    match category {
-                        Some(synth_core::ModuleCategory::Effect) => {
-                            self.handle.send(EngineCommand::RemoveEffect {
-                                instrument_id: Some(active_id),
-                                id: module_id,
-                            });
-                        }
-                        Some(synth_core::ModuleCategory::Visualizer) => {
-                            self.handle.send(EngineCommand::RemoveVisualizer {
-                                instrument_id: Some(active_id),
-                                id: module_id,
-                            });
-                            self.handle.remove_visualization_buffer(module_id);
-                        }
-                        _ => {
-                            self.handle.send(EngineCommand::RemoveModule {
-                                instrument_id: Some(active_id),
-                                id: module_id,
-                            });
-                        }
-                    }
+                if !editor_connections.contains(&conn) {
+                    Some(conn)
+                } else {
+                    None
                 }
-                patch_editor.clear();
-                self.instance_counters.clear();
-            }
+            })
+            .collect();
+
+        if to_add.is_empty() && to_remove.is_empty() && new_connections.is_empty() {
+            return;
+        }
+
+        for (module_id, descriptor) in to_add {
+            let position = eframe::egui::Pos2::new(100.0, 100.0);
+            patch_editor.add_module_at(module_id, descriptor, position);
+        }
+
+        for module_id in to_remove {
+            patch_editor.remove_module(module_id);
+        }
+
+        for conn in new_connections {
+            patch_editor.add_connection(conn);
         }
     }
 
@@ -2680,7 +2019,7 @@ impl SynthApp {
         // 1. Clear active instrument's GUI state
         let active_id = self.active_instrument_id;
 
-        // Clear all modules from the active instrument in the engine
+        // Remove visualizer buffers before clearing (session doesn't track these)
         if let Some(patch_editor) = self
             .instruments
             .iter()
@@ -2691,35 +2030,23 @@ impl SynthApp {
                 let category = patch_editor
                     .module_descriptor(module_id)
                     .map(|d| d.category);
-                match category {
-                    Some(ModuleCategory::Effect) => {
-                        self.handle.send_blocking(EngineCommand::RemoveEffect {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                    }
-                    Some(ModuleCategory::Visualizer) => {
-                        self.handle.send_blocking(EngineCommand::RemoveVisualizer {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                        self.handle.remove_visualization_buffer(module_id);
-                    }
-                    _ => {
-                        self.handle.send_blocking(EngineCommand::RemoveModule {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                    }
+                if matches!(category, Some(ModuleCategory::Visualizer)) {
+                    self.handle.send_blocking(EngineCommand::RemoveVisualizer {
+                        instrument_id: Some(active_id),
+                        id: module_id,
+                    });
+                    self.handle.remove_visualization_buffer(module_id);
                 }
             }
         }
+
+        // Clear all non-visualizer modules via session
+        let _ = self.session.clear_graph(active_id);
 
         // Clear the patch editor GUI state
         if let Some(editor) = self.active_patch_editor() {
             editor.clear();
         }
-        self.instance_counters.clear();
         self.handle.visualization_buffers.clear();
 
         // 2. Reset keyboard state

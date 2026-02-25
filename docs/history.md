@@ -1,5 +1,20 @@
 # Version History
 
+## [0.158.0] - 2026-02-25
+### SynthSession — gemensamt kontrollager för GUI och MCP
+
+**Ny arkitektur:** Trådsäker `SynthSession` äger modullivscykeln (skapa, ta bort, koppla) och används av både GUI och MCP.
+
+**Förändringar:**
+- `SynthSession` (`session.rs`) — ny struct med `add_module()`, `remove_module()`, `connect()`, `disconnect()`, `clear_graph()`, queries
+- MCP utför moduloperationer direkt via session (omedelbar feedback med ModuleId)
+- MCP fungerar nu korrekt i headless-läge (`--mcp`) — tidigare helt trasigt
+- GUI reconcilierar med session varje frame — MCP-tillagda moduler dyker upp automatiskt
+- `module_factory.rs` flyttad från `gui/` till crate-root (noll GUI-beroenden)
+- `patch_bridge.rs` reducerad från ~900 rader duplicerad factory-logik till ~80 rader via `session.add_module_with_id()`
+- `PendingMcpOp` och `pending_ops` borttagna — ersatta av direkt session-anrop
+- Eliminerar kodduplikation mellan GUI, MCP och patch-laddning
+
 ## [0.157.0] - 2026-02-25
 ### MCP: Batch-operationer för sequencern
 

@@ -6,7 +6,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::patch::Patch;
-use synth_core::ModuleType;
 use synth_sequencer::Song;
 
 /// Shared state for communication between MCP bridge and GUI.
@@ -15,35 +14,8 @@ pub struct McpSharedState {
     pub pending_patch: Mutex<Option<(Patch, String)>>,
     /// Current UI layout snapshot (written by GUI, read by MCP).
     pub ui_layout: Mutex<UiLayoutData>,
-    /// Pending MCP operations (consumed by GUI each frame).
-    pub pending_ops: Mutex<Vec<PendingMcpOp>>,
     /// Shared song data for sequencer (read/written by MCP, read by engine).
     pub song: Arc<RwLock<Song>>,
-}
-
-/// A pending MCP operation to be executed by the GUI thread.
-#[derive(Debug)]
-pub enum PendingMcpOp {
-    /// Add a new module of the given type.
-    AddModule { module_type: ModuleType },
-    /// Remove a module by its string ID (e.g. "osc-1").
-    RemoveModule { module_id: String },
-    /// Connect two module ports.
-    Connect {
-        from_module: String,
-        from_port: String,
-        to_module: String,
-        to_port: String,
-    },
-    /// Disconnect two module ports.
-    Disconnect {
-        from_module: String,
-        from_port: String,
-        to_module: String,
-        to_port: String,
-    },
-    /// Clear the entire voice graph (remove all modules and connections).
-    ClearGraph,
 }
 
 impl McpSharedState {
@@ -52,7 +24,6 @@ impl McpSharedState {
         Self {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),
-            pending_ops: Mutex::new(Vec::new()),
             song: Arc::new(RwLock::new(Song::new("Untitled"))),
         }
     }

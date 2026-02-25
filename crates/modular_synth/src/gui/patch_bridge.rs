@@ -13,18 +13,13 @@ use eframe::egui::Pos2;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
 use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch, PatchModuleType};
-use synth_core::ModuleType;
+use crate::session::SynthSession;
 use synth_core::{Describable, ModuleCategory, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineHandle, ModuleId};
-use synth_modules::effects::{Chorus, Delay, Distortion, MidSide, Reverb, Waveshaper};
-use synth_modules::{
-    Amplifier, Envelope, Filter, Lfo, MathOscillator, Mixer, NoiseGenerator, Oscillator,
-    StereoOutput, SubOscillator,
-};
 
 /// Load a patch into a specific instrument's rack view and send commands to the engine.
 ///
@@ -38,57 +33,35 @@ use synth_modules::{
 pub fn load_patch(
     patch: &Patch,
     patch_editor: &mut PatchEditor,
-    instance_counters: &mut HashMap<ModuleType, u16>,
+    session: &SynthSession,
     handle: &mut EngineHandle,
     keyboard: &mut PianoKeyboard,
     glide_time: &mut f32,
     instrument_id: InstrumentId,
 ) {
-    // Clear only the target instrument's modules (not destructive for multi-timbral)
-    // First remove all modules from the engine for this instrument
+    // Remove visualizers directly (session doesn't track them)
     for module_id in patch_editor.module_ids() {
-        // Check if this is an effect or visualizer (global) vs instrument module
         let category = patch_editor
             .module_descriptor(module_id)
             .map(|d| d.category);
-        match category {
-            Some(synth_core::ModuleCategory::Effect) => {
-                // Effects are now per-instrument - remove from this instrument's effect chain
-                handle.send_blocking(EngineCommand::RemoveEffect {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                });
-            }
-            Some(synth_core::ModuleCategory::Visualizer) => {
-                // Visualizers are now per-instrument - remove from this instrument's effect chain
-                handle.send_blocking(EngineCommand::RemoveVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                });
-                handle.remove_visualization_buffer(module_id);
-            }
-            _ => {
-                handle.send_blocking(EngineCommand::RemoveModule {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                });
-            }
+        if matches!(category, Some(synth_core::ModuleCategory::Visualizer)) {
+            handle.send_blocking(EngineCommand::RemoveVisualizer {
+                instrument_id: Some(instrument_id),
+                id: module_id,
+            });
+            handle.remove_visualization_buffer(module_id);
         }
     }
 
+    // Clear all non-visualizer modules via session
+    let _ = session.clear_graph(instrument_id);
+
     // Clear GUI state
     patch_editor.clear();
-    instance_counters.clear();
 
     // Add modules from patch
     for module_state in &patch.modules {
-        load_module(
-            module_state,
-            patch_editor,
-            instance_counters,
-            handle,
-            instrument_id,
-        );
+        load_module(module_state, patch_editor, session, handle, instrument_id);
     }
 
     // Add connections to both patch_editor and engine
@@ -159,7 +132,7 @@ pub fn load_patch(
 fn load_module(
     module_state: &ModuleState,
     patch_editor: &mut PatchEditor,
-    instance_counters: &mut HashMap<ModuleType, u16>,
+    session: &SynthSession,
     handle: &mut EngineHandle,
     instrument_id: InstrumentId,
 ) {
@@ -169,761 +142,216 @@ fn load_module(
         Err(_) => return, // Skip invalid IDs
     };
 
-    // Update instance counter to track highest instance number
-    let counter = instance_counters.entry(module_id.module_type).or_insert(0);
-    if module_id.instance > *counter {
-        *counter = module_id.instance;
-    }
-
     let position = Pos2::new(module_state.position.0, module_state.position.1);
 
-    // Create module descriptor and instance based on type
+    // Special cases: modules that need VisualizationBuffer injection (GUI-only)
     match module_state.module_type {
-        PatchModuleType::Oscillator => {
-            let m = Oscillator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::MathOscillator => {
-            let m = MathOscillator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::SubOscillator => {
-            let m = SubOscillator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Noise => {
-            let m = NoiseGenerator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Filter => {
-            let m = Filter::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Envelope => {
-            let m = Envelope::new();
-            let descriptor = m.descriptor();
-            let position_buffer = m.position_buffer();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            patch_editor.set_module_envelope_position(module_id, position_buffer);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Lfo => {
-            let m = Lfo::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Amplifier => {
-            let m = Amplifier::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Mixer => {
-            let m = Mixer::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::StereoOutput => {
-            let m = StereoOutput::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Delay => {
-            let e = Delay::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            // Effects are per-instrument - add to this instrument's effect chain
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Delay),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Reverb => {
-            let e = Reverb::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Reverb),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Distortion => {
-            let e = Distortion::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Distortion),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Chorus => {
-            let e = Chorus::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Chorus),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Waveshaper => {
-            let e = Waveshaper::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Waveshaper),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::MidSide => {
-            let e = MidSide::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::MidSide),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
         PatchModuleType::SignalMonitor => {
-            let mut m = synth_modules::SignalMonitor::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-
-            // Create shared vis buffer and inject into module
-            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(module_id, buffer.clone());
-            m.set_vis_sink(buffer);
-
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
+            load_signal_monitor(
                 module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
+                module_state,
                 patch_editor,
+                session,
                 handle,
                 instrument_id,
+                position,
             );
+            return;
         }
         PatchModuleType::InlineSignalMonitor => {
-            let mut m = synth_modules::SignalMonitor::new();
-            // Compact inline descriptor (no parameters, just in/out ports)
-            let inline_descriptor =
-                synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
-                    .description("Inline signal monitor (compact pass-through)")
-                    .category(synth_core::ModuleCategory::Utility)
-                    .port(synth_core::PortDescriptor::audio_input("in", "In"))
-                    .port(synth_core::PortDescriptor::audio_output("out", "Out"));
-            patch_editor.add_module_at(module_id, inline_descriptor, position);
-
-            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(module_id, buffer.clone());
-            m.set_vis_sink(buffer);
-
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
+            load_inline_signal_monitor(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+            );
+            return;
         }
         PatchModuleType::Oscilloscope => {
-            let descriptor = Oscilloscope::new().descriptor();
-            patch_editor.add_module_at(module_id, descriptor, position);
-
-            // Create shared visualization buffer
-            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(module_id, buffer.clone());
-
-            // Visualizers are per-instrument - add to this instrument's effect chain
-            handle.send(EngineCommand::AddVisualizer {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                visualizer_type: synth_engine::commands::VisualizerType::Oscilloscope,
-                buffer,
-            });
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::Oscilloscope,
+                Oscilloscope::new().descriptor(),
+            );
+            return;
         }
         PatchModuleType::LevelMeter => {
-            let descriptor = LevelMeter::new().descriptor();
-            patch_editor.add_module_at(module_id, descriptor, position);
-
-            // Create shared visualization buffer
-            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(module_id, buffer.clone());
-
-            // Visualizers are per-instrument - add to this instrument's effect chain
-            handle.send(EngineCommand::AddVisualizer {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                visualizer_type: synth_engine::commands::VisualizerType::LevelMeter,
-                buffer,
-            });
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::LevelMeter,
+                LevelMeter::new().descriptor(),
+            );
+            return;
         }
         PatchModuleType::SpectrumAnalyzer => {
-            let descriptor = SpectrumAnalyzer::new().descriptor();
-            patch_editor.add_module_at(module_id, descriptor, position);
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                SpectrumAnalyzer::new().descriptor(),
+            );
+            return;
+        }
+        _ => {}
+    }
 
-            // Create shared visualization buffer
-            let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(module_id, buffer.clone());
+    // All other modules: delegate to session
+    let descriptor =
+        match session.add_module_with_id(instrument_id, module_id, module_id.module_type) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Warning: failed to load module {}: {e}", module_state.id);
+                return;
+            }
+        };
 
-            // Visualizers are per-instrument - add to this instrument's effect chain
-            handle.send(EngineCommand::AddVisualizer {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                buffer,
-            });
-        }
-        PatchModuleType::ModMatrix => {
-            let m = synth_modules::ModMatrix::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        // Physical modeling modules - instantiated via crate::modules
-        PatchModuleType::KeyboardPanner => {
-            let m = synth_modules::KeyboardPanner::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::BodyResonance => {
-            let m = synth_modules::BodyResonance::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::MechanicalNoise => {
-            let m = synth_modules::MechanicalNoise::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::RingMod => {
-            let m = synth_modules::RingMod::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::EnvelopeFollower => {
-            let m = synth_modules::EnvelopeFollower::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::WavetableOsc => {
-            let m = synth_modules::WavetableOsc::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Mseg => {
-            let m = synth_modules::Mseg::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::AdditiveOsc => {
-            let m = synth_modules::AdditiveOsc::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Euclidean => {
-            let m = synth_modules::Euclidean::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::TuringMachine => {
-            let m = synth_modules::TuringMachine::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::RandomGates => {
-            let m = synth_modules::RandomGates::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::GranularOsc => {
-            let m = synth_modules::GranularOsc::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::BbdDelay => {
-            let e = synth_modules::BbdDelay::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::BbdDelay),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Limiter => {
-            let e = synth_modules::Limiter::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Limiter),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::Convolver => {
-            let e = synth_modules::effects::Convolver::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::Convolver),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::PhaseVocoder => {
-            let e = synth_modules::effects::PhaseVocoder::new();
-            let descriptor = e.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddEffectInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                effect: Box::new(e),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                Some(EffectType::PhaseVocoder),
-                patch_editor,
-                handle,
-                instrument_id,
-            );
-        }
-        PatchModuleType::KineticModulator => {
-            let m = synth_modules::KineticModulator::new();
-            let descriptor = m.descriptor();
-            patch_editor.add_module_at(module_id, descriptor.clone(), position);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id: module_id,
-                module: Box::new(m),
-            });
-            apply_module_parameters(
-                module_id,
-                &descriptor,
-                &module_state.parameters,
-                None,
-                patch_editor,
-                handle,
-                instrument_id,
-            );
+    patch_editor.add_module_at(module_id, descriptor.clone(), position);
+
+    // Determine effect type for parameter routing
+    let effect_type = EffectType::from_module_type(module_id.module_type);
+
+    apply_module_parameters(
+        module_id,
+        &descriptor,
+        &module_state.parameters,
+        effect_type,
+        patch_editor,
+        handle,
+        instrument_id,
+    );
+}
+
+/// Load a SignalMonitor module (needs VisualizationBuffer injection).
+fn load_signal_monitor(
+    module_id: ModuleId,
+    module_state: &ModuleState,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+    position: Pos2,
+) {
+    let mut m = synth_modules::SignalMonitor::new();
+    let descriptor = Describable::descriptor(&m);
+
+    // Update session counter so future IDs don't collide
+    {
+        let mut counters = session.counters_lock();
+        let counter = counters.entry(module_id.module_type).or_insert(0);
+        if module_id.instance > *counter {
+            *counter = module_id.instance;
         }
     }
+
+    patch_editor.add_module_at(module_id, descriptor.clone(), position);
+
+    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+    handle.add_visualization_buffer(module_id, buffer.clone());
+    m.set_vis_sink(buffer);
+
+    handle.send(EngineCommand::AddModuleInstance {
+        instrument_id: Some(instrument_id),
+        id: module_id,
+        module: Box::new(m),
+    });
+
+    apply_module_parameters(
+        module_id,
+        &descriptor,
+        &module_state.parameters,
+        None,
+        patch_editor,
+        handle,
+        instrument_id,
+    );
+}
+
+/// Load an InlineSignalMonitor module (compact pass-through with vis buffer).
+fn load_inline_signal_monitor(
+    module_id: ModuleId,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+    position: Pos2,
+) {
+    let mut m = synth_modules::SignalMonitor::new();
+    let inline_descriptor = synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
+        .description("Inline signal monitor (compact pass-through)")
+        .category(synth_core::ModuleCategory::Utility)
+        .port(synth_core::PortDescriptor::audio_input("in", "In"))
+        .port(synth_core::PortDescriptor::audio_output("out", "Out"));
+
+    // Update session counter
+    {
+        let mut counters = session.counters_lock();
+        let counter = counters.entry(module_id.module_type).or_insert(0);
+        if module_id.instance > *counter {
+            *counter = module_id.instance;
+        }
+    }
+
+    patch_editor.add_module_at(module_id, inline_descriptor, position);
+
+    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+    handle.add_visualization_buffer(module_id, buffer.clone());
+    m.set_vis_sink(buffer);
+
+    handle.send(EngineCommand::AddModuleInstance {
+        instrument_id: Some(instrument_id),
+        id: module_id,
+        module: Box::new(m),
+    });
+}
+
+/// Load a visualizer module (Oscilloscope, LevelMeter, SpectrumAnalyzer).
+#[allow(clippy::too_many_arguments)]
+fn load_visualizer(
+    module_id: ModuleId,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+    position: Pos2,
+    visualizer_type: synth_engine::commands::VisualizerType,
+    descriptor: ModuleDescriptor,
+) {
+    // Update session counter
+    {
+        let mut counters = session.counters_lock();
+        let counter = counters.entry(module_id.module_type).or_insert(0);
+        if module_id.instance > *counter {
+            *counter = module_id.instance;
+        }
+    }
+
+    patch_editor.add_module_at(module_id, descriptor, position);
+
+    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+    handle.add_visualization_buffer(module_id, buffer.clone());
+
+    handle.send(EngineCommand::AddVisualizer {
+        instrument_id: Some(instrument_id),
+        id: module_id,
+        visualizer_type,
+        buffer,
+    });
 }
 
 /// Apply parameters to a module during patch loading.

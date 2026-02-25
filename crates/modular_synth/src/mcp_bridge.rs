@@ -6,10 +6,9 @@
 use std::sync::Arc;
 
 use synth_core::{MidiNote, Param, PortDirection, Velocity};
+use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::state::EngineState;
-use synth_engine::{CommandSender, EngineCommand};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
     BridgeNoteData, BridgeNoteUpdate, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
@@ -24,26 +23,18 @@ use synth_mcp::types::{
 };
 
 use crate::mcp_shared::McpSharedState;
+use crate::session::SynthSession;
 
 /// Bridge implementation for the modular_synth application.
 pub struct AppSynthBridge {
-    state: Arc<EngineState>,
-    command_sender: CommandSender,
+    session: Arc<SynthSession>,
     shared: Arc<McpSharedState>,
 }
 
 impl AppSynthBridge {
-    /// Create a new bridge with access to the engine state, command sender, and shared MCP state.
-    pub fn new(
-        state: Arc<EngineState>,
-        command_sender: CommandSender,
-        shared: Arc<McpSharedState>,
-    ) -> Self {
-        Self {
-            state,
-            command_sender,
-            shared,
-        }
+    /// Create a new bridge with access to the session and shared MCP state.
+    pub fn new(session: Arc<SynthSession>, shared: Arc<McpSharedState>) -> Self {
+        Self { session, shared }
     }
 }
 
@@ -59,14 +50,10 @@ impl AppSynthBridge {
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
 
-        if !self.state.shared_graph.has_module(mid) {
-            return Err(McpBridgeError::ModuleNotFound(module_str.to_string()));
-        }
-
-        let descriptor =
-            crate::gui::module_factory::get_descriptor(mid.module_type).ok_or_else(|| {
-                McpBridgeError::ModuleNotFound(format!("{module_str} (unknown type)"))
-            })?;
+        let descriptor = self
+            .session
+            .module_descriptor(mid)
+            .ok_or_else(|| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
 
         let has_port = descriptor
             .ports
@@ -86,15 +73,14 @@ impl AppSynthBridge {
 
 impl SynthBridge for AppSynthBridge {
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError> {
-        // We expose the default instrument (ID 0).
-        // Full instrument tracking would require additional shared state.
+        let state = self.session.state();
         Ok(vec![InstrumentInfo {
             id: 0,
             name: "Default".to_string(),
             midi_channel: 1,
             enabled: true,
-            module_count: self.state.shared_graph.module_count(),
-            effect_count: self.state.effect_count.load() as usize,
+            module_count: state.shared_graph.module_count(),
+            effect_count: state.effect_count.load() as usize,
         }])
     }
 
@@ -102,13 +88,14 @@ impl SynthBridge for AppSynthBridge {
         if instrument_id != 0 {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
+        let state = self.session.state();
         Ok(InstrumentInfo {
             id: 0,
             name: "Default".to_string(),
             midi_channel: 1,
             enabled: true,
-            module_count: self.state.shared_graph.module_count(),
-            effect_count: self.state.effect_count.load() as usize,
+            module_count: state.shared_graph.module_count(),
+            effect_count: state.effect_count.load() as usize,
         })
     }
 
@@ -117,8 +104,9 @@ impl SynthBridge for AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
 
-        let modules = self.state.shared_graph.get_all_modules();
-        let connections = self.state.shared_graph.get_connections();
+        let state = self.session.state();
+        let modules = state.shared_graph.get_all_modules();
+        let connections = state.shared_graph.get_connections();
 
         Ok(modules
             .into_iter()
@@ -180,7 +168,7 @@ impl SynthBridge for AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
 
-        let connections = self.state.shared_graph.get_connections();
+        let connections = self.session.state().shared_graph.get_connections();
         Ok(connections
             .into_iter()
             .map(|c| ConnectionInfo {
@@ -207,20 +195,21 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn get_engine_status(&self) -> Result<EngineStatus, McpBridgeError> {
-        let (peak_left, peak_right) = self.state.meters.get_peak();
-        let (rms_left, rms_right) = self.state.meters.get_rms();
+        let state = self.session.state();
+        let (peak_left, peak_right) = state.meters.get_peak();
+        let (rms_left, rms_right) = state.meters.get_rms();
 
         Ok(EngineStatus {
-            cpu_usage: self.state.cpu_usage.load(),
-            voice_count: self.state.voice_count.load(),
-            sample_rate: self.state.sample_rate.load(),
+            cpu_usage: state.cpu_usage.load(),
+            voice_count: state.voice_count.load(),
+            sample_rate: state.sample_rate.load(),
             peak_left,
             peak_right,
             rms_left,
             rms_right,
-            master_volume: self.state.master_volume.load(),
-            tempo: self.state.transport.get_tempo(),
-            is_playing: self.state.transport.is_playing(),
+            master_volume: state.master_volume.load(),
+            tempo: state.transport.get_tempo(),
+            is_playing: state.transport.is_playing(),
             instrument_count: 1,
         })
     }
@@ -234,8 +223,9 @@ impl SynthBridge for AppSynthBridge {
         }
 
         let mut diagnostics = Vec::new();
-        let modules = self.state.shared_graph.get_all_modules();
-        let connections = self.state.shared_graph.get_connections();
+        let state = self.session.state();
+        let modules = state.shared_graph.get_all_modules();
+        let connections = state.shared_graph.get_connections();
 
         if modules.is_empty() {
             diagnostics.push(GraphDiagnostic {
@@ -311,7 +301,8 @@ impl SynthBridge for AppSynthBridge {
 
         // Find the module and its current parameter to construct the correct Param variant
         let module_snapshot = self
-            .state
+            .session
+            .state()
             .shared_graph
             .get_all_modules()
             .into_iter()
@@ -327,11 +318,15 @@ impl SynthBridge for AppSynthBridge {
 
         let new_param = param.with_f32(value);
 
-        if self.command_sender.send(EngineCommand::SetModuleParameter {
-            instrument_id: Some(InstrumentId::new(instrument_id)),
-            module_id: module_snapshot.id,
-            param: new_param,
-        }) {
+        if self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetModuleParameter {
+                instrument_id: Some(InstrumentId::new(instrument_id)),
+                module_id: module_snapshot.id,
+                param: new_param,
+            })
+        {
             Ok(())
         } else {
             Err(McpBridgeError::CommandSendFailed)
@@ -340,7 +335,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
         let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
-        if self.command_sender.send(EngineCommand::NoteOn {
+        if self.session.command_sender().send(EngineCommand::NoteOn {
             note: MidiNote::new(note),
             velocity: Velocity::from_midi(velocity),
             channel: midi_channel,
@@ -353,7 +348,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn note_off(&self, note: u8, channel: u8) -> Result<(), McpBridgeError> {
         let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
-        if self.command_sender.send(EngineCommand::NoteOff {
+        if self.session.command_sender().send(EngineCommand::NoteOff {
             note: MidiNote::new(note),
             channel: midi_channel,
         }) {
@@ -449,7 +444,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
-        use crate::gui::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+        use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
         use synth_core::PortDirection;
 
         let mut result = Vec::new();
@@ -498,14 +493,12 @@ impl SynthBridge for AppSynthBridge {
         let mt = synth_core::ModuleType::from_prefix(module_type)
             .ok_or_else(|| McpBridgeError::InvalidModuleType(module_type.to_string()))?;
 
-        if let Ok(mut ops) = self.shared.pending_ops.lock() {
-            ops.push(crate::mcp_shared::PendingMcpOp::AddModule { module_type: mt });
-        }
+        let (module_id, _descriptor) = self
+            .session
+            .add_module(InstrumentId::new(instrument_id), mt)
+            .map_err(|e| McpBridgeError::InvalidModuleType(e.to_string()))?;
 
-        Ok(format!(
-            "OK: {} queued for adding (use list_modules to see assigned ID)",
-            mt.name()
-        ))
+        Ok(format!("OK: {} added as {}", mt.name(), module_id))
     }
 
     fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError> {
@@ -513,13 +506,13 @@ impl SynthBridge for AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
 
-        if let Ok(mut ops) = self.shared.pending_ops.lock() {
-            ops.push(crate::mcp_shared::PendingMcpOp::RemoveModule {
-                module_id: module_id.to_string(),
-            });
-        }
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
-        Ok(())
+        self.session
+            .remove_module(InstrumentId::new(instrument_id), mid)
+            .map_err(|e| McpBridgeError::ModuleNotFound(e.to_string()))
     }
 
     fn connect(
@@ -537,16 +530,22 @@ impl SynthBridge for AppSynthBridge {
         self.validate_port(from_module, from_port, PortDirection::Output)?;
         self.validate_port(to_module, to_port, PortDirection::Input)?;
 
-        if let Ok(mut ops) = self.shared.pending_ops.lock() {
-            ops.push(crate::mcp_shared::PendingMcpOp::Connect {
-                from_module: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to_module: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        }
+        let from_id: ModuleId = from_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(from_module.to_string()))?;
+        let to_id: ModuleId = to_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
 
-        Ok(())
+        self.session
+            .connect(
+                InstrumentId::new(instrument_id),
+                from_id,
+                from_port.to_string(),
+                to_id,
+                to_port.to_string(),
+            )
+            .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 
     fn disconnect(
@@ -564,16 +563,22 @@ impl SynthBridge for AppSynthBridge {
         self.validate_port(from_module, from_port, PortDirection::Output)?;
         self.validate_port(to_module, to_port, PortDirection::Input)?;
 
-        if let Ok(mut ops) = self.shared.pending_ops.lock() {
-            ops.push(crate::mcp_shared::PendingMcpOp::Disconnect {
-                from_module: from_module.to_string(),
-                from_port: from_port.to_string(),
-                to_module: to_module.to_string(),
-                to_port: to_port.to_string(),
-            });
-        }
+        let from_id: ModuleId = from_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(from_module.to_string()))?;
+        let to_id: ModuleId = to_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
 
-        Ok(())
+        self.session
+            .disconnect(
+                InstrumentId::new(instrument_id),
+                from_id,
+                from_port.to_string(),
+                to_id,
+                to_port.to_string(),
+            )
+            .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 
     fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
@@ -581,11 +586,9 @@ impl SynthBridge for AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
 
-        if let Ok(mut ops) = self.shared.pending_ops.lock() {
-            ops.push(crate::mcp_shared::PendingMcpOp::ClearGraph);
-        }
-
-        Ok(())
+        self.session
+            .clear_graph(InstrumentId::new(instrument_id))
+            .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 
     // === Sequencer: Song ===
@@ -619,7 +622,8 @@ impl SynthBridge for AppSynthBridge {
         }
         // Also update engine transport tempo
         let _ = self
-            .command_sender
+            .session
+            .command_sender()
             .send(EngineCommand::SetTempo(synth_core::Bpm::new(bpm)));
         Ok(())
     }
@@ -1263,7 +1267,8 @@ impl SynthBridge for AppSynthBridge {
         // Also update engine transport tempo
         drop(song);
         let _ = self
-            .command_sender
+            .session
+            .command_sender()
             .send(EngineCommand::SetTempo(synth_core::Bpm::new(tempo)));
 
         Ok(SetSongResult {
@@ -1280,7 +1285,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Transport ===
 
     fn seq_play(&self) -> Result<(), McpBridgeError> {
-        if self.command_sender.send(EngineCommand::Play) {
+        if self.session.command_sender().send(EngineCommand::Play) {
             Ok(())
         } else {
             Err(McpBridgeError::CommandSendFailed)
@@ -1288,7 +1293,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn seq_stop(&self) -> Result<(), McpBridgeError> {
-        if self.command_sender.send(EngineCommand::Stop) {
+        if self.session.command_sender().send(EngineCommand::Stop) {
             Ok(())
         } else {
             Err(McpBridgeError::CommandSendFailed)
@@ -1297,7 +1302,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn seq_seek(&self, beat: f32) -> Result<(), McpBridgeError> {
         let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(beat)));
-        if self.command_sender.send(EngineCommand::Seek { tick }) {
+        if self
+            .session
+            .command_sender()
+            .send(EngineCommand::Seek { tick })
+        {
             Ok(())
         } else {
             Err(McpBridgeError::CommandSendFailed)

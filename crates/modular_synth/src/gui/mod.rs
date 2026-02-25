@@ -77,18 +77,15 @@ pub mod awe_view;
 #[cfg(feature = "gui-egui")]
 pub mod panels;
 
-#[cfg(feature = "gui-egui")]
-pub mod module_factory;
-
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;
+use std::sync::Arc;
 use synth_engine::{AllocatorConfig, EngineHandle, SynthEngine};
 
 /// Result type for GUI operations.
 pub type GuiResult<T> = Result<T, Box<dyn Error>>;
 
 /// Configuration for the synthesizer GUI.
-#[derive(Clone)]
 pub struct SynthGuiConfig {
     /// Window title.
     pub title: String,
@@ -100,23 +97,11 @@ pub struct SynthGuiConfig {
     pub allocator_config: AllocatorConfig,
     /// Audio stream configuration.
     pub stream_config: StreamConfig,
+    /// Shared synth session (module lifecycle).
+    pub session: Arc<crate::session::SynthSession>,
     /// Shared MCP state (if MCP feature enabled).
     #[cfg(feature = "mcp")]
     pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
-}
-
-impl Default for SynthGuiConfig {
-    fn default() -> Self {
-        Self {
-            title: "Modular Synthesizer".to_string(),
-            width: 1200,
-            height: 800,
-            allocator_config: AllocatorConfig::default(),
-            stream_config: StreamConfig::default(),
-            #[cfg(feature = "mcp")]
-            mcp_shared: None,
-        }
-    }
 }
 
 /// Trait that all GUI backends must implement.

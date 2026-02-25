@@ -23,8 +23,10 @@ pub mod io;
 pub mod mcp_bridge;
 #[cfg(feature = "mcp")]
 pub mod mcp_shared;
+pub mod module_factory;
 pub mod patch;
 pub mod patches;
+pub mod session;
 
 // Re-export workspace crates
 pub use synth_core;
