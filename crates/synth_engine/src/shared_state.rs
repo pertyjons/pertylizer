@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
 use super::instrument::InstrumentId;
-use synth_core::{BypassState, MuteState, SoloState};
+use synth_core::{BypassState, MuteState, PortName, SoloState};
 use synth_core::{ModuleType, Param};
 
 /// Atomic f32 wrapper for lock-free meter access.
@@ -191,13 +191,13 @@ pub struct ModuleStateSnapshot {
     /// Current parameter values (each Param contains both type and value).
     pub parameters: Vec<Param>,
     /// Number of connections to each input port.
-    pub input_connection_counts: HashMap<String, usize>,
+    pub input_connection_counts: HashMap<PortName, usize>,
     /// Number of connections from each output port.
-    pub output_connection_counts: HashMap<String, usize>,
+    pub output_connection_counts: HashMap<PortName, usize>,
     /// CPU usage percentage for this module.
     pub cpu_usage: f32,
     /// Output levels per port.
-    pub output_levels: HashMap<String, f32>,
+    pub output_levels: HashMap<PortName, f32>,
 }
 
 impl ModuleStateSnapshot {
@@ -243,18 +243,18 @@ impl ModuleStateSnapshot {
 }
 
 /// Snapshot of a connection for GUI display.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ConnectionSnapshot {
     /// Which instrument this connection belongs to.
     pub instrument_id: InstrumentId,
     /// Source module.
     pub from_module: ModuleId,
     /// Source port name.
-    pub from_port: String,
+    pub from_port: PortName,
     /// Destination module.
     pub to_module: ModuleId,
     /// Destination port name.
-    pub to_port: String,
+    pub to_port: PortName,
 }
 
 impl ConnectionSnapshot {
@@ -262,16 +262,16 @@ impl ConnectionSnapshot {
     pub fn new(
         instrument_id: InstrumentId,
         from_module: ModuleId,
-        from_port: String,
+        from_port: impl Into<PortName>,
         to_module: ModuleId,
-        to_port: String,
+        to_port: impl Into<PortName>,
     ) -> Self {
         Self {
             instrument_id,
             from_module,
-            from_port,
+            from_port: from_port.into(),
             to_module,
-            to_port,
+            to_port: to_port.into(),
         }
     }
 }
@@ -515,7 +515,7 @@ impl SharedGraphState {
     }
 
     /// Update a module's output level.
-    pub fn update_output_level(&self, id: ModuleId, port: String, level: f32) {
+    pub fn update_output_level(&self, id: ModuleId, port: PortName, level: f32) {
         if let Some(module) = self.modules.write().get_mut(&id) {
             module.output_levels.insert(port, level);
             // Don't bump version for level updates (too frequent)
@@ -662,9 +662,9 @@ mod tests {
         graph.add_connection(ConnectionSnapshot::new(
             InstrumentId::FIRST,
             ModuleId::new(ModuleType::Oscillator, 1),
-            "out".to_string(),
+            "out",
             ModuleId::new(ModuleType::Filter, 1),
-            "in".to_string(),
+            "in",
         ));
 
         let v2 = graph.version();

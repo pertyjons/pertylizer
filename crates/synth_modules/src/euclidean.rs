@@ -211,7 +211,7 @@ impl PolyModule for Euclidean {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -276,10 +276,10 @@ impl PolyModule for Euclidean {
             self.accent_buffer[i] = accent;
         }
 
-        if let Some(out) = outputs.get_mut("gate") {
+        if let Some(out) = outputs.get_mut(&PortName::GATE) {
             out.copy_from(&self.gate_buffer);
         }
-        if let Some(out) = outputs.get_mut("accent") {
+        if let Some(out) = outputs.get_mut(&PortName::ACCENT) {
             out.copy_from(&self.accent_buffer);
         }
     }

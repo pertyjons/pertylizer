@@ -4,29 +4,29 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use synth_core::ModuleType;
+use synth_core::{ModuleType, PortName};
 use synth_engine::{Connection, ModuleGraph, ModuleId};
 
 /// Information about a connection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ConnectionInfo {
     /// Source module.
     pub from_module: ModuleId,
     /// Source port name.
-    pub from_port: String,
+    pub from_port: PortName,
     /// Destination module.
     pub to_module: ModuleId,
     /// Destination port name.
-    pub to_port: String,
+    pub to_port: PortName,
 }
 
 impl From<&Connection> for ConnectionInfo {
     fn from(conn: &Connection) -> Self {
         Self {
             from_module: conn.from_module,
-            from_port: conn.from_port.as_str().to_string(),
+            from_port: conn.from_port,
             to_module: conn.to_module,
-            to_port: conn.to_port.as_str().to_string(),
+            to_port: conn.to_port,
         }
     }
 }

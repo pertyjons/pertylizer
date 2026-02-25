@@ -649,8 +649,8 @@ pub enum PortDirection {
 /// Description of a port.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortDescriptor {
-    /// Port name (unique within the module).
-    pub name: String,
+    /// Port name (unique within the module, interned for zero-allocation).
+    pub name: PortName,
     /// Display label.
     pub label: String,
     /// Description.
@@ -662,7 +662,7 @@ pub struct PortDescriptor {
 }
 
 impl PortDescriptor {
-    pub fn audio_input(name: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn audio_input(name: impl Into<PortName>, label: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             label: label.into(),
@@ -672,7 +672,7 @@ impl PortDescriptor {
         }
     }
 
-    pub fn audio_output(name: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn audio_output(name: impl Into<PortName>, label: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             label: label.into(),
@@ -682,7 +682,7 @@ impl PortDescriptor {
         }
     }
 
-    pub fn control_input(name: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn control_input(name: impl Into<PortName>, label: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             label: label.into(),
@@ -692,7 +692,7 @@ impl PortDescriptor {
         }
     }
 
-    pub fn gate_input(name: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn gate_input(name: impl Into<PortName>, label: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             label: label.into(),
@@ -816,7 +816,7 @@ pub trait PolyModule: Describable + Send {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     );
 

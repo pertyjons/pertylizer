@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{FilterState, Gain, MidiNote, SampleRate, Velocity};
 use synth_core::{ModuleType, NoiseParam, NoiseType, Param};
@@ -203,7 +203,7 @@ impl PolyModule for NoiseGenerator {
     fn process(
         &mut self,
         _inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -213,7 +213,7 @@ impl PolyModule for NoiseGenerator {
             self.output_buffer[i] = self.generate_sample();
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

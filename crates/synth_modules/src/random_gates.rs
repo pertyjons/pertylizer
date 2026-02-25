@@ -133,7 +133,7 @@ impl PolyModule for RandomGates {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -205,10 +205,10 @@ impl PolyModule for RandomGates {
             self.cv_buffer[i] = self.cv_value;
         }
 
-        if let Some(out) = outputs.get_mut("gate") {
+        if let Some(out) = outputs.get_mut(&PortName::GATE) {
             out.copy_from(&self.gate_buffer);
         }
-        if let Some(out) = outputs.get_mut("cv") {
+        if let Some(out) = outputs.get_mut(&PortName::CV) {
             out.copy_from(&self.cv_buffer);
         }
     }

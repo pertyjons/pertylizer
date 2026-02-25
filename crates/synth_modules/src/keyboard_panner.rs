@@ -157,7 +157,7 @@ impl PolyModule for KeyboardPanner {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -173,10 +173,10 @@ impl PolyModule for KeyboardPanner {
             self.output_right[i] = stereo.right;
         }
 
-        if let Some(out_l) = outputs.get_mut("out_l") {
+        if let Some(out_l) = outputs.get_mut(&PortName::OUT_L) {
             out_l.copy_from(&self.output_left);
         }
-        if let Some(out_r) = outputs.get_mut("out_r") {
+        if let Some(out_r) = outputs.get_mut(&PortName::OUT_R) {
             out_r.copy_from(&self.output_right);
         }
     }

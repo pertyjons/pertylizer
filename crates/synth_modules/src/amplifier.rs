@@ -132,7 +132,7 @@ impl PolyModule for Amplifier {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -183,13 +183,13 @@ impl PolyModule for Amplifier {
             self.output_right[i] = Self::apply_clip(right, self.clip_mode);
         }
 
-        if let Some(left) = outputs.get_mut("left") {
+        if let Some(left) = outputs.get_mut(&PortName::LEFT) {
             left.copy_from(&self.output_left);
         }
-        if let Some(right) = outputs.get_mut("right") {
+        if let Some(right) = outputs.get_mut(&PortName::RIGHT) {
             right.copy_from(&self.output_right);
         }
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             for i in 0..context.samples.as_usize() {
                 out[i] = (self.output_left[i] + self.output_right[i]) * 0.5;
             }
@@ -341,7 +341,7 @@ impl PolyModule for Mixer {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.output_buffer.resize(context.samples.as_usize());
@@ -368,7 +368,7 @@ impl PolyModule for Mixer {
             }
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

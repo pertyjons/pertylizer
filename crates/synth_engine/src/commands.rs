@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use synth_core::{
-    BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, Seconds, Semitones, Velocity,
+    BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, PortName, Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, Tick};
@@ -241,14 +241,14 @@ impl<S: AsRef<str>> From<S> for ModuleTypeId {
 }
 
 /// Connection point identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PortId {
     pub module: ModuleId,
-    pub port: String,
+    pub port: PortName,
 }
 
 impl PortId {
-    pub fn new(module: ModuleId, port: impl Into<String>) -> Self {
+    pub fn new(module: ModuleId, port: impl Into<PortName>) -> Self {
         Self {
             module,
             port: port.into(),

@@ -53,10 +53,8 @@ struct GraphNode {
     module: Box<dyn PolyModule>,
     /// Module descriptor (cached).
     descriptor: ModuleDescriptor,
-    /// Output buffers.
-    /// Note: Uses String keys for compatibility with PolyModule trait.
-    /// This will be changed to PortName when we update the trait (Problem 3).
-    outputs: HashMap<String, AudioBuffer>,
+    /// Output buffers (keyed by interned port name for zero-allocation lookup).
+    outputs: HashMap<PortName, AudioBuffer>,
 }
 
 impl std::fmt::Debug for GraphNode {
@@ -139,7 +137,7 @@ impl ModuleGraph {
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
             if port.direction == PortDirection::Output {
-                outputs.insert(port.name.clone(), AudioBuffer::new(self.buffer_size));
+                outputs.insert(port.name, AudioBuffer::new(self.buffer_size));
             }
         }
 
@@ -163,7 +161,7 @@ impl ModuleGraph {
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
             if port.direction == PortDirection::Output {
-                outputs.insert(port.name.clone(), AudioBuffer::new(self.buffer_size));
+                outputs.insert(port.name, AudioBuffer::new(self.buffer_size));
             }
         }
 
@@ -347,7 +345,7 @@ impl ModuleGraph {
             .iter()
             .find(|(_, n)| n.descriptor.category == ModuleCategory::Output)
             && let Some(node) = self.nodes.get(&id)
-            && let Some(out_buf) = node.outputs.get("out")
+            && let Some(out_buf) = node.outputs.get(&PortName::OUT)
         {
             output.copy_from(out_buf);
             return;
@@ -362,7 +360,7 @@ impl ModuleGraph {
             .copied()
             .filter(|&id| self.is_sink(id))
             .filter(|&id| self.connections.iter().any(|c| c.to_module == id))
-            .find_map(|id| self.nodes.get(&id)?.outputs.get("out"));
+            .find_map(|id| self.nodes.get(&id)?.outputs.get(&PortName::OUT));
 
         if let Some(out_buf) = found {
             output.copy_from(out_buf);
@@ -377,7 +375,7 @@ impl ModuleGraph {
                 .rev()
                 .copied()
                 .filter(|&id| self.is_sink(id))
-                .find_map(|id| self.nodes.get(&id)?.outputs.get("out"));
+                .find_map(|id| self.nodes.get(&id)?.outputs.get(&PortName::OUT));
 
             if let Some(out_buf) = found {
                 output.copy_from(out_buf);
@@ -411,8 +409,12 @@ impl ModuleGraph {
 
     /// Get a module's output buffer by port name (for extracting stereo outputs).
     /// This is useful after processing to get specific output ports.
-    pub fn get_module_output(&self, module_id: ModuleId, port_name: &str) -> Option<&AudioBuffer> {
-        self.nodes.get(&module_id)?.outputs.get(port_name)
+    pub fn get_module_output(
+        &self,
+        module_id: ModuleId,
+        port_name: PortName,
+    ) -> Option<&AudioBuffer> {
+        self.nodes.get(&module_id)?.outputs.get(&port_name)
     }
 
     /// Find a module by type and return its ID.
@@ -494,7 +496,7 @@ impl ModuleGraph {
     pub fn get_last_output_value(&self, module_id: ModuleId) -> f32 {
         self.nodes
             .get(&module_id)
-            .and_then(|n| n.outputs.get("out"))
+            .and_then(|n| n.outputs.get(&PortName::OUT))
             .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
             .unwrap_or(0.0)
     }
@@ -690,9 +692,8 @@ impl ModuleGraph {
         // Gather inputs from connected modules
         // Uses Vec for zero-allocation (no HashMap creation per frame)
         for (from_module, from_port, to_port) in &self.incoming_cache {
-            let from_port_str = from_port.as_str();
             if let Some(from_node) = self.nodes.get(from_module)
-                && let Some(output_buf) = from_node.outputs.get(from_port_str)
+                && let Some(output_buf) = from_node.outputs.get(from_port)
             {
                 // Sum inputs if multiple connections to same port
                 // Linear search in Vec is fast for typical 1-4 input ports

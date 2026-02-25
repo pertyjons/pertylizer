@@ -8,6 +8,7 @@ use std::f32::consts::PI;
 
 use super::connectivity::{ModuleConnectivityStatus, PortVisualState};
 use super::shared_state::ModuleStateSnapshot;
+use synth_core::PortName;
 
 /// Visual style for rendering a module.
 #[derive(Debug, Clone)]
@@ -53,7 +54,7 @@ pub struct ModuleVisualState {
     pub pulse_phase: f32,
 
     /// Port states.
-    pub port_states: HashMap<String, PortVisualState>,
+    pub port_states: HashMap<PortName, PortVisualState>,
 
     /// Current error (if any).
     pub error: Option<String>,
@@ -120,12 +121,12 @@ impl ModuleVisualState {
 
         // Update port states
         for (port_name, &count) in &snapshot.input_connection_counts {
-            let state = self.port_states.entry(port_name.clone()).or_default();
+            let state = self.port_states.entry(*port_name).or_default();
             state.connection = crate::connectivity::ConnectionState::from(count > 0);
             state.connection_count = crate::connectivity::ConnectionCount::new(count);
         }
         for (port_name, &count) in &snapshot.output_connection_counts {
-            let state = self.port_states.entry(port_name.clone()).or_default();
+            let state = self.port_states.entry(*port_name).or_default();
             state.connection = crate::connectivity::ConnectionState::from(count > 0);
             state.connection_count = crate::connectivity::ConnectionCount::new(count);
         }
@@ -192,8 +193,8 @@ impl ModuleVisualState {
     }
 
     /// Get port visual state.
-    pub fn get_port_state(&self, port_name: &str) -> Option<&PortVisualState> {
-        self.port_states.get(port_name)
+    pub fn get_port_state(&self, port_name: PortName) -> Option<&PortVisualState> {
+        self.port_states.get(&port_name)
     }
 }
 

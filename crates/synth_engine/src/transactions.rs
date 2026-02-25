@@ -164,8 +164,8 @@ impl CommandBatch {
         self.add_with_priority(
             EngineCommand::Connect {
                 instrument_id,
-                from: from.clone(),
-                to: to.clone(),
+                from,
+                to,
             },
             50, // Connections after modules
         );
@@ -436,8 +436,8 @@ impl Clone for EngineCommand {
                 to,
             } => Self::Connect {
                 instrument_id: *instrument_id,
-                from: from.clone(),
-                to: to.clone(),
+                from: *from,
+                to: *to,
             },
             Self::Disconnect {
                 instrument_id,
@@ -445,8 +445,8 @@ impl Clone for EngineCommand {
                 to,
             } => Self::Disconnect {
                 instrument_id: *instrument_id,
-                from: from.clone(),
-                to: to.clone(),
+                from: *from,
+                to: *to,
             },
             Self::DisconnectAll {
                 instrument_id,

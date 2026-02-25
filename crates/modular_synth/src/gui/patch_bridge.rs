@@ -70,21 +70,15 @@ pub fn load_patch(
             conn.from.0.parse::<ModuleId>(),
             conn.to.0.parse::<ModuleId>(),
         ) {
-            let connection = Connection::new(from_id, &conn.from.1, to_id, &conn.to.1);
+            let connection = Connection::new(from_id, &*conn.from.1, to_id, &*conn.to.1);
             patch_editor.add_connection(connection);
 
             // Send connection to engine - blocking to ensure all connections are established
             // Use the target instrument_id for instrument-level connections
             handle.send_blocking(EngineCommand::Connect {
                 instrument_id: Some(instrument_id),
-                from: PortId {
-                    module: from_id,
-                    port: conn.from.1.clone(),
-                },
-                to: PortId {
-                    module: to_id,
-                    port: conn.to.1.clone(),
-                },
+                from: PortId::new(from_id, &*conn.from.1),
+                to: PortId::new(to_id, &*conn.to.1),
             });
         }
     }

@@ -239,7 +239,7 @@ impl PolyModule for PitchTracker {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -277,10 +277,10 @@ impl PolyModule for PitchTracker {
             self.gate_buffer[i] = if self.gate_open { 1.0 } else { 0.0 };
         }
 
-        if let Some(out) = outputs.get_mut("pitch_cv") {
+        if let Some(out) = outputs.get_mut(&PortName::PITCH_CV) {
             out.copy_from(&self.pitch_buffer);
         }
-        if let Some(out) = outputs.get_mut("gate") {
+        if let Some(out) = outputs.get_mut(&PortName::GATE) {
             out.copy_from(&self.gate_buffer);
         }
     }

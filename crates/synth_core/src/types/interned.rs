@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 // ============================================================================
 // PRE-DEFINED PORT NAME IDS (compile-time constants)
 // ============================================================================
@@ -42,15 +44,19 @@ const ID_PAN_CV: u32 = 19;
 const ID_LEFT: u32 = 20;
 const ID_RIGHT: u32 = 21;
 const ID_VELOCITY: u32 = 22;
+// Additional commonly used ports
+const ID_PITCH: u32 = 23;
+const ID_PITCH_CV: u32 = 24;
+const ID_ACCENT: u32 = 25;
 // Mixer input ports (for zero-allocation mixer processing)
-const ID_IN1: u32 = 23;
-const ID_IN2: u32 = 24;
-const ID_IN3: u32 = 25;
-const ID_IN4: u32 = 26;
-const ID_IN5: u32 = 27;
-const ID_IN6: u32 = 28;
-const ID_IN7: u32 = 29;
-const ID_IN8: u32 = 30;
+const ID_IN1: u32 = 26;
+const ID_IN2: u32 = 27;
+const ID_IN3: u32 = 28;
+const ID_IN4: u32 = 29;
+const ID_IN5: u32 = 30;
+const ID_IN6: u32 = 31;
+const ID_IN7: u32 = 32;
+const ID_IN8: u32 = 33;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -91,15 +97,19 @@ impl InternPool {
         pool.intern("left"); // 20
         pool.intern("right"); // 21
         pool.intern("velocity"); // 22
+        // Additional commonly used ports
+        pool.intern("pitch"); // 23
+        pool.intern("pitch_cv"); // 24
+        pool.intern("accent"); // 25
         // Mixer input ports
-        pool.intern("in1"); // 23
-        pool.intern("in2"); // 24
-        pool.intern("in3"); // 25
-        pool.intern("in4"); // 26
-        pool.intern("in5"); // 27
-        pool.intern("in6"); // 28
-        pool.intern("in7"); // 29
-        pool.intern("in8"); // 30
+        pool.intern("in1"); // 26
+        pool.intern("in2"); // 27
+        pool.intern("in3"); // 28
+        pool.intern("in4"); // 29
+        pool.intern("in5"); // 30
+        pool.intern("in6"); // 31
+        pool.intern("in7"); // 32
+        pool.intern("in8"); // 33
         pool
     }
 
@@ -182,6 +192,12 @@ impl PortName {
     pub const RIGHT: Self = Self(ID_RIGHT);
     /// Velocity port "velocity".
     pub const VELOCITY: Self = Self(ID_VELOCITY);
+    /// Pitch port "pitch".
+    pub const PITCH: Self = Self(ID_PITCH);
+    /// Pitch CV port "pitch_cv".
+    pub const PITCH_CV: Self = Self(ID_PITCH_CV);
+    /// Accent port "accent".
+    pub const ACCENT: Self = Self(ID_ACCENT);
     // Mixer input ports "in1" through "in8"
     /// Mixer input port 1 "in1".
     pub const IN1: Self = Self(ID_IN1);
@@ -293,6 +309,12 @@ impl PortName {
     }
 }
 
+impl PartialEq<&str> for PortName {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 impl std::fmt::Display for PortName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
@@ -320,6 +342,19 @@ impl From<&String> for PortName {
 impl From<PortName> for String {
     fn from(p: PortName) -> Self {
         p.as_str().to_string()
+    }
+}
+
+impl Serialize for PortName {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PortName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::intern(&s))
     }
 }
 

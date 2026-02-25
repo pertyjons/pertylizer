@@ -11,7 +11,7 @@ use egui_extras as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
-use synth_core::{ModuleCategory, ModuleDescriptor};
+use synth_core::{ModuleCategory, ModuleDescriptor, PortName};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
@@ -102,7 +102,7 @@ pub enum ModuleConnectivity {
 pub struct PendingConnection {
     /// Starting port info.
     pub from_module: ModuleId,
-    pub from_port: String,
+    pub from_port: PortName,
     pub from_position: Pos2,
     pub from_type: WidgetPortType,
     pub from_direction: WidgetPortDirection,
@@ -114,7 +114,7 @@ pub struct PendingConnection {
 #[derive(Clone)]
 struct PortContextMenuState {
     module_id: ModuleId,
-    port_name: String,
+    port_name: PortName,
     port_type: WidgetPortType,
     direction: WidgetPortDirection,
     menu_pos: Pos2,
@@ -127,7 +127,7 @@ pub struct QuickAddRequest {
     pub selection: PaletteSelection,
     /// The existing module/port to connect to.
     pub target_module: ModuleId,
-    pub target_port: String,
+    pub target_port: PortName,
     /// Direction of the target port (determines connection direction).
     pub target_direction: WidgetPortDirection,
     /// Screen position for placing the new module near the port.
@@ -142,7 +142,7 @@ pub struct PatchEditor {
     /// All connections.
     connections: Vec<Connection>,
     /// Port positions (updated each frame).
-    port_positions: HashMap<(ModuleId, String), PortPosition>,
+    port_positions: HashMap<(ModuleId, PortName), PortPosition>,
     /// Currently selected module.
     selected_module: Option<ModuleId>,
     /// Connection being drawn.
@@ -420,14 +420,14 @@ impl PatchEditor {
     }
 
     /// Get connected ports for a module.
-    fn get_connected_ports(&self, module_id: ModuleId) -> Vec<String> {
+    fn get_connected_ports(&self, module_id: ModuleId) -> Vec<PortName> {
         let mut ports = Vec::new();
         for conn in &self.connections {
             if conn.from_module == module_id {
-                ports.push(conn.from_port.as_str().to_string());
+                ports.push(conn.from_port);
             }
             if conn.to_module == module_id {
-                ports.push(conn.to_port.as_str().to_string());
+                ports.push(conn.to_port);
             }
         }
         ports
@@ -534,7 +534,7 @@ impl PatchEditor {
 
         // Collect data before mutable iteration
         let module_ids: Vec<_> = self.z_order.clone();
-        let connected_ports_map: HashMap<ModuleId, Vec<String>> = module_ids
+        let connected_ports_map: HashMap<ModuleId, Vec<PortName>> = module_ids
             .iter()
             .map(|&id| (id, self.get_connected_ports(id)))
             .collect();
@@ -693,10 +693,10 @@ impl PatchEditor {
                                             WidgetPortType::Control
                                         };
                                         self.port_positions.insert(
-                                            (module_id, port.name.clone()),
+                                            (module_id, port.name),
                                             PortPosition {
                                                 module_id,
-                                                port_name: port.name.clone(),
+                                                port_name: port.name,
                                                 position: screen_pos,
                                                 direction: WidgetPortDirection::Input,
                                                 port_type: in_port_type,
@@ -707,7 +707,7 @@ impl PatchEditor {
                                         if port_resp.drag_started() {
                                             self.pending_connection = Some(PendingConnection {
                                                 from_module: module_id,
-                                                from_port: port.name.clone(),
+                                                from_port: port.name,
                                                 from_direction: WidgetPortDirection::Input,
                                                 from_type: in_port_type,
                                                 from_position: screen_pos,
@@ -773,10 +773,10 @@ impl PatchEditor {
                                             WidgetPortType::Control
                                         };
                                         self.port_positions.insert(
-                                            (module_id, port.name.clone()),
+                                            (module_id, port.name),
                                             PortPosition {
                                                 module_id,
-                                                port_name: port.name.clone(),
+                                                port_name: port.name,
                                                 position: screen_pos,
                                                 direction: WidgetPortDirection::Output,
                                                 port_type: out_port_type,
@@ -786,7 +786,7 @@ impl PatchEditor {
                                         if port_resp.drag_started() {
                                             self.pending_connection = Some(PendingConnection {
                                                 from_module: module_id,
-                                                from_port: port.name.clone(),
+                                                from_port: port.name,
                                                 from_direction: WidgetPortDirection::Output,
                                                 from_type: out_port_type,
                                                 from_position: screen_pos,
@@ -878,7 +878,8 @@ impl PatchEditor {
                         ui.painter().rect_filled(rect, 2.0, dimmed_accent);
 
                         // Module name
-                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent));
+                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent))
+                            .on_hover_text(format!("ID: {module_id}"));
 
                         let t = theme();
                         let button_min_size = Vec2::new(20.0, 20.0);
@@ -1204,7 +1205,7 @@ impl PatchEditor {
         module_id: ModuleId,
         descriptor: &ModuleDescriptor,
         direction: WidgetPortDirection,
-        connected_ports: &[String],
+        connected_ports: &[PortName],
     ) {
         use synth_core::PortDirection as CorePortDirection;
 
@@ -1267,10 +1268,10 @@ impl PatchEditor {
 
                             // Store port position for cable rendering
                             self.port_positions.insert(
-                                (module_id, port.name.clone()),
+                                (module_id, port.name),
                                 PortPosition {
                                     module_id,
-                                    port_name: port.name.clone(),
+                                    port_name: port.name,
                                     position: center,
                                     port_type,
                                     direction,
@@ -1358,14 +1359,8 @@ impl PatchEditor {
             let spread = (*idx as f32 - (n as f32 - 1.0) / 2.0) * CABLE_SPREAD;
             *dest_index.get_mut(&connection.to_module).unwrap_or(&mut 0) += 1;
 
-            let from_key = (
-                connection.from_module,
-                connection.from_port.as_str().to_string(),
-            );
-            let to_key = (
-                connection.to_module,
-                connection.to_port.as_str().to_string(),
-            );
+            let from_key = (connection.from_module, connection.from_port);
+            let to_key = (connection.to_module, connection.to_port);
 
             if let (Some(from_pos), Some(to_pos)) = (
                 self.port_positions.get(&from_key),
@@ -1534,7 +1529,7 @@ impl PatchEditor {
 
         // Clone what we need before mutable borrow
         let target_module = state.module_id;
-        let target_port = state.port_name.clone();
+        let target_port = state.port_name;
         let target_direction = state.direction;
         let port_type = state.port_type;
         let menu_pos = state.menu_pos;
@@ -1577,7 +1572,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1603,7 +1598,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1632,7 +1627,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1654,7 +1649,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1685,7 +1680,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1737,7 +1732,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1768,7 +1763,7 @@ impl PatchEditor {
                                             result,
                                             &mut close_menu,
                                             target_module,
-                                            &target_port,
+                                            target_port,
                                             target_direction,
                                             new_module_pos,
                                             &[
@@ -1823,7 +1818,7 @@ impl PatchEditor {
         result: &mut PatchEditorResult,
         close_menu: &mut bool,
         target_module: ModuleId,
-        target_port: &str,
+        target_port: PortName,
         target_direction: WidgetPortDirection,
         position: Pos2,
         items: &[(&str, PaletteSelection)],
@@ -1833,7 +1828,7 @@ impl PatchEditor {
                 result.quick_add_requests.push(QuickAddRequest {
                     selection: *selection,
                     target_module,
-                    target_port: target_port.to_owned(),
+                    target_port,
                     target_direction,
                     position,
                 });
@@ -1861,16 +1856,16 @@ impl PatchEditor {
                                 if pending.from_direction == WidgetPortDirection::Output {
                                     Connection::new(
                                         pending.from_module,
-                                        pending.from_port.clone(),
+                                        pending.from_port,
                                         *module_id,
-                                        port_name.clone(),
+                                        *port_name,
                                     )
                                 } else {
                                     Connection::new(
                                         *module_id,
-                                        port_name.clone(),
+                                        *port_name,
                                         pending.from_module,
-                                        pending.from_port.clone(),
+                                        pending.from_port,
                                     )
                                 };
                             result.connections_to_add.push(connection);
@@ -1880,7 +1875,7 @@ impl PatchEditor {
                         // Start new connection
                         self.pending_connection = Some(PendingConnection {
                             from_module: *module_id,
-                            from_port: port_name.clone(),
+                            from_port: *port_name,
                             from_position: port_pos.position,
                             from_type: port_pos.port_type,
                             from_direction: port_pos.direction,
@@ -1893,7 +1888,7 @@ impl PatchEditor {
                 if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
                     self.port_context_menu = Some(PortContextMenuState {
                         module_id: *module_id,
-                        port_name: port_name.clone(),
+                        port_name: *port_name,
                         port_type: port_pos.port_type,
                         direction: port_pos.direction,
                         menu_pos: pos,

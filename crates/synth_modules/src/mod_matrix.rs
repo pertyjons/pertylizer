@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
-    ModuleType, Param, ParameterDescriptor, PolyModule, ProcessContext, WidgetHint,
+    ModuleType, Param, ParameterDescriptor, PolyModule, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
@@ -189,7 +189,7 @@ impl PolyModule for ModMatrix {
     fn process(
         &mut self,
         _inputs: InputPorts<'_>,
-        _outputs: &mut HashMap<String, AudioBuffer>,
+        _outputs: &mut HashMap<PortName, AudioBuffer>,
         _context: &ProcessContext,
     ) {
         // No-op: modulation is applied by Voice, not in the graph processing chain.

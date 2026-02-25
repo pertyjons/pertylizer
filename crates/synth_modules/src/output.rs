@@ -206,7 +206,7 @@ impl PolyModule for StereoOutput {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         // Resize output buffer if needed (interleaved stereo)
@@ -273,20 +273,20 @@ impl PolyModule for StereoOutput {
         self.peak_r = Amplitude::new(self.peak_r.as_f32().max(peak_r.as_f32()));
 
         // Write to stereo output ports for Voice to read
-        if let Some(left_out) = outputs.get_mut("left") {
+        if let Some(left_out) = outputs.get_mut(&PortName::LEFT) {
             for i in 0..context.samples.as_usize().min(left_out.len()) {
                 left_out[i] = self.output_buffer[i * 2];
             }
         }
 
-        if let Some(right_out) = outputs.get_mut("right") {
+        if let Some(right_out) = outputs.get_mut(&PortName::RIGHT) {
             for i in 0..context.samples.as_usize().min(right_out.len()) {
                 right_out[i] = self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0);
             }
         }
 
         // Also write to "out" port if present (mono compatibility)
-        if let Some(out_buf) = outputs.get_mut("out") {
+        if let Some(out_buf) = outputs.get_mut(&PortName::OUT) {
             for i in 0..context.samples.as_usize().min(out_buf.len()) {
                 let stereo = StereoSample::new(
                     self.output_buffer[i * 2],

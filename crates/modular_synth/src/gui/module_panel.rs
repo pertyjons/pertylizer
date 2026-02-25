@@ -7,11 +7,11 @@ use eframe::egui::{self, Color32, Pos2, Response, Ui, Vec2};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use synth_core::Param;
 use synth_core::{
     ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortDirection as CorePortDirection,
     PortType as CorePortType, WidgetHint,
 };
+use synth_core::{Param, PortName};
 use synth_engine::ModuleId;
 use synth_modules::EnvelopePositionBuffer;
 
@@ -58,7 +58,7 @@ impl ModulePanelState {
 #[derive(Clone, Debug)]
 pub struct PortPosition {
     pub module_id: ModuleId,
-    pub port_name: String,
+    pub port_name: PortName,
     pub position: Pos2,
     pub port_type: WidgetPortType,
     pub direction: WidgetPortDirection,
@@ -81,7 +81,7 @@ pub fn draw_module_panel(
     ui: &mut Ui,
     state: &mut ModulePanelState,
     descriptor: &ModuleDescriptor,
-    connected_ports: &[String],
+    connected_ports: &[PortName],
 ) -> ModulePanelResult {
     let accent_color = category_color(descriptor.category);
     let mut port_positions = Vec::new();
@@ -150,7 +150,7 @@ pub fn draw_module_panel(
 
                             port_positions.push(PortPosition {
                                 module_id: state.id,
-                                port_name: port.name.clone(),
+                                port_name: port.name,
                                 position: abs_pos,
                                 port_type,
                                 direction: WidgetPortDirection::Input,
@@ -204,7 +204,7 @@ pub fn draw_module_panel(
 
                                 port_positions.push(PortPosition {
                                     module_id: state.id,
-                                    port_name: port.name.clone(),
+                                    port_name: port.name,
                                     position: abs_pos,
                                     port_type,
                                     direction: WidgetPortDirection::Output,

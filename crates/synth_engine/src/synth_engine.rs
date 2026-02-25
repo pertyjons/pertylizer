@@ -1483,9 +1483,9 @@ impl SynthEngine {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     if let Err(e) = instrument.voice_graph_mut().connect(
                         from.module,
-                        &from.port,
+                        from.port,
                         to.module,
-                        &to.port,
+                        to.port,
                     ) {
                         eprintln!(
                             "Voice graph connection failed: {:?}:{} -> {:?}:{} - {}",
@@ -1499,7 +1499,7 @@ impl SynthEngine {
             None => {
                 if let Err(e) =
                     self.module_graph
-                        .connect(from.module, &from.port, to.module, &to.port)
+                        .connect(from.module, from.port, to.module, to.port)
                 {
                     eprintln!(
                         "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
@@ -1516,17 +1516,21 @@ impl SynthEngine {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id)
                     && instrument.voice_graph_mut().disconnect(
                         from.module,
-                        &from.port,
+                        from.port.as_str(),
                         to.module,
-                        &to.port,
+                        to.port.as_str(),
                     )
                 {
                     instrument.rebuild_voices();
                 }
             }
             None => {
-                self.module_graph
-                    .disconnect(from.module, &from.port, to.module, &to.port);
+                self.module_graph.disconnect(
+                    from.module,
+                    from.port.as_str(),
+                    to.module,
+                    to.port.as_str(),
+                );
             }
         }
     }
@@ -1604,9 +1608,9 @@ impl SynthEngine {
                 ConnectionSnapshot::new(
                     instrument_id,
                     c.from_module,
-                    c.from_port.as_str().to_string(),
+                    c.from_port,
                     c.to_module,
-                    c.to_port.as_str().to_string(),
+                    c.to_port,
                 )
             })
             .collect();

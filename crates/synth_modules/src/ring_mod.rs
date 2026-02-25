@@ -189,7 +189,7 @@ impl PolyModule for RingMod {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -225,7 +225,7 @@ impl PolyModule for RingMod {
             self.output_buffer[i] = in_sample * (1.0 - mix) + ring * mix;
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

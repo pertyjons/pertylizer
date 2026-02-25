@@ -16,7 +16,7 @@
 
 use crate::graph::ModuleGraph;
 use synth_core::tuning::TuningTable;
-use synth_core::{AudioBuffer, ProcessContext};
+use synth_core::{AudioBuffer, PortName, ProcessContext};
 use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
     Semitones, Velocity,
@@ -585,15 +585,15 @@ impl Voice {
             // 3. "out" (Mixer, mono modules) - duplicate to stereo
             let left = self
                 .graph
-                .get_module_output(out_id, "left")
-                .or_else(|| self.graph.get_module_output(out_id, "out_l"))
-                .or_else(|| self.graph.get_module_output(out_id, "out"));
+                .get_module_output(out_id, PortName::LEFT)
+                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT_L))
+                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT));
 
             let right = self
                 .graph
-                .get_module_output(out_id, "right")
-                .or_else(|| self.graph.get_module_output(out_id, "out_r"))
-                .or_else(|| self.graph.get_module_output(out_id, "out"));
+                .get_module_output(out_id, PortName::RIGHT)
+                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT_R))
+                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT));
 
             if let Some(l) = left {
                 left_out.copy_from(l);

@@ -1260,7 +1260,7 @@ impl SynthApp {
             .ports
             .iter()
             .find(|p| p.direction == needed_dir)
-            .map(|p| p.name.clone())
+            .map(|p| p.name)
         else {
             return;
         };
@@ -1268,15 +1268,15 @@ impl SynthApp {
         let connection = match request.target_direction {
             WidgetPortDirection::Input => synth_engine::graph::Connection::new(
                 next_id,
-                &new_port_name,
+                new_port_name,
                 request.target_module,
-                &request.target_port,
+                request.target_port,
             ),
             WidgetPortDirection::Output => synth_engine::graph::Connection::new(
                 request.target_module,
-                &request.target_port,
+                request.target_port,
                 next_id,
-                &new_port_name,
+                new_port_name,
             ),
         };
 
@@ -1284,9 +1284,9 @@ impl SynthApp {
         let _ = session.connect(
             instrument_id,
             connection.from_module,
-            connection.from_port.to_string(),
+            connection.from_port,
             connection.to_module,
-            connection.to_port.to_string(),
+            connection.to_port,
         );
     }
 
@@ -1957,9 +1957,9 @@ impl SynthApp {
                 .filter_map(|snap| {
                     let conn = synth_engine::graph::Connection::new(
                         snap.from_module,
-                        &snap.from_port,
+                        snap.from_port,
                         snap.to_module,
-                        &snap.to_port,
+                        snap.to_port,
                     );
                     if !editor_connections.contains(&conn) {
                         Some(conn)

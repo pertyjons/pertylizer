@@ -212,7 +212,7 @@ impl PolyModule for TuringMachine {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -259,10 +259,10 @@ impl PolyModule for TuringMachine {
             self.pitch_buffer[i] = self.current_cv;
         }
 
-        if let Some(out) = outputs.get_mut("pitch") {
+        if let Some(out) = outputs.get_mut(&PortName::PITCH) {
             out.copy_from(&self.pitch_buffer);
         }
-        if let Some(out) = outputs.get_mut("gate") {
+        if let Some(out) = outputs.get_mut(&PortName::GATE) {
             out.copy_from(&self.gate_buffer);
         }
     }

@@ -225,12 +225,13 @@ pub fn show_instrument_rack(
                                     handle.set_focused_instrument(Some(instrument_id));
                                 }
 
-                                // Instrument name (editable)
+                                // Instrument name (editable) with ID tooltip
                                 ui.add(
                                     egui::TextEdit::singleline(&mut instruments[idx].name)
                                         .desired_width(60.0)
                                         .font(egui::FontId::proportional(t.fonts.size_small)),
-                                );
+                                )
+                                .on_hover_text(format!("ID: #{}", instrument_id.as_u64()));
 
                                 ui.add_space(4.0);
 

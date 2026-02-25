@@ -16,8 +16,8 @@ use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioBuffer, Describable, Gain, GrainSource, GrainWindow, GranularParam, InputPorts,
     Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, SampleRate,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    SampleRate, WidgetHint,
 };
 use synth_core::{MidiNote, Velocity};
 
@@ -366,7 +366,7 @@ impl PolyModule for GranularOsc {
     fn process(
         &mut self,
         _inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         let samples = context.samples.as_usize();
@@ -433,7 +433,7 @@ impl PolyModule for GranularOsc {
             self.output_buffer[i] = mix * level;
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

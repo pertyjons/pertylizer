@@ -4,20 +4,21 @@
 
 use std::collections::HashMap;
 
+use synth_core::PortName;
 use synth_engine::ModuleId;
 
 /// A point in the graph to probe.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ProbePoint {
     /// Module to probe.
     pub module_id: ModuleId,
     /// Port name to probe.
-    pub port_name: String,
+    pub port_name: PortName,
 }
 
 impl ProbePoint {
     /// Create a new probe point.
-    pub fn new(module_id: ModuleId, port_name: impl Into<String>) -> Self {
+    pub fn new(module_id: ModuleId, port_name: impl Into<PortName>) -> Self {
         Self {
             module_id,
             port_name: port_name.into(),

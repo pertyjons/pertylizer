@@ -135,12 +135,13 @@ impl SynthBridge for AppSynthBridge {
                 let mut outputs = output_ports;
 
                 for conn in &connections {
-                    if conn.to_module.to_string() == id_str && !inputs.contains(&conn.to_port) {
-                        inputs.push(conn.to_port.clone());
+                    let to_port_str = conn.to_port.to_string();
+                    if conn.to_module.to_string() == id_str && !inputs.contains(&to_port_str) {
+                        inputs.push(to_port_str);
                     }
-                    if conn.from_module.to_string() == id_str && !outputs.contains(&conn.from_port)
-                    {
-                        outputs.push(conn.from_port.clone());
+                    let from_port_str = conn.from_port.to_string();
+                    if conn.from_module.to_string() == id_str && !outputs.contains(&from_port_str) {
+                        outputs.push(from_port_str);
                     }
                 }
 
@@ -189,9 +190,9 @@ impl SynthBridge for AppSynthBridge {
             .into_iter()
             .map(|c| ConnectionInfo {
                 from_module: c.from_module.to_string(),
-                from_port: c.from_port,
+                from_port: c.from_port.to_string(),
                 to_module: c.to_module.to_string(),
-                to_port: c.to_port,
+                to_port: c.to_port.to_string(),
             })
             .collect())
     }

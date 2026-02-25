@@ -1,5 +1,28 @@
 # Version History
 
+## [0.166.0] - 2026-02-25
+### Typsäkerhet: String → PortName genomgående, GUI-visning av modul/instrument-ID
+
+**Typsäkerhet (PortName-refaktor):**
+- `PortId.port`: `String` → `PortName` (Copy, nollallokering). `PortId` nu `Copy`.
+- `ConnectionSnapshot` portfält: `String` → `PortName`. Nu `Copy`.
+- `PortDescriptor.name`: `String` → `PortName` — påverkar alla ~29 moduler.
+- `GraphNode.outputs`: `HashMap<String, AudioBuffer>` → `HashMap<PortName, AudioBuffer>`.
+- `PolyModule::process()` output-parameter: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
+- `Session::connect/disconnect`: `String` → `impl Into<PortName>`.
+- `ModuleGraph::get_module_output`: `&str` → `PortName`.
+- GUI-interna typer (`PendingConnection`, `QuickAddRequest`, `PortContextMenuState`, `port_positions`) → `PortName`.
+- Debug-typer (`ConnectionInfo`, `ProbePoint`) → `PortName`. Nu `Copy`.
+- `ModuleStateSnapshot` nivåer/räknare: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
+- `ModuleVisualState.port_states`: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
+- Nya PortName-konstanter: `PITCH`, `PITCH_CV`, `ACCENT`.
+- `Serialize`/`Deserialize` implementerat för `PortName`.
+- `PartialEq<&str>` implementerat för `PortName`.
+
+**GUI-förbättringar:**
+- Tooltip med ModuleId vid hover på modultitel i patch-editorn.
+- Tooltip med InstrumentId vid hover på instrumentnamn i instrumentlistan.
+
 ## [0.165.0] - 2026-02-25
 ### 3 nya exempelpatchar, PatchModuleType v0.162.0-stöd, parameterfix i alla 48 patchar
 

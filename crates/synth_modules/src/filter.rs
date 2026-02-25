@@ -312,7 +312,7 @@ impl PolyModule for Filter {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -332,7 +332,7 @@ impl PolyModule for Filter {
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }
@@ -565,7 +565,7 @@ impl PolyModule for LadderFilter {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -587,7 +587,7 @@ impl PolyModule for LadderFilter {
             self.output_buffer[i] = self.process_sample(input, effective_cutoff);
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

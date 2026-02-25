@@ -14,7 +14,7 @@ use std::f32::consts::TAU;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{Gain, Hertz, MidiNote, Phase, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
@@ -136,7 +136,7 @@ impl PolyModule for SubOscillator {
     fn process(
         &mut self,
         _inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -146,7 +146,7 @@ impl PolyModule for SubOscillator {
             self.output_buffer[i] = self.generate_sample();
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
     }

@@ -352,7 +352,7 @@ impl PolyModule for Oscillator {
     fn process(
         &mut self,
         inputs: InputPorts<'_>,
-        outputs: &mut HashMap<String, AudioBuffer>,
+        outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
@@ -447,13 +447,13 @@ impl PolyModule for Oscillator {
             }
         }
 
-        if let Some(out) = outputs.get_mut("out") {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
-        if let Some(out_l) = outputs.get_mut("out_l") {
+        if let Some(out_l) = outputs.get_mut(&PortName::OUT_L) {
             out_l.copy_from(&self.output_buffer_left);
         }
-        if let Some(out_r) = outputs.get_mut("out_r") {
+        if let Some(out_r) = outputs.get_mut(&PortName::OUT_R) {
             out_r.copy_from(&self.output_buffer_right);
         }
     }

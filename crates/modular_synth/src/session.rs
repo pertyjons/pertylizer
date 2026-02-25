@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType};
+use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType, PortName};
 use synth_engine::commands::{EffectType, PortId};
 use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use synth_engine::shared_state::InstrumentSnapshot;
@@ -346,9 +346,9 @@ impl SynthSession {
         &self,
         instrument_id: InstrumentId,
         from_module: ModuleId,
-        from_port: String,
+        from_port: impl Into<PortName>,
         to_module: ModuleId,
-        to_port: String,
+        to_port: impl Into<PortName>,
     ) -> Result<(), SessionError> {
         if !self.command_sender.send(EngineCommand::Connect {
             instrument_id: Some(instrument_id),
@@ -365,9 +365,9 @@ impl SynthSession {
         &self,
         instrument_id: InstrumentId,
         from_module: ModuleId,
-        from_port: String,
+        from_port: impl Into<PortName>,
         to_module: ModuleId,
-        to_port: String,
+        to_port: impl Into<PortName>,
     ) -> Result<(), SessionError> {
         if !self.command_sender.send(EngineCommand::Disconnect {
             instrument_id: Some(instrument_id),
