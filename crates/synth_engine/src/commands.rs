@@ -268,6 +268,12 @@ pub enum EngineCommand {
     /// Remove an instrument by ID.
     RemoveInstrument { instrument_id: InstrumentId },
 
+    /// Rename an instrument.
+    RenameInstrument {
+        instrument_id: InstrumentId,
+        name: String,
+    },
+
     /// Set a parameter on a specific instrument.
     SetInstrumentParameter {
         instrument_id: InstrumentId,
@@ -728,6 +734,14 @@ impl std::fmt::Debug for EngineCommand {
             Self::RemoveInstrument { instrument_id } => f
                 .debug_struct("RemoveInstrument")
                 .field("instrument_id", instrument_id)
+                .finish(),
+            Self::RenameInstrument {
+                instrument_id,
+                name,
+            } => f
+                .debug_struct("RenameInstrument")
+                .field("instrument_id", instrument_id)
+                .field("name", name)
                 .finish(),
             Self::SetInstrumentParameter {
                 instrument_id,

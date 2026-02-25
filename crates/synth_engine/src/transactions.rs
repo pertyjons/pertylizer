@@ -506,6 +506,13 @@ impl Clone for EngineCommand {
             Self::RemoveInstrument { instrument_id } => Self::RemoveInstrument {
                 instrument_id: *instrument_id,
             },
+            Self::RenameInstrument {
+                instrument_id,
+                name,
+            } => Self::RenameInstrument {
+                instrument_id: *instrument_id,
+                name: name.clone(),
+            },
             Self::SetInstrumentParameter {
                 instrument_id,
                 param,

@@ -311,9 +311,9 @@ impl EngineHub {
     fn check_command_permission(&self, perms: &ClientPermissions, command: &EngineCommand) -> bool {
         match command {
             // Instrument topology changes
-            EngineCommand::AddInstrument { .. } | EngineCommand::RemoveInstrument { .. } => {
-                perms.can_modify_topology
-            }
+            EngineCommand::AddInstrument { .. }
+            | EngineCommand::RemoveInstrument { .. }
+            | EngineCommand::RenameInstrument { .. } => perms.can_modify_topology,
 
             // Instrument parameter changes
             EngineCommand::SetInstrumentParameter { .. }

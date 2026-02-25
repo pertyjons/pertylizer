@@ -1,5 +1,15 @@
 # Version History
 
+## [0.160.0] - 2026-02-25
+### GUI-rekonciliering för MCP-instrumentändringar
+
+- GUI uppdateras nu automatiskt när instrument skapas, tas bort, döps om eller ändras via MCP
+- Ny `reconcile_instruments()` i GUI:t — jämför `instrument_snapshots` med GUI-state varje frame
+- MCP-skapade instrument dyker upp i instrument rack, MCP-borttagna försvinner
+- Metadata (namn, volym, pan, mute, solo) synkas från engine till GUI
+- `EngineCommand::RenameInstrument` — nytt engine-kommando för namnbyte (ersätter direkt skrivning till shared state som överskrevs)
+- `next_instrument_id` hålls synkad mellan GUI och MCP
+
 ## [0.159.0] - 2026-02-25
 ### MCP: Multi-instrument-stöd
 

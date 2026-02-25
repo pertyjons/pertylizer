@@ -615,6 +615,19 @@ impl SynthEngine {
             EngineCommand::RemoveInstrument { instrument_id } => {
                 self.handle_remove_instrument(instrument_id);
             }
+            EngineCommand::RenameInstrument {
+                instrument_id,
+                name,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_name(&name);
+                }
+                self.update_shared_instruments();
+            }
             EngineCommand::SetInstrumentParameter {
                 instrument_id,
                 param,

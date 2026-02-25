@@ -34,6 +34,8 @@ use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
 use crate::patch::{Patch, categorized_patches};
 use synth_core::Velocity;
+#[cfg(feature = "mcp")]
+use synth_core::{BipolarValue, Gain};
 use synth_core::{
     ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, MidSideParam,
     Param, PhaserParam, ReverbParam, WaveshaperParam,
@@ -1890,7 +1892,11 @@ impl SynthApp {
     /// - Modules in editor but not in session → remove from editor.
     #[cfg(feature = "mcp")]
     fn reconcile_with_session(&mut self) {
-        // Gather data from session and engine for the ACTIVE instrument only
+        // --- Instrument-level reconciliation ---
+        // Detect instruments added/removed/changed by MCP.
+        self.reconcile_instruments();
+
+        // --- Module-level reconciliation (active instrument only) ---
         let active_id = self.active_instrument_id;
         let session_modules = self.session.all_modules_for_instrument(active_id);
         let engine_connections = self
@@ -1960,6 +1966,73 @@ impl SynthApp {
 
         for conn in new_connections {
             patch_editor.add_connection(conn);
+        }
+    }
+
+    /// Reconcile GUI instrument list with engine's `instrument_snapshots`.
+    ///
+    /// Detects instruments added or removed by MCP and syncs the GUI.
+    #[cfg(feature = "mcp")]
+    fn reconcile_instruments(&mut self) {
+        let snapshots = self.session.list_instruments();
+
+        let gui_ids: std::collections::HashSet<InstrumentId> =
+            self.instruments.iter().map(|i| i.id).collect();
+        let engine_ids: std::collections::HashSet<InstrumentId> =
+            snapshots.iter().map(|s| s.id).collect();
+
+        // Instruments added by MCP (in engine but not in GUI)
+        for snap in &snapshots {
+            if !gui_ids.contains(&snap.id) {
+                let channel =
+                    MidiChannel::from_one_indexed(snap.midi_channel).unwrap_or(MidiChannel::CH1);
+                let mut ui_inst =
+                    InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
+                ui_inst.volume = Gain::new(snap.volume);
+                ui_inst.pan = BipolarValue::new(snap.pan);
+                ui_inst.muted = snap.muted;
+                ui_inst.solo = snap.solo;
+                self.instruments.push(ui_inst);
+
+                // Keep next_instrument_id above any MCP-created IDs
+                let id_val = snap.id.as_u64() + 1;
+                if id_val > self.next_instrument_id {
+                    self.next_instrument_id = id_val;
+                }
+            }
+        }
+
+        // Instruments removed by MCP (in GUI but not in engine)
+        // Don't remove the default instrument (ID 0) as a safety measure
+        self.instruments
+            .retain(|i| engine_ids.contains(&i.id) || i.id == InstrumentId::FIRST);
+
+        // If active instrument was removed, switch to first available
+        if !self
+            .instruments
+            .iter()
+            .any(|i| i.id == self.active_instrument_id)
+        {
+            if let Some(first) = self.instruments.first() {
+                self.active_instrument_id = first.id;
+                self.handle
+                    .set_focused_instrument(Some(self.active_instrument_id));
+            }
+        }
+
+        // Update metadata for existing instruments (name, volume, pan, mute, solo)
+        for snap in &snapshots {
+            if let Some(ui_inst) = self.instruments.iter_mut().find(|i| i.id == snap.id) {
+                ui_inst.name = snap.name.clone();
+                // Only update volume/pan/mute/solo if not currently being edited by GUI
+                // For now, always sync from engine (MCP is source of truth when changed)
+                if !ui_inst.muted {
+                    ui_inst.volume = Gain::new(snap.volume);
+                }
+                ui_inst.pan = BipolarValue::new(snap.pan);
+                ui_inst.muted = snap.muted;
+                ui_inst.solo = snap.solo;
+            }
         }
     }
 

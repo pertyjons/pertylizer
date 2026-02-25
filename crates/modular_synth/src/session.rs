@@ -117,20 +117,22 @@ impl SynthSession {
         Ok(())
     }
 
-    /// Rename an instrument. Name is stored directly in shared state
-    /// (no engine command needed since name doesn't affect audio).
+    /// Rename an instrument via engine command.
     pub fn rename_instrument(
         &self,
         instrument_id: InstrumentId,
         name: &str,
     ) -> Result<(), SessionError> {
-        let mut snapshots = self.state.instrument_snapshots.write();
-        if let Some(snap) = snapshots.iter_mut().find(|s| s.id == instrument_id) {
-            snap.name = name.to_string();
-            Ok(())
-        } else {
-            Err(SessionError::InstrumentNotFound(instrument_id.as_u64()))
+        if !self
+            .command_sender
+            .send(EngineCommand::RenameInstrument {
+                instrument_id,
+                name: name.to_string(),
+            })
+        {
+            return Err(SessionError::SendFailed);
         }
+        Ok(())
     }
 
     /// Set instrument volume.
