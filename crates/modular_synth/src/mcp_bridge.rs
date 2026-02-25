@@ -126,9 +126,10 @@ impl SynthBridge for AppSynthBridge {
             .into_iter()
             .map(|m| {
                 let id_str = m.id.to_string();
-                let input_ports: Vec<String> = m.input_connection_counts.keys().cloned().collect();
+                let input_ports: Vec<String> =
+                    m.input_connection_counts.keys().map(|k| k.to_string()).collect();
                 let output_ports: Vec<String> =
-                    m.output_connection_counts.keys().cloned().collect();
+                    m.output_connection_counts.keys().map(|k| k.to_string()).collect();
 
                 // Build input/output ports from connections if snapshot doesn't have them
                 let mut inputs = input_ports;
@@ -557,13 +558,13 @@ impl SynthBridge for AppSynthBridge {
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Input)
-                    .map(|p| p.name.clone())
+                    .map(|p| p.name.to_string())
                     .collect();
                 let output_ports = desc
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Output)
-                    .map(|p| p.name.clone())
+                    .map(|p| p.name.to_string())
                     .collect();
                 let parameters = desc.parameters.iter().map(|p| p.name.clone()).collect();
 
