@@ -188,7 +188,9 @@
       "Bash(.claude/skills/start-synth/mcp-call.py place_patterns:*)",
       "Bash(.claude/skills/start-synth/mcp-call.py clear_pattern:*)",
       "Bash(echo === $branch ===:*)",
-      "Bash(for wt in .claude/worktrees/agent-*; do git worktree remove --force \"$wt\" 2>/dev/null; done && git worktree list 2>&1)"
+      "Bash(for wt in .claude/worktrees/agent-*; do git worktree remove --force \"$wt\" 2>/dev/null; done && git worktree list 2>&1)",
+      "WebFetch(domain:www.kvraudio.com)",
+      "WebFetch(domain:knobulism.com)"
     ],
     "deny": [],
     "ask": []
