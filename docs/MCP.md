@@ -91,13 +91,83 @@ Alternativt med socat (utan bridge-binären):
 | `set_instrument_midi_channel` | Ställ MIDI-kanal (1–16) | `instrument_id`, `channel` |
 | `set_instrument_enabled` | Aktivera/avaktivera | `instrument_id`, `enabled` |
 
-### Skrivverktyg
+### Modulhantering
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `list_module_types` | Alla modultyper med portar och parametrar | inga |
+| `add_module` | Lägg till modul i röstgrafen | `instrument_id`, `module_type` |
+| `remove_module` | Ta bort modul | `instrument_id`, `module_id` |
+| `connect` | Koppla ihop två modulportar | `instrument_id`, `from_module`, `from_port`, `to_module`, `to_port` |
+| `disconnect` | Koppla bort två modulportar | `instrument_id`, `from_module`, `from_port`, `to_module`, `to_port` |
+| `clear_graph` | Rensa hela röstgrafen | `instrument_id` |
+
+### Parameterverktyg
 
 | Verktyg | Beskrivning | Parametrar |
 |---------|-------------|------------|
 | `set_parameter` | Ändra parametervärde | `instrument_id`, `module_id`, `param_name`, `value` |
 | `note_on` | Spela en MIDI-not | `note`, `velocity`, `channel` (opt) |
 | `note_off` | Stoppa en MIDI-not | `note`, `channel` (opt) |
+
+### Patchverktyg
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `list_example_patches` | Alla exempelpatchar grupperade per kategori | inga |
+| `load_example_patch` | Ladda en exempelpatch | `name` |
+| `get_ui_snapshot` | UI-layout (modulpositioner, storlekar) | `instrument_id` |
+
+### Sequencer: Song & Patterns
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `get_song_info` | Låtinfo (namn, tempo, längd) | inga |
+| `set_song_name` | Sätt låtnamn | `name` |
+| `set_song_tempo` | Sätt tempo i BPM | `bpm` |
+| `list_patterns` | Alla patterns i låten | inga |
+| `create_pattern` | Skapa pattern | `name`, `length_beats` |
+| `delete_pattern` | Ta bort pattern | `pattern_id` |
+
+### Sequencer: Noter
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `list_notes` | Alla noter i ett pattern | `pattern_id` |
+| `add_note` | Lägg till not | `pattern_id`, `pitch`, `start_beat`, `duration_beats`, `velocity` |
+| `update_note` | Uppdatera not (delfält) | `pattern_id`, `note_id`, `pitch`?, `start_beat`?, `duration_beats`?, `velocity`? |
+| `remove_note` | Ta bort not | `pattern_id`, `note_id` |
+
+### Sequencer: Tracks & Arrangement
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `list_tracks` | Alla tracks | inga |
+| `create_track` | Skapa track | `name`, `instrument_id`? |
+| `list_arrangement` | Alla pattern-placeringar | inga |
+| `place_pattern` | Placera pattern på track | `pattern_id`, `track_id`, `start_beat` |
+| `remove_placement` | Ta bort placering | `pattern_id`, `track_id`, `start_beat` |
+
+### Sequencer: Transport
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `seq_play` | Starta uppspelning | inga |
+| `seq_stop` | Stoppa uppspelning | inga |
+| `seq_seek` | Hoppa till position | `beat` |
+
+### Batch-operationer (Sequencer)
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `add_notes` | Lägg till flera noter | `pattern_id`, `notes[]` |
+| `update_notes` | Uppdatera flera noter | `pattern_id`, `updates[]` |
+| `replace_notes` | Ersätt alla noter | `pattern_id`, `notes[]` |
+| `clear_pattern` | Rensa alla noter | `pattern_id` |
+| `create_patterns` | Skapa flera patterns (med inline-noter) | `patterns[]` |
+| `create_tracks` | Skapa flera tracks | `tracks[]` |
+| `place_patterns` | Placera flera patterns | `placements[]` |
+| `set_song` | Bygg hel låt i ett anrop | `name`, `tempo`, `patterns[]`, `tracks[]`, `placements[]` |
 
 ### Modul-ID-format
 
@@ -111,14 +181,19 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
 
 ```
 → list_instruments
-  [{ id: 0, name: "Default", module_count: 14 }]
+  [{ id: 0, name: "Default", volume: 1.0, pan: 0.0, muted: false, solo: false, module_count: 14 }]
+
+→ create_instrument(name="Bass")
+  { id: 1, name: "Bass", volume: 1.0, module_count: 0 }
+
+→ add_module(instrument_id=1, module_type="osc")
+  "OK: Oscillator added as osc-3"
+
+→ list_modules(instrument_id=1)
+  [{ id: "osc-3", module_type: "Oscillator", parameters: [...] }]
 
 → list_modules(instrument_id=0)
-  [{ id: "osc-1", module_type: "Oscillator", parameters: [...] },
-   { id: "flt-1", module_type: "Filter", ... }, ...]
-
-→ get_parameter(instrument_id=0, module_id="flt-1", param_name="Cutoff")
-  { name: "Cutoff", value: 2000.0, display: "2.0 kHz" }
+  [{ id: "osc-1", ... }, { id: "flt-1", ... }, ...]   # Bara instrument 0:s moduler
 
 → set_parameter(instrument_id=0, module_id="flt-1", param_name="Cutoff", value=800.0)
   "OK"
@@ -127,10 +202,13 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
   "Note 60 on (vel=100, ch=1)"
 
 → get_engine_status()
-  { cpu_usage: 0.005, voice_count: 1, sample_rate: 48000, ... }
+  { cpu_usage: 0.005, voice_count: 1, instrument_count: 2, sample_rate: 48000, ... }
 
-→ get_graph_diagnostics(instrument_id=0)
-  [{ severity: "Warning", module_id: "lfo-1", message: "Module lfo-1 (LFO) has no connections" }]
+→ rename_instrument(instrument_id=1, name="Deep Bass")
+  "OK"
+
+→ delete_instrument(instrument_id=1)
+  "OK"
 ```
 
 ## Arkitektur
@@ -140,7 +218,7 @@ synth_mcp (crate)              modular_synth
 ┌─────────────────────┐       ┌──────────────────────┐
 │ SynthBridge trait    │◄──────│ AppSynthBridge impl  │
 │ MCP-server (rmcp)   │       │ Läser SharedGraphState│
-│ 11 tool-definitioner│       │ Skickar EngineCommand │
+│ 56 tool-definitioner│       │ Skickar EngineCommand │
 └──────┬──────────────┘       └──────┬───────────────┘
        │ TCP :9850                   │ ring buffer
        │                              ▼

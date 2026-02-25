@@ -54,6 +54,17 @@ $MCP get_module_info instrument_id=0 module_id=osc-1
 $MCP get_connections instrument_id=0
 $MCP get_engine_status
 
+# Instrument management (multi-instrument)
+$MCP create_instrument name=Bass
+$MCP rename_instrument instrument_id=1 name="Deep Bass"
+$MCP set_instrument_volume instrument_id=1 volume=0.8
+$MCP set_instrument_pan instrument_id=1 pan=-0.5
+$MCP set_instrument_mute instrument_id=1 muted=true
+$MCP set_instrument_solo instrument_id=1 solo=true
+$MCP set_instrument_midi_channel instrument_id=1 channel=2
+$MCP set_instrument_enabled instrument_id=1 enabled=false
+$MCP delete_instrument instrument_id=1
+
 # Build patches
 $MCP clear_graph instrument_id=0
 $MCP add_module instrument_id=0 module_type=osc
