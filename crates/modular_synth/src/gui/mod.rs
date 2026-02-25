@@ -77,6 +77,9 @@ pub mod awe_view;
 #[cfg(feature = "gui-egui")]
 pub mod panels;
 
+#[cfg(feature = "gui-egui")]
+pub mod sequencer;
+
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;
 use std::sync::Arc;
@@ -99,6 +102,8 @@ pub struct SynthGuiConfig {
     pub stream_config: StreamConfig,
     /// Shared synth session (module lifecycle).
     pub session: Arc<crate::session::SynthSession>,
+    /// Shared song data for sequencer.
+    pub song: Arc<std::sync::RwLock<synth_sequencer::Song>>,
     /// Shared MCP state (if MCP feature enabled).
     #[cfg(feature = "mcp")]
     pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,

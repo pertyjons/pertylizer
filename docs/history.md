@@ -1,5 +1,16 @@
 # Version History
 
+## [0.169.0] - 2026-02-25
+### Sequencer GUI — Koppling och RT-säkerhet (Fas 0)
+- Song alltid tillgänglig i GUI (inte bara med MCP-feature) — `SynthGuiConfig.song`
+- Song skapas i `main.rs` och delas med engine, GUI och MCP via samma `Arc<RwLock<Song>>`
+- `McpSharedState::with_song()` tar emot extern Song istället för att skapa egen
+- `SequencerEngine`: `song.read()` → `song.try_read()` för RT-säkerhet (aldrig blockerar audio-tråden)
+- Ny `AppView::Sequencer`-variant i navigeringsstate
+- Ny `SequencerGuiInput` (implementerar `InputSource`) — GUI-kommandokö för sequencer
+- Stub sequencer-vy visar Song-info (namn, tempo, antal patterns/tracks)
+- 3-vägs view-switcher i header: Rack / AWE / Seq
+
 ## [0.168.0] - 2026-02-25
 ### Enhetlig högerklicksmeny (kabel-medveten)
 - Kabel- och bakgrundskontextmenyn sammanslagen till en enda meny

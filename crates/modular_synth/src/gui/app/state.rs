@@ -16,6 +16,8 @@ pub enum AppView {
     Rack,
     /// Acoustic World Engine view.
     AcousticWorld,
+    /// Sequencer view (piano roll / arrangement).
+    Sequencer,
 }
 
 // Re-export effect types from views module to avoid duplication

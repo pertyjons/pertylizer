@@ -232,7 +232,7 @@ impl SequencerEngine {
 
     /// Update the cached tempo from the song.
     fn update_cached_tempo(&mut self) {
-        if let Ok(song) = self.song.read() {
+        if let Ok(song) = self.song.try_read() {
             self.cached_tempo = song.tempo_at(self.current_tick);
         }
     }
@@ -241,7 +241,7 @@ impl SequencerEngine {
     fn collect_events_at_tick(&mut self, events: &mut Vec<SequencerEvent>) {
         // Collect note data while holding the lock
         let notes_to_trigger: Vec<_> = {
-            let Ok(song) = self.song.read() else {
+            let Ok(song) = self.song.try_read() else {
                 return;
             };
 

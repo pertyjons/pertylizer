@@ -83,16 +83,24 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
         std::sync::Arc::clone(&handle.state),
     ));
 
+    // Create shared Song (always available, not just MCP)
+    let song = std::sync::Arc::new(std::sync::RwLock::new(synth_sequencer::Song::new(
+        "Untitled",
+    )));
+
+    // Send the shared Song to the engine so sequencer shares the same instance
+    let _ = handle
+        .command_sender()
+        .send(modular_synth::synth_engine::EngineCommand::SetSong {
+            song: std::sync::Arc::clone(&song),
+        });
+
     // Start MCP TCP server in background (if feature enabled)
     #[cfg(feature = "mcp")]
     let mcp_shared = {
-        let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::new());
-        // Send the shared Song to the engine so sequencer and MCP share the same instance
-        let _ = handle
-            .command_sender()
-            .send(modular_synth::synth_engine::EngineCommand::SetSong {
-                song: std::sync::Arc::clone(&shared.song),
-            });
+        let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::with_song(
+            std::sync::Arc::clone(&song),
+        ));
         let bridge = std::sync::Arc::new(modular_synth::mcp_bridge::AppSynthBridge::new(
             std::sync::Arc::clone(&session),
             std::sync::Arc::clone(&shared),
@@ -137,6 +145,7 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
         allocator_config,
         stream_config,
         session,
+        song,
         #[cfg(feature = "mcp")]
         mcp_shared: Some(mcp_shared),
     };

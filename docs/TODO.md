@@ -1,4 +1,4 @@
-# Master TODO - Modular Synth (v0.165.0)
+# Master TODO - Modular Synth (v0.169.0)
 
 ## Fas 0: Sequencer — MCP & GUI (Högsta prioritet)
 *Mål: Göra sequencern produktionsklar via MCP och GUI.*
@@ -9,7 +9,13 @@
    * [x] ~~`create_patterns` — Skapa flera patterns i ett anrop~~ *(v0.157.0)*
    * [x] ~~Minskar latens drastiskt vid låtbygge via MCP~~ *(v0.157.0: 8 batch-verktyg inkl. `set_song`)*
 
-2. **Sequencer GUI — Song-visualisering**
+2. **Sequencer GUI — Koppling & RT-säkerhet (Fas 0)**
+   * [x] ~~Song alltid tillgänglig (inte bara MCP-feature)~~ *(v0.169.0)*
+   * [x] ~~SequencerEngine: try_read() för RT-säkerhet~~ *(v0.169.0)*
+   * [x] ~~AppView::Sequencer + view-switcher (3-vägs: Rack/AWE/Seq)~~ *(v0.169.0)*
+   * [x] ~~SequencerGuiInput (InputSource) + stub sequencer-vy~~ *(v0.169.0)*
+
+3. **Sequencer GUI — Song-visualisering**
    * 👉 **Arkitektur & Plan:** [Läs `docs/sequencer_plan.md`](sequencer_plan.md)
    * [ ] Arrangement-vy: Visa tracks, pattern-placements på en tidslinje
    * [ ] Piano Roll-vy: Visa/redigera noter i ett pattern

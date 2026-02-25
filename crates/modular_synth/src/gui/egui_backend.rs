@@ -220,6 +220,9 @@ struct SynthApp {
     awe_enabled: bool,
     awe_ui: crate::gui::awe_view::AweUiState,
 
+    // Sequencer state
+    song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
+
     // MCP shared state
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
@@ -249,6 +252,7 @@ impl SynthApp {
         // This guarantees GUI and Engine have exactly the same state.
 
         let session = config.session.clone();
+        let song = config.song.clone();
         let mut keyboard = PianoKeyboard::new();
         let mut glide_time = 0.0;
 
@@ -302,6 +306,7 @@ impl SynthApp {
             active_view: AppView::default(),
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
+            song,
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
         }
@@ -543,24 +548,23 @@ impl eframe::App for SynthApp {
                     );
                     ui.separator();
 
-                    // AWE view toggle with on/off indicator
-                    let awe_indicator_color = if self.awe_enabled {
-                        theme().colors.meter_green
-                    } else {
-                        theme().colors.text_dim
-                    };
-                    let view_label = match self.active_view {
-                        AppView::Rack => "● AWE",
-                        AppView::AcousticWorld => "● Rack",
-                    };
-                    if ui
-                        .button(RichText::new(view_label).color(awe_indicator_color))
-                        .clicked()
-                    {
-                        self.active_view = match self.active_view {
-                            AppView::Rack => AppView::AcousticWorld,
-                            AppView::AcousticWorld => AppView::Rack,
+                    // View selector buttons
+                    let t = theme();
+                    let views = [
+                        (AppView::Rack, "Rack"),
+                        (AppView::AcousticWorld, "AWE"),
+                        (AppView::Sequencer, "Seq"),
+                    ];
+                    for (view, label) in views {
+                        let is_active = self.active_view == view;
+                        let color = if is_active {
+                            t.colors.accent_primary
+                        } else {
+                            t.colors.text_dim
                         };
+                        if ui.button(RichText::new(label).color(color)).clicked() {
+                            self.active_view = view;
+                        }
                     }
                     ui.separator();
                 });
@@ -947,6 +951,9 @@ impl eframe::App for SynthApp {
                     &mut self.active_view,
                     &mut self.awe_ui,
                 );
+            }
+            AppView::Sequencer => {
+                crate::gui::sequencer::draw_sequencer_view(ctx, &self.song);
             }
         }
 

@@ -27,6 +27,16 @@ impl McpSharedState {
             song: Arc::new(RwLock::new(Song::new("Untitled"))),
         }
     }
+
+    /// Create with a pre-existing shared Song (so GUI and MCP share the same instance).
+    #[must_use]
+    pub fn with_song(song: Arc<RwLock<Song>>) -> Self {
+        Self {
+            pending_patch: Mutex::new(None),
+            ui_layout: Mutex::new(UiLayoutData::default()),
+            song,
+        }
+    }
 }
 
 impl Default for McpSharedState {
