@@ -126,10 +126,16 @@ impl SynthBridge for AppSynthBridge {
             .into_iter()
             .map(|m| {
                 let id_str = m.id.to_string();
-                let input_ports: Vec<String> =
-                    m.input_connection_counts.keys().map(|k| k.to_string()).collect();
-                let output_ports: Vec<String> =
-                    m.output_connection_counts.keys().map(|k| k.to_string()).collect();
+                let input_ports: Vec<String> = m
+                    .input_connection_counts
+                    .keys()
+                    .map(|k| k.to_string())
+                    .collect();
+                let output_ports: Vec<String> = m
+                    .output_connection_counts
+                    .keys()
+                    .map(|k| k.to_string())
+                    .collect();
 
                 // Build input/output ports from connections if snapshot doesn't have them
                 let mut inputs = input_ports;

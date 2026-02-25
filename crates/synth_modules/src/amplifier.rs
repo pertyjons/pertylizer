@@ -297,6 +297,14 @@ impl Describable for Mixer {
             .category(ModuleCategory::Mixer)
             .tag("mixer");
 
+        // Master first (it's the master output level, not an input)
+        desc = desc.parameter(
+            ParameterDescriptor::float(Param::Mixer(MixerParam::Master(Gain::UNITY)), "Master")
+                .range(0.0, 2.0)
+                .default(1.0)
+                .widget(WidgetHint::Slider),
+        );
+
         let input_params = [
             MixerParam::Input1(Gain::UNITY),
             MixerParam::Input2(Gain::UNITY),
@@ -324,14 +332,7 @@ impl Describable for Mixer {
                 );
         }
 
-        desc = desc
-            .parameter(
-                ParameterDescriptor::float(Param::Mixer(MixerParam::Master(Gain::UNITY)), "Master")
-                    .range(0.0, 2.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Slider),
-            )
-            .port(PortDescriptor::audio_output("out", "Out").description("Mixad output"));
+        desc = desc.port(PortDescriptor::audio_output("out", "Out").description("Mixad output"));
 
         desc
     }

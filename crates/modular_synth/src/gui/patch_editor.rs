@@ -134,6 +134,17 @@ pub struct QuickAddRequest {
     pub position: Pos2,
 }
 
+/// State for the unified background/cable right-click context menu.
+#[derive(Clone)]
+struct BgContextMenuState {
+    /// Where to place the new module (world/logical coordinates).
+    world_pos: Pos2,
+    /// Where to draw the menu (screen coordinates).
+    screen_pos: Pos2,
+    /// If right-click was on a hovered cable, include it.
+    cable: Option<Connection>,
+}
+
 /// The main rack view state.
 #[derive(Clone)]
 pub struct PatchEditor {
@@ -162,14 +173,16 @@ pub struct PatchEditor {
     needs_reposition: HashSet<ModuleId>,
     /// When true, auto-layout runs on the next frame that has a canvas_rect.
     needs_initial_layout: bool,
-    /// Right-click context menu on a cable: (connection, screen position).
-    cable_context_menu: Option<(Connection, Pos2)>,
-    /// Guards against the opening click also closing the menu on the same frame.
-    cable_menu_just_opened: bool,
+    /// The cable closest to the pointer (if any), updated each frame.
+    hovered_cable: Option<Connection>,
     /// Right-click context menu on a port.
     port_context_menu: Option<PortContextMenuState>,
     /// Same-frame guard for port context menu.
     port_menu_just_opened: bool,
+    /// Right-click context menu on background (or cable). Contains cable if hovered.
+    bg_context_menu: Option<BgContextMenuState>,
+    /// Same-frame guard for background context menu.
+    bg_menu_just_opened: bool,
 }
 
 impl PatchEditor {
@@ -187,10 +200,11 @@ impl PatchEditor {
             bypassed: HashMap::new(),
             needs_reposition: HashSet::new(),
             needs_initial_layout: true,
-            cable_context_menu: None,
-            cable_menu_just_opened: false,
+            hovered_cable: None,
             port_context_menu: None,
             port_menu_just_opened: false,
+            bg_context_menu: None,
+            bg_menu_just_opened: false,
         }
     }
 
@@ -293,6 +307,14 @@ impl PatchEditor {
         if self.selected_module == Some(id) {
             self.selected_module = None;
         }
+        // Cancel pending connection if it involves this module
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|p| p.from_module == id)
+        {
+            self.pending_connection = None;
+        }
         self.calculate_connectivity();
     }
 
@@ -351,72 +373,6 @@ impl PatchEditor {
     /// Check if a module is a "sink" (no outgoing audio connections).
     pub fn is_sink(&self, module_id: ModuleId) -> bool {
         !self.connections.iter().any(|c| c.from_module == module_id)
-    }
-
-    /// Calculate the topological processing order of modules.
-    /// Returns a vector of (ModuleId, position) tuples.
-    pub fn calculate_processing_order(&self) -> Vec<(ModuleId, usize)> {
-        use std::collections::{HashMap, VecDeque};
-
-        let module_ids: Vec<ModuleId> = self.z_order.clone();
-        if module_ids.is_empty() {
-            return Vec::new();
-        }
-
-        // Build adjacency list and in-degree count
-        let mut in_degree: HashMap<ModuleId, usize> = HashMap::new();
-        let mut adjacency: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-
-        for &id in &module_ids {
-            in_degree.insert(id, 0);
-            adjacency.insert(id, Vec::new());
-        }
-
-        for conn in &self.connections {
-            if let Some(adj) = adjacency.get_mut(&conn.from_module) {
-                adj.push(conn.to_module);
-            }
-            if let Some(deg) = in_degree.get_mut(&conn.to_module) {
-                *deg += 1;
-            }
-        }
-
-        // Kahn's algorithm for topological sort
-        let mut queue: VecDeque<ModuleId> = VecDeque::new();
-        for (&id, &deg) in &in_degree {
-            if deg == 0 {
-                queue.push_back(id);
-            }
-        }
-
-        let mut order = Vec::new();
-        while let Some(id) = queue.pop_front() {
-            order.push(id);
-            if let Some(neighbors) = adjacency.get(&id) {
-                for &neighbor in neighbors {
-                    if let Some(deg) = in_degree.get_mut(&neighbor) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push_back(neighbor);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add any modules not in the order (disconnected)
-        for &id in &module_ids {
-            if !order.contains(&id) {
-                order.push(id);
-            }
-        }
-
-        // Return with positions
-        order
-            .into_iter()
-            .enumerate()
-            .map(|(pos, id)| (id, pos))
-            .collect()
     }
 
     /// Get connected ports for a module.
@@ -523,8 +479,8 @@ impl PatchEditor {
         }
 
         // Draw context menus (Foreground) — must happen after hover detection above
-        self.draw_cable_context_menu(ui, &mut result);
         self.draw_port_context_menu(ui, &mut result);
+        self.draw_bg_context_menu(ui, &mut result);
 
         // Now clear port positions so modules can repopulate them for next frame
         self.port_positions.clear();
@@ -538,11 +494,6 @@ impl PatchEditor {
             .iter()
             .map(|&id| (id, self.get_connected_ports(id)))
             .collect();
-
-        // Calculate processing order for display
-        let processing_order: HashMap<ModuleId, usize> =
-            self.calculate_processing_order().into_iter().collect();
-        let total_modules = module_ids.len();
 
         // Constrain rect: prevent modules going to negative logical coords,
         // allow extending right/down (content grows to fit)
@@ -641,7 +592,6 @@ impl PatchEditor {
                 .current_pos(screen_pos);
 
             // Get processing info for this module
-            let proc_position = processing_order.get(&module_id).copied();
             let is_source = self.is_source(module_id);
             let is_sink = self.is_sink(module_id);
 
@@ -869,7 +819,6 @@ impl PatchEditor {
                 }
 
                 frame.show(ui, |ui| {
-
                     // Title bar: name + status icons + close button (single row)
                     ui.horizontal(|ui| {
                         // Accent color indicator
@@ -980,26 +929,12 @@ impl PatchEditor {
                             result.bypass_toggles.push((module_id, new_bypass_state));
                         }
 
-                        // Processing order number (at end of title bar)
-                        if let Some(pos) = proc_position {
-                            let order_text = format!("#{}", pos + 1);
-                            ui.label(
-                                egui::RichText::new(order_text)
-                                    .small()
-                                    .color(theme().colors.text_dim),
-                            )
-                            .on_hover_text(format!(
-                                "Processing order: {} of {}",
-                                pos + 1,
-                                total_modules
-                            ));
-                        }
-
                         // Close button (only for disconnected modules)
-                        if connectivity_status == ModuleConnectivity::Disconnected
-                            && ui.small_button("\u{2715}").clicked()
-                        {
-                            open = false;
+                        if connectivity_status == ModuleConnectivity::Disconnected {
+                            ui.separator();
+                            if ui.small_button("\u{2715}").clicked() {
+                                open = false;
+                            }
                         }
                     });
 
@@ -1160,11 +1095,30 @@ impl PatchEditor {
             self.selected_module = None;
         }
 
+        // Right-click on background (or cable) → open unified context menu
+        if let Some(ref response) = canvas_response
+            && response.secondary_clicked()
+            && !self.port_menu_just_opened
+            && let Some(screen_pos) = ui.input(|i| i.pointer.interact_pos())
+        {
+            // Convert screen position to world/logical position
+            let world_pos = Pos2::new(
+                screen_pos.x - area_origin.x + scroll_offset.x,
+                screen_pos.y - area_origin.y + scroll_offset.y,
+            );
+            self.bg_context_menu = Some(BgContextMenuState {
+                world_pos,
+                screen_pos,
+                cable: self.hovered_cable,
+            });
+            self.bg_menu_just_opened = true;
+        }
+
         // Cancel pending connection / close context menus with escape
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.pending_connection = None;
-            self.cable_context_menu = None;
             self.port_context_menu = None;
+            self.bg_context_menu = None;
         }
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
@@ -1340,10 +1294,13 @@ impl PatchEditor {
             .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables_fg")));
 
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-        let right_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
         // Track which cable the context menu targets so we highlight it
-        let menu_target = self.cable_context_menu.as_ref().map(|(c, _)| *c);
+        let menu_target = self
+            .bg_context_menu
+            .as_ref()
+            .and_then(|s| s.cable.as_ref())
+            .cloned();
 
         // Compute spread offsets: group cables by destination module,
         // then spread cables within each group so they don't overlap.
@@ -1353,7 +1310,17 @@ impl PatchEditor {
         }
         let mut dest_index: HashMap<ModuleId, usize> = HashMap::new();
 
-        for connection in &self.connections {
+        // Pre-compute cable spreads and positions for nearest-cable detection
+        struct CableInfo {
+            index: usize,
+            spread: f32,
+            from_pos: Pos2,
+            to_pos: Pos2,
+            port_type: WidgetPortType,
+        }
+        let mut cable_infos: Vec<CableInfo> = Vec::new();
+
+        for (i, connection) in self.connections.iter().enumerate() {
             let idx = dest_index.entry(connection.to_module).or_default();
             let n = dest_count.get(&connection.to_module).copied().unwrap_or(1);
             let spread = (*idx as f32 - (n as f32 - 1.0) / 2.0) * CABLE_SPREAD;
@@ -1366,142 +1333,479 @@ impl PatchEditor {
                 self.port_positions.get(&from_key),
                 self.port_positions.get(&to_key),
             ) {
-                let color = cable_color(from_pos.port_type, 180);
-
-                // Don't detect cable hover when pointer is over a module,
-                // UNLESS the pointer is near one of this cable's ports.
-                let over_module = pointer_pos
-                    .map(|p| module_rects.iter().any(|r| r.contains(p)))
-                    .unwrap_or(false);
-                let near_port = pointer_pos
-                    .map(|p| {
-                        let to_from = (p - from_pos.position).length();
-                        let to_to = (p - to_pos.position).length();
-                        to_from < 15.0 || to_to < 15.0
-                    })
-                    .unwrap_or(false);
-
-                // Check if mouse is near this cable (20px threshold for easy targeting)
-                let is_hovered = (near_port || !over_module)
-                    && pointer_pos
-                        .map(|p| {
-                            point_near_cable(p, from_pos.position, to_pos.position, 20.0, spread)
-                        })
-                        .unwrap_or(false);
-
-                // Highlight if hovered or if context menu is open for this cable
-                let show_highlight = is_hovered || menu_target.as_ref() == Some(connection);
-
-                if show_highlight {
-                    // Highlighted cable in foreground (above modules)
-                    draw_cable_highlighted(
-                        &fg_painter,
-                        from_pos.position,
-                        to_pos.position,
-                        color,
-                        spread,
-                    );
-
-                    // Draw a small menu icon on the cable near the pointer
-                    if is_hovered && let Some(p) = pointer_pos {
-                        let snap =
-                            closest_point_on_cable(p, from_pos.position, to_pos.position, spread);
-                        let icon_pos = snap + Vec2::new(10.0, -10.0);
-                        // Background pill
-                        let pill = Rect::from_center_size(icon_pos, Vec2::new(20.0, 16.0));
-                        fg_painter.rect_filled(
-                            pill,
-                            4.0,
-                            Color32::from_rgba_unmultiplied(30, 30, 30, 200),
-                        );
-                        fg_painter.text(
-                            icon_pos,
-                            egui::Align2::CENTER_CENTER,
-                            "\u{2630}",
-                            theme().fonts.small(),
-                            Color32::WHITE,
-                        );
-                    }
-                } else {
-                    // Normal cable behind modules
-                    draw_cable(
-                        &bg_painter,
-                        from_pos.position,
-                        to_pos.position,
-                        color,
-                        spread,
-                    );
-                }
-
-                // Open context menu on right-click
-                if is_hovered
-                    && right_clicked
-                    && let Some(pos) = pointer_pos
-                {
-                    self.cable_context_menu = Some((*connection, pos));
-                    self.cable_menu_just_opened = true;
-                }
-
-                // Animated flow particles behind modules
-                draw_flow_particles(
-                    &bg_painter,
-                    from_pos.position,
-                    to_pos.position,
-                    color,
-                    from_pos.port_type,
-                    time,
+                cable_infos.push(CableInfo {
+                    index: i,
                     spread,
-                );
+                    from_pos: from_pos.position,
+                    to_pos: to_pos.position,
+                    port_type: from_pos.port_type,
+                });
             }
+        }
+
+        // Find the single nearest cable to the pointer (exclusive hover)
+        let nearest_cable_idx: Option<usize> = pointer_pos.and_then(|p| {
+            let over_module = module_rects.iter().any(|r| r.contains(p));
+
+            let mut best_idx: Option<usize> = None;
+            let mut best_dist = f32::MAX;
+
+            for info in &cable_infos {
+                let near_port = {
+                    let to_from = (p - info.from_pos).length();
+                    let to_to = (p - info.to_pos).length();
+                    to_from < 15.0 || to_to < 15.0
+                };
+
+                if !near_port && over_module {
+                    continue;
+                }
+
+                if point_near_cable(p, info.from_pos, info.to_pos, 20.0, info.spread) {
+                    let snap = closest_point_on_cable(p, info.from_pos, info.to_pos, info.spread);
+                    let dist = (p - snap).length();
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_idx = Some(info.index);
+                    }
+                }
+            }
+
+            best_idx
+        });
+
+        // Update hovered_cable state for right-click handling
+        self.hovered_cable = nearest_cable_idx.map(|i| self.connections[i]);
+
+        // Draw all cables
+        for info in &cable_infos {
+            let connection = &self.connections[info.index];
+            let color = cable_color(info.port_type, 180);
+
+            let is_nearest = nearest_cable_idx == Some(info.index);
+            let show_highlight = is_nearest || menu_target.as_ref() == Some(connection);
+
+            if show_highlight {
+                // Highlighted cable in foreground (above modules)
+                draw_cable_highlighted(&fg_painter, info.from_pos, info.to_pos, color, info.spread);
+            } else {
+                // Normal cable behind modules
+                draw_cable(&bg_painter, info.from_pos, info.to_pos, color, info.spread);
+            }
+
+            // Animated flow particles behind modules
+            draw_flow_particles(
+                &bg_painter,
+                info.from_pos,
+                info.to_pos,
+                color,
+                info.port_type,
+                time,
+                info.spread,
+            );
         }
     }
 
-    /// Draw the cable right-click context menu and handle its actions.
-    fn draw_cable_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
-        let Some((connection, menu_pos)) = self.cable_context_menu else {
-            // Clear the guard when no menu is open
-            self.cable_menu_just_opened = false;
+    /// Draw the background right-click context menu for adding modules.
+    #[allow(clippy::too_many_lines)]
+    fn draw_bg_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
+        let Some(ref menu_state) = self.bg_context_menu else {
+            self.bg_menu_just_opened = false;
             return;
         };
+        let world_pos = menu_state.world_pos;
+        let menu_screen_pos = menu_state.screen_pos;
+        let menu_cable = menu_state.cable;
 
-        let menu_id = egui::Id::new("cable_context_menu");
-        let mut close_menu = false;
+        let menu_id = egui::Id::new("bg_context_menu");
+        let mut selected: Option<PaletteSelection> = None;
+        let mut cable_action_taken = false;
 
         let area_resp = egui::Area::new(menu_id)
             .order(Order::Foreground)
-            .fixed_pos(menu_pos)
+            .fixed_pos(menu_screen_pos)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(theme().colors.bg_panel)
                     .show(ui, |ui| {
-                        ui.set_min_width(160.0);
+                        ui.set_min_width(150.0);
 
-                        if ui.button("Ta bort sladd").clicked() {
-                            self.connections.retain(|c| c != &connection);
-                            result.connections_to_remove.push(connection);
-                            self.calculate_connectivity();
-                            close_menu = true;
+                        // Cable actions (shown when right-clicking on a hovered cable)
+                        if let Some(connection) = menu_cable {
+                            if ui.button("Ta bort sladd").clicked() {
+                                self.connections.retain(|c| c != &connection);
+                                result.connections_to_remove.push(connection);
+                                self.calculate_connectivity();
+                                cable_action_taken = true;
+                            }
+
+                            if ui.button("Stoppa in Signal Monitor").clicked() {
+                                self.connections.retain(|c| c != &connection);
+                                result.connections_to_remove.push(connection);
+                                result.insert_signal_monitor_at.push(connection);
+                                self.calculate_connectivity();
+                                cable_action_taken = true;
+                            }
+
+                            ui.separator();
+
+                            ui.label(
+                                egui::RichText::new("Stoppa in modul...")
+                                    .color(theme().colors.text_secondary)
+                                    .size(11.0),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new("Lägg till modul")
+                                    .color(theme().colors.text_secondary)
+                                    .size(11.0),
+                            );
+                        }
+                        ui.separator();
+
+                        // Oscillator submenu
+                        let osc_color = category_color(ModuleCategory::Oscillator);
+                        ui.menu_button(
+                            egui::RichText::new("🎵 Oscillator").color(osc_color),
+                            |ui| {
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🎵 Basic",
+                                    PaletteSelection::Category(ModuleCategory::Oscillator),
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔢 Math",
+                                    PaletteSelection::MathOscillator,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔈 Sub",
+                                    PaletteSelection::SubOscillator,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🌫 Noise",
+                                    PaletteSelection::Noise,
+                                    &mut selected,
+                                );
+                                ui.separator();
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📊 Wavetable",
+                                    PaletteSelection::WavetableOsc,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🎶 Additive",
+                                    PaletteSelection::AdditiveOsc,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🌾 Granular",
+                                    PaletteSelection::GranularOsc,
+                                    &mut selected,
+                                );
+                            },
+                        );
+
+                        // Simple categories
+                        let categories = [
+                            (ModuleCategory::Filter, "🔊 Filter"),
+                            (ModuleCategory::Envelope, "📈 Envelope"),
+                            (ModuleCategory::LFO, "〰 LFO"),
+                            (ModuleCategory::Amplifier, "🔉 VCA"),
+                            (ModuleCategory::Mixer, "🎚 Mixer"),
+                        ];
+                        for (cat, label) in categories {
+                            let color = category_color(cat);
+                            if ui
+                                .add(
+                                    egui::Button::new(egui::RichText::new(label).color(color))
+                                        .frame(false),
+                                )
+                                .clicked()
+                            {
+                                selected = Some(PaletteSelection::Category(cat));
+                            }
                         }
 
-                        if ui.button("Stoppa in Signal Monitor").clicked() {
-                            // Remove the old cable and request a monitor insertion
-                            self.connections.retain(|c| c != &connection);
-                            result.connections_to_remove.push(connection);
-                            result.insert_signal_monitor_at.push(connection);
-                            self.calculate_connectivity();
-                            close_menu = true;
+                        ui.separator();
+
+                        // Effect submenu
+                        let fx_color = category_color(ModuleCategory::Effect);
+                        ui.menu_button(egui::RichText::new("✨ Effect").color(fx_color), |ui| {
+                            Self::bg_menu_item(
+                                ui,
+                                "🔁 Delay",
+                                PaletteSelection::Effect(EffectType::Delay),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🌊 Reverb",
+                                PaletteSelection::Effect(EffectType::Reverb),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🔥 Distortion",
+                                PaletteSelection::Effect(EffectType::Distortion),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🎭 Chorus",
+                                PaletteSelection::Effect(EffectType::Chorus),
+                                &mut selected,
+                            );
+                            ui.separator();
+                            Self::bg_menu_item(
+                                ui,
+                                "🌀 Flanger",
+                                PaletteSelection::Effect(EffectType::Flanger),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🔄 Phaser",
+                                PaletteSelection::Effect(EffectType::Phaser),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "📊 Compressor",
+                                PaletteSelection::Effect(EffectType::Compressor),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🎛 EQ",
+                                PaletteSelection::Effect(EffectType::Eq),
+                                &mut selected,
+                            );
+                            ui.separator();
+                            Self::bg_menu_item(
+                                ui,
+                                "🔊 Waveshaper",
+                                PaletteSelection::Effect(EffectType::Waveshaper),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "📼 BBD Delay",
+                                PaletteSelection::Effect(EffectType::BbdDelay),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🧱 Limiter",
+                                PaletteSelection::Effect(EffectType::Limiter),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "↔ Mid/Side",
+                                PaletteSelection::Effect(EffectType::MidSide),
+                                &mut selected,
+                            );
+                            ui.separator();
+                            Self::bg_menu_item(
+                                ui,
+                                "🏛 Convolver",
+                                PaletteSelection::Effect(EffectType::Convolver),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🔬 Phase Vocoder",
+                                PaletteSelection::Effect(EffectType::PhaseVocoder),
+                                &mut selected,
+                            );
+                            Self::bg_menu_item(
+                                ui,
+                                "🔀 Freq Shifter",
+                                PaletteSelection::Effect(EffectType::FrequencyShifter),
+                                &mut selected,
+                            );
+                        });
+
+                        // Visualizer submenu
+                        let viz_color = category_color(ModuleCategory::Visualizer);
+                        ui.menu_button(
+                            egui::RichText::new("📊 Visualizer").color(viz_color),
+                            |ui| {
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📈 Oscilloscope",
+                                    PaletteSelection::Visualizer(
+                                        PaletteVisualizerType::Oscilloscope,
+                                    ),
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📊 Level Meter",
+                                    PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter),
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📊 Spectrum",
+                                    PaletteSelection::Visualizer(
+                                        PaletteVisualizerType::SpectrumAnalyzer,
+                                    ),
+                                    &mut selected,
+                                );
+                                ui.separator();
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔍 Signal Monitor",
+                                    PaletteSelection::SignalMonitor,
+                                    &mut selected,
+                                );
+                            },
+                        );
+
+                        // Modulation submenu
+                        let mod_color = category_color(ModuleCategory::Utility);
+                        ui.menu_button(
+                            egui::RichText::new("🔀 Modulation").color(mod_color),
+                            |ui| {
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔔 Ring Mod",
+                                    PaletteSelection::RingMod,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📈 Env Follower",
+                                    PaletteSelection::EnvelopeFollower,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "📐 MSEG",
+                                    PaletteSelection::Mseg,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🏃 Kinetic Mod",
+                                    PaletteSelection::KineticModulator,
+                                    &mut selected,
+                                );
+                            },
+                        );
+
+                        // Generative submenu
+                        let gen_color = category_color(ModuleCategory::LFO);
+                        ui.menu_button(
+                            egui::RichText::new("🎲 Generative").color(gen_color),
+                            |ui| {
+                                Self::bg_menu_item(
+                                    ui,
+                                    "⊕ Euclidean",
+                                    PaletteSelection::Euclidean,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔀 Turing Machine",
+                                    PaletteSelection::TuringMachine,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🎲 Random Gates",
+                                    PaletteSelection::RandomGates,
+                                    &mut selected,
+                                );
+                            },
+                        );
+
+                        // Physical submenu
+                        let phys_color = category_color(ModuleCategory::PhysicalModeling);
+                        ui.menu_button(
+                            egui::RichText::new("🎹 Physical").color(phys_color),
+                            |ui| {
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🎹 Keyboard Panner",
+                                    PaletteSelection::KeyboardPanner,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🪵 Body Resonance",
+                                    PaletteSelection::BodyResonance,
+                                    &mut selected,
+                                );
+                                Self::bg_menu_item(
+                                    ui,
+                                    "🔧 Mechanical Noise",
+                                    PaletteSelection::MechanicalNoise,
+                                    &mut selected,
+                                );
+                            },
+                        );
+
+                        ui.separator();
+
+                        // Output & Mod Matrix as direct buttons
+                        let out_color = category_color(ModuleCategory::Output);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("🔈 Output").color(out_color),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            selected = Some(PaletteSelection::StereoOutput);
+                        }
+                        let util_color = category_color(ModuleCategory::Utility);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("🔀 Mod Matrix").color(util_color),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            selected = Some(PaletteSelection::ModMatrix);
                         }
                     });
             });
 
-        // On the frame the menu was opened, the same right-click event is still
-        // active. Skip the close check so it doesn't immediately dismiss.
-        if self.cable_menu_just_opened {
-            self.cable_menu_just_opened = false;
+        if cable_action_taken {
+            self.bg_context_menu = None;
+            self.bg_menu_just_opened = false;
             return;
         }
 
-        // Close on any click outside the menu area, or after an action
+        if let Some(sel) = selected {
+            result.context_add = Some((sel, world_pos, menu_cable));
+            self.bg_context_menu = None;
+            self.bg_menu_just_opened = false;
+            return;
+        }
+
+        // On the frame the menu was opened, skip the close check
+        if self.bg_menu_just_opened {
+            self.bg_menu_just_opened = false;
+            return;
+        }
+
+        // Close on any click outside the menu area
         let menu_rect = area_resp.response.rect;
         let pointer_pos = ui.input(|i| i.pointer.interact_pos());
         let any_click = ui.input(|i| {
@@ -1511,8 +1815,21 @@ impl PatchEditor {
         let clicked_outside =
             any_click && pointer_pos.map(|p| !menu_rect.contains(p)).unwrap_or(false);
 
-        if close_menu || clicked_outside {
-            self.cable_context_menu = None;
+        if clicked_outside {
+            self.bg_context_menu = None;
+        }
+    }
+
+    /// Helper for background context menu items.
+    fn bg_menu_item(
+        ui: &mut Ui,
+        label: &str,
+        selection: PaletteSelection,
+        out: &mut Option<PaletteSelection>,
+    ) {
+        if ui.button(label).clicked() {
+            *out = Some(selection);
+            ui.close();
         }
     }
 
@@ -2116,6 +2433,9 @@ pub struct PatchEditorResult {
     pub insert_signal_monitor_at: Vec<Connection>,
     /// Requests to create a new module and auto-connect to a port.
     pub quick_add_requests: Vec<QuickAddRequest>,
+    /// Context menu request: add a module at a specific world position.
+    /// Third value = cable to break and insert the module inline (if from cable context menu).
+    pub context_add: Option<(PaletteSelection, Pos2, Option<Connection>)>,
 }
 
 /// Simplified panel result for parameters only.

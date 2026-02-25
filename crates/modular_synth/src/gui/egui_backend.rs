@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
+use eframe::egui::{self, Color32, Pos2, RichText, Stroke, Vec2};
 
 use crate::audio::AudioHostTrait;
 use crate::gui::app::state::AppView;
@@ -28,28 +28,19 @@ use crate::gui::patch_editor::{
     QuickAddRequest,
 };
 use crate::gui::theme::theme;
-use crate::gui::views::{MasterEffectParams, MasterEffectUiState, draw_meter_horizontal};
-use crate::gui::widgets::draw_oscilloscope;
+use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::MidiHandler;
 use crate::patch::{Patch, categorized_patches};
 use synth_core::Velocity;
 #[cfg(feature = "mcp")]
 use synth_core::{BipolarValue, Gain};
-use synth_core::{
-    ChorusParam, CompressorParam, DelayParam, DistortionParam, EqParam, FlangerParam, MidSideParam,
-    Param, PhaserParam, ReverbParam, WaveshaperParam,
-};
 use synth_core::{Describable, ModuleCategory};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
-use synth_modules::effects::{
-    BbdDelay, Chorus, Compressor, Convolver, Delay, Distortion, Eq, Flanger, FrequencyShifter,
-    Limiter, MidSide, PhaseVocoder, Phaser, Reverb, Waveshaper,
-};
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -222,9 +213,6 @@ struct SynthApp {
     active_instrument_id: InstrumentId,
     next_instrument_id: u64,
 
-    // Master effects chain UI state
-    master_effects: Vec<MasterEffectUiState>,
-
     // Navigation state
     active_view: AppView,
 
@@ -311,7 +299,6 @@ impl SynthApp {
             instruments,
             active_instrument_id,
             next_instrument_id,
-            master_effects: Vec::new(),
             active_view: AppView::default(),
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
@@ -721,16 +708,6 @@ impl eframe::App for SynthApp {
                         &mut self.next_instrument_id,
                     );
                 });
-
-            // Right side panel with meters and master effects (resizable)
-            egui::SidePanel::right("meters_panel")
-                .min_width(140.0)
-                .default_width(180.0)
-                .max_width(300.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    self.draw_meters(ui);
-                });
         }
 
         // Main content - CentralPanel rendered LAST (normal egui order)
@@ -799,53 +776,23 @@ impl eframe::App for SynthApp {
 
             // Handle module removal
             for module_id in result.modules_to_remove {
-                // Get module descriptor to determine type (before removing from editor)
-                let category = patch_editor
+                // Check if this module has a visualization buffer to clean up
+                let has_vis_buffer = patch_editor
                     .module_descriptor(module_id)
-                    .map(|d| d.category);
-                let type_id = patch_editor
-                    .module_descriptor(module_id)
-                    .map(|d| d.type_id.0.clone());
+                    .is_some_and(|d| {
+                        d.category == ModuleCategory::Visualizer
+                            || d.type_id.0 == "signal_monitor"
+                            || d.type_id.0 == "inline_signal_monitor"
+                    });
 
                 patch_editor.remove_module(module_id);
 
-                // Send appropriate remove command to engine based on category
-                match category {
-                    Some(ModuleCategory::Visualizer) => {
-                        self.handle.send(EngineCommand::RemoveVisualizer {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                        self.handle.remove_visualization_buffer(module_id);
-                    }
-                    Some(ModuleCategory::Effect) => {
-                        self.handle.send(EngineCommand::RemoveEffect {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                    }
-                    Some(
-                        ModuleCategory::Oscillator
-                        | ModuleCategory::Filter
-                        | ModuleCategory::Envelope
-                        | ModuleCategory::LFO
-                        | ModuleCategory::Amplifier
-                        | ModuleCategory::Mixer
-                        | ModuleCategory::Output
-                        | ModuleCategory::Utility
-                        | ModuleCategory::PhysicalModeling,
-                    ) => {
-                        // Remove from active instrument's voice graph
-                        self.handle.send(EngineCommand::RemoveModule {
-                            instrument_id: Some(active_id),
-                            id: module_id,
-                        });
-                        // Signal monitor has a vis buffer that needs cleanup
-                        if type_id.as_deref() == Some("signal_monitor") {
-                            self.handle.remove_visualization_buffer(module_id);
-                        }
-                    }
-                    _ => {}
+                // Remove from session (registry + engine command)
+                let _ = self.session.remove_module(active_id, module_id);
+
+                // Clean up visualization buffer if needed
+                if has_vis_buffer {
+                    self.handle.remove_visualization_buffer(module_id);
                 }
             }
 
@@ -915,7 +862,11 @@ impl eframe::App for SynthApp {
                     _ => egui::Pos2::new(100.0, 100.0),
                 };
 
-                patch_editor.add_module_at(monitor_id, inline_descriptor, mid_pos);
+                patch_editor.add_module_at(monitor_id, inline_descriptor.clone(), mid_pos);
+
+                // Register in session so reconciliation doesn't remove it
+                self.session
+                    .register_descriptor(active_id, monitor_id, inline_descriptor);
 
                 // Create shared vis buffer and inject into module
                 let buffer = std::sync::Arc::new(
@@ -964,6 +915,19 @@ impl eframe::App for SynthApp {
                     active_id,
                     patch_editor,
                     request,
+                );
+            }
+
+            // Handle background context menu add (right-click on empty space or cable)
+            if let Some((selection, world_pos, inline_cable)) = result.context_add {
+                Self::handle_context_add(
+                    &self.session,
+                    &mut self.handle,
+                    self.active_instrument_id,
+                    patch_editor,
+                    selection,
+                    world_pos,
+                    inline_cable,
                 );
             }
 
@@ -1118,6 +1082,9 @@ impl SynthApp {
             *counter += 1;
             ModuleId::new(TypedModuleType::SignalMonitor, *counter)
         };
+        // Register in session so reconciliation doesn't remove it
+        self.session
+            .register_descriptor(self.active_instrument_id, next_id, descriptor.clone());
         let Some(editor) = self.active_patch_editor() else {
             return;
         };
@@ -1199,6 +1166,7 @@ impl SynthApp {
                     ModuleId::new(TypedModuleType::SignalMonitor, *counter)
                 };
                 let dc = d.clone();
+                session.register_descriptor(instrument_id, id, d.clone());
                 editor.add_module_at(id, d, request.position);
 
                 let buffer =
@@ -1288,6 +1256,205 @@ impl SynthApp {
             connection.to_module,
             connection.to_port,
         );
+    }
+
+    /// Handle a context menu add: create a module and place it at the given position.
+    /// If `inline_cable` is `Some`, the old cable is removed and the new module is
+    /// wired inline: `from → new_module(first_input) → new_module(first_output) → to`.
+    #[allow(clippy::too_many_lines)]
+    fn handle_context_add(
+        session: &crate::session::SynthSession,
+        handle: &mut EngineHandle,
+        instrument_id: InstrumentId,
+        editor: &mut PatchEditor,
+        selection: PaletteSelection,
+        position: Pos2,
+        inline_cable: Option<synth_engine::graph::Connection>,
+    ) {
+        // Helper: wire a newly created module inline on an existing cable.
+        // Removes the old cable, then connects from→new(first_input), new(first_output)→to.
+        let wire_inline = |handle: &mut EngineHandle,
+                           editor: &mut PatchEditor,
+                           new_id: ModuleId,
+                           descriptor: &synth_core::ModuleDescriptor,
+                           cable: synth_engine::graph::Connection| {
+            // Remove old cable from engine
+            handle.send(EngineCommand::Disconnect {
+                instrument_id: Some(instrument_id),
+                from: PortId::new(cable.from_module, cable.from_port),
+                to: PortId::new(cable.to_module, cable.to_port),
+            });
+
+            // Find first audio input and output on the new module
+            let first_input = descriptor.ports.iter().find(|p| {
+                p.direction == synth_core::PortDirection::Input
+                    && p.port_type == synth_core::PortType::Audio
+            });
+            let first_output = descriptor.ports.iter().find(|p| {
+                p.direction == synth_core::PortDirection::Output
+                    && p.port_type == synth_core::PortType::Audio
+            });
+
+            if let (Some(inp), Some(outp)) = (first_input, first_output) {
+                let conn_in = synth_engine::graph::Connection::new(
+                    cable.from_module,
+                    cable.from_port,
+                    new_id,
+                    inp.name,
+                );
+                let conn_out = synth_engine::graph::Connection::new(
+                    new_id,
+                    outp.name,
+                    cable.to_module,
+                    cable.to_port,
+                );
+                for c in [conn_in, conn_out] {
+                    editor.add_connection(c);
+                    handle.send(EngineCommand::Connect {
+                        instrument_id: Some(instrument_id),
+                        from: PortId::new(c.from_module, c.from_port),
+                        to: PortId::new(c.to_module, c.to_port),
+                    });
+                }
+            }
+        };
+
+        match selection {
+            PaletteSelection::Visualizer(viz_type) => {
+                let (descriptor, module_type) = match viz_type {
+                    PaletteVisualizerType::Oscilloscope => (
+                        Oscilloscope::new().descriptor(),
+                        TypedModuleType::Oscilloscope,
+                    ),
+                    PaletteVisualizerType::LevelMeter => {
+                        (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
+                    }
+                    PaletteVisualizerType::SpectrumAnalyzer => (
+                        SpectrumAnalyzer::new().descriptor(),
+                        TypedModuleType::SpectrumAnalyzer,
+                    ),
+                };
+                let next_id = {
+                    use synth_core::ModuleType;
+                    let mt = match viz_type {
+                        PaletteVisualizerType::Oscilloscope => ModuleType::Oscilloscope,
+                        PaletteVisualizerType::LevelMeter => ModuleType::LevelMeter,
+                        PaletteVisualizerType::SpectrumAnalyzer => ModuleType::SpectrumAnalyzer,
+                    };
+                    let mut counters = session.counters_lock();
+                    let counter = counters.entry((instrument_id, mt)).or_insert(0);
+                    *counter += 1;
+                    ModuleId::new(module_type, *counter)
+                };
+                editor.add_module_at(next_id, descriptor, position);
+
+                let buffer =
+                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(next_id, buffer.clone());
+                let engine_viz_type = match viz_type {
+                    PaletteVisualizerType::Oscilloscope => {
+                        synth_engine::commands::VisualizerType::Oscilloscope
+                    }
+                    PaletteVisualizerType::LevelMeter => {
+                        synth_engine::commands::VisualizerType::LevelMeter
+                    }
+                    PaletteVisualizerType::SpectrumAnalyzer => {
+                        synth_engine::commands::VisualizerType::SpectrumAnalyzer
+                    }
+                };
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: next_id,
+                    visualizer_type: engine_viz_type,
+                    buffer,
+                });
+            }
+            PaletteSelection::SignalMonitor => {
+                let mut m = synth_modules::SignalMonitor::new();
+                let d = m.descriptor();
+                let id = {
+                    let mut counters = session.counters_lock();
+                    let counter = counters
+                        .entry((instrument_id, synth_core::ModuleType::SignalMonitor))
+                        .or_insert(0);
+                    *counter += 1;
+                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
+                };
+                session.register_descriptor(instrument_id, id, d.clone());
+                editor.add_module_at(id, d, position);
+
+                let buffer =
+                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(id, buffer.clone());
+                m.set_vis_sink(buffer);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id,
+                    module: Box::new(m),
+                });
+            }
+            _ => {
+                let module_type = match selection {
+                    PaletteSelection::Category(category) => match category {
+                        ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
+                        ModuleCategory::Filter => Some(TypedModuleType::Filter),
+                        ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
+                        ModuleCategory::LFO => Some(TypedModuleType::Lfo),
+                        ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
+                        ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
+                        _ => None,
+                    },
+                    PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
+                    PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
+                    PaletteSelection::Noise => Some(TypedModuleType::Noise),
+                    PaletteSelection::WavetableOsc => Some(TypedModuleType::WavetableOsc),
+                    PaletteSelection::AdditiveOsc => Some(TypedModuleType::AdditiveOsc),
+                    PaletteSelection::GranularOsc => Some(TypedModuleType::GranularOsc),
+                    PaletteSelection::RingMod => Some(TypedModuleType::RingMod),
+                    PaletteSelection::EnvelopeFollower => Some(TypedModuleType::EnvelopeFollower),
+                    PaletteSelection::Mseg => Some(TypedModuleType::Mseg),
+                    PaletteSelection::KineticModulator => Some(TypedModuleType::KineticModulator),
+                    PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
+                    PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
+                    PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
+                    PaletteSelection::ModMatrix => Some(TypedModuleType::ModMatrix),
+                    PaletteSelection::StereoOutput => Some(TypedModuleType::StereoOutput),
+                    PaletteSelection::KeyboardPanner => Some(TypedModuleType::KeyboardPanner),
+                    PaletteSelection::BodyResonance => Some(TypedModuleType::BodyResonance),
+                    PaletteSelection::MechanicalNoise => Some(TypedModuleType::MechanicalNoise),
+                    PaletteSelection::Effect(effect_type) => Some(match effect_type {
+                        EffectType::Delay => TypedModuleType::Delay,
+                        EffectType::Reverb => TypedModuleType::Reverb,
+                        EffectType::Distortion => TypedModuleType::Distortion,
+                        EffectType::Chorus => TypedModuleType::Chorus,
+                        EffectType::Phaser => TypedModuleType::Phaser,
+                        EffectType::Flanger => TypedModuleType::Flanger,
+                        EffectType::Compressor => TypedModuleType::Compressor,
+                        EffectType::Eq => TypedModuleType::Eq,
+                        EffectType::Waveshaper => TypedModuleType::Waveshaper,
+                        EffectType::MidSide => TypedModuleType::MidSide,
+                        EffectType::BbdDelay => TypedModuleType::BbdDelay,
+                        EffectType::Limiter => TypedModuleType::Limiter,
+                        EffectType::Convolver => TypedModuleType::Convolver,
+                        EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
+                        EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
+                    }),
+                    _ => None,
+                };
+
+                if let Some(mt) = module_type {
+                    let Ok((next_id, descriptor)) = session.add_module(instrument_id, mt) else {
+                        return;
+                    };
+                    editor.add_module_at(next_id, descriptor.clone(), position);
+
+                    // Wire inline if this was a cable context menu action
+                    if let Some(cable) = inline_cable {
+                        wire_inline(handle, editor, next_id, &descriptor, cable);
+                    }
+                }
+            }
+        }
     }
 
     fn add_effect_module(&mut self, effect_type: EffectType) {
@@ -1389,304 +1556,6 @@ impl SynthApp {
         editor.add_module(next_id, descriptor);
     }
 
-    /// Add an effect to the master bus.
-    fn add_master_effect(&mut self, effect_type: EffectType) {
-        // Create effect in GUI thread (real-time safe allocation)
-        let (effect, module_type): (Box<dyn synth_core::AudioEffect>, TypedModuleType) =
-            match effect_type {
-                EffectType::Delay => (Box::new(Delay::new()), TypedModuleType::Delay),
-                EffectType::Reverb => (Box::new(Reverb::new()), TypedModuleType::Reverb),
-                EffectType::Distortion => {
-                    (Box::new(Distortion::new()), TypedModuleType::Distortion)
-                }
-                EffectType::Chorus => (Box::new(Chorus::new()), TypedModuleType::Chorus),
-                EffectType::Phaser => (Box::new(Phaser::new()), TypedModuleType::Phaser),
-                EffectType::Flanger => (Box::new(Flanger::new()), TypedModuleType::Flanger),
-                EffectType::Compressor => {
-                    (Box::new(Compressor::new()), TypedModuleType::Compressor)
-                }
-                EffectType::Eq => (Box::new(Eq::new()), TypedModuleType::Eq),
-                EffectType::Waveshaper => {
-                    (Box::new(Waveshaper::new()), TypedModuleType::Waveshaper)
-                }
-                EffectType::MidSide => (Box::new(MidSide::new()), TypedModuleType::MidSide),
-                EffectType::BbdDelay => (Box::new(BbdDelay::new()), TypedModuleType::BbdDelay),
-                EffectType::Limiter => (Box::new(Limiter::new()), TypedModuleType::Limiter),
-                EffectType::Convolver => (Box::new(Convolver::new()), TypedModuleType::Convolver),
-                EffectType::PhaseVocoder => {
-                    (Box::new(PhaseVocoder::new()), TypedModuleType::PhaseVocoder)
-                }
-                EffectType::FrequencyShifter => (
-                    Box::new(FrequencyShifter::new()),
-                    TypedModuleType::FrequencyShifter,
-                ),
-            };
-
-        // Master effects use session counters for ID but send directly (instrument_id: None)
-        let next_id = {
-            let mut counters = self.session.counters_lock();
-            let counter = counters
-                .entry((InstrumentId::MASTER, module_type))
-                .or_insert(0);
-            *counter += 1;
-            ModuleId::new(module_type, *counter)
-        };
-
-        self.handle.send(EngineCommand::AddEffectInstance {
-            instrument_id: None, // Master bus!
-            id: next_id,
-            effect,
-        });
-
-        // Track in UI state
-        self.master_effects
-            .push(MasterEffectUiState::new(next_id, effect_type));
-    }
-
-    fn draw_meters(&mut self, ui: &mut egui::Ui) {
-        // Output meters section - horizontal layout
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new("OUTPUT")
-                    .color(theme().colors.text_dim)
-                    .small(),
-            );
-            ui.add_space(4.0);
-
-            let (peak_l, peak_r) = self.handle.peak_meters();
-            let (rms_l, rms_r) = self.handle.rms_meters();
-            let meter_width = ui.available_width() - 30.0;
-
-            // Left channel - horizontal
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("L").color(theme().colors.text_dim).size(10.0));
-                draw_meter_horizontal(ui, peak_l, rms_l, meter_width, 12.0);
-            });
-
-            // Right channel - horizontal
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("R").color(theme().colors.text_dim).size(10.0));
-                draw_meter_horizontal(ui, peak_r, rms_r, meter_width, 12.0);
-            });
-
-            // dB readout
-            ui.horizontal(|ui| {
-                let db_l = 20.0 * peak_l.max(0.0001).log10();
-                let db_r = 20.0 * peak_r.max(0.0001).log10();
-                ui.label(
-                    RichText::new(format!("{:+.1} / {:+.1} dB", db_l, db_r))
-                        .color(theme().colors.text_dim)
-                        .size(9.0),
-                );
-            });
-        });
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
-
-        // Master FX section
-        self.draw_master_fx_section(ui);
-    }
-
-    /// Draw the Master FX section in the sidebar
-    #[allow(clippy::too_many_lines)]
-    fn draw_master_fx_section(&mut self, ui: &mut egui::Ui) {
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new("MASTER FX")
-                    .color(theme().colors.text_dim)
-                    .small(),
-            );
-            ui.add_space(4.0);
-
-            // Track actions to apply after iteration (to avoid borrow issues)
-            let mut effect_to_remove: Option<usize> = None;
-            let mut effect_to_toggle_bypass: Option<usize> = None;
-            let mut effect_to_toggle_expand: Option<usize> = None;
-            let mut param_changes: Vec<(EffectType, Param)> = Vec::new();
-
-            // Clone effect data for iteration (to allow mutation)
-            let effects_snapshot: Vec<_> = self
-                .master_effects
-                .iter()
-                .map(|e| (e.effect_type, e.expanded, e.bypassed, e.params.clone()))
-                .collect();
-
-            // Scrollable list of effects
-            egui::ScrollArea::vertical()
-                .max_height(ui.available_height() - 40.0)
-                .show(ui, |ui| {
-                    for (idx, (effect_type, is_expanded, is_bypassed, params)) in
-                        effects_snapshot.iter().enumerate()
-                    {
-                        // Effect header frame - use bg_module (lighter) for contrast with sliders
-                        let frame_color = if *is_bypassed {
-                            theme().colors.bg_module.gamma_multiply(0.7)
-                        } else {
-                            theme().colors.bg_module
-                        };
-
-                        egui::Frame::new()
-                            .fill(frame_color)
-                            .inner_margin(4.0)
-                            .corner_radius(4.0)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    // Expand/collapse toggle
-                                    let arrow = if *is_expanded { "▼" } else { "▶" };
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                RichText::new(arrow)
-                                                    .color(theme().colors.text_dim)
-                                                    .size(10.0),
-                                            )
-                                            .frame(false),
-                                        )
-                                        .clicked()
-                                    {
-                                        effect_to_toggle_expand = Some(idx);
-                                    }
-
-                                    // Effect name
-                                    let name = self.master_effects[idx].display_name();
-                                    let name_color = if *is_bypassed {
-                                        theme().colors.text_dim
-                                    } else {
-                                        theme().colors.text_primary
-                                    };
-                                    ui.label(RichText::new(name).color(name_color).size(11.0));
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            // Remove button
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(
-                                                        RichText::new("×")
-                                                            .color(theme().colors.text_dim)
-                                                            .size(12.0),
-                                                    )
-                                                    .min_size(egui::vec2(18.0, 18.0)),
-                                                )
-                                                .on_hover_text("Remove effect")
-                                                .clicked()
-                                            {
-                                                effect_to_remove = Some(idx);
-                                            }
-
-                                            // Bypass button
-                                            let bypass_color = if *is_bypassed {
-                                                theme().colors.accent_yellow
-                                            } else {
-                                                theme().colors.text_dim
-                                            };
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(
-                                                        RichText::new("B")
-                                                            .color(bypass_color)
-                                                            .size(10.0),
-                                                    )
-                                                    .min_size(egui::vec2(18.0, 18.0)),
-                                                )
-                                                .on_hover_text("Bypass effect")
-                                                .clicked()
-                                            {
-                                                effect_to_toggle_bypass = Some(idx);
-                                            }
-                                        },
-                                    );
-                                });
-
-                                // Expanded content with parameters
-                                if *is_expanded {
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.add_space(2.0);
-
-                                    // Draw parameters based on effect type
-                                    draw_effect_params(
-                                        ui,
-                                        idx,
-                                        *effect_type,
-                                        params,
-                                        &mut self.master_effects,
-                                        &mut param_changes,
-                                    );
-                                }
-                            });
-
-                        ui.add_space(2.0);
-                    }
-                });
-
-            // Apply actions after iteration
-            if let Some(idx) = effect_to_toggle_expand {
-                self.master_effects[idx].expanded = !self.master_effects[idx].expanded;
-            }
-
-            if let Some(idx) = effect_to_toggle_bypass {
-                let effect = &mut self.master_effects[idx];
-                effect.bypassed = !effect.bypassed;
-                self.handle.send(EngineCommand::SetEffectEnabled {
-                    instrument_id: None, // Master bus
-                    effect_type: effect.effect_type,
-                    enabled: !effect.bypassed,
-                });
-            }
-
-            if let Some(idx) = effect_to_remove {
-                let removed = self.master_effects.remove(idx);
-                self.handle.send(EngineCommand::RemoveEffect {
-                    instrument_id: None, // Master bus
-                    id: removed.id,
-                });
-            }
-
-            // Send parameter changes to engine
-            for (effect_type, param) in param_changes {
-                self.handle.send(EngineCommand::SetEffectParameter {
-                    instrument_id: None, // Master bus
-                    effect_type,
-                    param,
-                });
-            }
-
-            ui.add_space(8.0);
-
-            // Add effect dropdown
-            egui::ComboBox::from_id_salt("add_master_fx")
-                .selected_text(RichText::new("+ Add Effect").size(10.0))
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    let effect_types = [
-                        (EffectType::Compressor, "Compressor"),
-                        (EffectType::Eq, "EQ"),
-                        (EffectType::Reverb, "Reverb"),
-                        (EffectType::Delay, "Delay"),
-                        (EffectType::Chorus, "Chorus"),
-                        (EffectType::Phaser, "Phaser"),
-                        (EffectType::Flanger, "Flanger"),
-                        (EffectType::Distortion, "Distortion"),
-                        (EffectType::Waveshaper, "Waveshaper"),
-                        (EffectType::MidSide, "Mid/Side"),
-                        (EffectType::BbdDelay, "BBD Delay"),
-                        (EffectType::Limiter, "Limiter"),
-                        (EffectType::FrequencyShifter, "Freq Shifter"),
-                    ];
-
-                    for (effect_type, name) in effect_types {
-                        if ui.selectable_label(false, name).clicked() {
-                            self.add_master_effect(effect_type);
-                        }
-                    }
-                });
-        });
-    }
-
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannel::CH1;
@@ -1719,12 +1588,23 @@ impl SynthApp {
             self.keyboard.show_header(ui);
         });
 
-        // Layout: [Left Scope] [Piano Keys] [Right Scope]
+        // Layout: [Left Scope] [Piano Keys] [Right Scope] [Meter] [margin]
         let available_width = ui.available_width();
-        let piano_width = 52.0 * 24.0; // 52 white keys × 24px
-        let remaining = available_width - piano_width;
-        let min_scope_width = 60.0;
-        let show_scopes = remaining > min_scope_width * 2.0;
+        let meter_width = 30.0;
+        let meter_margin = 24.0;
+        let keys_height = 110.0;
+
+        // Piano: calculate octaves that fit, then its exact width
+        use crate::gui::keyboard::PianoKeyboard;
+        let piano_budget = available_width - meter_width - meter_margin;
+        let num_octaves = PianoKeyboard::octaves_for_width(piano_budget);
+        let piano_width = PianoKeyboard::width_for_octaves(num_octaves);
+
+        // Scopes share remaining space equally
+        let scope_total = (available_width - piano_width - meter_width - meter_margin).max(0.0);
+        let min_scope_width = 40.0;
+        let show_scopes = scope_total >= min_scope_width * 2.0;
+        let scope_width = if show_scopes { scope_total / 2.0 } else { 0.0 };
 
         let (samples_l, samples_r) = if show_scopes {
             self.handle.state.master_scope.read_samples()
@@ -1732,11 +1612,11 @@ impl SynthApp {
             (Vec::new(), Vec::new())
         };
 
-        let keys_height = 110.0;
+        let (peak_l, peak_r) = self.handle.peak_meters();
+        let (rms_l, rms_r) = self.handle.rms_meters();
 
         ui.horizontal(|ui| {
             if show_scopes {
-                let scope_width = remaining / 2.0;
                 draw_oscilloscope(
                     ui,
                     &samples_l,
@@ -1747,8 +1627,7 @@ impl SynthApp {
                 );
             }
 
-            let piano_max = available_width.min(piano_width + 10.0);
-            ui.allocate_ui(Vec2::new(piano_max, keys_height), |ui| {
+            ui.allocate_ui(Vec2::new(piano_width, keys_height), |ui| {
                 let event = self.keyboard.show_keys(ui);
 
                 if let Some(note) = event.note_on {
@@ -1761,7 +1640,6 @@ impl SynthApp {
             });
 
             if show_scopes {
-                let scope_width = remaining / 2.0;
                 draw_oscilloscope(
                     ui,
                     &samples_r,
@@ -1771,6 +1649,10 @@ impl SynthApp {
                     theme().colors.meter_green,
                 );
             }
+
+            // Vertical stereo level meter
+            draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, meter_width, keys_height);
+            ui.add_space(meter_margin);
         });
     }
 
@@ -2168,1806 +2050,4 @@ impl SynthApp {
             &self.awe_ui,
         )
     }
-}
-
-/// Draw effect parameters with compact sliders.
-#[allow(clippy::too_many_lines)]
-fn draw_effect_params(
-    ui: &mut egui::Ui,
-    idx: usize,
-    effect_type: EffectType,
-    params: &MasterEffectParams,
-    effects: &mut [MasterEffectUiState],
-    param_changes: &mut Vec<(EffectType, Param)>,
-) {
-    use synth_core::{Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, Seconds};
-
-    // Use push_id to give unique IDs to widgets within each effect
-    ui.push_id(format!("fx_{}", idx), |ui| {
-        match params {
-            MasterEffectParams::Compressor {
-                threshold,
-                ratio,
-                attack,
-                release,
-                makeup,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Compressor {
-                    threshold: t,
-                    ratio: r,
-                    attack: a,
-                    release: rel,
-                    makeup: m,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Threshold
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Thresh")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}dB", threshold))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *threshold;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -60.0..=0.0).show_value(false))
-                        .changed()
-                    {
-                        *t = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Threshold(Decibels::new(val))),
-                        ));
-                    }
-
-                    // Ratio
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Ratio")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.1}:1", ratio))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *ratio;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 1.0..=20.0).show_value(false))
-                        .changed()
-                    {
-                        *r = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Ratio(Ratio::new(val))),
-                        ));
-                    }
-
-                    // Attack
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Attack")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.1}ms", attack))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *attack;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut val, 0.1..=100.0)
-                                .show_value(false)
-                                .logarithmic(true),
-                        )
-                        .changed()
-                    {
-                        *a = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Attack(Milliseconds::new(val))),
-                        ));
-                    }
-
-                    // Release
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Release")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}ms", release))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *release;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut val, 10.0..=1000.0)
-                                .show_value(false)
-                                .logarithmic(true),
-                        )
-                        .changed()
-                    {
-                        *rel = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Release(Milliseconds::new(val))),
-                        ));
-                    }
-
-                    // Makeup
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Makeup")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}dB", makeup))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *makeup;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=24.0).show_value(false))
-                        .changed()
-                    {
-                        *m = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Makeup(Decibels::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Compressor(CompressorParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Eq {
-                low_gain,
-                mid_gain,
-                high_gain,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Eq {
-                    low_gain: lg,
-                    mid_gain: mg,
-                    high_gain: hg,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Low Gain
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Low")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}dB", low_gain))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *low_gain;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
-                        .changed()
-                    {
-                        *lg = val;
-                        param_changes
-                            .push((effect_type, Param::Eq(EqParam::LowGain(Decibels::new(val)))));
-                    }
-
-                    // Mid Gain
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mid")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}dB", mid_gain))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mid_gain;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
-                        .changed()
-                    {
-                        *mg = val;
-                        param_changes
-                            .push((effect_type, Param::Eq(EqParam::MidGain(Decibels::new(val)))));
-                    }
-
-                    // High Gain
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("High")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}dB", high_gain))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *high_gain;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
-                        .changed()
-                    {
-                        *hg = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Eq(EqParam::HighGain(Decibels::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Eq(EqParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Reverb {
-                room_size,
-                damping,
-                width,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Reverb {
-                    room_size: rs,
-                    damping: d,
-                    width: w,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Room Size
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Size")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", room_size * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *room_size;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *rs = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Reverb(ReverbParam::RoomSize(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Damping
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Damp")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", damping * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *damping;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *d = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Reverb(ReverbParam::Damping(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Width
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Width")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", width * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *width;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *w = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Reverb(ReverbParam::Width(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Reverb(ReverbParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Delay {
-                time,
-                feedback,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Delay {
-                    time: t,
-                    feedback: fb,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Time
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Time")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.2}s", time))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *time;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut val, 0.01..=2.0)
-                                .show_value(false)
-                                .logarithmic(true),
-                        )
-                        .changed()
-                    {
-                        *t = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Delay(DelayParam::Time(Seconds::new(val))),
-                        ));
-                    }
-
-                    // Feedback
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Feedback")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *feedback;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=0.95).show_value(false))
-                        .changed()
-                    {
-                        *fb = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Delay(DelayParam::Feedback(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Delay(DelayParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Chorus { rate, depth, mix } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Chorus {
-                    rate: r,
-                    depth: d,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Rate
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Rate")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.2}Hz", rate))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *rate;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.1..=5.0).show_value(false))
-                        .changed()
-                    {
-                        *r = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Chorus(ChorusParam::Rate(Hertz::new(val))),
-                        ));
-                    }
-
-                    // Depth
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Depth")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *depth;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *d = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Chorus(ChorusParam::Depth(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Chorus(ChorusParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Phaser {
-                rate,
-                depth,
-                feedback,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Phaser {
-                    rate: r,
-                    depth: d,
-                    feedback: fb,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Rate
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Rate")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.2}Hz", rate))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *rate;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.1..=5.0).show_value(false))
-                        .changed()
-                    {
-                        *r = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Phaser(PhaserParam::Rate(Hertz::new(val))),
-                        ));
-                    }
-
-                    // Depth
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Depth")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *depth;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *d = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Phaser(PhaserParam::Depth(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Feedback
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Feedback")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *feedback;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -1.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *fb = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Phaser(PhaserParam::Feedback(synth_core::BipolarValue::new(
-                                val,
-                            ))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Phaser(PhaserParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Flanger {
-                rate,
-                depth,
-                feedback,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Flanger {
-                    rate: r,
-                    depth: d,
-                    feedback: fb,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Rate
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Rate")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.2}Hz", rate))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *rate;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.1..=5.0).show_value(false))
-                        .changed()
-                    {
-                        *r = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Flanger(FlangerParam::Rate(Hertz::new(val))),
-                        ));
-                    }
-
-                    // Depth
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Depth")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", depth * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *depth;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *d = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Flanger(FlangerParam::Depth(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Feedback
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Feedback")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *feedback;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -1.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *fb = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Flanger(FlangerParam::Feedback(synth_core::BipolarValue::new(
-                                val,
-                            ))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Flanger(FlangerParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Distortion { drive, tone, mix } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Distortion {
-                    drive: dr,
-                    tone: t,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Drive
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Drive")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", drive * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *drive;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *dr = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Distortion(DistortionParam::Drive(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Tone
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Tone")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", tone * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *tone;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *t = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Distortion(DistortionParam::Tone(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Distortion(DistortionParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Waveshaper { drive, mix, bias } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Waveshaper {
-                    drive: dr,
-                    mix: mx,
-                    bias: bi,
-                } = &mut effect.params
-                {
-                    // Drive
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Drive")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", drive * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *drive;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *dr = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Waveshaper(WaveshaperParam::Drive(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Bias
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Bias")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.2}", bias))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *bias;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -1.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *bi = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Waveshaper(WaveshaperParam::Bias(
-                                synth_core::BipolarValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Waveshaper(WaveshaperParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::MidSide {
-                width,
-                mid_gain,
-                side_gain,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::MidSide {
-                    width: w,
-                    mid_gain: mg,
-                    side_gain: sg,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Width
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Width")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let actual_width = width * 2.0;
-                            ui.label(
-                                RichText::new(format!("{actual_width:.1}"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *width;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *w = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::MidSide(MidSideParam::Width(NormalizedValue::new(val))),
-                        ));
-                    }
-
-                    // Mid Gain
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mid Gain")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{mid_gain:+.1} dB"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mid_gain;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
-                        .changed()
-                    {
-                        *mg = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::MidSide(MidSideParam::MidGain(synth_core::Decibels::new(val))),
-                        ));
-                    }
-
-                    // Side Gain
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Side Gain")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{side_gain:+.1} dB"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *side_gain;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=12.0).show_value(false))
-                        .changed()
-                    {
-                        *sg = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::MidSide(MidSideParam::SideGain(synth_core::Decibels::new(val))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::MidSide(MidSideParam::Mix(NormalizedValue::new(val))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::BbdDelay {
-                time,
-                feedback,
-                tone,
-                wow_flutter,
-                clock_noise,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::BbdDelay {
-                    time: t,
-                    feedback: fb,
-                    tone: tn,
-                    wow_flutter: wf,
-                    clock_noise: cn,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Time
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Time")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}ms", time * 1000.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *time;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.01..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *t = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::Time(Seconds::new(val))),
-                        ));
-                    }
-
-                    // Feedback
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Feedback")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", feedback * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *feedback;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=0.95).show_value(false))
-                        .changed()
-                    {
-                        *fb = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::Feedback(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Tone
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Tone")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", tone * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *tone;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *tn = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::Tone(NormalizedValue::new(
-                                val,
-                            ))),
-                        ));
-                    }
-
-                    // Wow & Flutter
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("W&F")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", wow_flutter * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *wow_flutter;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *wf = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::WowFlutter(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Clock Noise
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Noise")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", clock_noise * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *clock_noise;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *cn = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::ClockNoise(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::BbdDelay(synth_core::BbdDelayParam::Mix(NormalizedValue::new(
-                                val,
-                            ))),
-                        ));
-                    }
-                }
-            }
-
-            MasterEffectParams::Limiter {
-                ceiling,
-                look_ahead,
-                release,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Limiter {
-                    ceiling: c,
-                    look_ahead: la,
-                    release: rel,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Ceiling
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Ceiling")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{ceiling:.1} dB"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *ceiling;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -12.0..=0.0).show_value(false))
-                        .changed()
-                    {
-                        *c = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Limiter(synth_core::LimiterParam::Ceiling(Decibels::new(val))),
-                        ));
-                    }
-
-                    // Look-ahead
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Look-ahead")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{look_ahead:.1}ms"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *look_ahead;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 1.0..=5.0).show_value(false))
-                        .changed()
-                    {
-                        *la = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Limiter(synth_core::LimiterParam::LookAhead(Milliseconds::new(
-                                val,
-                            ))),
-                        ));
-                    }
-
-                    // Release
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Release")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{release:.0}ms"))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *release;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 10.0..=500.0).show_value(false))
-                        .changed()
-                    {
-                        *rel = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Limiter(synth_core::LimiterParam::Release(Milliseconds::new(
-                                val,
-                            ))),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Limiter(synth_core::LimiterParam::Mix(NormalizedValue::new(
-                                val,
-                            ))),
-                        ));
-                    }
-                }
-            }
-            MasterEffectParams::Convolver {
-                ir_type: _,
-                pre_delay,
-                decay_trim,
-                brightness,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::Convolver {
-                    ir_type: _it,
-                    pre_delay: pd,
-                    decay_trim: dt,
-                    brightness: br,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Pre-Delay
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Pre-Delay")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}ms", pre_delay))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *pre_delay;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=200.0).show_value(false))
-                        .changed()
-                    {
-                        *pd = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Convolver(synth_core::ConvolverParam::PreDelay(
-                                Milliseconds::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Decay
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Decay")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", decay_trim * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *decay_trim;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.1..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *dt = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Convolver(synth_core::ConvolverParam::DecayTrim(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Brightness
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Bright")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", brightness * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *brightness;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *br = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Convolver(synth_core::ConvolverParam::Brightness(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::Convolver(synth_core::ConvolverParam::Mix(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-                }
-            }
-            MasterEffectParams::PhaseVocoder {
-                pitch_shift,
-                freeze: _,
-                fft_size: _,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::PhaseVocoder {
-                    pitch_shift: ps,
-                    freeze: _fr,
-                    fft_size: _fs,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Pitch Shift
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Pitch")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}st", pitch_shift))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *pitch_shift;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -24.0..=24.0).show_value(false))
-                        .changed()
-                    {
-                        *ps = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::PhaseVocoder(synth_core::PhaseVocoderParam::PitchShift(
-                                synth_core::Semitones(val),
-                            )),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::PhaseVocoder(synth_core::PhaseVocoderParam::Mix(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-                }
-            }
-            MasterEffectParams::FrequencyShifter {
-                shift,
-                mode: _,
-                mix,
-            } => {
-                let effect = &mut effects[idx];
-                if let MasterEffectParams::FrequencyShifter {
-                    shift: sh,
-                    mode: _md,
-                    mix: mx,
-                } = &mut effect.params
-                {
-                    // Shift
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Shift")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:+.1}Hz", shift))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *shift;
-                    if ui
-                        .add(egui::Slider::new(&mut val, -1000.0..=1000.0).show_value(false))
-                        .changed()
-                    {
-                        *sh = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::FrequencyShifter(synth_core::FrequencyShifterParam::Shift(
-                                Hertz::new(val),
-                            )),
-                        ));
-                    }
-
-                    // Mix
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Mix")
-                                .color(theme().colors.text_dim)
-                                .size(9.0),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{:.0}%", mix * 100.0))
-                                    .color(theme().colors.text_secondary)
-                                    .size(9.0),
-                            );
-                        });
-                    });
-                    let mut val = *mix;
-                    if ui
-                        .add(egui::Slider::new(&mut val, 0.0..=1.0).show_value(false))
-                        .changed()
-                    {
-                        *mx = val;
-                        param_changes.push((
-                            effect_type,
-                            Param::FrequencyShifter(synth_core::FrequencyShifterParam::Mix(
-                                NormalizedValue::new(val),
-                            )),
-                        ));
-                    }
-                }
-            }
-        }
-    });
 }

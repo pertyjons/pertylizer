@@ -421,6 +421,21 @@ impl SynthSession {
     // Queries
     // ------------------------------------------------------------------
 
+    /// Register a module descriptor in the session registry without creating it.
+    ///
+    /// Use this for GUI-created modules (visualizers, signal monitors) that bypass
+    /// the normal `add_module` flow but still need to be tracked by the session
+    /// so that reconciliation doesn't remove them.
+    pub fn register_descriptor(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        descriptor: ModuleDescriptor,
+    ) {
+        let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        registry.insert((instrument_id, module_id), descriptor);
+    }
+
     /// Check if a module exists in the registry for a specific instrument.
     pub fn has_module(&self, instrument_id: InstrumentId, module_id: ModuleId) -> bool {
         let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());

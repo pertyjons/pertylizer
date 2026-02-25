@@ -1,5 +1,22 @@
 # Version History
 
+## [0.168.0] - 2026-02-25
+### Enhetlig högerklicksmeny (kabel-medveten)
+- Kabel- och bakgrundskontextmenyn sammanslagen till en enda meny
+- Högerklick på kabel visar: "Ta bort sladd", "Stoppa in Signal Monitor", separator, "Stoppa in modul..." (med fullständig modulkatalog)
+- Vald modul kopplas in inline på kabeln (from→ny modul→to)
+- Exakt en kabel hovrad åt gången (närmaste, inom 20px) — ingen överlappning
+- Hamburger-ikon (☰) på hovrad kabel borttagen — kabeln highlightas fortfarande
+- Port-högerklick opåverkad
+
+## [0.167.0] - 2026-02-25
+### Högerklicksmeny för att lägga till moduler i patch-editorn
+- Högerklick på tom yta i patch-editorn öppnar en hierarkisk kontextmeny med alla modulkategorier
+- Vald modul placeras vid klickpositionen (istället för auto-layout)
+- Samma menystruktur som top bar-paletten: Oscillator, Filter, Envelope, LFO, VCA, Mixer, Effect, Visualizer, Modulation, Generative, Physical, Output, Mod Matrix
+- Undermenyer för Oscillator, Effect, Visualizer, Modulation, Generative och Physical
+- Befintliga högerklicksmenyer (kabel, port) opåverkade
+
 ## [0.166.0] - 2026-02-25
 ### Typsäkerhet: String → PortName genomgående, GUI-visning av modul/instrument-ID
 

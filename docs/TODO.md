@@ -10,8 +10,10 @@
    * [x] ~~Minskar latens drastiskt vid låtbygge via MCP~~ *(v0.157.0: 8 batch-verktyg inkl. `set_song`)*
 
 2. **Sequencer GUI — Song-visualisering**
+   * 👉 **Arkitektur & Plan:** [Läs `docs/sequencer_plan.md`](sequencer_plan.md)
    * [ ] Arrangement-vy: Visa tracks, pattern-placements på en tidslinje
    * [ ] Piano Roll-vy: Visa/redigera noter i ett pattern
+   * [ ] Tracker-vy: Komplementerande vy för tangentbordsdrivet workflow
    * [ ] Transport-kontroller i GUI (play/stop/seek)
 
 3. **Spara & ladda Song**
