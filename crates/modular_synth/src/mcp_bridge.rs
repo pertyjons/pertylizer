@@ -1593,9 +1593,7 @@ impl SynthBridge for AppSynthBridge {
         pattern_id: u32,
         points: &[BridgeAutomationPointData],
     ) -> Result<BatchResult, McpBridgeError> {
-        use synth_sequencer::{
-            AutoInstrumentParam, AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId,
-        };
+        use synth_sequencer::{AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId};
 
         let mut song_w = self
             .shared
