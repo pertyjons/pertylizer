@@ -69,6 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
+    // Load persistent settings
+    let settings = modular_synth::io::AppSettings::load();
+
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: VoiceCount::OCTO,
@@ -140,14 +143,13 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
     // Create GUI configuration
     let gui_config = SynthGuiConfig {
         title: "Modular Synthesizer".to_string(),
-        width: 1280,
-        height: 800,
         allocator_config,
         stream_config,
         session,
         song,
         #[cfg(feature = "mcp")]
         mcp_shared: Some(mcp_shared),
+        settings,
     };
 
     // Create and run the selected GUI backend

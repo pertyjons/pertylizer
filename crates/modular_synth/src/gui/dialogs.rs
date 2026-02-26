@@ -11,6 +11,7 @@ use egui_file_dialog::FileDialog;
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
+use crate::io::settings::AppSettings;
 use crate::patch::{Patch, example_patches};
 
 /// Type of file dialog operation.
@@ -142,17 +143,26 @@ pub enum LoadPatchResult {
 }
 
 /// Show the settings dialog.
-pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme: &mut ThemePreset) {
+///
+/// Returns `true` if any setting was changed (caller should save).
+pub fn show_settings_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    current_theme: &mut ThemePreset,
+    settings: &mut AppSettings,
+) -> bool {
     if !*open {
-        return;
+        return false;
     }
+
+    let mut changed = false;
 
     egui::Window::new("Settings")
         .collapsible(false)
         .resizable(true)
-        .min_width(300.0)
+        .min_width(360.0)
         .show(ctx, |ui| {
-            // Theme section
+            // --- Theme ---
             ui.heading("Theme");
             ui.add_space(4.0);
 
@@ -168,11 +178,12 @@ pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme:
 
                         if ui.add(button).clicked() {
                             *current_theme = *preset;
+                            settings.theme = *preset;
                             preset.apply();
                             setup_custom_style(ctx);
+                            changed = true;
                         }
 
-                        // 4 kolumner per rad
                         if (i + 1) % 4 == 0 {
                             ui.end_row();
                         }
@@ -182,7 +193,72 @@ pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme:
             ui.add_space(12.0);
             ui.separator();
 
-            // Keyboard section
+            // --- Author / Composer ---
+            ui.heading("Author");
+            ui.add_space(4.0);
+
+            egui::Grid::new("author_grid")
+                .num_columns(2)
+                .spacing([8.0, 4.0])
+                .min_col_width(80.0)
+                .show(ui, |ui| {
+                    ui.label("Name:");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.author.name)
+                                .desired_width(220.0)
+                                .hint_text("Your name"),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    ui.end_row();
+
+                    ui.label("Email:");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.author.email)
+                                .desired_width(220.0)
+                                .hint_text("email@example.com"),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    ui.end_row();
+
+                    ui.label("Website:");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.author.website)
+                                .desired_width(220.0)
+                                .hint_text("https://"),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    ui.end_row();
+
+                    ui.label("License:");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut settings.author.license)
+                                .desired_width(220.0)
+                                .hint_text("CC BY 4.0"),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    ui.end_row();
+                });
+
+            ui.add_space(12.0);
+            ui.separator();
+
+            // --- Keyboard ---
             ui.heading("Keyboard Layout");
             ui.label("Lower row (Z-M): C3-B3");
             ui.label("Upper row (Q-I): C4-C5");
@@ -193,6 +269,8 @@ pub fn show_settings_dialog(ctx: &egui::Context, open: &mut bool, current_theme:
                 *open = false;
             }
         });
+
+    changed
 }
 
 /// Show the about dialog.

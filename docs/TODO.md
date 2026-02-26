@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.179.0)
+# TODO - Modular Synth (v0.180.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -11,14 +11,11 @@
 - Code comments in theme.rs remain Swedish (not user-facing)
 
 ### 1.3 Settings file (persistent config)
-- [ ] Create a settings file (`~/.config/modular-synth/settings.json` or platform equivalent)
-- [ ] Load on startup, save on change
-- Initial contents:
-  - `theme: ThemePreset` — graphic theme selection
-  - `author: String` — composer name (used in song metadata)
-  - `window_position: (x, y)` — main window position
-  - `window_size: (width, height)` — main window size
-- Consider: Use `directories` crate for platform-appropriate config paths.
+- [x] Create settings file (`~/.local/share/modular-synth/settings.json`)
+- [x] Load on startup, save on change and on exit
+- [x] Theme persisted and restored at startup
+- [x] Window position and size persisted
+- [x] Author info in Settings dialog: name, email, website, license
 - Later expansion: MIDI device preferences, default BPM, audio buffer size, etc.
 
 ### 1.4 Sequencer — Track & pattern management from GUI

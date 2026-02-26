@@ -74,24 +74,32 @@ impl GuiBackend for EguiBackend {
         let stream_info = host.start_output(None, &config.stream_config, Box::new(engine))?;
 
         let window_title = config.title.clone();
-        let window_width = config.width as f32;
-        let window_height = config.height as f32;
+        let window_width = config.settings.window.width as f32;
+        let window_height = config.settings.window.height as f32;
+        let startup_theme = config.settings.theme;
+
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_inner_size([window_width, window_height])
+            .with_title(&window_title)
+            .with_min_inner_size([800.0, 600.0]);
+
+        if let (Some(x), Some(y)) = (config.settings.window.x, config.settings.window.y) {
+            viewport = viewport.with_position([x as f32, y as f32]);
+        }
 
         let app = SynthApp::new(handle, host, config, stream_info.output_latency);
 
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([window_width, window_height])
-                .with_title(&window_title)
-                .with_min_inner_size([800.0, 600.0]),
+            viewport,
             ..Default::default()
         };
 
         eframe::run_native(
             &window_title,
             options,
-            Box::new(|cc| {
+            Box::new(move |cc| {
                 setup_custom_fonts(&cc.egui_ctx);
+                startup_theme.apply();
                 setup_custom_style(&cc.egui_ctx);
                 Ok(Box::new(app))
             }),
@@ -227,6 +235,9 @@ struct SynthApp {
     // MCP shared state
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
+
+    // Persistent application settings
+    settings: crate::io::settings::AppSettings,
 }
 
 impl SynthApp {
@@ -252,6 +263,7 @@ impl SynthApp {
         //
         // This guarantees GUI and Engine have exactly the same state.
 
+        let settings = config.settings.clone();
         let session = config.session.clone();
         let song = config.song.clone();
         let mut keyboard = PianoKeyboard::new();
@@ -289,6 +301,9 @@ impl SynthApp {
         // can send commands to the engine.
         let midi_handler = MidiHandler::new(handle.command_sender());
 
+        let mut dialog_state = DialogState::new();
+        dialog_state.current_theme = settings.theme;
+
         Self {
             handle,
             host: Some(host),
@@ -297,7 +312,7 @@ impl SynthApp {
             midi_handler,
             keyboard,
             pressed_keys: HashMap::new(),
-            dialog_state: DialogState::new(),
+            dialog_state,
             current_patch_name: patch_name,
             current_patch_path: None,
             glide_time,
@@ -311,6 +326,7 @@ impl SynthApp {
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
+            settings,
         }
     }
 
@@ -970,9 +986,24 @@ impl eframe::App for SynthApp {
         // Write current UI layout to MCP shared state
         #[cfg(feature = "mcp")]
         self.write_mcp_layout(ctx);
+
+        // Track window geometry for saving on exit
+        ctx.input(|i| {
+            if let Some(rect) = i.viewport().inner_rect {
+                self.settings.window.width = rect.width() as u32;
+                self.settings.window.height = rect.height() as u32;
+            }
+            if let Some(pos) = i.viewport().outer_rect {
+                self.settings.window.x = Some(pos.min.x as i32);
+                self.settings.window.y = Some(pos.min.y as i32);
+            }
+        });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Save window geometry
+        self.settings.save();
+
         // Stop audio
         if let Some(ref mut host) = self.host {
             let _ = host.stop();
@@ -1688,11 +1719,14 @@ impl SynthApp {
         self.dialog_state.update();
 
         // Settings dialog
-        show_settings_dialog(
+        if show_settings_dialog(
             ctx,
             &mut self.dialog_state.show_settings,
             &mut self.dialog_state.current_theme,
-        );
+            &mut self.settings,
+        ) {
+            self.settings.save();
+        }
 
         // About dialog
         show_about_dialog(ctx, &mut self.dialog_state.show_about);

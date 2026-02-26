@@ -92,10 +92,6 @@ pub type GuiResult<T> = Result<T, Box<dyn Error>>;
 pub struct SynthGuiConfig {
     /// Window title.
     pub title: String,
-    /// Initial window width.
-    pub width: u32,
-    /// Initial window height.
-    pub height: u32,
     /// Voice allocator configuration.
     pub allocator_config: AllocatorConfig,
     /// Audio stream configuration.
@@ -107,6 +103,8 @@ pub struct SynthGuiConfig {
     /// Shared MCP state (if MCP feature enabled).
     #[cfg(feature = "mcp")]
     pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
+    /// Persistent application settings.
+    pub settings: crate::io::settings::AppSettings,
 }
 
 /// Trait that all GUI backends must implement.

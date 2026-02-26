@@ -6,6 +6,8 @@
 
 mod midi;
 mod patch_manager;
+pub mod settings;
 
 pub use midi::{MidiError, MidiHandler};
 pub use patch_manager::*;
+pub use settings::AppSettings;

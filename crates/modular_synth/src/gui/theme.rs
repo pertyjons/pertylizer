@@ -143,7 +143,7 @@ impl Theme {
 }
 
 /// Available theme presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ThemePreset {
     /// Default dark synth theme with orange accents.
     #[default]

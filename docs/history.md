@@ -1,5 +1,15 @@
 # Version History
 
+## [0.180.0] - 2026-02-27
+### Persistent settings file
+- **`AppSettings`** — new `io::settings` module with JSON config at `~/.local/share/modular-synth/settings.json`
+- **Theme persistence** — selected theme restored on startup (no longer resets to Dark)
+- **Window geometry** — size and position saved on exit, restored on next launch
+- **Author info** — name, email, website, and license fields in Settings dialog
+- Settings auto-saved on change and on exit
+- `ThemePreset` now derives `Serialize`/`Deserialize`
+- `SynthGuiConfig` carries `AppSettings` instead of hardcoded width/height
+
 ## [0.179.0] - 2026-02-27
 ### MCP default + English UI
 - **MCP feature enabled by default** — `default = ["gui-egui", "mcp"]`, no longer requires `--features mcp`
