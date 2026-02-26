@@ -431,4 +431,26 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: Option<u64>,
         patch_name: &str,
     ) -> Result<ApplyExamplePatchResult, McpBridgeError>;
+
+    // === Automation ===
+
+    /// Add automation points to a pattern.
+    fn add_automation_points(
+        &self,
+        pattern_id: u32,
+        points: &[BridgeAutomationPointData],
+    ) -> Result<BatchResult, McpBridgeError>;
+}
+
+/// Automation point data for MCP bridge.
+pub struct BridgeAutomationPointData {
+    /// Instrument parameter name: "Volume", "Pan", "FilterCutoff", "FilterResonance",
+    /// "Attack", "Decay", "Sustain", "Release".
+    pub param: String,
+    /// Instrument index (default 0).
+    pub instrument_id: u16,
+    /// Position in beats.
+    pub beat: f32,
+    /// Normalized value (0.0-1.0).
+    pub value: f32,
 }

@@ -11,8 +11,8 @@ use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
-    BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate, BridgeParamValue, BridgePatternData,
-    BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
+    BridgeAutomationPointData, BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate,
+    BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
@@ -1581,6 +1581,74 @@ impl SynthBridge for AppSynthBridge {
             module_count: result.module_count,
             connection_count: result.connection_count,
             errors: result.errors,
+        })
+    }
+
+    fn add_automation_points(
+        &self,
+        pattern_id: u32,
+        points: &[BridgeAutomationPointData],
+    ) -> Result<BatchResult, McpBridgeError> {
+        use synth_sequencer::{
+            AutoInstrumentParam, AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId,
+        };
+
+        let mut song_w = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song_w
+            .pattern_mut(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let mut succeeded = 0usize;
+        let mut items = Vec::new();
+        let total = points.len();
+
+        for (i, pt) in points.iter().enumerate() {
+            let param = match pt.param.as_str() {
+                "Volume" => AutoInstrumentParam::Volume,
+                "Pan" => AutoInstrumentParam::Pan,
+                "FilterCutoff" => AutoInstrumentParam::FilterCutoff,
+                "FilterResonance" => AutoInstrumentParam::FilterResonance,
+                "Attack" => AutoInstrumentParam::Attack,
+                "Decay" => AutoInstrumentParam::Decay,
+                "Sustain" => AutoInstrumentParam::Sustain,
+                "Release" => AutoInstrumentParam::Release,
+                other => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!("unknown param '{other}'")),
+                    });
+                    continue;
+                }
+            };
+
+            let target = AutomationTarget::Instrument {
+                instrument: SeqInstrumentId::new(pt.instrument_id),
+                param,
+            };
+            let tick = PatternTick(beats_to_ticks(pt.beat));
+            let lane = pattern.get_or_create_automation(target);
+            lane.add_point(AutomationPoint::new(tick, pt.value));
+            items.push(BatchItemResult {
+                index: i,
+                success: true,
+                id: None,
+                error: None,
+            });
+            succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total,
+            succeeded,
+            failed: total - succeeded,
+            items,
         })
     }
 }

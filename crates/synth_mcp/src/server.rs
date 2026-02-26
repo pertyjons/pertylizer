@@ -317,6 +317,29 @@ pub struct ClearPatternParam {
     pub pattern_id: u32,
 }
 
+/// An automation point to add.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AutomationPointInput {
+    #[schemars(
+        description = "Parameter: Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay, Sustain, Release"
+    )]
+    pub param: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+    #[schemars(description = "Position in beats")]
+    pub beat: f32,
+    #[schemars(description = "Normalized value (0.0-1.0)")]
+    pub value: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddAutomationPointsParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Automation points to add")]
+    pub points: Vec<AutomationPointInput>,
+}
+
 /// A pattern to create in a batch operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternInput {
@@ -1193,6 +1216,27 @@ impl SynthMcpServer {
                 "OK: cleared {count} notes from pattern {}",
                 params.0.pattern_id
             ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add automation points to a pattern. Each point specifies a parameter (e.g. Volume, Pan, FilterCutoff), position in beats, and a normalized value (0.0-1.0)."
+    )]
+    async fn add_automation_points(&self, params: Parameters<AddAutomationPointsParam>) -> String {
+        let p = params.0;
+        let points: Vec<_> = p
+            .points
+            .into_iter()
+            .map(|pt| crate::bridge::BridgeAutomationPointData {
+                param: pt.param,
+                instrument_id: pt.instrument_id.unwrap_or(0),
+                beat: pt.beat,
+                value: pt.value,
+            })
+            .collect();
+        match self.bridge.add_automation_points(p.pattern_id, &points) {
+            Ok(result) => serde_json::to_string_pretty(&result).unwrap_or_default(),
             Err(e) => format!("Error: {e}"),
         }
     }
