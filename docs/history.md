@@ -1,5 +1,11 @@
 # Version History
 
+## [0.179.0] - 2026-02-27
+### MCP default + English UI
+- **MCP feature enabled by default** — `default = ["gui-egui", "mcp"]`, no longer requires `--features mcp`
+- **All UI strings translated to English** — AWE view (materials, labels, tooltips, section headings), patch editor context menus
+- **Comprehensive TODO list** added with prioritized roadmap (docs/TODO.md)
+
 ## [0.178.0] - 2026-02-26
 ### InstrumentMapping: Stabil SeqInstrumentId ↔ InstrumentId
 - **`InstrumentMapping`** — ny struct i `synth_engine` som mappar `SeqInstrumentId(u16)` ↔ `InstrumentId(u64)` stabilt

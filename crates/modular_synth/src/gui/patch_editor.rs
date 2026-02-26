@@ -1450,13 +1450,13 @@ impl PatchEditor {
                             ui.separator();
 
                             ui.label(
-                                egui::RichText::new("Stoppa in modul...")
+                                egui::RichText::new("Insert module...")
                                     .color(theme().colors.text_secondary)
                                     .size(11.0),
                             );
                         } else {
                             ui.label(
-                                egui::RichText::new("Lägg till modul")
+                                egui::RichText::new("Add module")
                                     .color(theme().colors.text_secondary)
                                     .size(11.0),
                             );
@@ -1868,8 +1868,8 @@ impl PatchEditor {
                         ui.set_min_width(160.0);
 
                         let header = match target_direction {
-                            WidgetPortDirection::Input => "Lägg till källa",
-                            WidgetPortDirection::Output => "Lägg till mål",
+                            WidgetPortDirection::Input => "Add source",
+                            WidgetPortDirection::Output => "Add target",
                         };
                         ui.label(
                             egui::RichText::new(header)

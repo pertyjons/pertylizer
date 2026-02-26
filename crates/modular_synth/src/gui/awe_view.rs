@@ -312,8 +312,8 @@ impl AweUiState {
 }
 
 const MATERIAL_NAMES: [&str; 15] = [
-    "Concrete", "Wood", "Glass", "Metal", "Fabric", "Tile", "Marmor", "Is", "Matta", "Vatten",
-    "Tomrum", "Prisma", "Plasma", "Membran", "Nanogel",
+    "Concrete", "Wood", "Glass", "Metal", "Fabric", "Tile", "Marble", "Ice", "Carpet", "Water",
+    "Void", "Prism", "Plasma", "Membrane", "Nanogel",
 ];
 
 fn material_from_index(idx: usize) -> Material {
@@ -1100,7 +1100,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         painter.text(
             egui::pos2(source_pos.x, source_pos.y + marker_radius + 6.0),
             egui::Align2::CENTER_TOP,
-            "Källa",
+            "Source",
             egui::FontId::proportional(11.0),
             source_color,
         );
@@ -1127,7 +1127,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
         painter.text(
             egui::pos2(listener_pos.x, listener_pos.y + marker_radius + 6.0),
             egui::Align2::CENTER_TOP,
-            "Lyssnare",
+            "Listener",
             egui::FontId::proportional(11.0),
             listener_color,
         );
@@ -1160,7 +1160,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     };
 
     let info_text =
-        format!("Avstånd: {distance:.1} m\nRT60: {rt60:.1} s\nVolym: {volume:.0} m\u{00B3}");
+        format!("Distance: {distance:.1} m\nRT60: {rt60:.1} s\nVolume: {volume:.0} m\u{00B3}");
     let info_pos = egui::pos2(draw_rect.min.x + 6.0, draw_rect.min.y + 6.0);
     let info_font = egui::FontId::proportional(11.0);
     let info_color = t.colors.text_dim;
@@ -2185,7 +2185,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Diffusion:");
         if ui
             .add(egui::Slider::new(&mut state.material_diffusion, 0.0..=1.0))
-            .on_hover_text("Hur mycket väggarna sprider ljudet (slät vs ojämn yta)")
+            .on_hover_text("How much the walls scatter sound (smooth vs rough surface)")
             .changed()
         {
             state.selected_preset = None;
@@ -2208,7 +2208,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .size(16.0),
     );
     ui.label(
-        egui::RichText::new("Balans mellan torr/våt signal")
+        egui::RichText::new("Dry/wet signal balance")
             .size(10.0)
             .color(t.colors.text_dim),
     );
@@ -2218,7 +2218,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Dry/Wet:");
         if ui
             .add(egui::Slider::new(&mut state.dry_wet, 0.0..=1.0))
-            .on_hover_text("Balans mellan originalsignal (dry) och rumseffekt (wet)")
+            .on_hover_text("Balance between original signal (dry) and room effect (wet)")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2231,7 +2231,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Early/Late:");
         if ui
             .add(egui::Slider::new(&mut state.early_late, 0.0..=1.0))
-            .on_hover_text("Balans mellan tidiga reflektioner och efterklang")
+            .on_hover_text("Balance between early reflections and reverb tail")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2244,7 +2244,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Modes:");
         if ui
             .add(egui::Slider::new(&mut state.modes_amount, 0.0..=1.0))
-            .on_hover_text("Stående vågor i rummet \u{2014} rumsresonanser")
+            .on_hover_text("Standing waves in the room \u{2014} room resonances")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2257,7 +2257,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Tail:");
         if ui
             .add(egui::Slider::new(&mut state.tail_stretch, 0.5..=4.0).suffix("x"))
-            .on_hover_text("Förlänger eller förkortar efterklangens svans")
+            .on_hover_text("Extend or shorten the reverb tail")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2268,14 +2268,14 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
 
     ui.separator();
 
-    // --- Effekter (formerly "Impossible") ---
+    // --- Effects (formerly "Impossible") ---
     ui.heading(
-        egui::RichText::new("Effekter")
+        egui::RichText::new("Effects")
             .color(t.colors.accent_orange)
             .size(16.0),
     );
     ui.label(
-        egui::RichText::new("Effekter bortom fysiken")
+        egui::RichText::new("Effects beyond physics")
             .size(10.0)
             .color(t.colors.text_dim),
     );
@@ -2285,7 +2285,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Freq Warp:");
         if ui
             .add(egui::Slider::new(&mut state.freq_warp, -1.0..=1.0))
-            .on_hover_text("Förskjuter rumsresonansernas frekvenser (ej fysiskt realistiskt)")
+            .on_hover_text("Shift room resonance frequencies (not physically realistic)")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2298,7 +2298,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Resonance:");
         if ui
             .add(egui::Slider::new(&mut state.resonance_boost, 0.0..=1.0))
-            .on_hover_text("Förstärker rumsresonansernas intensitet")
+            .on_hover_text("Boost room resonance intensity")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {
@@ -2311,7 +2311,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         ui.label("Portal:");
         if ui
             .add(egui::Slider::new(&mut state.portal_amount, 0.0..=1.0))
-            .on_hover_text("Simulerar ljud som läcker in från angränsande rum")
+            .on_hover_text("Simulates sound leaking in from adjacent rooms")
             .changed()
         {
             handle.send(EngineCommand::SetAweParameter {

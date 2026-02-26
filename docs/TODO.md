@@ -1,130 +1,141 @@
-# Master TODO - Modular Synth (v0.178.0)
+# TODO - Modular Synth (v0.179.0)
 
-## Fas 0: Sequencer — MCP & GUI (Högsta prioritet)
-*Mål: Göra sequencern produktionsklar via MCP och GUI.*
+## Priority 1 — Foundation & Core Functionality
 
-1. **Batch-operationer i MCP** (Kritiskt för workflow)
-   * [x] ~~`add_notes` — Lägg in flera noter i ett anrop~~ *(v0.157.0)*
-   * [x] ~~`create_tracks` — Skapa flera tracks i ett anrop~~ *(v0.157.0)*
-   * [x] ~~`create_patterns` — Skapa flera patterns i ett anrop~~ *(v0.157.0)*
-   * [x] ~~Minskar latens drastiskt vid låtbygge via MCP~~ *(v0.157.0: 8 batch-verktyg inkl. `set_song`)*
+### 1.1 Enable MCP feature by default
+- [x] Change `default = ["gui-egui"]` to `default = ["gui-egui", "mcp"]` in `crates/modular_synth/Cargo.toml`
 
-2. **Sequencer GUI — Koppling & RT-säkerhet (Fas 0)**
-   * [x] ~~Song alltid tillgänglig (inte bara MCP-feature)~~ *(v0.169.0)*
-   * [x] ~~SequencerEngine: try_read() för RT-säkerhet~~ *(v0.169.0)*
-   * [x] ~~AppView::Sequencer + view-switcher (3-vägs: Rack/AWE/Seq)~~ *(v0.169.0)*
-   * [x] ~~SequencerGuiInput (InputSource) + stub sequencer-vy~~ *(v0.169.0)*
+### 1.2 English language everywhere
+- [x] Translate all Swedish UI strings to English
+- Translated: awe_view.rs (materials, labels, tooltips), patch_editor.rs (context menus)
+- Code comments in theme.rs remain Swedish (not user-facing)
 
-3. **Sequencer GUI — Transport & Läs-vy (Fas 1)**
-   * [x] ~~Transport-bar: Play/Pause/Stop, position (Bar:Beat:Tick), tempo, taktart~~ *(v0.170.0)*
-   * [x] ~~Song-info: tracks, patterns, placements~~ *(v0.170.0)*
+### 1.3 Settings file (persistent config)
+- [ ] Create a settings file (`~/.config/modular-synth/settings.json` or platform equivalent)
+- [ ] Load on startup, save on change
+- Initial contents:
+  - `theme: ThemePreset` — graphic theme selection
+  - `author: String` — composer name (used in song metadata)
+  - `window_position: (x, y)` — main window position
+  - `window_size: (width, height)` — main window size
+- Consider: Use `directories` crate for platform-appropriate config paths.
+- Later expansion: MIDI device preferences, default BPM, audio buffer size, etc.
 
-4. **Sequencer GUI — Arrangement-vy (Fas 2)**
-   * [x] ~~Arrangement-vy: Tracks, pattern-placements på tidslinje, grid, playhead~~ *(v0.171.0)*
-
-5. **Sequencer GUI — Song-visualisering (Fas 3+)**
-   * 👉 **Arkitektur & Plan:** [Läs `docs/sequencer_plan.md`](sequencer_plan.md)
-   * [x] ~~Piano Roll läs-vy: Visa noter i ett pattern (dubbelklick på placement)~~ *(v0.172.0)*
-   * [x] ~~Piano Roll redigering: Lägg till/ta bort/flytta noter~~ *(v0.173.0)*
-   * [x] ~~Automation i Piano Roll: GUI, kurvrendering, uppspelning~~ *(v0.175.0)*
-   * [ ] Tracker-vy: Komplementerande vy för tangentbordsdrivet workflow
-
-3. **Spara & ladda Song**
-   * [ ] Serialisera Song till fil (JSON eller binärt format)
-   * [ ] Ladda in Song från fil
-   * [ ] MCP-verktyg: `save_song`/`load_song`
+### 1.4 Sequencer — Track & pattern management from GUI
+- [ ] Add/remove/rename tracks from GUI (currently MCP-only)
+- [ ] Add/remove/rename patterns from GUI
+- [ ] Edit pattern length from GUI
+- [ ] Edit track length from GUI
+- [ ] Assign instrument to track from GUI
+- [ ] Show which instrument is selected/active in piano roll (header or color coding)
+- [ ] Add mute/solo buttons per track in track header
+- [ ] Add repeat/loop toggle checkbox for playback
+- This is the biggest functional gap — sequencer is usable via MCP but not self-contained in the GUI.
 
 ---
 
-## Fas 1: Grundläggande Funktionalitet & Workflow (Kort sikt)
-*Mål: Göra klart påbörjad arkitektur och fixa de mest irriterande begränsningarna för användaren.*
+## Priority 2 — UI Structure & Layout
 
-1.  **Stereo Routing & Mixning** (Från nuvarande P1)
-    * [x] ~~Flytta limiter/master-volym från röst-nivå till `Instrument`-nivå för att spara CPU.~~ *(0.33.6: Soft clipper på instrument-nivå)*
-2.  **Solo & Mute-logik** (Från nuvarande P2)
-    * [x] ~~Lägg till Solo-knapp. Implementera "Exclusive Solo" logik i mixern.~~ *(0.33.6: Solo-logik i engine, GUI behövs)*
-3.  **Bypass-knappar** (Från nuvarande P2)
-    * [x] ~~Lägg till Power-knapp i modul-headern för effekter.~~ *(0.33.9)*
-4.  **Attenuverters & Input Gain** (Från nuvarande P2 - Kritiskt för ljuddesign)
-    * [x] ~~Lägg till skalning på CV-ingångar (t.ex. LFO -> Filter) så man slipper externa VCA:er för enkla modulationer.~~ *(0.33.13: Filter CutoffMod, Oscillator FmAmount)*
-5.  **Ljudinspelning / Tape Recorder** (Nytt - Prio Hög)
-    * [ ] Implementera en global "Record"-knapp som streamar output till WAV-fil. Detta gör synten omedelbart användbar för produktion.
+### 2.1 Replace context menus with top-bar menus
+- [ ] Remove the "Add module" row at top of Rack view
+- [ ] Move "Add module" to top menu bar with categorized submenus (Sources, Filters, Envelopes, Effects, etc.)
+- [ ] Move other right-click actions to appropriate top-bar menus
+- Benefit: More discoverable, consistent UX. Right-click can remain as shortcut.
 
----
+### 2.2 Keyboard area cleanup
+- [ ] Fix gap between piano keys and visualizers (persistent spacing issue)
+- [ ] Move PANIC button to top menu bar (right side, keep red styling)
+- [ ] Remove "KEYBOARD" label — the piano keys are self-explanatory
+- [ ] Clarify "Playing: Default" — this shows active instrument name. Rename to "Active: {name}" or show instrument icon + name
+- [ ] Move octave +/- controls inline with the keyboard or into a compact row to eliminate the full-width control row
 
-## Fas 2: Kreativ Expansion (Medellång sikt)
-*Mål: Göra synten rolig och musikalisk att använda.*
+### 2.3 Tab buttons — make Seq/AWE/Rack clearer
+- [ ] Use larger, styled tab buttons with icons (once egui-remixicon is available)
+- [ ] Consider: icons + text, active tab underline/highlight, or segmented control style
+- Alternatives: Sidebar navigation, or top-bar integrated tabs
 
-6.  **Sampling & Audio Assets** (Från nuvarande P3)
-    * [x] ~~`SampleManager` och `SamplePlayer`-modul. Detta öppnar upp för trummor och texturer.~~ *(0.33.20: SamplePlayer med pitch tracking, loop modes, interpolation)*
-7.  **Patch Browser & Taggar** (Nytt - UX)
-    * [ ] Byt ut fil-dialogen mot en inbyggd browser med tag-filtrering (Bass, Pad, FX).
-8.  **Makro-system & Mod Matrix** (Nytt - Ljuddesign)
-    * [x] ~~Mod Matrix: 8-slot modulationsrouting med 10 källor och 11 destinationer per röst~~ *(0.107.0)*
-    * [x] ~~Polyfon Aftertouch som ModSource~~ *(0.121.0)*
-    * [ ] Skapa 4 globala Makro-rattar som kan styra flera parametrar. Detta ersätter behovet av komplex kabeldragning för "Performance"-rattar.
-9.  **Dynamic MIDI Learn** (Nytt - UX)
-    * [ ] Högerklick på parameter -> "Learn MIDI CC". Nödvändigt för hårdvarukontroll.
-10. **Visualiseringar: Spectrum Analyzer (FFT)** (Från nuvarande P4)
-    * [x] ~~FFT-infrastruktur (FftProcessor, StftProcessor, PartitionedConvolver)~~ *(0.121.0: synth_dsp::spectral)*
-    * [x] ~~Bygg visuell spectrum analyzer med FFT-infrastrukturen.~~ *(0.122.0: 2048-punkt FFT, logaritmisk frekvensaxel)*
+### 2.4 MCP connection status indicator
+- [ ] Show MCP status icon next to MIDI status in top bar
+- [ ] States: connected (green dot), disconnected (gray dot), error (red dot)
+- Note: Check if MCP server state is accessible from GUI thread. May need an atomic flag or channel.
 
----
+### 2.5 Effects section — visual separation from voice modules
+- [ ] Add a visual divider between voice modules and effects in the grid
+- [ ] Use a distinct background color/tint for the effects area (right side)
+- [ ] Alternative: Separate "Effects" panel below or beside voice grid, with its own header
+- [ ] Label the section clearly: "Master Effects" or "Effect Chain"
+- Current state: Effects show as "Effect Chain" with full-width layout, but distinction is subtle.
 
-## Fas 3: Workstation & Ljudkvalitet (Lång sikt)
-*Mål: Förvandla synten till en professionell miljö.*
+### 2.6 Cable rendering — clip to patch area
+- [ ] Ensure cables don't render outside the patch/rack view bounds when hovered
+- Current: `painter.with_clip_rect(inner_rect)` exists but may not account for hover glow layers
+- Check: The glow effect (8px outer, 5px inner) may extend beyond clip rect
 
-11. **Oversampling** (Nytt - Ljudkvalitet)
-    * [x] ~~Implementera 2x/4x oversampling för att minska aliasing i distortion och FM.~~ *(0.122.0: Per-instrument 2x/4x med half-band FIR)*
-12. **Undo / Redo** (Nytt - UX)
-    * [ ] Implementera Command-historik för `PatchEditor`. Kritiskt när man bygger komplexa patchar.
-13. **Sequencer GUI & Transport** (Från nuvarande P5)
-    * [ ] Ny sequencer-arkitektur (skrivs från scratch efter v0.99.0 tracker-rensning)
-    * [ ] Piano Roll-vy
-    * [ ] Record-knapp i transport
-14. **Generativa Moduler** (Nytt - Kreativitet)
-    * [x] ~~Euclidean Sequencer, Turing Machine, Random Gates.~~ *(0.119.0)*
-15. **Projekt-filer (.msproject)** (Från nuvarande Övrigt)
-    * [ ] Spara hela sessionen (alla instrument + sequencer), inte bara enstaka patchar.
+### 2.7 Auto-layout after patch load
+- [ ] Run auto-layout when a patch is loaded from file or selected from examples
+- [ ] Ensure module positions settle before user interaction
+- Related: Save/restore module positions (see 3.1)
 
 ---
 
-## Fas 4: "Nice to Have" / Nischade Features
-*Mål: Specialfunktioner för specifika användare.*
+## Priority 3 — Visual Polish
 
-16. **Live Performance View** (Nytt)
-    * [ ] En förenklad vy för scenbruk (stora mätare, makron, setlist).
-17. **Plugin-stöd (CLAP/VST3)** (Nytt)
-    * [ ] Wrappa motorn med `nih-plug` för att köra inuti en DAW.
-18. **Microtuning / Scala-filer** (Nytt)
-    * [x] ~~Stöd för .scl filer för icke-västerländska skalor.~~ *(0.120.0: TuningTable med 5 presets + Scala-parser)*
-19. **M/S Processing** (Från nuvarande Övrigt)
-    * [x] ~~Mid/Side-läge på EQ och kompressor.~~ *(0.119.0: MidSide-effekt med width, mid/side gain)*
-20. **Avancerade Visualiseringar** (Från nuvarande P4)
-    * [ ] Vectorscope, Tuner, 3D-vyer.
+### 3.1 Save module positions in patch JSON
+- [ ] Add `position: (x, y)` to `ModuleState` in patch serialization
+- [ ] Save positions when writing patch to disk
+- [ ] Restore positions when loading (fall back to auto-layout if missing)
+- Check: MCP patch format compatibility — ensure `PatchBridge` and file I/O share serialization.
+  Current patch format uses `serde_json` with `Patch { modules, connections, settings }`.
+  MCP builds patches via `session.add_module_with_id()` — positions are GUI-only state.
 
-## Fas 5: Prestanda & Optimering (Ny sektion)
-21. **Cargo Workspace Refactoring**
-    * [x] ~~Dela upp monolitisk crate i 6 separata crates~~ *(0.52.0)*
-    * [x] ~~synth_core: Types, traits, audio abstractions~~
-    * [x] ~~synth_dsp: DSP primitives~~
-    * [x] ~~synth_sequencer: Pattern, song, events~~
-    * [x] ~~synth_modules: Synth modules and effects~~
-    * [x] ~~synth_engine: Voice allocation, graph~~
-    * [x] ~~modular_synth: GUI, main, backends~~
-22. **Realtime Audio Thread Safety**
-    * [x] ~~Eliminera AudioBuffer::new() i Instrument::process()~~ *(0.33.10)*
-    * [x] ~~Ändra Connection till PortName (Copy) istället för String~~ *(0.33.10)*
-    * [x] ~~Refaktorera PolyModule::process() till InputPorts istället för HashMap~~ *(0.33.11)*
-    * [ ] Eliminera kvarvarande Vec-allokering i process_module() (kräver stack-array eller arrayvec)
-22. **"Baked Graph" / Graf-kompilering** (Tillagd)
-    * [ ] Implementera ett "kompileringssteg" som omvandlar `ModuleGraph` (HashMap) till en linjär lista av operationer (`Vec<Op>`) och en platt minnesbuffert.
-    * [ ] Mål: Eliminera alla hash-uppslagningar och pointer-jumps i ljudtråden för maximal cache-lokalitet och prestanda.
-23. **Oversampling**
-    * [x] ~~Stöd för 2x/4x oversampling internt i rösterna för minskad aliasing.~~ *(0.122.0)*
+### 3.2 Switch to egui-remixicon for all icons
+- [ ] Add `egui-remixicon` dependency
+- [ ] **Test phase:** Replace one icon set (e.g., module category icons) and verify rendering
+- [ ] Replace module header icons (source/sink indicators, connectivity, power/bypass, close)
+- [ ] Replace transport controls (play/stop/seek)
+- [ ] Replace tab icons (Seq/AWE/Rack)
+- [ ] Replace all remaining emoji/Unicode symbols
+- Current icons: Mix of Unicode symbols and emoji — inconsistent across platforms.
+- Scope: ~30-40 icon replacements across patch_editor, keyboard, sequencer, awe_view.
 
-### Analys av förändringen
-Denna nya lista prioriterar **användbarhet** (Inspelning, Browser, MIDI Learn) högre än ren teknik (Sequencer GUI, Avancerade Visualiseringar).
+### 3.3 Improve module knobs
+- [ ] Better visual design — consider: gradient fill, shadow, tick marks, value tooltip
+- [ ] Consistent sizing across module types
+- [ ] Consider: Arc-style knobs with colored fill showing current value
 
-* **Varför flytta ner Sequencer?** Motorn har redan en sequencer, men att bygga ett bra *GUI* för den (Piano Roll) är ett enormt projekt. Det är bättre att först göra synten till ett grymt instrument som kan spelas med externt tangentbord/DAW, innan man bygger en hel DAW inuti den.
-* **Varför flytta upp Inspelning?** Det är en "lågt hängande frukt" (lätt att koda) som ger enormt värde direkt ("Jag gjorde ett ljud, jag vill spara det som WAV").
+### 3.4 Improve module ports
+- [ ] Clearer port type distinction (audio vs control vs gate vs MIDI)
+- [ ] Better hover feedback
+- [ ] Consider: Colored rings matching cable colors, port labels on hover
+
+### 3.5 Improve module header icons
+- [ ] Replace Unicode symbols with proper icons (egui-remixicon, depends on 3.2)
+- [ ] Better visual hierarchy — power button more prominent, status icons more subtle
+
+---
+
+## Priority 4 — AWE Improvements
+
+### 4.1 Rework room visualization
+- [ ] Redesign the 3D isometric room rendering
+- [ ] Improve animations (sound rings, reflection paths)
+- [ ] Better visual clarity for room shape and dimensions
+
+### 4.2 Differentiate effects more clearly
+- [ ] Each material/effect should have more distinct visual representation
+- [ ] Consider: Color-coded zones, animated textures per material, spectral visualization
+- [ ] Alternative: Show frequency response curves for each material type
+
+---
+
+## Priority 5 — Future / Later
+
+### 5.1 Redesign instrument list
+- [ ] Current: Scrollable list with inline controls (name, MIDI channel, volume, pan, mute/solo)
+- [ ] Consider: Tabbed interface, mixer-style vertical strips, or collapsible panels
+- [ ] TBD: Gather more specific requirements
+
+### 5.2 Patch/MCP serialization unification
+- [ ] Audit: Compare file-based patch format with MCP's `build_instrument` / `apply_example_patch` format
+- [ ] Goal: Single serialization path for save/load/MCP, reducing duplication
+- [ ] `patch_bridge.rs` already bridges between formats — evaluate if it can be the single source of truth
