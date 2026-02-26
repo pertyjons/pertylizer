@@ -1,16 +1,18 @@
 //! Sequencer GUI module.
 //!
 //! Provides the sequencer view with transport controls, an arrangement timeline,
-//! a piano roll read-view, and a GUI input source for sending `InputCommand`s
-//! to the sequencer engine.
+//! a piano roll with mouse interaction (draw, select, move, resize, delete notes),
+//! and a GUI input source for sending `InputCommand`s to the sequencer engine.
 
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use synth_core::Bpm;
+use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use synth_core::{Bpm, Semitones};
 use synth_engine::{EngineCommand, EngineHandle};
 use synth_sequencer::{
-    InputCommand, InputSource, NoteName, PatternId, Song, Tick, TimeSignature, TrackId,
+    Duration as SeqDuration, InputCommand, InputSource, NoteId, NoteName, PatternId, PatternTick,
+    Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
 };
 
 use crate::gui::theme::theme;
@@ -66,6 +68,47 @@ impl InputSource for SequencerGuiInput {
 }
 
 // ============================================================================
+// EDIT TYPES
+// ============================================================================
+
+/// Active editing tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditTool {
+    Select,
+    Draw,
+}
+
+/// Which part of a note was hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HitZone {
+    /// Note body (for moving).
+    Body,
+    /// Right edge (for resizing).
+    RightEdge,
+}
+
+/// Active drag operation (preview only — Song is mutated on release).
+#[derive(Debug, Clone)]
+enum DragState {
+    /// Drag-move a note.
+    MoveNote {
+        note_id: NoteId,
+        original_tick: u32,
+        original_pitch: u8,
+        current_tick: u32,
+        current_pitch: u8,
+    },
+    /// Drag-resize a note (right edge).
+    ResizeNote {
+        note_id: NoteId,
+        original_end_tick: u32,
+        current_end_tick: u32,
+    },
+    /// Selection rectangle (lasso).
+    SelectRect { start_pos: Pos2, current_pos: Pos2 },
+}
+
+// ============================================================================
 // VIEW STATE
 // ============================================================================
 
@@ -73,12 +116,21 @@ impl InputSource for SequencerGuiInput {
 pub struct SequencerViewState {
     /// Currently opened pattern (None = piano roll closed).
     opened_pattern: Option<PatternId>,
+    /// Currently selected notes.
+    selected_notes: HashSet<NoteId>,
+    /// Active edit tool.
+    edit_tool: EditTool,
+    /// Active drag operation.
+    drag: Option<DragState>,
 }
 
 impl SequencerViewState {
     pub fn new() -> Self {
         Self {
             opened_pattern: None,
+            selected_notes: HashSet::new(),
+            edit_tool: EditTool::Draw,
+            drag: None,
         }
     }
 }
@@ -119,6 +171,8 @@ const VELOCITY_ZONE_HEIGHT: f32 = 40.0;
 const PR_PIXELS_PER_BEAT: f32 = 60.0;
 /// Height of the piano roll toolbar.
 const PR_TOOLBAR_HEIGHT: f32 = 24.0;
+/// Resize grab zone width (pixels from right edge).
+const RESIZE_GRAB_ZONE: f32 = 6.0;
 
 // ============================================================================
 // TRANSPORT BAR
@@ -702,6 +756,7 @@ fn draw_arrangement(
 
 /// Snapshot of a note for piano roll rendering.
 struct PianoRollNote {
+    note_id: NoteId,
     pitch: u8,
     start_tick: u32,
     end_tick: Option<u32>,
@@ -711,7 +766,6 @@ struct PianoRollNote {
 /// Collected data for piano roll rendering.
 struct PianoRollData {
     pattern_name: String,
-    #[allow(dead_code)]
     pattern_id: PatternId,
     length_ticks: u32,
     ticks_per_row: u16,
@@ -743,6 +797,7 @@ fn collect_piano_roll_data(
                 pitch_max = midi;
             }
             PianoRollNote {
+                note_id: n.id,
                 pitch: midi,
                 start_tick: n.start.0,
                 end_tick: n.end().map(|e| e.0),
@@ -772,10 +827,67 @@ fn collect_piano_roll_data(
     })
 }
 
+/// Find the note at the given position, returning its ID and which zone was hit.
+fn note_at_pos(
+    notes: &[PianoRollNote],
+    pos: Pos2,
+    tick_to_x: &dyn Fn(u32) -> f32,
+    pitch_to_y: &dyn Fn(u8) -> f32,
+    length_ticks: u32,
+    view_pitch_min: u8,
+    view_pitch_max: u8,
+) -> Option<(NoteId, HitZone)> {
+    // Iterate in reverse so top-most (last drawn) notes are checked first
+    for note in notes.iter().rev() {
+        if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
+            continue;
+        }
+
+        let y = pitch_to_y(note.pitch);
+        let x_start = tick_to_x(note.start_tick);
+        let x_end = match note.end_tick {
+            Some(end) => tick_to_x(end),
+            None => tick_to_x(length_ticks),
+        };
+        let note_width = (x_end - x_start).max(3.0);
+
+        let note_rect = Rect::from_min_size(
+            Pos2::new(x_start, y + 1.0),
+            Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
+        );
+
+        if note_rect.contains(pos) {
+            // Check if near right edge (resize zone)
+            let zone = if pos.x >= note_rect.max.x - RESIZE_GRAB_ZONE {
+                HitZone::RightEdge
+            } else {
+                HitZone::Body
+            };
+            return Some((note.note_id, zone));
+        }
+    }
+    None
+}
+
+/// Quantize a tick value to the nearest row boundary.
+fn quantize_tick(tick: u32, ticks_per_row: u16) -> u32 {
+    if ticks_per_row == 0 {
+        return tick;
+    }
+    let tpr = ticks_per_row as u32;
+    ((tick + tpr / 2) / tpr) * tpr
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines)]
-fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -> bool {
+fn draw_piano_roll(
+    ui: &mut egui::Ui,
+    data: &PianoRollData,
+    current_tick: u64,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+) -> bool {
     let t = theme();
     let mut keep_open = true;
 
@@ -788,9 +900,39 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                 .color(t.colors.accent_cyan),
         );
         ui.separator();
+
+        // Tool selector
+        let select_label = if view_state.edit_tool == EditTool::Select {
+            RichText::new("Select").color(t.colors.accent_primary)
+        } else {
+            RichText::new("Select").color(t.colors.text_secondary)
+        };
+        if ui.button(select_label).clicked() {
+            view_state.edit_tool = EditTool::Select;
+        }
+
+        let draw_label = if view_state.edit_tool == EditTool::Draw {
+            RichText::new("Draw").color(t.colors.accent_primary)
+        } else {
+            RichText::new("Draw").color(t.colors.text_secondary)
+        };
+        if ui.button(draw_label).clicked() {
+            view_state.edit_tool = EditTool::Draw;
+        }
+
+        ui.separator();
+
         ui.label(
             RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
         );
+
+        if !view_state.selected_notes.is_empty() {
+            ui.label(
+                RichText::new(format!("{} selected", view_state.selected_notes.len()))
+                    .color(t.colors.accent_yellow),
+            );
+        }
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .button(RichText::new("X").color(t.colors.accent_red))
@@ -828,7 +970,11 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
         .max_height(PIANO_ROLL_HEIGHT - PR_TOOLBAR_HEIGHT - 8.0)
         .show(ui, |ui| {
             let total_size = Vec2::new(KEY_WIDTH + grid_width, total_content_height);
-            let (_, rect) = ui.allocate_space(total_size);
+
+            // Use allocate_rect with click_and_drag sense for mouse interaction
+            let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
+            let response = ui.allocate_rect(alloc_rect, Sense::click_and_drag());
+            let rect = response.rect;
             let painter = ui.painter_at(rect);
 
             let origin = rect.min;
@@ -849,6 +995,26 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                 let row = view_pitch_max.saturating_sub(pitch);
                 grid_y + row as f32 * NOTE_ROW_HEIGHT
             };
+
+            // Inverse: x to tick
+            let x_to_tick = |x: f32| -> u32 {
+                #[allow(clippy::cast_possible_truncation)]
+                let tick = ((x - grid_x) / PR_PIXELS_PER_BEAT * ticks_per_beat as f32).max(0.0);
+                tick as u32
+            };
+
+            // Inverse: y to pitch
+            let y_to_pitch = |y: f32| -> u8 {
+                #[allow(clippy::cast_possible_truncation)]
+                let row = ((y - grid_y) / NOTE_ROW_HEIGHT).floor().max(0.0) as u8;
+                view_pitch_max.saturating_sub(row)
+            };
+
+            // Grid rect for checking if pointer is in the note grid area
+            let grid_rect = Rect::from_min_size(
+                Pos2::new(grid_x, grid_y),
+                Vec2::new(grid_width, grid_height),
+            );
 
             // ── Keyboard (left column) ──
             painter.rect_filled(
@@ -979,8 +1145,19 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
 
             // ── Notes ──
             let note_color = Color32::from_rgb(100, 180, 255);
+            let selected_color = Color32::from_rgb(140, 210, 255);
+
             for note in &data.notes {
                 if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
+                    continue;
+                }
+
+                // Skip notes that are being dragged (draw ghost instead)
+                let is_being_moved = matches!(
+                    &view_state.drag,
+                    Some(DragState::MoveNote { note_id, .. }) if *note_id == note.note_id
+                );
+                if is_being_moved {
                     continue;
                 }
 
@@ -995,13 +1172,30 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                     }
                 };
 
+                // Apply resize preview if this note is being resized
+                let x_end = match &view_state.drag {
+                    Some(DragState::ResizeNote {
+                        note_id,
+                        current_end_tick,
+                        ..
+                    }) if *note_id == note.note_id => tick_to_x(*current_end_tick),
+                    _ => x_end,
+                };
+
                 let note_width = (x_end - x_start).max(3.0);
                 let alpha = (note.velocity * 200.0 + 55.0).min(255.0) as u8;
 
+                let is_selected = view_state.selected_notes.contains(&note.note_id);
+                let base_color = if is_selected {
+                    selected_color
+                } else {
+                    note_color
+                };
+
                 let fill = Color32::from_rgba_unmultiplied(
-                    note_color.r(),
-                    note_color.g(),
-                    note_color.b(),
+                    base_color.r(),
+                    base_color.g(),
+                    base_color.b(),
                     alpha,
                 );
 
@@ -1014,7 +1208,7 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                 painter.rect_stroke(
                     note_rect,
                     2.0,
-                    Stroke::new(0.5, note_color),
+                    Stroke::new(if is_selected { 1.5 } else { 0.5 }, base_color),
                     egui::StrokeKind::Inside,
                 );
 
@@ -1028,13 +1222,73 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                         fade_rect,
                         0.0,
                         Color32::from_rgba_unmultiplied(
-                            note_color.r(),
-                            note_color.g(),
-                            note_color.b(),
+                            base_color.r(),
+                            base_color.g(),
+                            base_color.b(),
                             alpha / 3,
                         ),
                     );
                 }
+            }
+
+            // ── Ghost note for MoveNote drag ──
+            if let Some(DragState::MoveNote {
+                note_id,
+                current_tick: drag_tick,
+                current_pitch: drag_pitch,
+                ..
+            }) = &view_state.drag
+            {
+                // Find the original note data for velocity/duration
+                if let Some(note) = data.notes.iter().find(|n| n.note_id == *note_id) {
+                    let duration_ticks = note
+                        .end_tick
+                        .map_or(data.length_ticks.saturating_sub(note.start_tick), |end| {
+                            end.saturating_sub(note.start_tick)
+                        });
+                    let y = pitch_to_y(*drag_pitch);
+                    let x_start = tick_to_x(*drag_tick);
+                    let x_end = tick_to_x(drag_tick + duration_ticks);
+                    let note_width = (x_end - x_start).max(3.0);
+
+                    let ghost_rect = Rect::from_min_size(
+                        Pos2::new(x_start, y + 1.0),
+                        Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
+                    );
+
+                    // Semi-transparent ghost
+                    painter.rect_filled(
+                        ghost_rect,
+                        2.0,
+                        Color32::from_rgba_unmultiplied(140, 210, 255, 100),
+                    );
+                    painter.rect_stroke(
+                        ghost_rect,
+                        2.0,
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(140, 210, 255, 180)),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+
+            // ── Selection rectangle ──
+            if let Some(DragState::SelectRect {
+                start_pos,
+                current_pos,
+            }) = &view_state.drag
+            {
+                let sel_rect = Rect::from_two_pos(*start_pos, *current_pos);
+                painter.rect_filled(
+                    sel_rect,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(100, 180, 255, 30),
+                );
+                painter.rect_stroke(
+                    sel_rect,
+                    0.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(100, 180, 255, 150)),
+                    egui::StrokeKind::Inside,
+                );
             }
 
             // ── Velocity bars (below grid) ──
@@ -1073,7 +1327,12 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                 let bar_height = note.velocity * (VELOCITY_ZONE_HEIGHT - 4.0);
                 let bar_y = vel_y + VELOCITY_ZONE_HEIGHT - bar_height - 2.0;
 
-                let vel_color = velocity_color(note.velocity);
+                let is_selected = view_state.selected_notes.contains(&note.note_id);
+                let vel_color = if is_selected {
+                    Color32::from_rgb(140, 210, 255)
+                } else {
+                    velocity_color(note.velocity)
+                };
                 painter.rect_filled(
                     Rect::from_min_size(Pos2::new(x - 1.5, bar_y), Vec2::new(3.0, bar_height)),
                     1.0,
@@ -1109,9 +1368,345 @@ fn draw_piano_roll(ui: &mut egui::Ui, data: &PianoRollData, current_tick: u64) -
                 ],
                 Stroke::new(1.0, t.colors.border),
             );
+
+            // ── Hover and cursor ──
+            if let Some(pos) = ui.ctx().pointer_hover_pos()
+                && grid_rect.contains(pos)
+            {
+                let hit = note_at_pos(
+                    &data.notes,
+                    pos,
+                    &tick_to_x,
+                    &pitch_to_y,
+                    data.length_ticks,
+                    view_pitch_min,
+                    view_pitch_max,
+                );
+
+                match hit {
+                    Some((_, HitZone::RightEdge)) => {
+                        ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
+                    }
+                    Some((note_id, HitZone::Body)) => {
+                        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+
+                        // Subtle hover highlight
+                        if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                            let y = pitch_to_y(note.pitch);
+                            let x_start = tick_to_x(note.start_tick);
+                            let x_end = match note.end_tick {
+                                Some(end) => tick_to_x(end),
+                                None => tick_to_x(data.length_ticks),
+                            };
+                            let hover_rect = Rect::from_min_size(
+                                Pos2::new(x_start, y + 1.0),
+                                Vec2::new((x_end - x_start).max(3.0), NOTE_ROW_HEIGHT - 2.0),
+                            );
+                            painter.rect_stroke(
+                                hover_rect,
+                                2.0,
+                                Stroke::new(
+                                    1.0,
+                                    Color32::from_rgba_unmultiplied(255, 255, 255, 60),
+                                ),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                    }
+                    None => {
+                        if view_state.edit_tool == EditTool::Draw {
+                            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                        }
+                    }
+                }
+            }
+
+            // ── Mouse interaction ──
+            handle_piano_roll_interaction(
+                &response,
+                ui,
+                data,
+                song,
+                view_state,
+                grid_rect,
+                &x_to_tick,
+                &y_to_pitch,
+                &tick_to_x,
+                &pitch_to_y,
+                view_pitch_min,
+                view_pitch_max,
+            );
         });
 
+    // ── Keyboard shortcuts ──
+    let ctx = ui.ctx();
+    if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+        delete_selected_notes(song, data.pattern_id, &mut view_state.selected_notes);
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        view_state.selected_notes.clear();
+        view_state.drag = None;
+    }
+
     keep_open
+}
+
+/// Handle mouse clicks and drags in the piano roll.
+#[allow(clippy::too_many_arguments)]
+fn handle_piano_roll_interaction(
+    response: &egui::Response,
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    grid_rect: Rect,
+    x_to_tick: &dyn Fn(f32) -> u32,
+    y_to_pitch: &dyn Fn(f32) -> u8,
+    tick_to_x: &dyn Fn(u32) -> f32,
+    pitch_to_y: &dyn Fn(u8) -> f32,
+    view_pitch_min: u8,
+    view_pitch_max: u8,
+) {
+    let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+
+    // ── Click handling ──
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && grid_rect.contains(pos)
+    {
+        let hit = note_at_pos(
+            &data.notes,
+            pos,
+            tick_to_x,
+            pitch_to_y,
+            data.length_ticks,
+            view_pitch_min,
+            view_pitch_max,
+        );
+
+        match hit {
+            Some((note_id, _)) => {
+                // Clicked on a note — select it
+                if shift_held {
+                    // Toggle in selection
+                    if !view_state.selected_notes.remove(&note_id) {
+                        view_state.selected_notes.insert(note_id);
+                    }
+                } else {
+                    view_state.selected_notes.clear();
+                    view_state.selected_notes.insert(note_id);
+                }
+            }
+            None => {
+                // Clicked on empty space
+                if view_state.edit_tool == EditTool::Draw {
+                    // Add a new note
+                    let raw_tick = x_to_tick(pos.x);
+                    let tick = quantize_tick(raw_tick, data.ticks_per_row);
+                    let pitch_val = y_to_pitch(pos.y);
+
+                    if let Some(pitch) = Pitch::new(pitch_val)
+                        && let Ok(mut song_w) = song.write()
+                        && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                    {
+                        let duration = SeqDuration(data.ticks_per_row as u32);
+                        let note_id = pattern.add_note(
+                            PatternTick(tick),
+                            pitch,
+                            Velocity::MF,
+                            SeqInstrumentId::new(0),
+                        );
+                        pattern.resize_note(note_id, duration);
+                        // Select the new note
+                        view_state.selected_notes.clear();
+                        view_state.selected_notes.insert(note_id);
+                    }
+                } else if !shift_held {
+                    // Select tool on empty space — clear selection
+                    view_state.selected_notes.clear();
+                }
+            }
+        }
+    }
+
+    // ── Drag start ──
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+        && grid_rect.contains(pos)
+    {
+        let hit = note_at_pos(
+            &data.notes,
+            pos,
+            tick_to_x,
+            pitch_to_y,
+            data.length_ticks,
+            view_pitch_min,
+            view_pitch_max,
+        );
+
+        match hit {
+            Some((note_id, HitZone::Body)) => {
+                // Start moving the note
+                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                    view_state.drag = Some(DragState::MoveNote {
+                        note_id,
+                        original_tick: note.start_tick,
+                        original_pitch: note.pitch,
+                        current_tick: note.start_tick,
+                        current_pitch: note.pitch,
+                    });
+                    // Ensure note is selected
+                    if !shift_held {
+                        view_state.selected_notes.clear();
+                    }
+                    view_state.selected_notes.insert(note_id);
+                }
+            }
+            Some((note_id, HitZone::RightEdge)) => {
+                // Start resizing the note
+                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                    let end_tick = note.end_tick.unwrap_or(data.length_ticks);
+                    view_state.drag = Some(DragState::ResizeNote {
+                        note_id,
+                        original_end_tick: end_tick,
+                        current_end_tick: end_tick,
+                    });
+                }
+            }
+            None => {
+                if view_state.edit_tool == EditTool::Select {
+                    // Start selection rectangle
+                    view_state.drag = Some(DragState::SelectRect {
+                        start_pos: pos,
+                        current_pos: pos,
+                    });
+                    if !shift_held {
+                        view_state.selected_notes.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Drag update ──
+    if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        match &mut view_state.drag {
+            Some(DragState::MoveNote {
+                current_tick,
+                current_pitch,
+                ..
+            }) => {
+                let raw_tick = x_to_tick(pos.x);
+                *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
+                *current_pitch = y_to_pitch(pos.y).clamp(0, 127);
+            }
+            Some(DragState::ResizeNote {
+                current_end_tick, ..
+            }) => {
+                let raw_tick = x_to_tick(pos.x);
+                *current_end_tick = quantize_tick(raw_tick, data.ticks_per_row).max(1);
+            }
+            Some(DragState::SelectRect { current_pos, .. }) => {
+                *current_pos = pos;
+            }
+            None => {}
+        }
+    }
+
+    // ── Drag end ──
+    if response.drag_stopped()
+        && let Some(drag) = view_state.drag.take()
+    {
+        match drag {
+            DragState::MoveNote {
+                note_id,
+                original_tick,
+                original_pitch,
+                current_tick,
+                current_pitch,
+                ..
+            } => {
+                // Apply move to song
+                if (current_tick != original_tick || current_pitch != original_pitch)
+                    && let Ok(mut song_w) = song.write()
+                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                {
+                    if current_tick != original_tick {
+                        pattern.move_note(note_id, PatternTick(current_tick));
+                    }
+                    if current_pitch != original_pitch {
+                        #[allow(clippy::cast_precision_loss)]
+                        let delta = current_pitch as f32 - original_pitch as f32;
+                        pattern.transpose_note(note_id, Semitones::new(delta));
+                    }
+                }
+            }
+            DragState::ResizeNote {
+                note_id,
+                original_end_tick,
+                current_end_tick,
+                ..
+            } => {
+                // Apply resize to song
+                if current_end_tick != original_end_tick
+                    && let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
+                {
+                    let new_duration = current_end_tick.saturating_sub(note.start_tick).max(1);
+                    if let Ok(mut song_w) = song.write()
+                        && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                    {
+                        pattern.resize_note(note_id, SeqDuration(new_duration));
+                    }
+                }
+            }
+            DragState::SelectRect {
+                start_pos,
+                current_pos,
+                ..
+            } => {
+                // Resolve selection rectangle to notes
+                let sel_rect = Rect::from_two_pos(start_pos, current_pos);
+                let tick_start = x_to_tick(sel_rect.min.x);
+                let tick_end = x_to_tick(sel_rect.max.x);
+                let pitch_top = y_to_pitch(sel_rect.min.y);
+                let pitch_bottom = y_to_pitch(sel_rect.max.y);
+                let p_min = pitch_bottom.min(pitch_top);
+                let p_max = pitch_bottom.max(pitch_top);
+
+                for note in &data.notes {
+                    let note_end = note.end_tick.unwrap_or(data.length_ticks);
+                    if note.start_tick < tick_end
+                        && note_end > tick_start
+                        && note.pitch >= p_min
+                        && note.pitch <= p_max
+                    {
+                        view_state.selected_notes.insert(note.note_id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Delete all selected notes from the pattern.
+fn delete_selected_notes(
+    song: &Arc<RwLock<Song>>,
+    pattern_id: PatternId,
+    selected: &mut HashSet<NoteId>,
+) {
+    if selected.is_empty() {
+        return;
+    }
+    if let Ok(mut song_w) = song.write()
+        && let Some(pattern) = song_w.pattern_mut(pattern_id)
+    {
+        for note_id in selected.iter() {
+            pattern.remove_note(*note_id);
+        }
+    }
+    selected.clear();
 }
 
 /// Map velocity (0.0-1.0) to a color (green → yellow → red).
@@ -1171,8 +1766,10 @@ pub fn draw_sequencer_view(
             .max_height(600.0)
             .show(ctx, |ui| {
                 if let Some(data) = &piano_roll_data {
-                    if !draw_piano_roll(ui, data, current_tick) {
+                    if !draw_piano_roll(ui, data, current_tick, song, view_state) {
                         view_state.opened_pattern = None;
+                        view_state.selected_notes.clear();
+                        view_state.drag = None;
                     }
                 } else {
                     // Pattern no longer exists
@@ -1186,6 +1783,11 @@ pub fn draw_sequencer_view(
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(data) = &arrangement_data {
             if let Some(pattern_id) = draw_arrangement(ui, data, current_tick) {
+                // Clear selection when switching patterns
+                if view_state.opened_pattern != Some(pattern_id) {
+                    view_state.selected_notes.clear();
+                    view_state.drag = None;
+                }
                 view_state.opened_pattern = Some(pattern_id);
             }
         } else {

@@ -1,5 +1,21 @@
 # Version History
 
+## [0.173.0] - 2026-02-26
+### Sequencer GUI — Piano Roll Mus-interaktion (Fas 4)
+- Klicka i griden (Draw-tool) skapar nya noter med kvantisering till `RowResolution`
+- Klicka på not (Select/Draw) väljer noten, Shift+klick togglar i selektion
+- Dra not-kropp → flytta not (tick + pitch), visuell ghost-preview under drag
+- Dra höger kant → resize not (ändra duration)
+- Selection-rektangel (lasso) i Select-tool: dra på tom yta → markera alla noter i rektangeln
+- Delete/Backspace tar bort alla selekterade noter, Escape rensar selektion
+- Verktygsväljare i toolbar: Select / Draw med aktiv markering
+- Visuell feedback: selekterade noter ljusare blå + tjockare kant, hover-highlight, ghost-preview
+- Cursor-ikoner: Crosshair (Draw), PointingHand (hover not), ResizeEast (höger kant)
+- Edit Transactions: Song muteras bara vid drag-release (inte under drag)
+- `NoteId` inkluderat i `PianoRollNote` snapshot för hit-testing och kommandon
+- `draw_piano_roll` tar nu `song` och `view_state` för write-lås och interaktions-state
+- `allocate_rect` med `Sense::click_and_drag()` ersätter `allocate_space`
+
 ## [0.172.0] - 2026-02-25
 ### Sequencer GUI — Piano Roll Läs-vy (Fas 3)
 - Piano roll öppnas vid dubbelklick på PatternPlacement i arrangemanget
