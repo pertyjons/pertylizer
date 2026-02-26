@@ -12,14 +12,16 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate,
-    BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement, BridgeTrackData,
+    BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
+    BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    ApplyExamplePatchResult, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionInfo,
-    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo, PlacementInfo, SetSongResult,
-    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchItemResult, BatchResult,
+    BuildInstrumentResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
+    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo,
+    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -1174,6 +1176,7 @@ impl SynthBridge for AppSynthBridge {
                 for n in &p.notes {
                     insert_note_into_pattern(pattern, n);
                 }
+                insert_automation_into_pattern(pattern, &p.automation);
             }
             items.push(BatchItemResult {
                 index: i,
@@ -1313,6 +1316,7 @@ impl SynthBridge for AppSynthBridge {
                     insert_note_into_pattern(pattern, n);
                     total_notes += 1;
                 }
+                insert_automation_into_pattern(pattern, &p.automation);
             } else {
                 errors.push(format!("failed to access pattern[{i}] after creation"));
             }
@@ -1608,21 +1612,14 @@ impl SynthBridge for AppSynthBridge {
         let total = points.len();
 
         for (i, pt) in points.iter().enumerate() {
-            let param = match pt.param.as_str() {
-                "Volume" => AutoInstrumentParam::Volume,
-                "Pan" => AutoInstrumentParam::Pan,
-                "FilterCutoff" => AutoInstrumentParam::FilterCutoff,
-                "FilterResonance" => AutoInstrumentParam::FilterResonance,
-                "Attack" => AutoInstrumentParam::Attack,
-                "Decay" => AutoInstrumentParam::Decay,
-                "Sustain" => AutoInstrumentParam::Sustain,
-                "Release" => AutoInstrumentParam::Release,
-                other => {
+            let param = match parse_auto_instrument_param(&pt.param) {
+                Some(p) => p,
+                None => {
                     items.push(BatchItemResult {
                         index: i,
                         success: false,
                         id: None,
-                        error: Some(format!("unknown param '{other}'")),
+                        error: Some(format!("unknown param '{}'", pt.param)),
                     });
                     continue;
                 }
@@ -1633,8 +1630,9 @@ impl SynthBridge for AppSynthBridge {
                 param,
             };
             let tick = PatternTick(beats_to_ticks(pt.beat));
+            let curve = parse_curve_type(&pt.curve);
             let lane = pattern.get_or_create_automation(target);
-            lane.add_point(AutomationPoint::new(tick, pt.value));
+            lane.add_point(AutomationPoint::new(tick, pt.value).with_curve(curve));
             items.push(BatchItemResult {
                 index: i,
                 success: true,
@@ -1642,6 +1640,358 @@ impl SynthBridge for AppSynthBridge {
                 error: None,
             });
             succeeded += 1;
+        }
+
+        Ok(BatchResult {
+            total,
+            succeeded,
+            failed: total - succeeded,
+            items,
+        })
+    }
+
+    fn list_automation_lanes(
+        &self,
+        pattern_id: u32,
+    ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError> {
+        let song = self
+            .shared
+            .song
+            .read()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song
+            .pattern(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        Ok(pattern
+            .automation
+            .iter()
+            .map(|lane| {
+                let (target_name, instrument_id) = automation_target_info(&lane.target);
+                AutomationLaneInfo {
+                    target: target_name,
+                    instrument_id,
+                    point_count: lane.len(),
+                }
+            })
+            .collect())
+    }
+
+    fn get_automation_points(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+    ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
+        let song = self
+            .shared
+            .song
+            .read()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song
+            .pattern(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let auto_target = build_automation_target(target, instrument_id)?;
+        let lane = pattern
+            .automation_lane(&auto_target)
+            .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
+
+        Ok(lane
+            .points()
+            .iter()
+            .map(|p| AutomationPointInfo {
+                beat: ticks_to_beats(p.tick.0),
+                value: p.value,
+                curve: format_curve_type(p.curve),
+            })
+            .collect())
+    }
+
+    fn remove_automation_points(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+        beats: &[f32],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song
+            .pattern_mut(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let auto_target = build_automation_target(target, instrument_id)?;
+        let lane = pattern.get_or_create_automation(auto_target);
+
+        let total = beats.len();
+        let mut succeeded = 0usize;
+        let mut items = Vec::with_capacity(total);
+
+        for (i, &beat) in beats.iter().enumerate() {
+            let tick = synth_sequencer::PatternTick(beats_to_ticks(beat));
+            if lane.remove_point(tick).is_some() {
+                items.push(BatchItemResult {
+                    index: i,
+                    success: true,
+                    id: None,
+                    error: None,
+                });
+                succeeded += 1;
+            } else {
+                items.push(BatchItemResult {
+                    index: i,
+                    success: false,
+                    id: None,
+                    error: Some(format!("no point at beat {beat}")),
+                });
+            }
+        }
+
+        Ok(BatchResult {
+            total,
+            succeeded,
+            failed: total - succeeded,
+            items,
+        })
+    }
+
+    fn clear_automation_lane(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+    ) -> Result<usize, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song
+            .pattern_mut(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let auto_target = build_automation_target(target, instrument_id)?;
+        let lane = pattern.get_or_create_automation(auto_target);
+        let count = lane.len();
+        lane.clear();
+        Ok(count)
+    }
+
+    // === Track control ===
+
+    fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.volume = synth_core::NormalizedValue::new(volume);
+        Ok(())
+    }
+
+    fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.pan = synth_core::NormalizedValue::new(pan);
+        Ok(())
+    }
+
+    fn set_track_mute(&self, track_id: u16, muted: bool) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.mute = muted;
+        Ok(())
+    }
+
+    fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.solo = solo;
+        Ok(())
+    }
+
+    fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.name = name.to_string();
+        Ok(())
+    }
+
+    fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        song.delete_track(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        Ok(())
+    }
+
+    // === Pattern management ===
+
+    fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        pattern.name = name.to_string();
+        Ok(())
+    }
+
+    fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        pattern.length = synth_sequencer::Duration(beats_to_ticks(length_beats));
+        Ok(())
+    }
+
+    fn duplicate_pattern(&self, pattern_id: u32) -> Result<u32, McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        song.duplicate_pattern(pid)
+            .map(|new_id| new_id.0)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))
+    }
+
+    // === Song metadata ===
+
+    fn set_song_author(&self, author: &str) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        song.author = author.to_string();
+        Ok(())
+    }
+
+    fn set_song_time_signature(
+        &self,
+        numerator: u8,
+        denominator: u8,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        song.default_time_signature = synth_sequencer::TimeSignature {
+            numerator,
+            denominator,
+        };
+        Ok(())
+    }
+
+    // === Batch parameter set ===
+
+    fn set_parameters(
+        &self,
+        instrument_id: u64,
+        params: &[BridgeParamSet],
+    ) -> Result<BatchResult, McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
+
+        let total = params.len();
+        let mut succeeded = 0usize;
+        let mut items = Vec::with_capacity(total);
+
+        for (i, ps) in params.iter().enumerate() {
+            let mid: ModuleId = match ps.module_id.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!("invalid module ID: {}", ps.module_id)),
+                    });
+                    continue;
+                }
+            };
+
+            match self.session.set_parameter(
+                inst_id,
+                mid,
+                &ps.param_name,
+                &crate::patch::ParamValue::Float(ps.value),
+            ) {
+                Ok(()) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: true,
+                        id: None,
+                        error: None,
+                    });
+                    succeeded += 1;
+                }
+                Err(e) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
         }
 
         Ok(BatchResult {
@@ -1688,6 +2038,103 @@ fn ticks_to_beats(ticks: u32) -> f32 {
 #[allow(clippy::cast_precision_loss)]
 fn ticks_to_beats_u64(ticks: u64) -> f32 {
     ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
+}
+
+/// Parse a parameter name string to `AutoInstrumentParam`.
+fn parse_auto_instrument_param(name: &str) -> Option<synth_sequencer::AutoInstrumentParam> {
+    use synth_sequencer::AutoInstrumentParam;
+    match name {
+        "Volume" => Some(AutoInstrumentParam::Volume),
+        "Pan" => Some(AutoInstrumentParam::Pan),
+        "FilterCutoff" => Some(AutoInstrumentParam::FilterCutoff),
+        "FilterResonance" => Some(AutoInstrumentParam::FilterResonance),
+        "Attack" => Some(AutoInstrumentParam::Attack),
+        "Decay" => Some(AutoInstrumentParam::Decay),
+        "Sustain" => Some(AutoInstrumentParam::Sustain),
+        "Release" => Some(AutoInstrumentParam::Release),
+        _ => None,
+    }
+}
+
+/// Parse a curve type string.
+fn parse_curve_type(s: &str) -> synth_sequencer::CurveType {
+    use synth_sequencer::CurveType;
+    match s {
+        "Step" => CurveType::Step,
+        "Exponential" => CurveType::Exponential(0),
+        "SCurve" => CurveType::SCurve,
+        _ => CurveType::Linear,
+    }
+}
+
+/// Format a `CurveType` to a string.
+fn format_curve_type(curve: synth_sequencer::CurveType) -> String {
+    use synth_sequencer::CurveType;
+    match curve {
+        CurveType::Linear => "Linear".to_string(),
+        CurveType::Step => "Step".to_string(),
+        CurveType::Exponential(strength) => format!("Exponential({strength})"),
+        CurveType::SCurve => "SCurve".to_string(),
+    }
+}
+
+/// Build an `AutomationTarget` from parameter name and instrument ID.
+fn build_automation_target(
+    target: &str,
+    instrument_id: u16,
+) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
+    let param = parse_auto_instrument_param(target)
+        .ok_or_else(|| McpBridgeError::Other(format!("unknown automation param: {target}")))?;
+    Ok(synth_sequencer::AutomationTarget::Instrument {
+        instrument: synth_sequencer::SeqInstrumentId::new(instrument_id),
+        param,
+    })
+}
+
+/// Extract target name and optional instrument ID from an `AutomationTarget`.
+fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String, Option<u16>) {
+    use synth_sequencer::AutoInstrumentParam;
+    match target {
+        synth_sequencer::AutomationTarget::Instrument { instrument, param } => {
+            let name = match param {
+                AutoInstrumentParam::Volume => "Volume",
+                AutoInstrumentParam::Pan => "Pan",
+                AutoInstrumentParam::FilterCutoff => "FilterCutoff",
+                AutoInstrumentParam::FilterResonance => "FilterResonance",
+                AutoInstrumentParam::Attack => "Attack",
+                AutoInstrumentParam::Decay => "Decay",
+                AutoInstrumentParam::Sustain => "Sustain",
+                AutoInstrumentParam::Release => "Release",
+            };
+            (name.to_string(), Some(instrument.0))
+        }
+        synth_sequencer::AutomationTarget::Track { track, param } => {
+            (format!("{param:?}"), Some(track.0))
+        }
+        synth_sequencer::AutomationTarget::Global(param) => (format!("{param:?}"), None),
+    }
+}
+
+/// Insert automation points from `BridgeAutomationPointData` into a pattern.
+fn insert_automation_into_pattern(
+    pattern: &mut synth_sequencer::Pattern,
+    points: &[BridgeAutomationPointData],
+) {
+    use synth_sequencer::{AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId};
+
+    for pt in points {
+        let Some(param) = parse_auto_instrument_param(&pt.param) else {
+            continue;
+        };
+        let target = AutomationTarget::Instrument {
+            instrument: SeqInstrumentId::new(pt.instrument_id),
+            param,
+        };
+        let tick = PatternTick(beats_to_ticks(pt.beat));
+        let curve = parse_curve_type(&pt.curve);
+        let lane = pattern.get_or_create_automation(target);
+        lane.add_point(AutomationPoint::new(tick, pt.value).with_curve(curve));
+    }
 }
 
 /// Compute overlapping module pairs from their positions and sizes.

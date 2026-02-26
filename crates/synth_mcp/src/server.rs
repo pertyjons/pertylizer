@@ -330,6 +330,8 @@ pub struct AutomationPointInput {
     pub beat: f32,
     #[schemars(description = "Normalized value (0.0-1.0)")]
     pub value: f32,
+    #[schemars(description = "Interpolation curve: Linear (default), Step, Exponential, SCurve")]
+    pub curve: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -338,6 +340,147 @@ pub struct AddAutomationPointsParam {
     pub pattern_id: u32,
     #[schemars(description = "Automation points to add")]
     pub points: Vec<AutomationPointInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetAutomationPointsParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Target parameter name (e.g. Volume, Pan, FilterCutoff)")]
+    pub target: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveAutomationPointsParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Target parameter name (e.g. Volume, Pan)")]
+    pub target: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+    #[schemars(description = "Beat positions of points to remove")]
+    pub beats: Vec<f32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ClearAutomationLaneParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Target parameter name (e.g. Volume, Pan)")]
+    pub target: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+}
+
+// === Track control parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackVolumeParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "Volume (0.0 = silent, 1.0 = full)")]
+    pub volume: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackPanParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "Pan (0.0 = left, 0.5 = center, 1.0 = right)")]
+    pub pan: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackMuteParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "Whether the track should be muted")]
+    pub muted: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackSoloParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "Whether the track should be soloed")]
+    pub solo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameTrackParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "New name for the track")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeleteTrackParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+}
+
+// === Pattern management parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenamePatternParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "New name for the pattern")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatternLengthParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "New length in beats (e.g. 4.0 for one bar in 4/4)")]
+    pub length_beats: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DuplicatePatternParam {
+    #[schemars(description = "Pattern ID to duplicate")]
+    pub pattern_id: u32,
+}
+
+// === Song metadata parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSongAuthorParam {
+    #[schemars(description = "Author name")]
+    pub author: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSongTimeSignatureParam {
+    #[schemars(description = "Numerator (beats per bar, e.g. 4)")]
+    pub numerator: u8,
+    #[schemars(description = "Denominator (beat unit, e.g. 4 for quarter note)")]
+    pub denominator: u8,
+}
+
+// === Batch parameter set structs ===
+
+/// A parameter to set in a batch operation.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ParamSetInput {
+    #[schemars(description = "Module ID (e.g. 'osc-1')")]
+    pub module_id: String,
+    #[schemars(description = "Parameter name (e.g. 'frequency', 'level')")]
+    pub param_name: String,
+    #[schemars(description = "New value as float")]
+    pub value: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetParametersParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Array of parameters to set")]
+    pub params: Vec<ParamSetInput>,
 }
 
 /// A pattern to create in a batch operation.
@@ -349,6 +492,8 @@ pub struct PatternInput {
     pub length_beats: f32,
     #[schemars(description = "Optional array of notes to add immediately")]
     pub notes: Option<Vec<NoteInput>>,
+    #[schemars(description = "Optional array of automation points to add")]
+    pub automation: Option<Vec<AutomationPointInput>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -398,6 +543,8 @@ pub struct SongPatternDef {
     pub length_beats: f32,
     #[schemars(description = "Notes in this pattern")]
     pub notes: Vec<NoteInput>,
+    #[schemars(description = "Optional automation points for this pattern")]
+    pub automation: Option<Vec<AutomationPointInput>>,
 }
 
 /// Track definition for set_song.
@@ -1234,6 +1381,7 @@ impl SynthMcpServer {
                 instrument_id: pt.instrument_id.unwrap_or(0),
                 beat: pt.beat,
                 value: pt.value,
+                curve: pt.curve.unwrap_or_else(|| "Linear".to_string()),
             })
             .collect();
         match self.bridge.add_automation_points(p.pattern_id, &points) {
@@ -1243,7 +1391,231 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create multiple patterns in one call, optionally with inline notes. Returns per-pattern results with assigned IDs."
+        description = "List all automation lanes in a pattern with their target parameters and point counts."
+    )]
+    async fn list_automation_lanes(&self, params: Parameters<PatternIdParam>) -> String {
+        match self.bridge.list_automation_lanes(params.0.pattern_id) {
+            Ok(lanes) => serde_json::to_string_pretty(&lanes)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get all automation points for a specific parameter lane in a pattern.")]
+    async fn get_automation_points(&self, params: Parameters<GetAutomationPointsParam>) -> String {
+        let p = params.0;
+        match self.bridge.get_automation_points(
+            p.pattern_id,
+            &p.target,
+            p.instrument_id.unwrap_or(0),
+        ) {
+            Ok(points) => serde_json::to_string_pretty(&points)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Remove automation points at specific beat positions from a lane.")]
+    async fn remove_automation_points(
+        &self,
+        params: Parameters<RemoveAutomationPointsParam>,
+    ) -> String {
+        let p = params.0;
+        match self.bridge.remove_automation_points(
+            p.pattern_id,
+            &p.target,
+            p.instrument_id.unwrap_or(0),
+            &p.beats,
+        ) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Clear all automation points from a specific lane in a pattern.")]
+    async fn clear_automation_lane(&self, params: Parameters<ClearAutomationLaneParam>) -> String {
+        let p = params.0;
+        match self.bridge.clear_automation_lane(
+            p.pattern_id,
+            &p.target,
+            p.instrument_id.unwrap_or(0),
+        ) {
+            Ok(count) => format!("OK: cleared {count} points from {}", p.target),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Track control ===
+
+    #[tool(description = "Set the volume of a track (0.0 = silent, 1.0 = full).")]
+    async fn set_track_volume(&self, params: Parameters<SetTrackVolumeParam>) -> String {
+        match self
+            .bridge
+            .set_track_volume(params.0.track_id, params.0.volume)
+        {
+            Ok(()) => format!(
+                "OK: track {} volume set to {}",
+                params.0.track_id, params.0.volume
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the pan position of a track (0.0 = left, 0.5 = center, 1.0 = right)."
+    )]
+    async fn set_track_pan(&self, params: Parameters<SetTrackPanParam>) -> String {
+        match self.bridge.set_track_pan(params.0.track_id, params.0.pan) {
+            Ok(()) => format!(
+                "OK: track {} pan set to {}",
+                params.0.track_id, params.0.pan
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Mute or unmute a track.")]
+    async fn set_track_mute(&self, params: Parameters<SetTrackMuteParam>) -> String {
+        match self
+            .bridge
+            .set_track_mute(params.0.track_id, params.0.muted)
+        {
+            Ok(()) => {
+                let state = if params.0.muted { "muted" } else { "unmuted" };
+                format!("OK: track {} {state}", params.0.track_id)
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Solo or unsolo a track. When any track is soloed, only soloed tracks produce sound."
+    )]
+    async fn set_track_solo(&self, params: Parameters<SetTrackSoloParam>) -> String {
+        match self.bridge.set_track_solo(params.0.track_id, params.0.solo) {
+            Ok(()) => {
+                let state = if params.0.solo { "soloed" } else { "unsoloed" };
+                format!("OK: track {} {state}", params.0.track_id)
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Rename a track.")]
+    async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
+        match self.bridge.rename_track(params.0.track_id, &params.0.name) {
+            Ok(()) => format!(
+                "OK: track {} renamed to '{}'",
+                params.0.track_id, params.0.name
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Delete a track and all its placements from the arrangement.")]
+    async fn delete_track(&self, params: Parameters<DeleteTrackParam>) -> String {
+        match self.bridge.delete_track(params.0.track_id) {
+            Ok(()) => format!("OK: deleted track {}", params.0.track_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Pattern management ===
+
+    #[tool(description = "Rename a pattern.")]
+    async fn rename_pattern(&self, params: Parameters<RenamePatternParam>) -> String {
+        match self
+            .bridge
+            .rename_pattern(params.0.pattern_id, &params.0.name)
+        {
+            Ok(()) => format!(
+                "OK: pattern {} renamed to '{}'",
+                params.0.pattern_id, params.0.name
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set the length of a pattern in beats.")]
+    async fn set_pattern_length(&self, params: Parameters<SetPatternLengthParam>) -> String {
+        match self
+            .bridge
+            .set_pattern_length(params.0.pattern_id, params.0.length_beats)
+        {
+            Ok(()) => format!(
+                "OK: pattern {} length set to {} beats",
+                params.0.pattern_id, params.0.length_beats
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Duplicate a pattern including all notes and automation. Returns the new pattern ID."
+    )]
+    async fn duplicate_pattern(&self, params: Parameters<DuplicatePatternParam>) -> String {
+        match self.bridge.duplicate_pattern(params.0.pattern_id) {
+            Ok(new_id) => format!(
+                "OK: duplicated pattern {} as new pattern {new_id}",
+                params.0.pattern_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Song metadata ===
+
+    #[tool(description = "Set the song author name.")]
+    async fn set_song_author(&self, params: Parameters<SetSongAuthorParam>) -> String {
+        match self.bridge.set_song_author(&params.0.author) {
+            Ok(()) => format!("OK: song author set to '{}'", params.0.author),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set the song time signature (e.g. 4/4, 3/4, 6/8).")]
+    async fn set_song_time_signature(
+        &self,
+        params: Parameters<SetSongTimeSignatureParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_song_time_signature(params.0.numerator, params.0.denominator)
+        {
+            Ok(()) => format!(
+                "OK: time signature set to {}/{}",
+                params.0.numerator, params.0.denominator
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Batch parameter set ===
+
+    #[tool(
+        description = "Set multiple module parameters in one call. Faster than calling set_parameter repeatedly."
+    )]
+    async fn set_parameters(&self, params: Parameters<SetParametersParam>) -> String {
+        let p = params.0;
+        let param_sets: Vec<_> = p
+            .params
+            .into_iter()
+            .map(|ps| crate::bridge::BridgeParamSet {
+                module_id: ps.module_id,
+                param_name: ps.param_name,
+                value: ps.value,
+            })
+            .collect();
+        match self.bridge.set_parameters(p.instrument_id, &param_sets) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create multiple patterns in one call, optionally with inline notes and automation. Returns per-pattern results with assigned IDs."
     )]
     async fn create_patterns(&self, params: Parameters<CreatePatternsParam>) -> String {
         let patterns: Vec<_> = params
@@ -1264,6 +1636,7 @@ impl SynthMcpServer {
                         velocity: n.velocity.unwrap_or(100),
                     })
                     .collect(),
+                automation: convert_automation_points(p.automation),
             })
             .collect();
         match self.bridge.create_patterns(&patterns) {
@@ -1315,7 +1688,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Build a complete song in one call: creates patterns (with notes), tracks, and arrangement placements. \
+        description = "Build a complete song in one call: creates patterns (with notes and optional automation), tracks, and arrangement placements. \
                        Replaces the current song. Placements use array indices (pattern_index, track_index) since IDs are assigned during creation. \
                        Returns a summary with all assigned IDs."
     )]
@@ -1337,6 +1710,7 @@ impl SynthMcpServer {
                         velocity: n.velocity.unwrap_or(100),
                     })
                     .collect(),
+                automation: convert_automation_points(pat.automation),
             })
             .collect();
         let tracks: Vec<_> = p
@@ -1513,4 +1887,21 @@ fn convert_instrument_def(
         modules: bridge_modules,
         connections: bridge_connections,
     }
+}
+
+/// Convert optional automation point inputs to bridge-level data.
+fn convert_automation_points(
+    points: Option<Vec<AutomationPointInput>>,
+) -> Vec<crate::bridge::BridgeAutomationPointData> {
+    points
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pt| crate::bridge::BridgeAutomationPointData {
+            param: pt.param,
+            instrument_id: pt.instrument_id.unwrap_or(0),
+            beat: pt.beat,
+            value: pt.value,
+            curve: pt.curve.unwrap_or_else(|| "Linear".to_string()),
+        })
+        .collect()
 }

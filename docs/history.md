@@ -1,5 +1,15 @@
 # Version History
 
+## [0.177.0] - 2026-02-26
+### MCP: Komplett API med 18 nya verktyg
+- **Automation CRUD** — `list_automation_lanes`, `get_automation_points`, `remove_automation_points`, `clear_automation_lane` + `curve`-parameter (Linear/Step/Exponential/SCurve) på `add_automation_points`
+- **Track-kontroll** — `set_track_volume`, `set_track_pan`, `set_track_mute`, `set_track_solo`, `rename_track`, `delete_track`
+- **Pattern-hantering** — `rename_pattern`, `set_pattern_length`, `duplicate_pattern`
+- **Song-metadata** — `set_song_author`, `set_song_time_signature`
+- **Batch parameter** — `set_parameters` (sätt flera modulparametrar i ett anrop)
+- **Automation i `set_song`/`create_patterns`** — patterns kan nu inkludera automation inline
+- Totalt 79 MCP-verktyg (från 61)
+
 ## [0.176.0] - 2026-02-26
 ### MCP: Streamable HTTP + Hybrid Resonator preset
 - **MCP transport: TCP → Streamable HTTP** — Servern använder nu axum + rmcp Streamable HTTP på `http://127.0.0.1:9850/mcp`. Claude Code ansluter direkt utan bridge-process.

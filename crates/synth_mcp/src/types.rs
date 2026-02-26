@@ -362,3 +362,27 @@ pub struct PlacementInfo {
     /// Start position in beats.
     pub start_beat: f32,
 }
+
+// === Automation types ===
+
+/// Information about an automation lane in a pattern.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationLaneInfo {
+    /// Target parameter name (e.g. "Volume", "Pan").
+    pub target: String,
+    /// Instrument ID (if instrument-targeted).
+    pub instrument_id: Option<u16>,
+    /// Number of automation points.
+    pub point_count: usize,
+}
+
+/// Information about an automation point.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationPointInfo {
+    /// Position in beats.
+    pub beat: f32,
+    /// Normalized value (0.0-1.0).
+    pub value: f32,
+    /// Interpolation curve type (Linear, Step, Exponential, SCurve).
+    pub curve: String,
+}

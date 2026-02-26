@@ -6,9 +6,10 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ApplyExamplePatchResult, BatchResult, BuildInstrumentResult, ConnectionInfo, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    ParameterInfo, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchResult,
+    BuildInstrumentResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo,
+    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -47,6 +48,8 @@ pub struct BridgePatternData {
     pub length_beats: f32,
     /// Optional inline notes.
     pub notes: Vec<BridgeNoteData>,
+    /// Optional inline automation points.
+    pub automation: Vec<BridgeAutomationPointData>,
 }
 
 /// Track data for batch create operations.
@@ -440,6 +443,86 @@ pub trait SynthBridge: Send + Sync + 'static {
         pattern_id: u32,
         points: &[BridgeAutomationPointData],
     ) -> Result<BatchResult, McpBridgeError>;
+
+    /// List all automation lanes in a pattern.
+    fn list_automation_lanes(
+        &self,
+        pattern_id: u32,
+    ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError>;
+
+    /// Get all automation points for a specific lane.
+    fn get_automation_points(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+    ) -> Result<Vec<AutomationPointInfo>, McpBridgeError>;
+
+    /// Remove automation points at specific beats.
+    fn remove_automation_points(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+        beats: &[f32],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Clear all points in an automation lane.
+    fn clear_automation_lane(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+    ) -> Result<usize, McpBridgeError>;
+
+    // === Track control ===
+
+    /// Set track volume (0.0-1.0).
+    fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError>;
+
+    /// Set track pan (0.0-1.0, 0.5=center).
+    fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError>;
+
+    /// Mute or unmute a track.
+    fn set_track_mute(&self, track_id: u16, muted: bool) -> Result<(), McpBridgeError>;
+
+    /// Solo or unsolo a track.
+    fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError>;
+
+    /// Rename a track.
+    fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Delete a track and its placements.
+    fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError>;
+
+    // === Pattern management ===
+
+    /// Rename a pattern.
+    fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Set pattern length in beats.
+    fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError>;
+
+    /// Duplicate a pattern (notes + automation). Returns new pattern ID.
+    fn duplicate_pattern(&self, pattern_id: u32) -> Result<u32, McpBridgeError>;
+
+    // === Song metadata ===
+
+    /// Set the song author.
+    fn set_song_author(&self, author: &str) -> Result<(), McpBridgeError>;
+
+    /// Set the song time signature.
+    fn set_song_time_signature(&self, numerator: u8, denominator: u8)
+    -> Result<(), McpBridgeError>;
+
+    // === Batch parameter set ===
+
+    /// Set multiple parameters at once.
+    fn set_parameters(
+        &self,
+        instrument_id: u64,
+        params: &[BridgeParamSet],
+    ) -> Result<BatchResult, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.
@@ -452,5 +535,17 @@ pub struct BridgeAutomationPointData {
     /// Position in beats.
     pub beat: f32,
     /// Normalized value (0.0-1.0).
+    pub value: f32,
+    /// Interpolation curve: "Linear", "Step", "Exponential", "SCurve".
+    pub curve: String,
+}
+
+/// Parameter set for batch set_parameters operations.
+pub struct BridgeParamSet {
+    /// Module ID string (e.g. "osc-1").
+    pub module_id: String,
+    /// Parameter name.
+    pub param_name: String,
+    /// New value.
     pub value: f32,
 }
