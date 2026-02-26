@@ -175,6 +175,22 @@ pub enum AutomationTarget {
     Global(GlobalParam),
 }
 
+impl AutomationTarget {
+    /// Display name for GUI labels.
+    #[must_use]
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Instrument { instrument, param } => {
+                format!("Inst {} {}", instrument.0, param.display_name())
+            }
+            Self::Track { track, param } => {
+                format!("Track {} {param:?}", track.0)
+            }
+            Self::Global(param) => format!("{param:?}"),
+        }
+    }
+}
+
 /// Automatable instrument parameters for sequencer automation lanes.
 ///
 /// These are parameter identifiers (no values) used in automation.
@@ -190,6 +206,35 @@ pub enum AutoInstrumentParam {
     Sustain,
     Release,
     // Can be extended to match PolyModule parameters
+}
+
+impl AutoInstrumentParam {
+    /// Display name for GUI labels.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Volume => "Volume",
+            Self::Pan => "Pan",
+            Self::FilterCutoff => "Filter Cutoff",
+            Self::FilterResonance => "Filter Res",
+            Self::Attack => "Attack",
+            Self::Decay => "Decay",
+            Self::Sustain => "Sustain",
+            Self::Release => "Release",
+        }
+    }
+
+    /// All variants for GUI enumeration.
+    pub const ALL: &[Self] = &[
+        Self::Volume,
+        Self::Pan,
+        Self::FilterCutoff,
+        Self::FilterResonance,
+        Self::Attack,
+        Self::Decay,
+        Self::Sustain,
+        Self::Release,
+    ];
 }
 
 /// Automatable track parameters.

@@ -26,6 +26,7 @@
    * 👉 **Arkitektur & Plan:** [Läs `docs/sequencer_plan.md`](sequencer_plan.md)
    * [x] ~~Piano Roll läs-vy: Visa noter i ett pattern (dubbelklick på placement)~~ *(v0.172.0)*
    * [x] ~~Piano Roll redigering: Lägg till/ta bort/flytta noter~~ *(v0.173.0)*
+   * [x] ~~Automation i Piano Roll: GUI, kurvrendering, uppspelning~~ *(v0.175.0)*
    * [ ] Tracker-vy: Komplementerande vy för tangentbordsdrivet workflow
 
 3. **Spara & ladda Song**

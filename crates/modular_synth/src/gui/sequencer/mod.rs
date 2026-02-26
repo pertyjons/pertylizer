@@ -11,8 +11,9 @@ use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Strok
 use synth_core::{Bpm, Semitones};
 use synth_engine::{EngineCommand, EngineHandle};
 use synth_sequencer::{
-    Duration as SeqDuration, InputCommand, InputSource, NoteId, NoteName, PatternId, PatternTick,
-    Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
+    AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
+    InputCommand, InputSource, NoteId, NoteName, PatternId, PatternTick, Pitch, SeqInstrumentId,
+    Song, Tick, TimeSignature, TrackId, Velocity,
 };
 
 use crate::gui::theme::theme;
@@ -114,6 +115,14 @@ enum DragState {
     },
     /// Selection rectangle (lasso).
     SelectRect { start_pos: Pos2, current_pos: Pos2 },
+    /// Drag-move an automation point.
+    DragAutomationPoint {
+        target: AutomationTarget,
+        original_tick: u32,
+        original_value: f32,
+        current_tick: u32,
+        current_value: f32,
+    },
 }
 
 // ============================================================================
@@ -130,6 +139,8 @@ pub struct SequencerViewState {
     edit_tool: EditTool,
     /// Active drag operation.
     drag: Option<DragState>,
+    /// Currently selected automation lane (None = automation zone hidden).
+    selected_automation: Option<AutomationTarget>,
 }
 
 impl SequencerViewState {
@@ -139,6 +150,7 @@ impl SequencerViewState {
             selected_notes: HashSet::new(),
             edit_tool: EditTool::Draw,
             drag: None,
+            selected_automation: None,
         }
     }
 }
@@ -179,6 +191,12 @@ const VELOCITY_ZONE_HEIGHT: f32 = 40.0;
 const PR_PIXELS_PER_BEAT: f32 = 60.0;
 /// Resize grab zone width (pixels from right edge).
 const RESIZE_GRAB_ZONE: f32 = 10.0;
+/// Height of the automation zone (below velocity zone).
+const AUTOMATION_ZONE_HEIGHT: f32 = 80.0;
+/// Radius for automation point circles.
+const AUTOMATION_POINT_RADIUS: f32 = 4.0;
+/// Hit radius for automation point click detection.
+const AUTOMATION_HIT_RADIUS: f32 = 8.0;
 
 // ============================================================================
 // TRANSPORT BAR
@@ -769,6 +787,19 @@ struct PianoRollNote {
     velocity: f32,
 }
 
+/// Snapshot of a single automation point for rendering.
+struct AutomationPointSnapshot {
+    tick: u32,
+    value: f32,
+    curve: CurveType,
+}
+
+/// Snapshot of an automation lane for rendering.
+struct AutomationLaneSnapshot {
+    target: AutomationTarget,
+    points: Vec<AutomationPointSnapshot>,
+}
+
 /// Collected data for piano roll rendering.
 struct PianoRollData {
     pattern_name: String,
@@ -778,6 +809,7 @@ struct PianoRollData {
     notes: Vec<PianoRollNote>,
     pitch_min: u8,
     pitch_max: u8,
+    automation_lanes: Vec<AutomationLaneSnapshot>,
 }
 
 /// Collect piano roll data from song (short read-lock, then release).
@@ -818,6 +850,23 @@ fn collect_piano_roll_data(
         pitch_max = 72; // C5
     }
 
+    let automation_lanes: Vec<AutomationLaneSnapshot> = pattern
+        .automation
+        .iter()
+        .map(|lane| AutomationLaneSnapshot {
+            target: lane.target.clone(),
+            points: lane
+                .points()
+                .iter()
+                .map(|p| AutomationPointSnapshot {
+                    tick: p.tick.0,
+                    value: p.value,
+                    curve: p.curve,
+                })
+                .collect(),
+        })
+        .collect();
+
     Some(PianoRollData {
         pattern_name: if pattern.name.is_empty() {
             format!("Pattern {}", pattern_id.0)
@@ -830,6 +879,7 @@ fn collect_piano_roll_data(
         notes,
         pitch_min,
         pitch_max,
+        automation_lanes,
     })
 }
 
@@ -943,6 +993,52 @@ fn draw_piano_roll(
 
         ui.separator();
 
+        // Automation lane selector
+        ui.label(RichText::new("Auto:").color(t.colors.text_dim));
+        {
+            // Build label for ComboBox
+            let auto_label = view_state
+                .selected_automation
+                .as_ref()
+                .map_or_else(|| "None".to_owned(), AutomationTarget::display_name);
+
+            egui::ComboBox::from_id_salt("auto_lane_select")
+                .selected_text(&auto_label)
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    // "None" option to hide automation zone
+                    if ui
+                        .selectable_label(view_state.selected_automation.is_none(), "None")
+                        .clicked()
+                    {
+                        view_state.selected_automation = None;
+                    }
+
+                    // All instrument params for instrument 0
+                    for param in AutoInstrumentParam::ALL {
+                        let target = AutomationTarget::Instrument {
+                            instrument: SeqInstrumentId::new(0),
+                            param: *param,
+                        };
+                        let has_points = data
+                            .automation_lanes
+                            .iter()
+                            .any(|l| l.target == target && !l.points.is_empty());
+                        let label = if has_points {
+                            format!("* {}", param.display_name())
+                        } else {
+                            param.display_name().to_owned()
+                        };
+                        let is_selected = view_state.selected_automation.as_ref() == Some(&target);
+                        if ui.selectable_label(is_selected, &label).clicked() {
+                            view_state.selected_automation = Some(target);
+                        }
+                    }
+                });
+        }
+
+        ui.separator();
+
         ui.label(
             RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
         );
@@ -974,7 +1070,12 @@ fn draw_piano_roll(
     let pitch_range = view_pitch_max - view_pitch_min + 1;
 
     let grid_height = pitch_range as f32 * NOTE_ROW_HEIGHT;
-    let total_content_height = grid_height + VELOCITY_ZONE_HEIGHT;
+    let auto_height = if view_state.selected_automation.is_some() {
+        AUTOMATION_ZONE_HEIGHT
+    } else {
+        0.0
+    };
+    let total_content_height = grid_height + VELOCITY_ZONE_HEIGHT + auto_height;
 
     // Timeline width: use max of pattern length and furthest note end
     let ticks_per_beat = synth_sequencer::TICKS_PER_QUARTER;
@@ -1406,6 +1507,22 @@ fn draw_piano_roll(
                 );
             }
 
+            // ── Automation zone (below velocity) ──
+            let auto_y = vel_y + VELOCITY_ZONE_HEIGHT;
+            if let Some(selected_target) = &view_state.selected_automation {
+                draw_automation_zone(
+                    &painter,
+                    data,
+                    view_state,
+                    selected_target,
+                    grid_x,
+                    auto_y,
+                    grid_width,
+                    &tick_to_x,
+                    &t,
+                );
+            }
+
             // ── Playhead ──
             // Convert song tick to pattern-relative tick if applicable
             if current_tick > 0 && data.length_ticks > 0 {
@@ -1419,7 +1536,7 @@ fn draw_piano_roll(
                     painter.line_segment(
                         [
                             Pos2::new(playhead_x, grid_y),
-                            Pos2::new(playhead_x, vel_y + VELOCITY_ZONE_HEIGHT),
+                            Pos2::new(playhead_x, grid_y + total_content_height),
                         ],
                         Stroke::new(1.5, t.colors.accent_primary),
                     );
@@ -1435,53 +1552,66 @@ fn draw_piano_roll(
                 Stroke::new(1.0, t.colors.border),
             );
 
+            // Automation zone rect (for hit-testing)
+            let auto_rect = if view_state.selected_automation.is_some() {
+                Some(Rect::from_min_size(
+                    Pos2::new(grid_x, auto_y),
+                    Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
+                ))
+            } else {
+                None
+            };
+
             // ── Hover and cursor ──
-            if let Some(pos) = ui.ctx().pointer_hover_pos()
-                && grid_rect.contains(pos)
-            {
-                let hit = note_at_pos(
-                    &data.notes,
-                    pos,
-                    &tick_to_x,
-                    &pitch_to_y,
-                    data.length_ticks,
-                    view_pitch_min,
-                    view_pitch_max,
-                );
+            if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                // Check automation zone hover first
+                if auto_rect.is_some_and(|r| r.contains(pos)) {
+                    ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                } else if grid_rect.contains(pos) {
+                    let hit = note_at_pos(
+                        &data.notes,
+                        pos,
+                        &tick_to_x,
+                        &pitch_to_y,
+                        data.length_ticks,
+                        view_pitch_min,
+                        view_pitch_max,
+                    );
 
-                match hit {
-                    Some((_, HitZone::RightEdge)) => {
-                        ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
-                    }
-                    Some((note_id, HitZone::Body)) => {
-                        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-
-                        // Subtle hover highlight
-                        if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                            let y = pitch_to_y(note.pitch);
-                            let x_start = tick_to_x(note.start_tick);
-                            let x_end = match note.end_tick {
-                                Some(end) => tick_to_x(end),
-                                None => tick_to_x(data.length_ticks),
-                            };
-                            let hover_rect = Rect::from_min_size(
-                                Pos2::new(x_start, y + 1.0),
-                                Vec2::new((x_end - x_start).max(3.0), NOTE_ROW_HEIGHT - 2.0),
-                            );
-                            painter.rect_stroke(
-                                hover_rect,
-                                2.0,
-                                Stroke::new(
-                                    1.0,
-                                    Color32::from_rgba_unmultiplied(255, 255, 255, 60),
-                                ),
-                                egui::StrokeKind::Outside,
-                            );
+                    match hit {
+                        Some((_, HitZone::RightEdge)) => {
+                            ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
                         }
-                    }
-                    None => {
-                        if view_state.edit_tool == EditTool::Draw {
-                            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                        Some((note_id, HitZone::Body)) => {
+                            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+
+                            // Subtle hover highlight
+                            if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                                let y = pitch_to_y(note.pitch);
+                                let x_start = tick_to_x(note.start_tick);
+                                let x_end = match note.end_tick {
+                                    Some(end) => tick_to_x(end),
+                                    None => tick_to_x(data.length_ticks),
+                                };
+                                let hover_rect = Rect::from_min_size(
+                                    Pos2::new(x_start, y + 1.0),
+                                    Vec2::new((x_end - x_start).max(3.0), NOTE_ROW_HEIGHT - 2.0),
+                                );
+                                painter.rect_stroke(
+                                    hover_rect,
+                                    2.0,
+                                    Stroke::new(
+                                        1.0,
+                                        Color32::from_rgba_unmultiplied(255, 255, 255, 60),
+                                    ),
+                                    egui::StrokeKind::Outside,
+                                );
+                            }
+                        }
+                        None => {
+                            if view_state.edit_tool == EditTool::Draw {
+                                ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                            }
                         }
                     }
                 }
@@ -1495,6 +1625,8 @@ fn draw_piano_roll(
                 song,
                 view_state,
                 grid_rect,
+                auto_rect,
+                auto_y,
                 &x_to_tick,
                 &y_to_pitch,
                 &tick_to_x,
@@ -1526,6 +1658,8 @@ fn handle_piano_roll_interaction(
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     grid_rect: Rect,
+    auto_rect: Option<Rect>,
+    auto_y: f32,
     x_to_tick: &dyn Fn(f32) -> u32,
     y_to_pitch: &dyn Fn(f32) -> u8,
     tick_to_x: &dyn Fn(u32) -> f32,
@@ -1534,6 +1668,48 @@ fn handle_piano_roll_interaction(
     view_pitch_max: u8,
 ) {
     let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+
+    // ── Automation click handling ──
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(ar) = auto_rect
+        && ar.contains(pos)
+        && let Some(target) = &view_state.selected_automation
+    {
+        let target = target.clone();
+        let raw_tick = x_to_tick(pos.x);
+        let tick = quantize_tick(raw_tick, data.ticks_per_row);
+        let value = (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0);
+
+        if let Ok(mut song_w) = song.write()
+            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+        {
+            let lane = pattern.get_or_create_automation(target);
+            lane.add_point(AutomationPoint::new(PatternTick(tick), value));
+        }
+    }
+
+    // ── Automation right-click (delete point) ──
+    if response.secondary_clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(ar) = auto_rect
+        && ar.contains(pos)
+        && let Some(target) = &view_state.selected_automation
+    {
+        let target = target.clone();
+        // Find the lane snapshot to hit-test against
+        if let Some(lane) = data.automation_lanes.iter().find(|l| l.target == target)
+            && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
+        {
+            let point_tick = lane.points[idx].tick;
+            if let Ok(mut song_w) = song.write()
+                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                && let Some(auto_lane) = pattern.automation.iter_mut().find(|l| l.target == target)
+            {
+                auto_lane.remove_point(PatternTick(point_tick));
+            }
+        }
+    }
 
     // ── Click handling ──
     if response.clicked()
@@ -1592,6 +1768,28 @@ fn handle_piano_roll_interaction(
                     view_state.selected_notes.clear();
                 }
             }
+        }
+    }
+
+    // ── Automation drag start ──
+    if response.drag_started()
+        && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
+        && let Some(ar) = auto_rect
+        && ar.contains(pos)
+        && let Some(target) = &view_state.selected_automation
+    {
+        let target = target.clone();
+        if let Some(lane) = data.automation_lanes.iter().find(|l| l.target == target)
+            && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
+        {
+            let pt = &lane.points[idx];
+            view_state.drag = Some(DragState::DragAutomationPoint {
+                target,
+                original_tick: pt.tick,
+                original_value: pt.value,
+                current_tick: pt.tick,
+                current_value: pt.value,
+            });
         }
     }
 
@@ -1720,6 +1918,15 @@ fn handle_piano_roll_interaction(
             Some(DragState::SelectRect { current_pos, .. }) => {
                 *current_pos = pos;
             }
+            Some(DragState::DragAutomationPoint {
+                current_tick,
+                current_value,
+                ..
+            }) => {
+                let raw_tick = x_to_tick(pos.x);
+                *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
+                *current_value = (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0);
+            }
             None => {}
         }
     }
@@ -1818,7 +2025,203 @@ fn handle_piano_roll_interaction(
                     }
                 }
             }
+            DragState::DragAutomationPoint {
+                target,
+                original_tick,
+                original_value,
+                current_tick,
+                current_value,
+            } => {
+                // Apply automation point move
+                if (current_tick != original_tick
+                    || (current_value - original_value).abs() > f32::EPSILON)
+                    && let Ok(mut song_w) = song.write()
+                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                {
+                    let lane = pattern.get_or_create_automation(target);
+                    lane.remove_point(PatternTick(original_tick));
+                    lane.add_point(AutomationPoint::new(
+                        PatternTick(current_tick),
+                        current_value,
+                    ));
+                }
+            }
         }
+    }
+}
+
+/// Find automation point at the given position (within hit radius).
+fn automation_point_at_pos(
+    lane: &AutomationLaneSnapshot,
+    pos: Pos2,
+    tick_to_x: &dyn Fn(u32) -> f32,
+    auto_y: f32,
+) -> Option<usize> {
+    let value_to_y =
+        |val: f32| -> f32 { auto_y + AUTOMATION_ZONE_HEIGHT * (1.0 - val.clamp(0.0, 1.0)) };
+
+    for (i, pt) in lane.points.iter().enumerate() {
+        let px = tick_to_x(pt.tick);
+        let py = value_to_y(pt.value);
+        let dist = ((pos.x - px).powi(2) + (pos.y - py).powi(2)).sqrt();
+        if dist <= AUTOMATION_HIT_RADIUS {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Draw the automation zone below the velocity zone.
+#[allow(clippy::too_many_arguments)]
+fn draw_automation_zone(
+    painter: &egui::Painter,
+    data: &PianoRollData,
+    view_state: &SequencerViewState,
+    selected_target: &AutomationTarget,
+    grid_x: f32,
+    auto_y: f32,
+    grid_width: f32,
+    tick_to_x: &dyn Fn(u32) -> f32,
+    t: &crate::gui::theme::Theme,
+) {
+    let auto_color = Color32::from_rgb(255, 160, 50); // Orange
+
+    // Background
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(grid_x, auto_y),
+            Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
+        ),
+        0.0,
+        Color32::from_rgba_premultiplied(18, 20, 24, 220),
+    );
+
+    // Separator line
+    painter.line_segment(
+        [
+            Pos2::new(grid_x, auto_y),
+            Pos2::new(grid_x + grid_width, auto_y),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // Label
+    painter.text(
+        Pos2::new(grid_x - KEY_WIDTH + 2.0, auto_y + 2.0),
+        egui::Align2::LEFT_TOP,
+        "AUTO",
+        egui::FontId::proportional(9.0),
+        t.colors.text_dim,
+    );
+
+    // Reference lines (25%, 50%, 75%)
+    for frac in [0.25, 0.5, 0.75] {
+        let ry = auto_y + AUTOMATION_ZONE_HEIGHT * (1.0 - frac);
+        painter.line_segment(
+            [Pos2::new(grid_x, ry), Pos2::new(grid_x + grid_width, ry)],
+            Stroke::new(0.3, t.colors.border.gamma_multiply(0.3)),
+        );
+    }
+
+    // Coordinate helpers
+    let value_to_y =
+        |val: f32| -> f32 { auto_y + AUTOMATION_ZONE_HEIGHT * (1.0 - val.clamp(0.0, 1.0)) };
+
+    // Find the lane matching the selected target
+    let lane = data
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == *selected_target);
+
+    if let Some(lane) = lane {
+        let points = &lane.points;
+
+        if !points.is_empty() {
+            // Draw flat extension before first point
+            if let Some(first) = points.first() {
+                let first_x = tick_to_x(first.tick);
+                if first_x > grid_x {
+                    let y = value_to_y(first.value);
+                    painter.line_segment(
+                        [Pos2::new(grid_x, y), Pos2::new(first_x, y)],
+                        Stroke::new(1.0, auto_color.gamma_multiply(0.5)),
+                    );
+                }
+            }
+
+            // Draw curves between consecutive points
+            for window in points.windows(2) {
+                let from = &window[0];
+                let to = &window[1];
+                let x_start = tick_to_x(from.tick);
+                let x_end = tick_to_x(to.tick);
+                let pixel_width = (x_end - x_start).max(1.0);
+
+                // Sample the curve pixel by pixel
+                let steps = (pixel_width as u32).max(2);
+                let mut prev_pos = Pos2::new(x_start, value_to_y(from.value));
+
+                for step in 1..=steps {
+                    #[allow(clippy::cast_precision_loss)]
+                    let frac = step as f32 / steps as f32;
+                    let x = x_start + frac * (x_end - x_start);
+                    let val = from.curve.interpolate(from.value, to.value, frac);
+                    let y = value_to_y(val);
+                    let cur_pos = Pos2::new(x, y);
+
+                    painter.line_segment([prev_pos, cur_pos], Stroke::new(1.5, auto_color));
+                    prev_pos = cur_pos;
+                }
+            }
+
+            // Draw flat extension after last point
+            if let Some(last) = points.last() {
+                let last_x = tick_to_x(last.tick);
+                let grid_end_x = grid_x + grid_width;
+                if last_x < grid_end_x {
+                    let y = value_to_y(last.value);
+                    painter.line_segment(
+                        [Pos2::new(last_x, y), Pos2::new(grid_end_x, y)],
+                        Stroke::new(1.0, auto_color.gamma_multiply(0.5)),
+                    );
+                }
+            }
+
+            // Draw points
+            for pt in points {
+                let px = tick_to_x(pt.tick);
+                let py = value_to_y(pt.value);
+                painter.circle_filled(Pos2::new(px, py), AUTOMATION_POINT_RADIUS, auto_color);
+                painter.circle_stroke(
+                    Pos2::new(px, py),
+                    AUTOMATION_POINT_RADIUS,
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
+    }
+
+    // Draw drag preview ghost point
+    if let Some(DragState::DragAutomationPoint {
+        current_tick,
+        current_value,
+        target,
+        ..
+    }) = &view_state.drag
+        && target == selected_target
+    {
+        let px = tick_to_x(*current_tick);
+        let py = value_to_y(*current_value);
+        painter.circle_filled(
+            Pos2::new(px, py),
+            AUTOMATION_POINT_RADIUS + 1.0,
+            Color32::from_rgba_unmultiplied(255, 160, 50, 120),
+        );
+        painter.circle_stroke(
+            Pos2::new(px, py),
+            AUTOMATION_POINT_RADIUS + 1.0,
+            Stroke::new(1.0, Color32::WHITE),
+        );
     }
 }
 

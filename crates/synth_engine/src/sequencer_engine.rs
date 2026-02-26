@@ -3,10 +3,14 @@
 //! This module provides the runtime engine that converts stored song data
 //! into real-time events at audio sample rate precision.
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use synth_core::{Bpm, SampleCount, SampleRate};
-use synth_sequencer::{Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick};
+use synth_sequencer::{
+    AutomationTarget, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER,
+    Tick,
+};
 
 /// Playback state of the sequencer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +60,8 @@ pub struct SequencerEngine {
     loop_start: Tick,
     /// Loop end position.
     loop_end: Tick,
+    /// Last emitted automation values (for deduplication).
+    last_automation_values: HashMap<AutomationTarget, f32>,
 }
 
 impl SequencerEngine {
@@ -73,6 +79,7 @@ impl SequencerEngine {
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
+            last_automation_values: HashMap::new(),
         }
     }
 
@@ -94,6 +101,7 @@ impl SequencerEngine {
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
+            last_automation_values: HashMap::new(),
         }
     }
 
@@ -141,6 +149,7 @@ impl SequencerEngine {
         // Generate NoteOff events for all active notes
         let events = self.release_all_notes();
         self.active_notes.clear();
+        self.last_automation_values.clear();
 
         events
     }
@@ -149,6 +158,7 @@ impl SequencerEngine {
     pub fn seek(&mut self, tick: Tick) -> Vec<SequencerEvent> {
         let events = self.release_all_notes();
         self.active_notes.clear();
+        self.last_automation_values.clear();
         self.current_tick = tick;
         self.tick_accumulator = 0.0;
         self.update_cached_tempo();
@@ -239,13 +249,14 @@ impl SequencerEngine {
 
     /// Collect events that should trigger at the current tick.
     fn collect_events_at_tick(&mut self, events: &mut Vec<SequencerEvent>) {
-        // Collect note data while holding the lock
-        let notes_to_trigger: Vec<_> = {
+        // Collect note and automation data while holding the lock
+        let (notes_to_trigger, auto_events): (Vec<_>, Vec<_>) = {
             let Ok(song) = self.song.try_read() else {
                 return;
             };
 
             let mut notes = Vec::new();
+            let mut auto_vals = Vec::new();
 
             for placement in song.arrangement() {
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
@@ -259,6 +270,7 @@ impl SequencerEngine {
                 }
 
                 // Calculate position within the pattern
+                #[allow(clippy::cast_possible_truncation)]
                 let pattern_tick = (self.current_tick.0 - placement.start.0) as u32;
 
                 // Collect notes that start at this pattern tick
@@ -278,9 +290,16 @@ impl SequencerEngine {
 
                     notes.push((transposed_pitch, note.velocity, note.instrument, end_tick));
                 }
+
+                // Collect automation values at this tick
+                for lane in &pattern.automation {
+                    if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
+                        auto_vals.push((lane.target.clone(), value));
+                    }
+                }
             }
 
-            notes
+            (notes, auto_vals)
         }; // Lock released here
 
         // Now process the collected notes without holding the lock
@@ -297,6 +316,23 @@ impl SequencerEngine {
                 velocity,
                 instrument,
             });
+        }
+
+        // Emit automation parameter events (deduplicated)
+        for (target, value) in auto_events {
+            let changed = self
+                .last_automation_values
+                .get(&target)
+                .is_none_or(|last| (value - last).abs() > 0.001);
+
+            if changed {
+                self.last_automation_values.insert(target.clone(), value);
+                events.push(SequencerEvent::Parameter {
+                    tick: self.current_tick,
+                    target,
+                    value,
+                });
+            }
         }
     }
 

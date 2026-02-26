@@ -24,13 +24,13 @@ use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, Visualizati
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
-    AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, Bpm,
-    EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType, NormalizedValue,
-    OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate,
-    Seconds, StreamInfo, Velocity, Waveform,
+    AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue,
+    Bpm, EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType,
+    NormalizedValue, OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext,
+    SampleCount, SampleRate, Seconds, StreamInfo, Velocity, Waveform,
 };
 use synth_modules::{Amplifier, Envelope, Filter, Lfo, Oscillator};
-use synth_sequencer::SequencerEvent;
+use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
 
 /// Size of the command ring buffer.
 /// Large enough to handle patch loading (100+ modules with params/connections).
@@ -1795,7 +1795,23 @@ fn route_sequencer_events(events: &[SequencerEvent], instruments: &mut [Box<Inst
                     first.note_off(note);
                 }
             }
-            _ => {}
+            SequencerEvent::Parameter { target, value, .. } => {
+                if let AutomationTarget::Instrument { instrument, param } = target {
+                    let idx = instrument.0 as usize;
+                    if let Some(inst) = instruments.get_mut(idx) {
+                        match param {
+                            AutoInstrumentParam::Volume => {
+                                inst.set_volume(Gain::new(*value));
+                            }
+                            AutoInstrumentParam::Pan => {
+                                // Map 0.0-1.0 to -1.0..1.0
+                                inst.set_pan(BipolarValue::new(*value * 2.0 - 1.0));
+                            }
+                            _ => {} // FilterCutoff etc. requires module routing (future)
+                        }
+                    }
+                }
+            }
         }
     }
 }

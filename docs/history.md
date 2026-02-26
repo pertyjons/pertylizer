@@ -1,5 +1,22 @@
 # Version History
 
+## [0.175.0] - 2026-02-26
+### Sequencer GUI — Automation i Piano Roll (Fas 5)
+- **Automations-zon** under velocity-zonen i piano roll (80px hög, togglas via dropdown)
+- **Lane-väljare** (ComboBox) i toolbar: välj `AutoInstrumentParam` för instrument 0 (Volume, Pan, Filter Cutoff, etc.)
+- Aktiva lanes (med punkter) markeras med `*` i dropdown
+- **Kurvrendering** med pixel-för-pixel interpolation (Linear, Step, Exponential, SCurve)
+- Flat extension före första / efter sista punkt
+- Referenslinjer vid 25%, 50%, 75%
+- **Punktinteraktion**: klick → skapa punkt, högerklick → ta bort punkt, drag → flytta punkt
+- Ghost-preview under drag med semi-transparent cirkel
+- Orange cirklar med vit kant för automationspunkter
+- **Automationsuppspelning** i `SequencerEngine`: `collect_events_at_tick()` genererar `SequencerEvent::Parameter` från automation lanes
+- Deduplicering via `last_automation_values` HashMap (emit bara vid ändring > 0.001)
+- **Event-routing** i `SynthEngine`: Volume → `Instrument::set_volume()`, Pan → `Instrument::set_pan()`
+- `display_name()` på `AutoInstrumentParam` och `AutomationTarget` för GUI-labels
+- `AutoInstrumentParam::ALL` const array för GUI-enumeration
+
 ## [0.174.0] - 2026-02-26
 ### Piano Roll Buggfixar & Förbättringar
 - **Fix: `move_note` återanvände NoteId** — `next_note_id`-räknaren backades felaktigt, vilket orsakade "kopierade" noter (synth_sequencer/pattern.rs)
