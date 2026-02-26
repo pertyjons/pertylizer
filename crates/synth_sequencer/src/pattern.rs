@@ -226,13 +226,9 @@ impl Pattern {
     /// Move a note to a new position.
     pub fn move_note(&mut self, id: NoteId, new_start: PatternTick) -> bool {
         if let Some(mut note) = self.remove_note(id) {
-            let old_id = note.id;
             note.start = new_start;
-            note.id = old_id; // Preserve ID
             self.notes
                 .insert(self.notes.partition_point(|n| n.start <= new_start), note);
-            // Decrement counter since we reused the ID
-            self.next_note_id -= 1;
             true
         } else {
             false

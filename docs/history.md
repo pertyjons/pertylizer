@@ -1,5 +1,18 @@
 # Version History
 
+## [0.174.0] - 2026-02-26
+### Piano Roll Buggfixar & Förbättringar
+- **Fix: `move_note` återanvände NoteId** — `next_note_id`-räknaren backades felaktigt, vilket orsakade "kopierade" noter (synth_sequencer/pattern.rs)
+- **Fix: Vertikal drag fungerar nu** — `drag_started()` använder `press_origin()` istf `interact_pointer_pos()` så hit-test sker på klick-position, inte efter drag-tröskel
+- **Fix: Relativ grip vid flytt** — noter behåller position relativt muspekaren (grab offset), inte snap till notens start
+- **Fix: Kort-not resize-zon proportionell** — `min(RESIZE_GRAB_ZONE, note_width * 0.3)` så korta noter går att flytta
+- **Fix: `quantize_tick` floor istf nearest** — noter snappar till grid-linjen vid/före klick, inte närmaste
+- **Fix: `y_to_pitch` clamp** — pitch clampas till synligt range vid drag utanför grid
+- **Fix: Zero-duration guard** — `SeqDuration` alltid minst 1 tick
+- Grid-bredd inkluderar nu noter som sträcker sig förbi pattern-längden
+- Open-ended noter (`duration=None`) får explicit duration vid drag-start
+- Expanderade hit-rects för tiny notes (`< RESIZE_GRAB_ZONE`)
+
 ## [0.173.0] - 2026-02-26
 ### Sequencer GUI — Piano Roll Mus-interaktion (Fas 4)
 - Klicka i griden (Draw-tool) skapar nya noter med kvantisering till `RowResolution`

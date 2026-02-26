@@ -97,11 +97,19 @@ enum DragState {
         original_pitch: u8,
         current_tick: u32,
         current_pitch: u8,
+        /// Offset from note start to where the mouse grabbed (in ticks).
+        grab_offset_ticks: u32,
     },
     /// Drag-resize a note (right edge).
     ResizeNote {
         note_id: NoteId,
         original_end_tick: u32,
+        current_end_tick: u32,
+    },
+    /// Draw a new note by dragging (Draw tool on empty space).
+    DrawNote {
+        start_tick: u32,
+        pitch: u8,
         current_end_tick: u32,
     },
     /// Selection rectangle (lasso).
@@ -169,10 +177,8 @@ const NOTE_ROW_HEIGHT: f32 = 12.0;
 const VELOCITY_ZONE_HEIGHT: f32 = 40.0;
 /// Horizontal zoom: pixels per beat in the piano roll.
 const PR_PIXELS_PER_BEAT: f32 = 60.0;
-/// Height of the piano roll toolbar.
-const PR_TOOLBAR_HEIGHT: f32 = 24.0;
 /// Resize grab zone width (pixels from right edge).
-const RESIZE_GRAB_ZONE: f32 = 6.0;
+const RESIZE_GRAB_ZONE: f32 = 10.0;
 
 // ============================================================================
 // TRANSPORT BAR
@@ -856,9 +862,17 @@ fn note_at_pos(
             Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
         );
 
-        if note_rect.contains(pos) {
-            // Check if near right edge (resize zone)
-            let zone = if pos.x >= note_rect.max.x - RESIZE_GRAB_ZONE {
+        // Expand tiny notes so they're easier to click
+        let hit_rect = if note_width < RESIZE_GRAB_ZONE {
+            note_rect.expand2(Vec2::new(2.0, 1.0))
+        } else {
+            note_rect
+        };
+
+        if hit_rect.contains(pos) {
+            // Proportional grab zone: at most 30% of note width, so short notes remain movable
+            let grab_zone = RESIZE_GRAB_ZONE.min(note_width * 0.3);
+            let zone = if pos.x >= note_rect.max.x - grab_zone {
                 HitZone::RightEdge
             } else {
                 HitZone::Body
@@ -869,13 +883,20 @@ fn note_at_pos(
     None
 }
 
-/// Quantize a tick value to the nearest row boundary.
+/// Check if a note already exists at the given tick and pitch.
+fn has_note_at(notes: &[PianoRollNote], tick: u32, pitch: u8) -> bool {
+    notes
+        .iter()
+        .any(|n| n.pitch == pitch && n.start_tick <= tick && n.end_tick.unwrap_or(u32::MAX) > tick)
+}
+
+/// Quantize a tick value to the nearest row boundary (floor).
 fn quantize_tick(tick: u32, ticks_per_row: u16) -> u32 {
     if ticks_per_row == 0 {
         return tick;
     }
     let tpr = ticks_per_row as u32;
-    ((tick + tpr / 2) / tpr) * tpr
+    (tick / tpr) * tpr
 }
 
 /// Draw the piano roll in a bottom panel.
@@ -955,19 +976,33 @@ fn draw_piano_roll(
     let grid_height = pitch_range as f32 * NOTE_ROW_HEIGHT;
     let total_content_height = grid_height + VELOCITY_ZONE_HEIGHT;
 
-    // Timeline width based on pattern length
+    // Timeline width: use max of pattern length and furthest note end
     let ticks_per_beat = synth_sequencer::TICKS_PER_QUARTER;
+    let max_note_end = data
+        .notes
+        .iter()
+        .filter_map(|n| n.end_tick)
+        .max()
+        .unwrap_or(0);
+    let effective_ticks = data.length_ticks.max(max_note_end);
     let beats_in_pattern = if ticks_per_beat > 0 {
-        data.length_ticks as f32 / ticks_per_beat as f32
+        effective_ticks as f32 / ticks_per_beat as f32
     } else {
         4.0
     };
     let grid_width = (beats_in_pattern * PR_PIXELS_PER_BEAT).max(200.0);
 
     // ── Scrollable piano roll area ──
+    // Use all available height (panel is resizable via TopBottomPanel)
+    let scroll_max_height = ui.available_height().max(100.0);
     egui::ScrollArea::both()
         .id_salt("piano_roll_scroll")
-        .max_height(PIANO_ROLL_HEIGHT - PR_TOOLBAR_HEIGHT - 8.0)
+        .max_height(scroll_max_height)
+        .scroll_source(egui::scroll_area::ScrollSource {
+            scroll_bar: true,
+            drag: false, // Don't steal drag events — we handle them for note editing
+            mouse_wheel: true,
+        })
         .show(ui, |ui| {
             let total_size = Vec2::new(KEY_WIDTH + grid_width, total_content_height);
 
@@ -1003,11 +1038,13 @@ fn draw_piano_roll(
                 tick as u32
             };
 
-            // Inverse: y to pitch
+            // Inverse: y to pitch (clamped to visible range)
             let y_to_pitch = |y: f32| -> u8 {
                 #[allow(clippy::cast_possible_truncation)]
                 let row = ((y - grid_y) / NOTE_ROW_HEIGHT).floor().max(0.0) as u8;
-                view_pitch_max.saturating_sub(row)
+                view_pitch_max
+                    .saturating_sub(row)
+                    .clamp(view_pitch_min, view_pitch_max)
             };
 
             // Grid rect for checking if pointer is in the note grid area
@@ -1271,6 +1308,35 @@ fn draw_piano_roll(
                 }
             }
 
+            // ── DrawNote preview ──
+            if let Some(DragState::DrawNote {
+                start_tick,
+                pitch,
+                current_end_tick,
+            }) = &view_state.drag
+            {
+                let y = pitch_to_y(*pitch);
+                let x_start = tick_to_x(*start_tick);
+                let x_end = tick_to_x(*current_end_tick);
+                let note_width = (x_end - x_start).max(3.0);
+
+                let draw_rect = Rect::from_min_size(
+                    Pos2::new(x_start, y + 1.0),
+                    Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
+                );
+                painter.rect_filled(
+                    draw_rect,
+                    2.0,
+                    Color32::from_rgba_unmultiplied(100, 220, 140, 120),
+                );
+                painter.rect_stroke(
+                    draw_rect,
+                    2.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(100, 220, 140, 200)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+
             // ── Selection rectangle ──
             if let Some(DragState::SelectRect {
                 start_pos,
@@ -1500,16 +1566,17 @@ fn handle_piano_roll_interaction(
             None => {
                 // Clicked on empty space
                 if view_state.edit_tool == EditTool::Draw {
-                    // Add a new note
+                    // Add a new note (only if no note already exists here)
                     let raw_tick = x_to_tick(pos.x);
                     let tick = quantize_tick(raw_tick, data.ticks_per_row);
                     let pitch_val = y_to_pitch(pos.y);
 
-                    if let Some(pitch) = Pitch::new(pitch_val)
+                    if !has_note_at(&data.notes, tick, pitch_val)
+                        && let Some(pitch) = Pitch::new(pitch_val)
                         && let Ok(mut song_w) = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
-                        let duration = SeqDuration(data.ticks_per_row as u32);
+                        let duration = SeqDuration((data.ticks_per_row as u32).max(1));
                         let note_id = pattern.add_note(
                             PatternTick(tick),
                             pitch,
@@ -1517,7 +1584,6 @@ fn handle_piano_roll_interaction(
                             SeqInstrumentId::new(0),
                         );
                         pattern.resize_note(note_id, duration);
-                        // Select the new note
                         view_state.selected_notes.clear();
                         view_state.selected_notes.insert(note_id);
                     }
@@ -1530,8 +1596,11 @@ fn handle_piano_roll_interaction(
     }
 
     // ── Drag start ──
+    // Use press_origin (where the click started) for hit-testing, not current pointer pos.
+    // Without this, dragging straight up/down misses the note because the pointer
+    // has already left the note rect by the time the drag threshold is reached.
     if response.drag_started()
-        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
         && grid_rect.contains(pos)
     {
         let hit = note_at_pos(
@@ -1548,12 +1617,26 @@ fn handle_piano_roll_interaction(
             Some((note_id, HitZone::Body)) => {
                 // Start moving the note
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                    // If note has no explicit duration, lock it before move
+                    // so the visual length is preserved
+                    if note.end_tick.is_none() {
+                        let implied_dur = data.length_ticks.saturating_sub(note.start_tick).max(1);
+                        if let Ok(mut song_w) = song.write()
+                            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                        {
+                            pattern.resize_note(note_id, SeqDuration(implied_dur));
+                        }
+                    }
+                    // Calculate where on the note the user grabbed
+                    let grab_tick = x_to_tick(pos.x);
+                    let grab_offset = grab_tick.saturating_sub(note.start_tick);
                     view_state.drag = Some(DragState::MoveNote {
                         note_id,
                         original_tick: note.start_tick,
                         original_pitch: note.pitch,
                         current_tick: note.start_tick,
                         current_pitch: note.pitch,
+                        grab_offset_ticks: grab_offset,
                     });
                     // Ensure note is selected
                     if !shift_held {
@@ -1573,8 +1656,8 @@ fn handle_piano_roll_interaction(
                     });
                 }
             }
-            None => {
-                if view_state.edit_tool == EditTool::Select {
+            None => match view_state.edit_tool {
+                EditTool::Select => {
                     // Start selection rectangle
                     view_state.drag = Some(DragState::SelectRect {
                         start_pos: pos,
@@ -1584,21 +1667,37 @@ fn handle_piano_roll_interaction(
                         view_state.selected_notes.clear();
                     }
                 }
-            }
+                EditTool::Draw => {
+                    // Start drawing a new note by dragging (only if position is free)
+                    let raw_tick = x_to_tick(pos.x);
+                    let start_tick = quantize_tick(raw_tick, data.ticks_per_row);
+                    let pitch = y_to_pitch(pos.y);
+                    if !has_note_at(&data.notes, start_tick, pitch) {
+                        let end_tick = start_tick + (data.ticks_per_row as u32).max(1);
+                        view_state.drag = Some(DragState::DrawNote {
+                            start_tick,
+                            pitch,
+                            current_end_tick: end_tick,
+                        });
+                    }
+                }
+            },
         }
     }
 
     // ── Drag update ──
+    // Use pointer_latest_pos for smooth tracking during drags
     if response.dragged()
-        && let Some(pos) = response.interact_pointer_pos()
+        && let Some(pos) = ui.ctx().pointer_latest_pos()
     {
         match &mut view_state.drag {
             Some(DragState::MoveNote {
                 current_tick,
                 current_pitch,
+                grab_offset_ticks,
                 ..
             }) => {
-                let raw_tick = x_to_tick(pos.x);
+                let raw_tick = x_to_tick(pos.x).saturating_sub(*grab_offset_ticks);
                 *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
                 *current_pitch = y_to_pitch(pos.y).clamp(0, 127);
             }
@@ -1607,6 +1706,16 @@ fn handle_piano_roll_interaction(
             }) => {
                 let raw_tick = x_to_tick(pos.x);
                 *current_end_tick = quantize_tick(raw_tick, data.ticks_per_row).max(1);
+            }
+            Some(DragState::DrawNote {
+                start_tick,
+                current_end_tick,
+                ..
+            }) => {
+                let raw_tick = x_to_tick(pos.x);
+                let quantized = quantize_tick(raw_tick, data.ticks_per_row);
+                // End tick must be at least one row past start
+                *current_end_tick = quantized.max(*start_tick + (data.ticks_per_row as u32).max(1));
             }
             Some(DragState::SelectRect { current_pos, .. }) => {
                 *current_pos = pos;
@@ -1659,6 +1768,29 @@ fn handle_piano_roll_interaction(
                     {
                         pattern.resize_note(note_id, SeqDuration(new_duration));
                     }
+                }
+            }
+            DragState::DrawNote {
+                start_tick,
+                pitch,
+                current_end_tick,
+            } => {
+                // Create the note with the dragged duration (only if no duplicate)
+                let duration = current_end_tick.saturating_sub(start_tick).max(1);
+                if !has_note_at(&data.notes, start_tick, pitch)
+                    && let Some(p) = Pitch::new(pitch)
+                    && let Ok(mut song_w) = song.write()
+                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                {
+                    let note_id = pattern.add_note(
+                        PatternTick(start_tick),
+                        p,
+                        Velocity::MF,
+                        SeqInstrumentId::new(0),
+                    );
+                    pattern.resize_note(note_id, SeqDuration(duration));
+                    view_state.selected_notes.clear();
+                    view_state.selected_notes.insert(note_id);
                 }
             }
             DragState::SelectRect {

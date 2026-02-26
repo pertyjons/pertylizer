@@ -1,6 +1,6 @@
 [package]
 name = "modular_synth"
-version = "0.173.0"
+version = "0.174.0"
 edition = "2024"
 rust-version = "1.93"
 description = "A modular synthesizer with abstract audio backend"
@@ -62,7 +62,7 @@ synth_mcp = { path = "../synth_mcp", optional = true }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3.24.0"
+tempfile = "3.26.0"
 
 [[bin]]
 name = "modular-synth"
