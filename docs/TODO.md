@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.180.0)
+# TODO - Modular Synth (v0.181.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -40,11 +40,11 @@
 - Benefit: More discoverable, consistent UX. Right-click can remain as shortcut.
 
 ### 2.2 Keyboard area cleanup
-- [ ] Fix gap between piano keys and visualizers (persistent spacing issue)
-- [ ] Move PANIC button to top menu bar (right side, keep red styling)
-- [ ] Remove "KEYBOARD" label — the piano keys are self-explanatory
-- [ ] Clarify "Playing: Default" — this shows active instrument name. Rename to "Active: {name}" or show instrument icon + name
-- [ ] Move octave +/- controls inline with the keyboard or into a compact row to eliminate the full-width control row
+- [x] Fix gap between piano keys and visualizers (persistent spacing issue)
+- [x] Move PANIC button to top menu bar (right side, keep red styling)
+- [x] Remove "KEYBOARD" label — the piano keys are self-explanatory
+- [x] Clarify "Playing: Default" — this shows active instrument name. Rename to "Active: {name}" or show instrument icon + name
+- [x] Move octave +/- controls inline with the keyboard or into a compact row to eliminate the full-width control row
 
 ### 2.3 Tab buttons — make Seq/AWE/Rack clearer
 - [ ] Use larger, styled tab buttons with icons (once egui-remixicon is available)

@@ -1,5 +1,13 @@
 # Version History
 
+## [0.181.0] - 2026-02-27
+### Keyboard area cleanup (TODO 2.2)
+- **PANIC button moved to top menu bar** — right-aligned with red styling, always accessible
+- **"KEYBOARD" label removed** — piano keys are self-explanatory
+- **"Playing: Default" renamed to "Active: {name}"** — clearer instrument indication
+- **Octave controls moved inline** — compact header row above keys, eliminates full-width control row
+- **Gap between keys and visualizers fixed** — tighter layout
+
 ## [0.180.0] - 2026-02-27
 ### Persistent settings file
 - **`AppSettings`** — new `io::settings` module with JSON config at `~/.local/share/modular-synth/settings.json`

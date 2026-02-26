@@ -492,6 +492,18 @@ impl eframe::App for SynthApp {
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new("PANIC").color(theme().colors.accent_red),
+                        ))
+                        .clicked()
+                    {
+                        self.handle.send(EngineCommand::AllNotesOff);
+                        self.pressed_keys.clear();
+                        self.keyboard.clear_pressed();
+                    }
+                    ui.separator();
+
                     // Status indicators
                     let cpu = self.handle.cpu_usage();
                     let cpu_color = if cpu > 0.8 {
@@ -1605,48 +1617,32 @@ impl SynthApp {
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannel::CH1;
 
-        // Header row: PANIC, Playing instrument, KEYBOARD label, Octave, Center
-        ui.horizontal(|ui| {
-            if ui
-                .add(egui::Button::new(
-                    RichText::new("PANIC").color(theme().colors.accent_red),
-                ))
-                .clicked()
-            {
-                self.handle.send(EngineCommand::AllNotesOff);
-                self.pressed_keys.clear();
-            }
-
-            let active_name = self
-                .instruments
-                .iter()
-                .find(|p| p.id == self.active_instrument_id)
-                .map(|p| p.name.as_str())
-                .unwrap_or("Instrument 1");
-            ui.separator();
-            ui.label(
-                RichText::new(format!("Playing: {}", active_name))
-                    .color(theme().colors.accent_orange),
-            );
-
-            ui.separator();
-            self.keyboard.show_header(ui);
-        });
+        let active_name = self
+            .instruments
+            .iter()
+            .find(|p| p.id == self.active_instrument_id)
+            .map(|p| p.name.as_str())
+            .unwrap_or("Instrument 1");
 
         // Layout: [Left Scope] [Piano Keys] [Right Scope] [Meter] [margin]
         let available_width = ui.available_width();
         let meter_width = 30.0;
         let meter_margin = 24.0;
-        let keys_height = 110.0;
+        let item_spacing = ui.spacing().item_spacing.x;
+        let keys_height = 130.0;
+
+        // Estimate spacings (max 3 gaps: between ScopeL-Piano, Piano-ScopeR, ScopeR-Meter)
+        let max_spacings = 3.0 * item_spacing;
 
         // Piano: calculate octaves that fit, then its exact width
         use crate::gui::keyboard::PianoKeyboard;
-        let piano_budget = available_width - meter_width - meter_margin;
-        let num_octaves = PianoKeyboard::octaves_for_width(piano_budget);
+        let piano_budget = available_width - meter_width - meter_margin - max_spacings;
+        let num_octaves = PianoKeyboard::octaves_for_width(piano_budget.max(0.0));
         let piano_width = PianoKeyboard::width_for_octaves(num_octaves);
 
         // Scopes share remaining space equally
-        let scope_total = (available_width - piano_width - meter_width - meter_margin).max(0.0);
+        let scope_total =
+            (available_width - piano_width - meter_width - meter_margin - max_spacings).max(0.0);
         let min_scope_width = 40.0;
         let show_scopes = scope_total >= min_scope_width * 2.0;
         let scope_width = if show_scopes { scope_total / 2.0 } else { 0.0 };
@@ -1673,15 +1669,27 @@ impl SynthApp {
             }
 
             ui.allocate_ui(Vec2::new(piano_width, keys_height), |ui| {
-                let event = self.keyboard.show_keys(ui);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("Active: {}", active_name))
+                                .color(theme().colors.accent_orange),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.keyboard.show_header(ui);
+                        });
+                    });
 
-                if let Some(note) = event.note_on {
-                    self.handle
-                        .note_on_channel(note, Velocity::new(0.8), active_channel);
-                }
-                for note in event.note_off {
-                    self.handle.note_off_channel(note, active_channel);
-                }
+                    let event = self.keyboard.show_keys(ui);
+
+                    if let Some(note) = event.note_on {
+                        self.handle
+                            .note_on_channel(note, Velocity::new(0.8), active_channel);
+                    }
+                    for note in event.note_off {
+                        self.handle.note_off_channel(note, active_channel);
+                    }
+                });
             });
 
             if show_scopes {

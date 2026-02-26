@@ -49,7 +49,8 @@ synth_engine        (SynthEngine anropar AweEngine::process())
 modular_synth       (GUI: awe_view.rs)
 ```
 
-**synth_awe beror enbart på synth_core + synth_dsp**. Inga andra beroenden.
+**synth_awe beror enbart på synth_core + synth_dsp** (+ `serde` för
+serialisering). Inga engine-/module-beroenden.
 
 ### 2.2 Signalflöde i SynthEngine
 
@@ -73,7 +74,7 @@ SynthEngine::process()
 │      │   │                                                      │
 │      │   │   ┌──────────────────┐                               │
 │      │   │   │ Early Reflections│  Image Source Method (ISM)    │
-│      │   │   │ (tapped interp.  │  1:a + 2:a ordningen          │
+│      │   │   │ (tapped interp.  │  1:a ordningen (6 taps)        │
 │      │   │   │  delay + filter) │  InterpolatedDelayLine        │
 │      │   │   └────────┬─────────┘                               │
 │      │   │            │                                         │
@@ -84,7 +85,7 @@ SynthEngine::process()
 │      │   │   └────────┬─────────┘                               │
 │      │   │            │                                         │
 │      │   │   ┌────────▼─────────┐                               │
-│      │   │   │ Room Mode Bank   │  3-6 comb-filter              │
+│      │   │   │ Room Mode Bank   │  3 axiella comb-filter        │
 │      │   │   │                  │  f_n = c/(2·dim)              │
 │      │   │   └────────┬─────────┘                               │
 │      │   │            │                                         │
@@ -93,8 +94,12 @@ SynthEngine::process()
 │      │   │   │ (ITD + ILD)      │  InterpolatedDelayLine        │
 │      │   │   └────────┬─────────┘                               │
 │      │   │            │                                         │
-│      │   │   Interna LFO:er → modulerar parametrar per sample   │
-│      │   │   Mix: Dry/Wet · Early/Late · Modes Amount           │
+│      │   │   ┌────────▼─────────┐                               │
+│      │   │   │ Portal Delay     │  Extra feedback-path (muffled)│
+│      │   │   └────────┬─────────┘                               │
+│      │   │            │                                         │
+│      │   │   Interna LFO:er → kontroll-rate (per block)         │
+│      │   │   Mix: Dry/Wet · Early/Late · Modes Amount · Portal   │
 │      │   └────────────┼────────────────────────────────────────┘
 │      │                ▼
 │      │           Stereo Out
@@ -142,7 +147,7 @@ pub fn process_visualizers(&mut self, mix_buffer: &AudioBuffer) {
 
 // I SynthEngine::process():
 self.process_master_effects(&process_context);   // Enbart effekter
-self.awe_engine.process(&mut self.mix_buffer);   // AWE
+self.awe_engine.process(self.mix_buffer.as_mut_slice(), process_context.sample_rate);   // AWE
 self.master_effects.process_visualizers(&self.mix_buffer);  // Post-AWE
 ```
 
@@ -166,7 +171,7 @@ if self.awe_engine.enabled() {
 }
 ```
 
-**Process-signatur**: `AweEngine::process(&mut self, buffer: &mut [f32], sample_rate: f32)`
+**Process-signatur**: `AweEngine::process(&mut self, buffer: &mut [f32], sample_rate: SampleRate)`
 
 AWE processar interleaved stereo in-place, samma format som `AudioBuffer`.
 Intern split till L/R sker bara för DSP-steg som kräver det (ISM, FDN) —
@@ -194,7 +199,7 @@ SetAweEnabled { enabled: bool },
 /// Används vid patch-load och drag-operationer för att undvika
 /// ringbuffer-stress (16384 capacity, men 15+ parametrar per drag
 /// frame × 60fps = hundratals kommandon/sekund).
-SetAweState { state: synth_awe::AweSnapshot },
+SetAweState { snapshot: synth_awe::AweSnapshot },
 ```
 
 **Batch-strategi**: GUI throttlar drag-uppdateringar till ett
@@ -281,44 +286,21 @@ Alla delay-linjer allokeras vid skapande och **ändrar aldrig storlek**.
 `DelayLine::resize()` allokerar via `Vec::resize` — detta får **aldrig**
 anropas runtime.
 
-Max-delay måste täcka:
-- **Största preset**: Steel Pipeline = 200m, men ISM-ordning begränsas
-- **Högsta sample rate**: 96 kHz
-- **Marginal**: Beror på ISM-ordning per preset
+Max-delay i implementationen:
+- **Early Reflections**: 1.0s max (96_000 samples @ 96 kHz), klampas för stora rum.
+- **Room Modes**: 48_000 samples per comb-filter (3 st).
+- **FDN**: per kanal `base_delay * 48 + 16`, klampas om rummet är extremt stort.
+- **Portal**: 28_800 samples (~300 ms @ 96 kHz).
+- **Spatializer ITD**: 64 samples.
 
-**Nyckelinsikt: 1.0s max delay ≠ 2:a ordningens ISM för alla rum.**
-200m pipeline med 2:a ordningen → 400m → 1.17s — överskrider 1.0s.
-
-**Lösning: Dynamisk ISM-ordning.**
-- Rum ≤ 85m (2:a ordningen ≤ 170m/343 = 0.50s): **2:a ordning** (18 taps)
-- Rum 85–170m (1:a ordningen ≤ 340m/343 = 0.99s): **1:a ordning** (6 taps)
-- Rum > 170m: **Enbart direkt + FDN** (inga ISM-taps, FDN-delays klampas)
-
-Steel Pipeline preset kör 1:a ordningens ISM. "The Void" (100m) kör
-enbart FDN — ISM-reflektioner i 100m³ rum är för glesa för att höras.
-
-```
-Max delay-tid: 1.0 sekund
-  (täcker 343m avstånd, tillräckligt för 1:a ordningens ISM
-   upp till ~170m och alla FDN delay-tider)
-
-Max delay-samples: 1.0s × 96_000 Hz = 96_000 samples
-Avrundning: 98_304 (96 × 1024, power-of-2-vänligt)
-
-Minnesbudget (worst case @ 96kHz):
-  ISM:         2 InterpolatedDelayLine × 98_304 × 4 bytes = 768 KB
-  FDN:         8 kanaler × 98_304 × 4 bytes                = 3.0 MB
-  Comb bank:   6 kanaler × 98_304 × 4 bytes                = 2.3 MB
-  Spatializer: 2 InterpolatedDelayLine × 64 × 4 bytes     ≈ 0.5 KB
-  ──────────────────────────────────────────────────────────────
-  Totalt: ~6 MB (engångsallokering vid AweEngine::new())
-```
+Konsekvens: mycket stora rum får **klampade early reflections** (ingen dynamisk
+ISM-ordning). RT-säkerhet uppnås genom pre-allokering och klampning.
 
 Vid parameterändringar justeras bara `read_position` (varifrån i buffern
 vi läser), inte bufferstorleken. Oanvända delar av buffern är nollor.
 
-Presets som "The Void" (100×100×100m) kör utan ISM (enbart FDN + moder).
-GUI klampar dimensioner så att vald ISM-ordning ryms inom 1.0s max delay.
+Presets med extremt stora rum (t.ex. "The Void") använder fortfarande
+ISM 1:a ordningen, men reflektioner klampas till 1.0s max delay.
 
 ### 3.2 InterpolatedDelayLine för ISM
 
@@ -331,9 +313,7 @@ har linjär interpolering. Denna finns redan och används för chorus.
 ```rust
 struct EarlyReflections {
     taps: [EarlyTap; MAX_EARLY_TAPS],
-    active_taps: usize,
-    delay_line_left: InterpolatedDelayLine,   // fraktionell delay
-    delay_line_right: InterpolatedDelayLine,
+    delay_line: InterpolatedDelayLine,        // mono delay, tappad per vägg
 }
 ```
 
@@ -343,13 +323,16 @@ struct EarlyReflections {
 `metering` och `sequencer` — men **inte** effekter eller moduler.
 AWE:s delay-tider beror direkt på sample rate (meter → samples).
 
-**Lösning**: AWE tar `sample_rate` som parameter i `process()`:
+**Lösning**: AWE tar `sample_rate` som parameter i `process()`, och
+`SynthEngine::on_stream_start()` markerar geometry dirty så AWE
+ombereknar delays vid nästa block.
 
 ```rust
-pub fn process(&mut self, buffer: &mut [f32], sample_rate: f32) {
-    if (sample_rate - self.cached_sample_rate).abs() > 0.1 {
-        self.cached_sample_rate = sample_rate;
-        self.recalculate_all_delays();  // Alla tider → samples
+pub fn process(&mut self, buffer: &mut [f32], sample_rate: SampleRate) {
+    self.cached_sample_rate = sample_rate;
+    if self.geometry_dirty {
+        self.recalculate_geometry(sample_rate);
+        self.geometry_dirty = false;
     }
     // ... DSP
 }
@@ -399,40 +382,24 @@ impl RoomShape {
 ```rust
 /// Akustiskt material med frekvensberoende absorption.
 pub struct Material {
-    pub name: &'static str,
-    pub absorption_low: f32,   // < 500 Hz
-    pub absorption_mid: f32,   // 500 Hz – 4 kHz
-    pub absorption_high: f32,  // > 4 kHz
-    pub diffusion: f32,        // 0.0 = spegel, 1.0 = helt diffus
+    pub absorption_low: NormalizedValue,   // < 500 Hz
+    pub absorption_mid: NormalizedValue,   // 500 Hz – 4 kHz
+    pub absorption_high: NormalizedValue,  // > 4 kHz
+    pub diffusion: NormalizedValue,        // 0.0 = spegel, 1.0 = helt diffus
 }
-
-// Presets (6 st)
-const CONCRETE: Material = Material { name: "Concrete", absorption_low: 0.01, .. };
-const WOOD:     Material = Material { name: "Wood",     absorption_low: 0.15, .. };
-const GLASS:    Material = Material { name: "Glass",    absorption_low: 0.04, .. };
-const METAL:    Material = Material { name: "Metal",    absorption_low: 0.01, .. };
-const FABRIC:   Material = Material { name: "Fabric",   absorption_low: 0.10, .. };
-const TILE:     Material = Material { name: "Tile",     absorption_low: 0.02, .. };
 ```
+
+**Presets (15 st)**: Concrete, Wood, Glass, Metal, Fabric, Tile, Marble, Ice,
+Carpet, Water, Void, Prism, Plasma, Membrane, Nanogel.  
+UI:n lagrar vald preset som index och kan override:a diffusion.
 
 ### 4.3 "Omöjliga rum"-parametrar
 
-```rust
-/// Parametrar som bryter fysikens lagar för kreativa effekter.
-pub struct ImpossibleParams {
-    /// Frekvensbaserad rumsstorlek: bas ser ett större rum.
-    /// 0.0 = normalt, 1.0 = bas ser 4x större rum.
-    pub freq_warp: f32,
-
-    /// Negativ absorption: väggar förstärker ljud.
-    /// 0.0 = fysisk, 1.0 = +6dB per reflektion (med intern limiter).
-    pub resonance_boost: f32,
-
-    /// Svans-stretch: reverb-tid oberoende av rum-storlek.
-    /// 0.0 = fysisk, >0 = längre, <0 = kortare.
-    pub tail_stretch: f32,
-}
-```
+Implementerat som **platta fält i `AweSnapshot`** (ingen separat struct):
+- `freq_warp: BipolarValue` (positiv = snabbare bass‑decay/ljusare tail)
+- `resonance_boost: NormalizedValue` (extra feedback, klampad)
+- `tail_stretch: StretchFactor` (skalar RT60)
+- `portal_amount: NormalizedValue` (mix av portal‑feedback‑väg)
 
 ### 4.4 Persistence (patch-format)
 
@@ -447,15 +414,30 @@ pub awe: Option<AweState>,
 #[derive(Serialize, Deserialize)]
 pub struct AweState {
     pub enabled: bool,
-    pub room_shape: RoomShapeState,
-    pub material: String,         // preset-namn eller "custom"
-    pub source_pos: (f32, f32),
-    pub listener_pos: (f32, f32),
-    pub dry_wet: f32,
-    pub early_late_balance: f32,
-    pub modes_amount: f32,
-    pub impossible: ImpossibleState,
-    pub lfos: Vec<LfoState>,     // 0-4 interna LFO:er
+    pub room: RoomShape,
+    pub material: Material,
+    pub spatial_enabled: bool,
+    pub note_mapping: NotePositionMapping,
+    pub snapshot: AweSnapshot,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone)]
+pub struct AweSnapshot {
+    pub dry_wet: NormalizedValue,
+    pub early_late_balance: NormalizedValue,
+    pub modes_amount: NormalizedValue,
+    pub freq_warp: BipolarValue,
+    pub resonance_boost: NormalizedValue,
+    pub tail_stretch: StretchFactor,
+    pub portal_amount: NormalizedValue,
+    pub source_pos: Position3,
+    pub listener_pos: Position3,
+    pub spatial_enabled: bool,
+    pub note_mapping: NotePositionMapping,
+    pub lfo1: AweLfoState,
+    pub lfo2: AweLfoState,
+    pub lfo3: AweLfoState,
+    pub lfo4: AweLfoState,
 }
 ```
 
@@ -467,25 +449,30 @@ if let Some(awe_state) = &patch.settings.awe {
     handle.send_blocking(EngineCommand::SetAweEnabled {
         enabled: awe_state.enabled,
     });
-    // Varje parameter som eget command:
     handle.send_blocking(EngineCommand::SetAweParameter {
-        param: AweParam::RoomShape(/* ... */),
+        param: AweParam::RoomShape(awe_state.room),
     });
     handle.send_blocking(EngineCommand::SetAweParameter {
-        param: AweParam::Material(/* ... */),
+        param: AweParam::Material(awe_state.material),
     });
-    // ... alla parametrar
+    handle.send_blocking(EngineCommand::SetAweState {
+        snapshot: awe_state.to_snapshot(),
+    });
+    handle.send_blocking(EngineCommand::SetAweParameter {
+        param: AweParam::SpatialEnabled(awe_state.spatial_enabled),
+    });
+    handle.send_blocking(EngineCommand::SetAweParameter {
+        param: AweParam::NoteMapping(awe_state.note_mapping),
+    });
 }
 
 // I save_patch() — GUI-state → AweState:
-// AWE-vyns state (i modular_synth) har alla värden.
-// Serialiseras direkt till AweState utan att fråga engine.
 patch.settings.awe = Some(awe_view_state.to_awe_state());
 ```
 
 Nuvarande `load_patch()` hanterar `master_volume`, `glide_time` och
-`octave_offset` (rad 119-127 i `patch_bridge.rs`). AWE-wiring läggs till
-i samma funktion, efter befintlig parameter-laddning.
+`octave_offset` (rad 119-127 i `patch_bridge.rs`). AWE-wiring ligger i
+samma funktion, efter befintlig parameter-laddning.
 
 ---
 
@@ -643,7 +630,7 @@ match self.app_view {
 │   │       ·    ◉ Source        ·│       │   └ Height  [===]  │
 │   │       ·                   · │       │                   │
 │   │         ·               ·   │       │   Material        │
-│   │           · ▲ Listener·     │       │   ├ Absorb  [===]  │
+│   │           · ▲ Listener·     │       │   ├ Preset  [▼]    │
 │   │              ·  ·  ·        │       │   └ Diffuse [===]  │
 │   └─────────────────────────────┘       │                   │
 │                                         │   Mix             │
@@ -651,15 +638,20 @@ match self.app_view {
 │                                         │   ├ Early   [===]  │
 │                                         │   └ Modes   [===]  │
 │                                         │                   │
-│                                         │   Impossible      │
+│                                         │   Warp/Portal     │
 │                                         │   ├ FreqWarp[===]  │
-│                                         │   ├ Resonate[===]  │
-│                                         │   └ Stretch [===]  │
+│                                         │   ├ Resonance[===] │
+│                                         │   ├ Stretch [===]  │
+│                                         │   └ Portal  [===]  │
 │                                         │                   │
-│                                         │   LFO 1-2         │
+│                                         │   LFO 1-4         │
 │                                         │   ├ Rate    [===]  │
 │                                         │   ├ Amount  [===]  │
 │                                         │   └ Target  [▼]   │
+│                                         │                   │
+│                                         │   Spatial         │
+│                                         │   ├ Enable [■]    │
+│                                         │   └ Mapping [▼]   │
 │                                         │                   │
 ├─────────────────────────────────────────┴───────────────────┤
 │  Status: Room 8.0×5.0×3.0m · Concrete · RT60: 1.2s          │
@@ -698,25 +690,25 @@ ISM beräknar reflektioner genom att spegla källan i varje vägg:
     Gain = 1 / avstånd · (1 - absorption)
 ```
 
-**Rektangulärt rum, 1:a ordningen**: 6 spegelpunkter (en per vägg).
-**2:a ordningen**: ~18 spegelpunkter (vägg → vägg).
+**Rektangulärt rum, 1:a ordningen**: 6 spegelpunkter (en per vägg).  
+**2:a ordningen**: ej implementerad (endast 1:a ordningen i codebase).
 
 ```rust
-const MAX_EARLY_TAPS: usize = 24;
+const MAX_EARLY_TAPS: usize = 6;
 
 struct EarlyTap {
     delay_samples: f32,       // fraktionell delay (läses med interpolering)
     gain_left: f32,           // inkl. pan + absorption
     gain_right: f32,
-    damping_coeff: f32,       // one-pole LP per tap
-    filter_state: f32,
+    lp_coeff: f32,            // one-pole LP per tap
+    hp_coeff: f32,            // one-pole HP per tap
+    lp_state: f32,
+    hp_state: f32,
 }
 
 struct EarlyReflections {
     taps: [EarlyTap; MAX_EARLY_TAPS],
-    active_taps: usize,
-    delay_line_left: InterpolatedDelayLine,   // fraktionell delay
-    delay_line_right: InterpolatedDelayLine,  // pre-allokerad vid max
+    delay_line: InterpolatedDelayLine,        // mono delay, tappad per vägg
 }
 ```
 
@@ -731,8 +723,10 @@ Medelabsorption ᾱ = Σ(α_i · S_i) / S
 
 Sabines formel: RT60 = 0.161 · V / (ᾱ · S)
 
-FDN delay-tider: proportionella mot rummets dimensioner
-  d₁ = 2L/c, d₂ = 2W/c, d₃ = 2H/c, d₄ = √(L²+W²)/c, ...
+FDN delay-tider: baseras på fasta primtal och skalas av rummets
+genomsnittliga dimension + tail_stretch:
+  room_scale = avg_dimension / 5.33
+  delay = base_delay * room_scale * sample_rate_scale * tail_stretch
 
 FDN damping: härledd från material absorption per band
 FDN feedback: härledd från RT60
@@ -749,19 +743,21 @@ f_y(n) = n · c / (2·W)    (breddmoder)
 f_z(n) = n · c / (2·H)    (höjdmoder)
 ```
 
-Implementeras som comb-filter bank (3-6 filter):
+Implementeras som comb-filter bank (3 axiella filter):
 
 ```rust
 struct RoomModeBank {
-    modes: [CombFilter; 6],
-    active_modes: usize,
+    modes: [CombFilter; 3],
     amount: f32,
 }
 
 struct CombFilter {
     delay_line: DelayLine,    // pre-allokerad vid max-storlek
     feedback: f32,
-    damping: f32,
+    lp_coeff: f32,
+    hp_coeff: f32,
+    lp_state: f32,
+    hp_state: f32,
 }
 ```
 
@@ -771,11 +767,16 @@ Appliceras **enbart på wet-signalen**. Dry passerar ospatialiserad.
 
 ```rust
 struct Spatializer {
-    itd_delay_left: InterpolatedDelayLine,   // fraktionell ITD
-    itd_delay_right: InterpolatedDelayLine,
+    delay_left: InterpolatedDelayLine,   // fraktionell ITD
+    delay_right: InterpolatedDelayLine,
+    itd_left: f32,
+    itd_right: f32,
     gain_left: f32,
     gain_right: f32,
-    shadow_filter: f32,
+    shadow_state_left: f32,
+    shadow_state_right: f32,
+    shadow_coeff_left: f32,
+    shadow_coeff_right: f32,
 }
 ```
 
@@ -788,7 +789,7 @@ AWE har **egna interna LFO:er** som modulerar AWE-parametrar direkt:
 struct AweLfo {
     phase: Phase,
     rate: Hertz,          // 0.01 - 20 Hz
-    amount: f32,
+    amount: NormalizedValue,
     target: AweLfoTarget,
 }
 
@@ -797,6 +798,9 @@ enum AweLfoTarget {
     SourceX, SourceY,
     ListenerX, ListenerY,
     DryWet, FreqWarp,
+    EarlyLate, ModesAmount,
+    ResonanceBoost, TailStretch,
+    PortalAmount,
 }
 ```
 
@@ -809,21 +813,25 @@ Istället: **kontroll-rate uppdatering** i `AweEngine::process()`:
 
 1. LFO-faser inkrementeras per block (en gång per `process()`-anrop)
 2. Modulerade parametrar beräknas en gång per block → nya mål-värden
-3. DSP-parametrar (delay-tider, gains) rampas smootht mot mål (~5ms ramp)
-4. ISM tap-omberäkning sker enbart om modulerade parametrar ändrats
+3. Mix-parametrar rampas smootht mot mål (~5ms ramp) för Dry/Wet,
+   Early/Late och Portal
+4. ISM/FDN/modes-omberäkning sker enbart om geometri ändrats
 
 ```rust
 // I AweEngine::process():
-fn process(&mut self, buffer: &mut [f32], sample_rate: f32) {
+fn process(&mut self, buffer: &mut [f32], sample_rate: SampleRate) {
     let num_samples = buffer.len() / 2;
 
     // 1. Kontroll-rate: uppdatera LFO:er och beräkna nya mål
     self.update_lfos(num_samples, sample_rate);
-    self.update_geometry_if_changed();  // ISM, modes — bara vid ändring
+    if self.geometry_dirty {
+        self.recalculate_geometry(sample_rate);  // ISM, modes, spatializer
+        self.geometry_dirty = false;
+    }
 
     // 2. Per-sample DSP med rampade parametrar
     for i in 0..num_samples {
-        self.ramp_parameters();  // Smooth 5ms ramp mot mål
+        // Ramp mix-parametrar (dry/wet, early/late, portal)
         // ... ISM, FDN, modes, spatializer per sample
     }
 }
@@ -836,32 +844,35 @@ Typisk blockstorlek: 256–1024 samples. Kontroll-rate uppdatering kostar
 
 ## 8. Implementeringsfaser
 
+**Status (2026-02-26)**: Fas 0–3 är implementerade i kodbasen. Checklistorna
+nedan speglar implementationen (ej automatiskt CI-verifierat här).
+
 ### Fas 0: Crate + infrastruktur
 
-**Mål**: `synth_awe`-crate existerar, AweEngine processar pass-through,
-har en dedikerad vy, sparas och laddas. FdnCore extraherad.
+**Mål**: `synth_awe`-crate existerar, AweEngine har full DSP-pipeline,
+dedikerad vy, sparas och laddas. FdnCore extraherad.
 
 **Prerequisite**: Extrahera `FdnCore` till `synth_dsp` (se §5).
 
 **Acceptance criteria**:
-- [ ] `synth_awe` crate skapad med Cargo.toml (deps: synth_core, synth_dsp)
-- [ ] `FdnCore` extraherad till `synth_dsp/src/fdn.rs`, FdnReverb delegerar
-- [ ] `AweEngine::new()` pre-allokerar alla delay-linjer (6 MB @ 96kHz)
-- [ ] `AweEngine::process()` pass-through (output = input)
-- [ ] `EngineCommand::SetAweParameter` och `SetAweEnabled` fungerar
-- [ ] `AppView::AcousticWorld` med separat toolbar
-- [ ] AWE-vy renderas (placeholder med rum-parametrar)
-- [ ] `AweState` sparas/laddas via explicit wiring i `patch_bridge.rs`
-- [ ] Visualizers processar **efter** AWE i `SynthEngine::process()`
-- [ ] Alla 4 obligatoriska kontroller passerar (build, clippy, test, fmt)
+- [x] `synth_awe` crate skapad med Cargo.toml (deps: synth_core, synth_dsp, serde)
+- [x] `FdnCore` extraherad till `synth_dsp/src/fdn.rs`, FdnReverb delegerar
+- [x] `AweEngine::new()` pre-allokerar alla delay-linjer (RT-säker)
+- [x] `AweEngine::process()` full DSP-pipeline (ej pass-through)
+- [x] `EngineCommand::SetAweParameter` och `SetAweEnabled` fungerar
+- [x] `AppView::AcousticWorld` med separat toolbar
+- [x] AWE-vy renderas (full 2D/3D-vy, ej placeholder)
+- [x] `AweState` sparas/laddas via explicit wiring i `patch_bridge.rs`
+- [x] Visualizers processar **efter** AWE i `SynthEngine::process()`
+- [ ] Alla 4 obligatoriska kontroller passerar (build, clippy, test, fmt) – ej verifierat här
 
 **Filer**:
 
 | Fil | Ändring |
 |-----|---------|
-| `synth_awe/Cargo.toml` | **Ny crate.** deps: synth_core, synth_dsp |
+| `synth_awe/Cargo.toml` | **Ny crate.** deps: synth_core, synth_dsp, serde |
 | `synth_awe/src/lib.rs` | Pub exports |
-| `synth_awe/src/awe_engine.rs` | AweEngine (pass-through) |
+| `synth_awe/src/awe_engine.rs` | AweEngine (full DSP-pipeline) |
 | `synth_awe/src/params.rs` | AweParam enum |
 | `synth_awe/src/room.rs` | RoomShape, Material (datastrukturer) |
 | `Cargo.toml` (workspace) | Lägg till synth_awe member |
@@ -891,16 +902,16 @@ Mer än initiala 400-uppskattningen pga dessa tre refaktoreringar.)
 **Mål**: Spelbar rumseffekt med ISM + FDN + moder + 2D-vy + LFO:er.
 
 **Acceptance criteria**:
-- [ ] Rektangulärt rum med ISM tidiga reflektioner (6 taps, InterpolatedDelayLine)
-- [ ] FDN-reverb med geometridrivna parametrar (via FdnCore)
-- [ ] 3 axiella rumsmoder som comb-filter
-- [ ] 2D planritning med dragbar källa + lyssnare
-- [ ] Spatializer enbart på wet-signal
-- [ ] 6 material-presets
-- [ ] Dry/wet, early/late balance, modes amount
-- [ ] 2 interna LFO:er med target-väljare
-- [ ] Parametrar uppdateras i realtid
-- [ ] Alla kontroller passerar
+- [x] Rektangulärt rum med ISM tidiga reflektioner (6 taps, InterpolatedDelayLine)
+- [x] FDN-reverb med geometridrivna parametrar (via FdnCore)
+- [x] 3 axiella rumsmoder som comb-filter
+- [x] 2D planritning med dragbar källa + lyssnare
+- [x] Spatializer enbart på wet-signal
+- [x] 15 material-presets
+- [x] Dry/wet, early/late balance, modes amount
+- [x] 4 interna LFO:er med target-väljare
+- [x] Parametrar uppdateras i realtid
+- [ ] Alla kontroller passerar – ej verifierat här
 
 **Nya/ändrade filer i synth_awe**:
 
@@ -923,23 +934,27 @@ Mer än initiala 400-uppskattningen pga dessa tre refaktoreringar.)
 **Mål**: Icke-rektangulära rum, "omöjliga" parametrar, fler LFO:er.
 
 **Acceptance criteria**:
-- [ ] Cylinder-rum (pipeline/tunnel mode)
-- [ ] L-format rum
-- [ ] Freq Warp, Resonance Boost, Tail Stretch
-- [ ] 4 interna LFO:er med utökade targets
-- [ ] Akustisk portal
+- [x] Cylinder-rum (pipeline/tunnel mode)
+- [x] L-format rum
+- [x] Sphere, Dome, Tube (ytterligare geometrier)
+- [x] Freq Warp, Resonance Boost, Tail Stretch
+- [x] 4 interna LFO:er med utökade targets
+- [x] Akustisk portal
 
 **Uppskattning**: ~300 rader.
 
 ---
 
-### Fas 3: Per-röst spatialisering (framtid)
+### Fas 3: Per-röst spatialisering (implementerad)
 
-- Note-to-position mapping
-- Per-röst ISM
-- Valfri 3D-vy
+**Acceptance criteria**:
+- [x] Note-to-position mapping (Off, LinearX, LinearY, Circular)
+- [x] Per-röst ISM (EarlyReflections per voice)
+- [x] Per-röst spatializer (ITD/ILD)
+- [x] Isometrisk 3D cutaway-vy i UI
 
-Kräver arkitekturförändring — bör inte påbörjas förrän Fas 1 är stabil.
+**Notering**: SpatialVoiceBank har fast pool (16 voices) och fast
+monobuffer (4096 samples) per voice.
 
 ---
 
@@ -947,9 +962,9 @@ Kräver arkitekturförändring — bör inte påbörjas förrän Fas 1 är stabi
 
 | Risk | Konsekvens | Mitigering |
 |------|-----------|------------|
-| FDN-parametrar ger click vid snabb ändring | Artefakt | Smooth-rampa ~5ms per block |
-| Comb-filter resonans blåser upp | Feedback | Intern limiter + max feedback 0.99 |
-| ISM 2:a ordningen för CPU-tung | Stuttering | Dynamisk ordning baserat på rumsstorlek (§3.1) |
+| FDN-parametrar ger click vid snabb ändring | Artefakt | Endast mix-parametrar rampas; undvik snabb automation av geometri/material |
+| Comb-filter resonans blåser upp | Feedback | Feedback klampas + LP/HP-dämpning i feedback-vägen (ingen limiter) |
+| ISM är 1:a ordningen | Mindre realism | Medveten tradeoff för CPU; 2:a ordningen ej implementerad |
 | "Omöjliga rum" låter illa | Oanvändbart | Bra defaults, subtila ranges, presets |
 | FDN-extraktion bryter FdnReverb | Regression | Befintliga tester passerar |
 | Pre-allokerat minne ~6MB oanvänt | Minnesslöseri | Försumbart |
@@ -958,12 +973,32 @@ Kräver arkitekturförändring — bör inte påbörjas förrän Fas 1 är stabi
 | Visualizers visar pre-AWE signal | Förvirrande | Delad EffectChain: process() vs process_visualizers() |
 | Ringbuffer-overflow vid drag/automation | Desync | SetAweState batch-kommando, 1 per frame |
 | Sample rate ändras runtime | Felaktiga delay-tider | AWE tar sample_rate som process()-param, cachear (§3.3) |
-| LFO modulerar geometri per-sample | CPU-spike | Kontroll-rate uppdatering per block + 5ms ramp (§7.5) |
-| 200m pipeline + 2:a ordningen > 1.0s | Klampade reflektioner | Dynamisk ISM-ordning per preset (§3.1) |
+| LFO modulerar geometri per-sample | CPU-spike | Kontroll-rate uppdatering per block (§7.5) |
+| Mycket stora rum | Klampade reflektioner | ISM-delay klampas till 1.0s |
 
 ---
 
+## 9.1 Kritisk utvärdering (status)
+
+- **LFO‑latch vid noll‑output**: `update_lfos()` returnerar tidigt när alla LFO‑värden är 0, vilket kan lämna modulerade värden “fast” istället för att återgå till bas.  
+  **Åtgärd**: återställ alltid till `base_*` innan tidig return, eller ta bort early‑return.
+- **Ingen smoothing på geometri/material**: endast mix‑parametrar rampas. Snabb automation av room‑storlek, material, eller FDN‑relaterade parametrar riskerar klick/zipper.  
+  **Åtgärd**: lägg smoothing på geometri‑deriverade parametrar eller begränsa UI‑uppdateringsrate.
+- **Icke‑rektangulära rum ≈ rektangel**: ISM + modes bygger på length/width/height även för Cylinder/Sphere/Dome/Tube/L‑Shape. Det ger plausibla men inte fysiskt korrekta reflektioner/modes.  
+  **Åtgärd**: dokumentera detta som approximation eller implementera form‑specifik geometri.
+- **Per‑röst‑spatial är hårt begränsad**: max 16 röster, 4096‑sample buffer per röst; vid hög polyfoni/large block kan röster trunkeras.  
+  **Åtgärd**: gör buffertstorlek dynamisk per block eller rapportera “overflow” till UI.
+- **Oversampling‑väg använder naiv decimering för spatial capture**: kan skapa aliasing/tonal bias i per‑röst‑spatial när OS>1.  
+  **Åtgärd**: använd korrekt downsample‑filter före spatial capture.
+- **`AweParam::Enabled` rensar ej DSP‑state**: bara `set_enabled()` gör clear. Om route använder `AweParam::Enabled` kan “stale tails” uppstå.  
+  **Åtgärd**: mappa `AweParam::Enabled` → `set_enabled()` eller ta bort param‑varianten.
+- **Stora rum klampar early reflections**: 1.0s max delay innebär att mycket stora rum får “intryckta” reflektioner.  
+  **Åtgärd**: öka max‑delay, eller minska/reflektera order dynamiskt.
+
 ## 10. Presets
+
+Nuvarande implementation har **36 presets** i `synth_awe::presets`.
+Tabellen nedan är **exempel** på presets/karaktärer.
 
 | Preset | Shape | Material | Storlek | Karaktär |
 |--------|-------|----------|---------|----------|
@@ -983,9 +1018,9 @@ Fas 0:  ~550 rader    synth_awe crate, FDN-extraktion, EffectChain-split,
                        infrastruktur, AppView, persistence
 Fas 1:  ~500 rader    ISM + FDN + moder + spatializer + 2D-vy + LFO:er
 Fas 2:  ~300 rader    Avancerade former, omöjliga rum, fler LFO:er
-Fas 3:  Framtida      Per-röst spatialisering, ev. 3D-vy
+Fas 3:  Implementerad Per-röst spatialisering + note-mapping
         ─────────
-Totalt: ~1350 rader (Fas 0-2), noll nya externa dependencies
+Totalt: ~1350 rader (Fas 0-3), + serde-dependency
 ```
 
 ### Nyckeldesignbeslut
@@ -996,9 +1031,9 @@ Totalt: ~1350 rader (Fas 0-2), noll nya externa dependencies
 | Param-routing | Ren AweParam + AweSnapshot batch | Undvik dead code, undvik ringbuffer-stress |
 | Placering | Eget engine-steg | Inte slot i master_effects |
 | Livscykel | Fixed global med bypass | Inget add/remove |
-| Process-signatur | `process(&mut [f32], f32)` interleaved | Matchar AudioBuffer, ingen kopiering |
+| Process-signatur | `process(&mut [f32], SampleRate)` interleaved | Matchar AudioBuffer, ingen kopiering |
 | Modulation | AWE-interna LFO:er, kontroll-rate | Per block, ej per sample — undvik CPU-spike |
-| RT-säkerhet | Pre-allokera allt, 1.0s max delay | Dynamisk ISM-ordning per rumsstorlek |
+| RT-säkerhet | Pre-allokera allt, 1.0s max delay | 1:a ordningens ISM, delays klampas |
 | ISM delay-typ | InterpolatedDelayLine | Fraktionella delay-tider krävs |
 | FDN delay-typ | Egna FdnChannel med linjär interpolation | Matchar befintlig reverb — ren extraktion |
 | FDN | FdnCore i synth_dsp | Undvik cirkulärt beroende |

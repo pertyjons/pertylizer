@@ -112,9 +112,6 @@ impl PianoKeyboard {
     pub fn show_header(&mut self, ui: &mut egui::Ui) -> i32 {
         let mut octave_change = 0;
         ui.horizontal(|ui| {
-            ui.label(RichText::new("KEYBOARD").color(theme().colors.text_dim));
-            ui.separator();
-
             ui.label(
                 RichText::new(format!("Octave: {:+}", self.octave_offset))
                     .color(theme().colors.text_secondary),
