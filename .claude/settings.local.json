@@ -207,7 +207,9 @@
       "Bash(echo MCP TCP port open:*)",
       "Bash(pkill:*)",
       "Bash(sleep 30:*)",
-      "Bash(pgrep:*)"
+      "Bash(pgrep:*)",
+      "WebFetch(domain:institute.sfeir.com)",
+      "Bash(npm update:*)"
     ],
     "deny": [],
     "ask": []

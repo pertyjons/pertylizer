@@ -1,5 +1,15 @@
 # Version History
 
+## [0.176.0] - 2026-02-26
+### MCP: Streamable HTTP + Hybrid Resonator preset
+- **MCP transport: TCP → Streamable HTTP** — Servern använder nu axum + rmcp Streamable HTTP på `http://127.0.0.1:9850/mcp`. Claude Code ansluter direkt utan bridge-process.
+- **Borttagen `synth-mcp-bridge`** — Stdio↔TCP proxy-binären behövs inte längre
+- **Fix: MCP tools capability** — `ServerCapabilities::enable_tools()` annonseras nu i initialize-svar, så Claude Code upptäcker verktygen
+- **Ny preset: Hybrid Resonator** (🔬 Experimental) — Layered hybrid voice med ring-modulerad wavetable, bitwise math oscillator, body resonance och LFO/envelope-modulation
+- Uppdaterad `.mcp.json` till `"type": "http"` konfiguration
+- Uppdaterad `mcp-call.py` helper till HTTP-baserad kommunikation
+- Uppdaterad dokumentation (ARCHITECTURE.md, MCP.md, SKILL.md)
+
 ## [0.175.0] - 2026-02-26
 ### Sequencer GUI — Automation i Piano Roll (Fas 5)
 - **Automations-zon** under velocity-zonen i piano roll (80px hög, togglas via dropdown)

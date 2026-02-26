@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple CLI for calling MCP tools on the modular synth.
+"""Simple CLI for calling MCP tools on the modular synth via Streamable HTTP.
 
 Usage:
     mcp-call.py <tool_name> [key=value ...]
@@ -36,10 +36,12 @@ Examples:
     mcp-call.py seq_seek beat=4.0
 """
 
-import socket
 import json
 import sys
-import time
+import urllib.request
+import urllib.error
+
+MCP_URL = "http://127.0.0.1:9850/mcp"
 
 
 def parse_value(v):
@@ -60,6 +62,30 @@ def parse_value(v):
     return v
 
 
+def mcp_post(payload, session_id=None):
+    """POST a JSON-RPC message to the MCP HTTP endpoint."""
+    data = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    req = urllib.request.Request(MCP_URL, data=data, headers=headers, method="POST")
+    resp = urllib.request.urlopen(req, timeout=10)
+    sid = resp.headers.get("Mcp-Session-Id", session_id)
+    body = resp.read().decode()
+    return body, sid
+
+
+def parse_sse_response(body):
+    """Parse SSE stream and extract JSON-RPC response."""
+    for line in body.splitlines():
+        if line.startswith("data: "):
+            try:
+                return json.loads(line[6:])
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: mcp-call.py <tool_name> [key=value ...]", file=sys.stderr)
@@ -75,58 +101,49 @@ def main():
             print(f"Invalid argument (expected key=value): {arg}", file=sys.stderr)
             sys.exit(1)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.connect(("127.0.0.1", 9850))
-    except ConnectionRefusedError:
-        print("Error: synth not running on port 9850", file=sys.stderr)
+        # Initialize
+        body, session_id = mcp_post({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mcp-call", "version": "1.0"},
+            },
+        })
+
+        # Initialized notification
+        mcp_post(
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            session_id,
+        )
+
+        # Tool call
+        body, _ = mcp_post({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": tool, "arguments": args},
+        }, session_id)
+
+    except urllib.error.URLError as e:
+        print(f"Error: cannot connect to synth at {MCP_URL}: {e.reason}", file=sys.stderr)
         sys.exit(1)
-    s.settimeout(5)
-
-    def send(msg):
-        s.sendall((json.dumps(msg) + "\n").encode())
-
-    def recv(timeout=2):
-        s.settimeout(timeout)
-        buf = b""
-        try:
-            while True:
-                chunk = s.recv(8192)
-                if not chunk:
-                    break
-                buf += chunk
-        except socket.timeout:
-            pass
-        return buf.decode()
-
-    # Handshake
-    send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "mcp-call", "version": "1.0"},
-    }})
-    time.sleep(0.3)
-    recv(0.5)
-    send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    time.sleep(0.1)
-
-    # Tool call
-    send({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": tool,
-        "arguments": args,
-    }})
-    time.sleep(0.3)
-    raw = recv(2)
-    s.close()
 
     try:
-        data = json.loads(raw)
+        # Response may be direct JSON or SSE
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            data = parse_sse_response(body)
+            if data is None:
+                print(body, file=sys.stderr)
+                sys.exit(1)
+
         text = data["result"]["content"][0]["text"]
         is_error = data["result"].get("isError", False) or text.startswith("Error:")
         print(text)
         sys.exit(1 if is_error else 0)
-    except (json.JSONDecodeError, KeyError, IndexError):
-        print(raw, file=sys.stderr)
+    except (KeyError, IndexError, TypeError):
+        print(body, file=sys.stderr)
         sys.exit(1)
 
 

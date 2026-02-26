@@ -1,8 +1,2 @@
 {
-  "mcpServers": {
-    "synth": {
-      "command": "/home/per/Dokument/rust-projects/modular-synth/target/debug/synth-mcp-bridge",
-      "args": []
-    }
-  }
 }

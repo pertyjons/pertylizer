@@ -22,6 +22,7 @@ mod formant_voice;
 mod glitch_pad;
 mod grand_piano;
 mod harmonic_lead;
+mod hybrid_resonator;
 mod karplus_guitar;
 mod kinetic_pad;
 mod kinetic_pluck;
@@ -71,6 +72,7 @@ pub use formant_voice::patch_formant_voice;
 pub use glitch_pad::patch_glitch_pad;
 pub use grand_piano::patch_grand_piano;
 pub use harmonic_lead::patch_harmonic_lead;
+pub use hybrid_resonator::patch_hybrid_resonator;
 pub use karplus_guitar::patch_karplus_guitar;
 pub use kinetic_pad::patch_kinetic_pad;
 pub use kinetic_pluck::patch_kinetic_pluck;
@@ -187,6 +189,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_shepard_riser(),
                 patch_bytebeat_glitch(),
                 patch_formant_voice(),
+                patch_hybrid_resonator(),
                 patch_digital_chime(),
                 patch_kinetic_pluck(),
                 patch_kinetic_pad(),

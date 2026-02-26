@@ -24,9 +24,9 @@ Start the modular synth with MCP support enabled.
    ```
    Run this in the background so Claude can continue working.
 
-3. Wait 3 seconds, then verify the MCP server is listening:
+3. Wait 3 seconds, then verify the MCP HTTP server is listening:
    ```bash
-   ss -tlnp | grep 9850
+   curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9850/mcp
    ```
 
 4. List available MCP tools:
@@ -37,12 +37,12 @@ Start the modular synth with MCP support enabled.
 
 5. Report status to the user:
    - Whether GUI started
-   - Whether MCP server is listening on 127.0.0.1:9850
+   - Whether MCP HTTP server is listening on http://127.0.0.1:9850/mcp
    - Confirm MCP tools are available
 
 ## Calling MCP Tools
 
-Use the helper script for all MCP calls. It handles TCP connection and handshake automatically:
+Use the helper script for all MCP calls. It handles HTTP connection and handshake automatically:
 
 ```bash
 MCP=".claude/skills/start-synth/mcp-call.py"

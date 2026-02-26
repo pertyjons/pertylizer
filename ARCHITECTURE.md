@@ -17,11 +17,11 @@ Stack: Rust 1.93 (Edition 2024), egui (GUI), cpal (audio I/O), ringbuf (lock-fre
                                   │
           ┌───────────────────┬───┼───────────────┬───────────────┐
           ▼                   ▼   ▼               ▼               ▼
-┌──────────────────┐ ┌────────────────┐ ┌──────────────────┐ ┌──────────┐
-│  synth_engine    │ │ synth_sequencer│ │  synth_modules   │ │ synth_mcp│
+┌──────────────────┐ ┌────────────────┐ ┌──────────────────┐ ┌───────────┐
+│  synth_engine    │ │ synth_sequencer│ │  synth_modules   │ │ synth_mcp │
 │ (Voice alloc,    │ │ (Pattern, Song,│ │ (Oscillator,     │ │(MCP-server│
 │  Graph, Commands)│ │  Events)       │ │  Filter, etc.)   │ │ AI-agent) │
-└────────┬─────────┘ └───────┬───────┘ └────────┬─────────┘ └──────────┘
+└────────┬─────────┘ └───────┬────────┘ └────────┬─────────┘ └───────────┘
          │                   │                   │
          │            ┌──────┼───────────────────┘
          │            │      │
@@ -30,7 +30,7 @@ Stack: Rust 1.93 (Edition 2024), egui (GUI), cpal (audio I/O), ringbuf (lock-fre
 │    synth_dsp     │ │   synth_awe    │
 │ (PolyBLEP,       │ │ (Spatial audio,│
 │  Filters, Delay) │ │  Room sim)     │
-└────────┬─────────┘ └───────┬───────┘
+└────────┬─────────┘ └───────┬────────┘
          │                   │
          └───────┬───────────┘
                  ▼
@@ -97,7 +97,7 @@ Stack: Rust 1.93 (Edition 2024), egui (GUI), cpal (audio I/O), ringbuf (lock-fre
 **Ansvar:** MCP-server (Model Context Protocol) för AI-agent-integration.
 **Nyckeltyper:** `SynthBridge` (trait), `SynthMcpServer` (rmcp handler), `McpBridgeError`
 **Verktyg:** 11 MCP tools — list/get instruments, modules, connections, parameters, engine status, diagnostics, set parameter, note on/off
-**Transport:** TCP :9850 (GUI-läge) eller stdio (headless)
+**Transport:** Streamable HTTP :9850/mcp (GUI-läge) eller stdio (headless)
 **Beroenden:** synth_core, rmcp, tokio, schemars, serde
 **Dokumentation:** Se `docs/MCP.md` för fullständig beskrivning
 
@@ -106,7 +106,7 @@ Stack: Rust 1.93 (Edition 2024), egui (GUI), cpal (audio I/O), ringbuf (lock-fre
 **GUI:** egui-baserat med widgets (knob, meter, port, scope, spectrum, cable, envelope, waveform)
 **Vyer:** `patch_editor.rs` (modulär graf), `instrument_rack.rs`, `master_effects.rs`, `awe_view.rs`
 **Audio:** cpal-backend
-**MCP:** `mcp_bridge.rs` (AppSynthBridge impl), `bin/synth-mcp-bridge.rs` (stdio↔TCP proxy)
+**MCP:** `mcp_bridge.rs` (AppSynthBridge impl)
 **Debug:** `graph_debugger.rs`, `sequencer_debugger.rs`, `voice_debugger.rs`, `signal_probe.rs`
 **Beroenden:** Alla crates + cpal, egui, midir
 
@@ -176,11 +176,11 @@ MIDI/Sequencer Events
 ### MCP-kommunikation
 
 ```
-Claude Code ←stdio→ synth-mcp-bridge ←TCP:9850→ modular-synth
-                                                      │
-                                    AppSynthBridge läser EngineState
-                                    (SharedGraphState, meters, transport)
-                                    och skickar EngineCommand
+Claude Code ←HTTP→ modular-synth (http://127.0.0.1:9850/mcp)
+                          │
+        AppSynthBridge läser EngineState
+        (SharedGraphState, meters, transport)
+        och skickar EngineCommand
 ```
 
 Se `docs/MCP.md` för fullständig MCP-dokumentation.
@@ -318,8 +318,6 @@ modular-synth/
 │       └── src/
 │           ├── main.rs
 │           ├── mcp_bridge.rs      # AppSynthBridge (SynthBridge impl)
-│           ├── bin/
-│           │   └── synth-mcp-bridge.rs  # stdio↔TCP proxy
 │           ├── gui/
 │           │   ├── app/           # App state, uppdateringsloop
 │           │   ├── patch_editor.rs     # Modulär grafredigering

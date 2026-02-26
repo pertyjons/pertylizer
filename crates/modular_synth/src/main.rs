@@ -43,7 +43,7 @@ enum CliAction {
     HeadlessMcp,
 }
 
-/// Default MCP TCP port.
+/// Default MCP HTTP port.
 #[cfg(feature = "mcp")]
 const MCP_PORT: u16 = 9850;
 
@@ -95,7 +95,7 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
             song: std::sync::Arc::clone(&song),
         });
 
-    // Start MCP TCP server in background (if feature enabled)
+    // Start MCP HTTP server in background (if feature enabled)
     #[cfg(feature = "mcp")]
     let mcp_shared = {
         let shared = std::sync::Arc::new(modular_synth::mcp_shared::McpSharedState::with_song(
@@ -109,7 +109,7 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
             let rt = tokio::runtime::Runtime::new()
                 .unwrap_or_else(|e| panic!("Failed to create tokio runtime: {e}"));
             rt.block_on(async {
-                if let Err(e) = synth_mcp::serve_tcp(bridge, MCP_PORT).await {
+                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT).await {
                     eprintln!("MCP server error: {e}");
                 }
             });

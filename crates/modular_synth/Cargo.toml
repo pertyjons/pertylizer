@@ -1,6 +1,6 @@
 [package]
 name = "modular_synth"
-version = "0.175.0"
+version = "0.176.0"
 edition = "2024"
 rust-version = "1.93"
 description = "A modular synthesizer with abstract audio backend"
@@ -68,6 +68,3 @@ tempfile = "3.26.0"
 name = "modular-synth"
 path = "src/main.rs"
 
-[[bin]]
-name = "synth-mcp-bridge"
-path = "src/bin/synth-mcp-bridge.rs"

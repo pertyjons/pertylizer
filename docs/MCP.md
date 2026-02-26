@@ -5,10 +5,10 @@ MCP låter AI-agenter (t.ex. Claude Code) inspektera och styra den körande synt
 ## Översikt
 
 ```
-  Claude Code ←stdio→ synth-mcp-bridge ←TCP:9850→ modular-synth (GUI + ljud)
+  Claude Code ←HTTP→ modular-synth (GUI + ljud + MCP HTTP-server)
 ```
 
-**Primärt läge:** GUI + MCP samtidigt. Synthen startar med GUI och ljud som vanligt, plus en MCP TCP-server på port 9850 i en bakgrundstråd.
+**Primärt läge:** GUI + MCP samtidigt. Synthen startar med GUI och ljud som vanligt, plus en MCP HTTP-server på `http://127.0.0.1:9850/mcp` i en bakgrundstråd. Claude Code ansluter direkt via Streamable HTTP — ingen bridge-process behövs.
 
 **Sekundärt läge:** `--mcp` headless. Stdio direkt, ingen GUI. Ljud spelas fortfarande.
 
@@ -24,7 +24,7 @@ cargo build --features mcp
 
 ```bash
 cargo run --features mcp
-# → GUI startar, MCP lyssnar på 127.0.0.1:9850
+# → GUI startar, MCP HTTP-server lyssnar på http://127.0.0.1:9850/mcp
 ```
 
 ### Kör headless (stdio MCP)
@@ -36,31 +36,20 @@ cargo run --features mcp -- --mcp
 
 ### Claude Code-konfiguration
 
-Lägg till i `.claude/settings.json`:
+Projektet innehåller redan en `.mcp.json` i roten som konfigurerar anslutningen:
 
 ```json
 {
   "mcpServers": {
     "synth": {
-      "command": "path/to/synth-mcp-bridge",
-      "args": []
+      "type": "http",
+      "url": "http://127.0.0.1:9850/mcp"
     }
   }
 }
 ```
 
-Alternativt med socat (utan bridge-binären):
-
-```json
-{
-  "mcpServers": {
-    "synth": {
-      "command": "socat",
-      "args": ["STDIO", "TCP:localhost:9850"]
-    }
-  }
-}
-```
+Claude Code ansluter direkt till den körande synthen via Streamable HTTP — ingen bridge-process behövs. Starta synthen före Claude Code.
 
 ## Verktyg
 
@@ -254,23 +243,19 @@ synth_mcp (crate)              modular_synth
 ┌─────────────────────┐       ┌──────────────────────┐
 │ SynthBridge trait    │◄──────│ AppSynthBridge impl  │
 │ MCP-server (rmcp)   │       │ Läser SharedGraphState│
-│ 59 tool-definitioner│       │ Skickar EngineCommand │
+│ 61 tool-definitioner│       │ Skickar EngineCommand │
 └──────┬──────────────┘       └──────┬───────────────┘
-       │ TCP :9850                   │ ring buffer
-       │                              ▼
+       │ HTTP :9850/mcp              │ ring buffer
+       │ (Streamable HTTP)           ▼
        │                       SynthEngine (audio thread)
        ▼
-  stdio-bridge                 GUI (egui) + Ljud
-  (tunn binär)
-       │
-       │ stdio (JSON-RPC)
-       ▼
-  Claude Code
+  Claude Code                  GUI (egui) + Ljud
 ```
 
 **SynthBridge** — trait som abstraherar bort synth_engine.
 **AppSynthBridge** — impl som läser `EngineState.shared_graph` (RwLock) och skickar kommandon via `CommandSender` (lock-free ring buffer).
 **SynthMcpServer** — rmcp `ServerHandler` som delegerar till bridge.
+**Transport** — Streamable HTTP (axum) på port 9850. Claude Code ansluter direkt utan bridge-process.
 
 ## Kända begränsningar
 

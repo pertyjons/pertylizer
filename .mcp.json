@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "synth": {
-      "command": "/home/per/Dokument/rust-projects/modular-synth/target/debug/synth-mcp-bridge",
-      "args": []
+      "type": "http",
+      "url": "http://127.0.0.1:9850/mcp"
     }
   }
 }

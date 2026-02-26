@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::ServerInfo;
+use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
 use crate::bridge::SynthBridge;
@@ -558,6 +558,7 @@ impl SynthMcpServer {
 impl ServerHandler for SynthMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
             instructions: Some(
                 "Modular synthesizer MCP server. Inspect and control the running synth: \
                  list modules, read parameters, change settings, play notes."

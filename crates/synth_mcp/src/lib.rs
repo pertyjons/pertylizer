@@ -39,35 +39,40 @@ pub async fn serve_stdio(bridge: Arc<dyn SynthBridge>) -> Result<(), Box<dyn std
     Ok(())
 }
 
-/// Serve MCP over a TCP listener on the given port.
+/// Serve MCP over Streamable HTTP on the given port.
 ///
-/// Accepts connections concurrently. Returns when the listener is shut down.
-pub async fn serve_tcp(
+/// Claude Code connects directly to `http://127.0.0.1:{port}/mcp`.
+/// No bridge process needed.
+pub async fn serve_http(
     bridge: Arc<dyn SynthBridge>,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService,
+        session::local::LocalSessionManager,
+    };
+
+    let ct = tokio_util::sync::CancellationToken::new();
+
+    let service = StreamableHttpService::new(
+        move || Ok(SynthMcpServer::new(Arc::clone(&bridge))),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig {
+            stateful_mode: true,
+            cancellation_token: ct.child_token(),
+            ..Default::default()
+        },
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
-    eprintln!("MCP server listening on 127.0.0.1:{port}");
+    eprintln!("MCP HTTP server listening on http://127.0.0.1:{port}/mcp");
 
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        eprintln!("MCP client connected from {addr}");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            ct.cancelled().await;
+        })
+        .await?;
 
-        let server = SynthMcpServer::new(Arc::clone(&bridge));
-        let (reader, writer) = stream.into_split();
-
-        match server.serve((reader, writer)).await {
-            Ok(ct) => {
-                tokio::spawn(async move {
-                    if let Err(e) = ct.waiting().await {
-                        eprintln!("MCP session error: {e}");
-                    }
-                    eprintln!("MCP client disconnected: {addr}");
-                });
-            }
-            Err(e) => {
-                eprintln!("MCP session setup error: {e}");
-            }
-        }
-    }
+    Ok(())
 }
