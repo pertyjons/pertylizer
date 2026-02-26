@@ -45,12 +45,16 @@ MCP_URL = "http://127.0.0.1:9850/mcp"
 
 
 def parse_value(v):
-    """Auto-detect JSON, int, float, or string."""
+    """Auto-detect JSON, bool, int, float, or string."""
     if v.startswith("[") or v.startswith("{"):
         try:
             return json.loads(v)
         except json.JSONDecodeError:
             pass
+    if v == "true":
+        return True
+    if v == "false":
+        return False
     try:
         return int(v)
     except ValueError:
