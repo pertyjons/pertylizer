@@ -814,6 +814,7 @@ impl SynthBridge for AppSynthBridge {
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
+        instrument_id: Option<u16>,
     ) -> Result<u64, McpBridgeError> {
         let mut song = self
             .shared
@@ -828,7 +829,7 @@ impl SynthBridge for AppSynthBridge {
         let p = synth_sequencer::Pitch::new(pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
         let start = synth_sequencer::PatternTick(beats_to_ticks(start_beat));
         let vel = synth_core::Velocity::from_midi(velocity);
-        let instrument = synth_sequencer::SeqInstrumentId(0);
+        let instrument = synth_sequencer::SeqInstrumentId(instrument_id.unwrap_or(0));
 
         let note = synth_sequencer::Note::new(
             synth_sequencer::NoteId(0), // will be reassigned by insert_note
@@ -2006,7 +2007,7 @@ fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNo
     let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
-    let instrument = synth_sequencer::SeqInstrumentId(0);
+    let instrument = synth_sequencer::SeqInstrumentId(n.instrument_id.unwrap_or(0));
 
     let note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note

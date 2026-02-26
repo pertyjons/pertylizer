@@ -22,6 +22,7 @@ pub mod event_priority;
 pub mod graph;
 pub mod hub;
 pub mod instrument;
+pub mod instrument_mapping;
 pub mod metering;
 pub mod sequencer_engine;
 pub mod shared_state;
@@ -50,6 +51,7 @@ pub use event_priority::{
 pub use graph::{Connection, GraphError, ModuleGraph};
 pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
 pub use instrument::{Instrument, InstrumentId, MidiChannel};
+pub use instrument_mapping::InstrumentMapping;
 pub use metering::*;
 pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use shared_state::{

@@ -1,4 +1,4 @@
-# Master TODO - Modular Synth (v0.177.0)
+# Master TODO - Modular Synth (v0.178.0)
 
 ## Fas 0: Sequencer — MCP & GUI (Högsta prioritet)
 *Mål: Göra sequencern produktionsklar via MCP och GUI.*

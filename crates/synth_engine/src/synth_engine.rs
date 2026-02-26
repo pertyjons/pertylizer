@@ -16,6 +16,7 @@ use crate::commands::{EngineCommand, EngineEvent, ModuleId, PortId};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel};
+use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::sequencer_engine::SequencerEngine;
 use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
@@ -374,6 +375,9 @@ pub struct SynthEngine {
     sequencer: SequencerEngine,
     /// Pre-allocated buffer for sequencer events (real-time safe).
     sequencer_event_buffer: Vec<SequencerEvent>,
+    /// Stable mapping from sequencer instrument IDs to engine instrument IDs.
+    /// Convention: `SeqInstrumentId(X)` ↔ `InstrumentId(X)`.
+    instrument_mapping: InstrumentMapping,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -420,6 +424,10 @@ impl SynthEngine {
             default_instrument.voice_graph(),
         );
 
+        // Initialize instrument mapping with default instrument
+        let mut instrument_mapping = InstrumentMapping::new();
+        instrument_mapping.insert(synth_sequencer::SeqInstrumentId(0), InstrumentId::FIRST);
+
         let engine = Self {
             command_consumer,
             event_producer,
@@ -439,6 +447,7 @@ impl SynthEngine {
             metering: MeteringSystem::new(48000.0),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
+            instrument_mapping,
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -928,6 +937,10 @@ impl SynthEngine {
     // ========================================================================
 
     fn handle_add_instrument(&mut self, instrument: Box<Instrument>) {
+        // Register in mapping: SeqInstrumentId(id as u16) ↔ InstrumentId(id)
+        #[allow(clippy::cast_possible_truncation)]
+        let seq_id = synth_sequencer::SeqInstrumentId(instrument.id().as_u64() as u16);
+        self.instrument_mapping.insert(seq_id, instrument.id());
         self.instruments.push(instrument);
         self.update_shared_instruments();
     }
@@ -945,6 +958,9 @@ impl SynthEngine {
             self.state
                 .shared_graph
                 .set_connections_for_instrument(instrument_id, Vec::new());
+
+            // Remove from mapping
+            self.instrument_mapping.remove_by_engine_id(instrument_id);
 
             let instrument = self.instruments.swap_remove(idx);
             let _ = self.instrument_return_producer.try_push(instrument);
@@ -1625,17 +1641,25 @@ impl SynthEngine {
         let snapshots: Vec<crate::shared_state::InstrumentSnapshot> = self
             .instruments
             .iter()
-            .map(|inst| crate::shared_state::InstrumentSnapshot {
-                id: inst.id(),
-                name: inst.name().to_string(),
-                midi_channel: inst.midi_channel().as_one_indexed(),
-                volume: inst.volume().as_f32(),
-                pan: inst.pan().as_f32(),
-                enabled: inst.is_enabled(),
-                muted: !inst.is_enabled(),
-                solo: inst.is_solo(),
-                module_count: inst.voice_graph().len(),
-                effect_count: inst.effect_chain().slots().len(),
+            .map(|inst| {
+                #[allow(clippy::cast_possible_truncation)]
+                let seq_id = self
+                    .instrument_mapping
+                    .seq_id(inst.id())
+                    .map_or(inst.id().as_u64() as u16, |s| s.0);
+                crate::shared_state::InstrumentSnapshot {
+                    id: inst.id(),
+                    seq_instrument_id: seq_id,
+                    name: inst.name().to_string(),
+                    midi_channel: inst.midi_channel().as_one_indexed(),
+                    volume: inst.volume().as_f32(),
+                    pan: inst.pan().as_f32(),
+                    enabled: inst.is_enabled(),
+                    muted: !inst.is_enabled(),
+                    solo: inst.is_solo(),
+                    module_count: inst.voice_graph().len(),
+                    effect_count: inst.effect_chain().slots().len(),
+                }
             })
             .collect();
         *self.state.instrument_snapshots.write() = snapshots;
@@ -1763,8 +1787,35 @@ fn count_effects(instrument: &Instrument) -> u32 {
         .count() as u32
 }
 
+/// Resolve a `SeqInstrumentId` to an instrument index using the stable mapping.
+///
+/// Falls back to index 0 (first instrument) if the mapping yields no match.
+fn resolve_instrument_index(
+    seq_id: &synth_sequencer::SeqInstrumentId,
+    mapping: &InstrumentMapping,
+    instruments: &[Box<Instrument>],
+) -> Option<usize> {
+    if let Some(engine_id) = mapping.engine_id(*seq_id)
+        && let Some(idx) = instruments.iter().position(|i| i.id() == engine_id)
+    {
+        return Some(idx);
+    }
+    // Fallback: first instrument (orphaned notes still produce sound)
+    if instruments.is_empty() {
+        None
+    } else {
+        Some(0)
+    }
+}
+
 /// Route sequencer events to the appropriate instruments.
-fn route_sequencer_events(events: &[SequencerEvent], instruments: &mut [Box<Instrument>]) {
+///
+/// Uses `InstrumentMapping` for stable lookup instead of vec-index casting.
+fn route_sequencer_events(
+    events: &[SequencerEvent],
+    instruments: &mut [Box<Instrument>],
+    mapping: &InstrumentMapping,
+) {
     for event in events {
         match event {
             SequencerEvent::NoteOn {
@@ -1775,40 +1826,34 @@ fn route_sequencer_events(events: &[SequencerEvent], instruments: &mut [Box<Inst
             } => {
                 let note = MidiNote::new(pitch.as_midi());
                 let vel = *velocity;
-                let instrument_index = instrument.0 as usize;
 
-                if let Some(target) = instruments.get_mut(instrument_index) {
-                    target.note_on(note, vel);
-                } else if let Some(first) = instruments.first_mut() {
-                    first.note_on(note, vel);
+                if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
+                    instruments[idx].note_on(note, vel);
                 }
             }
             SequencerEvent::NoteOff {
                 pitch, instrument, ..
             } => {
                 let note = MidiNote::new(pitch.as_midi());
-                let instrument_index = instrument.0 as usize;
 
-                if let Some(target) = instruments.get_mut(instrument_index) {
-                    target.note_off(note);
-                } else if let Some(first) = instruments.first_mut() {
-                    first.note_off(note);
+                if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
+                    instruments[idx].note_off(note);
                 }
             }
             SequencerEvent::Parameter { target, value, .. } => {
-                if let AutomationTarget::Instrument { instrument, param } = target {
-                    let idx = instrument.0 as usize;
-                    if let Some(inst) = instruments.get_mut(idx) {
-                        match param {
-                            AutoInstrumentParam::Volume => {
-                                inst.set_volume(Gain::new(*value));
-                            }
-                            AutoInstrumentParam::Pan => {
-                                // Map 0.0-1.0 to -1.0..1.0
-                                inst.set_pan(BipolarValue::new(*value * 2.0 - 1.0));
-                            }
-                            _ => {} // FilterCutoff etc. requires module routing (future)
+                if let AutomationTarget::Instrument { instrument, param } = target
+                    && let Some(engine_id) = mapping.engine_id(*instrument)
+                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
+                {
+                    match param {
+                        AutoInstrumentParam::Volume => {
+                            inst.set_volume(Gain::new(*value));
                         }
+                        AutoInstrumentParam::Pan => {
+                            // Map 0.0-1.0 to -1.0..1.0
+                            inst.set_pan(BipolarValue::new(*value * 2.0 - 1.0));
+                        }
+                        _ => {} // FilterCutoff etc. requires module routing (future)
                     }
                 }
             }
@@ -1843,7 +1888,11 @@ impl AudioProcessor for SynthEngine {
             .transport
             .set_ticks(self.sequencer.current_tick().0);
 
-        route_sequencer_events(&self.sequencer_event_buffer, &mut self.instruments);
+        route_sequencer_events(
+            &self.sequencer_event_buffer,
+            &mut self.instruments,
+            &self.instrument_mapping,
+        );
 
         self.process_voices(&process_context);
 

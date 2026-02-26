@@ -24,6 +24,9 @@ pub struct BridgeNoteData {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
+    /// Optional instrument ID (SeqInstrumentId). Default 0 = first instrument.
+    /// During playback, the track's instrument overrides this when set.
+    pub instrument_id: Option<u16>,
 }
 
 /// Note update for batch update operations.
@@ -298,6 +301,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
 
     /// Add a note to a pattern. Returns the new note ID.
+    /// `instrument_id` defaults to 0 if None. Track instrument overrides during playback.
     fn add_note(
         &self,
         pattern_id: u32,
@@ -305,6 +309,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
+        instrument_id: Option<u16>,
     ) -> Result<u64, McpBridgeError>;
 
     /// Remove a note from a pattern.

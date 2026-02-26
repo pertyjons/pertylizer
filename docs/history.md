@@ -1,5 +1,15 @@
 # Version History
 
+## [0.178.0] - 2026-02-26
+### InstrumentMapping: Stabil SeqInstrumentId ↔ InstrumentId
+- **`InstrumentMapping`** — ny struct i `synth_engine` som mappar `SeqInstrumentId(u16)` ↔ `InstrumentId(u64)` stabilt
+- **`route_sequencer_events`** — använder nu mapping-lookup istället för instabilt vec-index (`instrument.0 as usize`)
+- **`collect_events_at_tick`** — track-instrument overridar nu not-instrument vid uppspelning (track.instrument → note.instrument fallback)
+- **`seq_instrument_id`** — nytt fält i `InstrumentSnapshot` för GUI/MCP-synlighet
+- **MCP `add_note`/`add_notes`** — valfri `instrument_id`-parameter (default 0, track-instrument overridar vid uppspelning)
+- Mappningen uppdateras automatiskt vid instrument-skapande/borttagning
+- Orphaned noter (borttaget instrument) faller tillbaka på första instrumentet
+
 ## [0.177.0] - 2026-02-26
 ### MCP: Komplett API med 18 nya verktyg
 - **Automation CRUD** — `list_automation_lanes`, `get_automation_points`, `remove_automation_points`, `clear_automation_lane` + `curve`-parameter (Linear/Step/Exponential/SCurve) på `add_automation_points`

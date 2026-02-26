@@ -132,24 +132,14 @@ Alla tidpunkter hanteras internt i **Ticks** (960 PPQN). Detta ger extrem noggra
 | `TempoChange` | Tempoändring | `tick` (Tick), `tempo` (Bpm) |
 | `TimeSignatureChange` | Taktartsändring | `tick` (Tick), `time_signature` |
 
-### SeqInstrumentId ↔ InstrumentId mapping
+### SeqInstrumentId ↔ InstrumentId mapping ✅ (v0.178.0)
 
-`SeqInstrumentId(u16)` mappas idag till `SynthEngine`s instrument-array via `instrument.0 as usize` (se `route_sequencer_events()` i `synth_engine.rs:1778`). **Detta är instabilt vid borttagning/omordning av instrument** — index förskjuts och noter hamnar på fel instrument.
+Implementerad i `crates/synth_engine/src/instrument_mapping.rs`. `InstrumentMapping` ger stabil bidirektionell lookup mellan `SeqInstrumentId` och `InstrumentId`. Convention: `SeqInstrumentId(X)` ↔ `InstrumentId(X)`.
 
-**Lösning — stabil mappningstabell (Fas 0):**
-
-```rust
-/// Bidirectional map between sequencer and engine instrument IDs.
-struct InstrumentMapping {
-    /// SeqInstrumentId → InstrumentId (stable, survives reorder)
-    seq_to_engine: HashMap<SeqInstrumentId, InstrumentId>,
-    /// InstrumentId → SeqInstrumentId (reverse lookup)
-    engine_to_seq: HashMap<InstrumentId, SeqInstrumentId>,
-    next_seq_id: u16,
-}
-```
-
-Vid instrument-skapande tilldelas ett stabilt `SeqInstrumentId`. Vid borttagning tas entry bort — befintliga noter/automation behåller sitt ID men renderas som "orphaned". Vid `route_sequencer_events()` görs lookup i tabellen istället för index-cast.
+- `route_sequencer_events()` använder `InstrumentMapping::engine_id()` istället för vec-index
+- `collect_events_at_tick()` respekterar track-instrument (overridar note.instrument)
+- Mappningen underhålls i `handle_add_instrument`/`handle_remove_instrument`
+- Orphaned noter (borttaget instrument) faller tillbaka på första instrumentet
 
 ## 4. Vy-komponenter (Arkitektur)
 
@@ -432,7 +422,7 @@ fn instrument_name(&self, seq_id: SeqInstrumentId) -> &str {
 - Skapa `Arc<RwLock<Song>>` i `SynthApp::new()`, skicka till engine via `EngineCommand::SetSong`
 - Dela samma `Arc` med `McpSharedState`
 - **Migrera `SequencerEngine` till `try_read()`** — byt `self.song.read()` till `self.song.try_read()` i `collect_events_at_tick()` och `update_cached_tempo()` (se 5.2)
-- **Skapa `InstrumentMapping`** — stabil mappning mellan `SeqInstrumentId` och `InstrumentId` (se 3)
+- ~~**Skapa `InstrumentMapping`** — stabil mappning mellan `SeqInstrumentId` och `InstrumentId` (se 3)~~ ✅ v0.178.0
 - **Refaktorera MCP song-access** — MCP buffrar kommandon i en `InputSource` istället för direkta `song.write()` (se 5.2)
 - Registrera GUI `InputSource` + MCP `InputSource` i `InputMultiplexer`, koppla poll-loop på GUI-tråden
 - Lägg till `AppView::Sequencer` i `AppView`-enum

@@ -207,6 +207,10 @@ pub struct AddNoteParam {
     pub duration_beats: f32,
     #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
     pub velocity: u8,
+    #[schemars(
+        description = "Instrument index (default 0). During playback, the track's instrument overrides this when set."
+    )]
+    pub instrument_id: Option<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -270,6 +274,10 @@ pub struct NoteInput {
     pub duration_beats: f32,
     #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
     pub velocity: Option<u8>,
+    #[schemars(
+        description = "Instrument index (default 0). During playback, the track's instrument overrides this when set."
+    )]
+    pub instrument_id: Option<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1182,6 +1190,7 @@ impl SynthMcpServer {
             params.0.start_beat,
             params.0.duration_beats,
             params.0.velocity,
+            params.0.instrument_id,
         ) {
             Ok(id) => format!("OK: added note {id} to pattern {}", params.0.pattern_id),
             Err(e) => format!("Error: {e}"),
@@ -1303,6 +1312,7 @@ impl SynthMcpServer {
                 start_beat: n.start_beat,
                 duration_beats: n.duration_beats,
                 velocity: n.velocity.unwrap_or(100),
+                instrument_id: n.instrument_id,
             })
             .collect();
         match self.bridge.add_notes(params.0.pattern_id, &notes) {
@@ -1348,6 +1358,7 @@ impl SynthMcpServer {
                 start_beat: n.start_beat,
                 duration_beats: n.duration_beats,
                 velocity: n.velocity.unwrap_or(100),
+                instrument_id: n.instrument_id,
             })
             .collect();
         match self.bridge.replace_notes(params.0.pattern_id, &notes) {
@@ -1634,6 +1645,7 @@ impl SynthMcpServer {
                         start_beat: n.start_beat,
                         duration_beats: n.duration_beats,
                         velocity: n.velocity.unwrap_or(100),
+                        instrument_id: n.instrument_id,
                     })
                     .collect(),
                 automation: convert_automation_points(p.automation),
@@ -1708,6 +1720,7 @@ impl SynthMcpServer {
                         start_beat: n.start_beat,
                         duration_beats: n.duration_beats,
                         velocity: n.velocity.unwrap_or(100),
+                        instrument_id: n.instrument_id,
                     })
                     .collect(),
                 automation: convert_automation_points(pat.automation),
