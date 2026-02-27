@@ -1827,16 +1827,16 @@ impl PatchEditor {
                                 new_module_pos,
                                 &[
                                     (
-                                        "Oscillator",
+                                        "🎵 Oscillator",
                                         PaletteSelection::Category(ModuleCategory::Oscillator),
                                     ),
-                                    ("Sub Osc", PaletteSelection::SubOscillator),
-                                    ("Wavetable", PaletteSelection::WavetableOsc),
-                                    ("Math Osc", PaletteSelection::MathOscillator),
-                                    ("Additive", PaletteSelection::AdditiveOsc),
-                                    ("Granular", PaletteSelection::GranularOsc),
-                                    ("Noise", PaletteSelection::Noise),
-                                    ("Ring Mod", PaletteSelection::RingMod),
+                                    ("🔈 Sub Osc", PaletteSelection::SubOscillator),
+                                    ("📊 Wavetable", PaletteSelection::WavetableOsc),
+                                    ("🔢 Math Osc", PaletteSelection::MathOscillator),
+                                    ("🎶 Additive", PaletteSelection::AdditiveOsc),
+                                    ("🌾 Granular", PaletteSelection::GranularOsc),
+                                    ("🌫 Noise", PaletteSelection::Noise),
+                                    ("🔔 Ring Mod", PaletteSelection::RingMod),
                                 ],
                             );
                         }
@@ -1850,14 +1850,14 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    ("LFO", PaletteSelection::Category(ModuleCategory::LFO)),
+                                    ("〰 LFO", PaletteSelection::Category(ModuleCategory::LFO)),
                                     (
-                                        "Envelope",
+                                        "📈 Envelope",
                                         PaletteSelection::Category(ModuleCategory::Envelope),
                                     ),
-                                    ("MSEG", PaletteSelection::Mseg),
-                                    ("Kinetic Mod", PaletteSelection::KineticModulator),
-                                    ("Envelope Follower", PaletteSelection::EnvelopeFollower),
+                                    ("📐 MSEG", PaletteSelection::Mseg),
+                                    ("🏃 Kinetic Mod", PaletteSelection::KineticModulator),
+                                    ("📈 Env Follower", PaletteSelection::EnvelopeFollower),
                                 ],
                             );
                         }
@@ -1871,9 +1871,9 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    ("Euclidean", PaletteSelection::Euclidean),
-                                    ("Turing Machine", PaletteSelection::TuringMachine),
-                                    ("Random Gates", PaletteSelection::RandomGates),
+                                    ("⊕ Euclidean", PaletteSelection::Euclidean),
+                                    ("🔀 Turing Machine", PaletteSelection::TuringMachine),
+                                    ("🎲 Random Gates", PaletteSelection::RandomGates),
                                 ],
                             );
                         }
@@ -1893,10 +1893,16 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    ("Filter", PaletteSelection::Category(ModuleCategory::Filter)),
-                                    ("VCA", PaletteSelection::Category(ModuleCategory::Amplifier)),
-                                    ("Mixer", PaletteSelection::Category(ModuleCategory::Mixer)),
-                                    ("Signal Monitor", PaletteSelection::SignalMonitor),
+                                    (
+                                        "🔊 Filter",
+                                        PaletteSelection::Category(ModuleCategory::Filter),
+                                    ),
+                                    (
+                                        "🔉 VCA",
+                                        PaletteSelection::Category(ModuleCategory::Amplifier),
+                                    ),
+                                    ("🎚 Mixer", PaletteSelection::Category(ModuleCategory::Mixer)),
+                                    ("🔍 Signal Monitor", PaletteSelection::SignalMonitor),
                                 ],
                             );
                             ui.separator();
@@ -1909,22 +1915,22 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    ("Delay", PaletteSelection::Effect(EffectType::Delay)),
-                                    ("Reverb", PaletteSelection::Effect(EffectType::Reverb)),
+                                    ("🔁 Delay", PaletteSelection::Effect(EffectType::Delay)),
+                                    ("🌊 Reverb", PaletteSelection::Effect(EffectType::Reverb)),
                                     (
-                                        "Distortion",
+                                        "🔥 Distortion",
                                         PaletteSelection::Effect(EffectType::Distortion),
                                     ),
-                                    ("Chorus", PaletteSelection::Effect(EffectType::Chorus)),
-                                    ("Flanger", PaletteSelection::Effect(EffectType::Flanger)),
-                                    ("Phaser", PaletteSelection::Effect(EffectType::Phaser)),
+                                    ("🎭 Chorus", PaletteSelection::Effect(EffectType::Chorus)),
+                                    ("🌀 Flanger", PaletteSelection::Effect(EffectType::Flanger)),
+                                    ("🔄 Phaser", PaletteSelection::Effect(EffectType::Phaser)),
                                     (
-                                        "Compressor",
+                                        "📊 Compressor",
                                         PaletteSelection::Effect(EffectType::Compressor),
                                     ),
-                                    ("EQ", PaletteSelection::Effect(EffectType::Eq)),
+                                    ("🎛 EQ", PaletteSelection::Effect(EffectType::Eq)),
                                     (
-                                        "Waveshaper",
+                                        "🔊 Waveshaper",
                                         PaletteSelection::Effect(EffectType::Waveshaper),
                                     ),
                                 ],
@@ -1940,10 +1946,16 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    ("VCA", PaletteSelection::Category(ModuleCategory::Amplifier)),
-                                    ("Filter", PaletteSelection::Category(ModuleCategory::Filter)),
                                     (
-                                        "Oscillator",
+                                        "🔉 VCA",
+                                        PaletteSelection::Category(ModuleCategory::Amplifier),
+                                    ),
+                                    (
+                                        "🔊 Filter",
+                                        PaletteSelection::Category(ModuleCategory::Filter),
+                                    ),
+                                    (
+                                        "🎵 Oscillator",
                                         PaletteSelection::Category(ModuleCategory::Oscillator),
                                     ),
                                 ],
@@ -1960,10 +1972,13 @@ impl PatchEditor {
                                 new_module_pos,
                                 &[
                                     (
-                                        "Envelope",
+                                        "📈 Envelope",
                                         PaletteSelection::Category(ModuleCategory::Envelope),
                                     ),
-                                    ("VCA", PaletteSelection::Category(ModuleCategory::Amplifier)),
+                                    (
+                                        "🔉 VCA",
+                                        PaletteSelection::Category(ModuleCategory::Amplifier),
+                                    ),
                                 ],
                             );
                         }
