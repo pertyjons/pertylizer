@@ -135,12 +135,10 @@ pub struct QuickAddRequest {
 }
 
 /// State for the unified background/cable right-click context menu.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct BgContextMenuState {
     /// Where to place the new module (world/logical coordinates).
     world_pos: Pos2,
-    /// Where to draw the menu (screen coordinates).
-    screen_pos: Pos2,
     /// If right-click was on a hovered cable, include it.
     cable: Option<Connection>,
 }
@@ -181,8 +179,6 @@ pub struct PatchEditor {
     port_menu_just_opened: bool,
     /// Right-click context menu on background (or cable). Contains cable if hovered.
     bg_context_menu: Option<BgContextMenuState>,
-    /// Same-frame guard for background context menu.
-    bg_menu_just_opened: bool,
 }
 
 impl PatchEditor {
@@ -204,7 +200,6 @@ impl PatchEditor {
             port_context_menu: None,
             port_menu_just_opened: false,
             bg_context_menu: None,
-            bg_menu_just_opened: false,
         }
     }
 
@@ -480,7 +475,9 @@ impl PatchEditor {
 
         // Draw context menus (Foreground) — must happen after hover detection above
         self.draw_port_context_menu(ui, &mut result);
-        self.draw_bg_context_menu(ui, &mut result);
+        if let Some(ref response) = canvas_response {
+            self.draw_bg_context_menu(response, &mut result);
+        }
 
         // Now clear port positions so modules can repopulate them for next frame
         self.port_positions.clear();
@@ -1095,7 +1092,7 @@ impl PatchEditor {
             self.selected_module = None;
         }
 
-        // Right-click on background (or cable) → open unified context menu
+        // Right-click on background (or cable) → capture state for context menu
         if let Some(ref response) = canvas_response
             && response.secondary_clicked()
             && !self.port_menu_just_opened
@@ -1108,10 +1105,8 @@ impl PatchEditor {
             );
             self.bg_context_menu = Some(BgContextMenuState {
                 world_pos,
-                screen_pos,
                 cable: self.hovered_cable,
             });
-            self.bg_menu_just_opened = true;
         }
 
         // Cancel pending connection / close context menus with escape
@@ -1408,398 +1403,351 @@ impl PatchEditor {
 
     /// Draw the background right-click context menu for adding modules.
     #[allow(clippy::too_many_lines)]
-    fn draw_bg_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
-        let Some(ref menu_state) = self.bg_context_menu else {
-            self.bg_menu_just_opened = false;
-            return;
-        };
-        let world_pos = menu_state.world_pos;
-        let menu_screen_pos = menu_state.screen_pos;
-        let menu_cable = menu_state.cable;
-
-        let menu_id = egui::Id::new("bg_context_menu");
+    fn draw_bg_context_menu(&mut self, response: &egui::Response, result: &mut PatchEditorResult) {
+        let menu_state = self.bg_context_menu;
+        let world_pos = menu_state.map(|s| s.world_pos).unwrap_or_default();
+        let menu_cable = menu_state.and_then(|s| s.cable);
         let mut selected: Option<PaletteSelection> = None;
         let mut cable_action_taken = false;
 
-        let area_resp = egui::Area::new(menu_id)
-            .order(Order::Foreground)
-            .fixed_pos(menu_screen_pos)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style())
-                    .fill(theme().colors.bg_panel)
-                    .show(ui, |ui| {
-                        ui.set_min_width(150.0);
+        response.context_menu(|ui| {
+            // Cable actions (shown when right-clicking on a hovered cable)
+            if let Some(connection) = menu_cable {
+                if ui.button("Delete cable").clicked() {
+                    self.connections.retain(|c| c != &connection);
+                    result.connections_to_remove.push(connection);
+                    self.calculate_connectivity();
+                    cable_action_taken = true;
+                    ui.close();
+                }
 
-                        // Cable actions (shown when right-clicking on a hovered cable)
-                        if let Some(connection) = menu_cable {
-                            if ui.button("Delete cable").clicked() {
-                                self.connections.retain(|c| c != &connection);
-                                result.connections_to_remove.push(connection);
-                                self.calculate_connectivity();
-                                cable_action_taken = true;
-                            }
+                if ui.button("Insert Signal Monitor").clicked() {
+                    self.connections.retain(|c| c != &connection);
+                    result.connections_to_remove.push(connection);
+                    result.insert_signal_monitor_at.push(connection);
+                    self.calculate_connectivity();
+                    cable_action_taken = true;
+                    ui.close();
+                }
 
-                            if ui.button("Insert Signal Monitor").clicked() {
-                                self.connections.retain(|c| c != &connection);
-                                result.connections_to_remove.push(connection);
-                                result.insert_signal_monitor_at.push(connection);
-                                self.calculate_connectivity();
-                                cable_action_taken = true;
-                            }
+                ui.separator();
 
-                            ui.separator();
+                ui.label(
+                    egui::RichText::new("Insert module...")
+                        .color(theme().colors.text_secondary)
+                        .size(11.0),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new("Add module")
+                        .color(theme().colors.text_secondary)
+                        .size(11.0),
+                );
+            }
+            ui.separator();
 
-                            ui.label(
-                                egui::RichText::new("Insert module...")
-                                    .color(theme().colors.text_secondary)
-                                    .size(11.0),
-                            );
-                        } else {
-                            ui.label(
-                                egui::RichText::new("Add module")
-                                    .color(theme().colors.text_secondary)
-                                    .size(11.0),
-                            );
-                        }
-                        ui.separator();
+            // Oscillator submenu
+            let osc_color = category_color(ModuleCategory::Oscillator);
+            ui.menu_button(
+                egui::RichText::new("🎵 Oscillator").color(osc_color),
+                |ui| {
+                    Self::bg_menu_item(
+                        ui,
+                        "🎵 Basic",
+                        PaletteSelection::Category(ModuleCategory::Oscillator),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🔢 Math",
+                        PaletteSelection::MathOscillator,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🔈 Sub",
+                        PaletteSelection::SubOscillator,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(ui, "🌫 Noise", PaletteSelection::Noise, &mut selected);
+                    ui.separator();
+                    Self::bg_menu_item(
+                        ui,
+                        "📊 Wavetable",
+                        PaletteSelection::WavetableOsc,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🎶 Additive",
+                        PaletteSelection::AdditiveOsc,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🌾 Granular",
+                        PaletteSelection::GranularOsc,
+                        &mut selected,
+                    );
+                },
+            );
 
-                        // Oscillator submenu
-                        let osc_color = category_color(ModuleCategory::Oscillator);
-                        ui.menu_button(
-                            egui::RichText::new("🎵 Oscillator").color(osc_color),
-                            |ui| {
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🎵 Basic",
-                                    PaletteSelection::Category(ModuleCategory::Oscillator),
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔢 Math",
-                                    PaletteSelection::MathOscillator,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔈 Sub",
-                                    PaletteSelection::SubOscillator,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🌫 Noise",
-                                    PaletteSelection::Noise,
-                                    &mut selected,
-                                );
-                                ui.separator();
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📊 Wavetable",
-                                    PaletteSelection::WavetableOsc,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🎶 Additive",
-                                    PaletteSelection::AdditiveOsc,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🌾 Granular",
-                                    PaletteSelection::GranularOsc,
-                                    &mut selected,
-                                );
-                            },
-                        );
+            // Simple categories (single module type each)
+            let categories = [
+                (ModuleCategory::Filter, "🔊 Filter"),
+                (ModuleCategory::Envelope, "📈 Envelope"),
+                (ModuleCategory::LFO, "〰 LFO"),
+                (ModuleCategory::Amplifier, "🔉 VCA"),
+                (ModuleCategory::Mixer, "🎚 Mixer"),
+            ];
+            for (cat, label) in categories {
+                let color = category_color(cat);
+                if ui.button(egui::RichText::new(label).color(color)).clicked() {
+                    selected = Some(PaletteSelection::Category(cat));
+                    ui.close();
+                }
+            }
 
-                        // Simple categories (single module type each)
-                        let categories = [
-                            (ModuleCategory::Filter, "🔊 Filter"),
-                            (ModuleCategory::Envelope, "📈 Envelope"),
-                            (ModuleCategory::LFO, "〰 LFO"),
-                            (ModuleCategory::Amplifier, "🔉 VCA"),
-                            (ModuleCategory::Mixer, "🎚 Mixer"),
-                        ];
-                        for (cat, label) in categories {
-                            let color = category_color(cat);
-                            if ui.button(egui::RichText::new(label).color(color)).clicked() {
-                                selected = Some(PaletteSelection::Category(cat));
-                            }
-                        }
+            ui.separator();
 
-                        ui.separator();
-
-                        // Effect submenu
-                        let fx_color = category_color(ModuleCategory::Effect);
-                        ui.menu_button(egui::RichText::new("✨ Effect").color(fx_color), |ui| {
-                            Self::bg_menu_item(
-                                ui,
-                                "🔁 Delay",
-                                PaletteSelection::Effect(EffectType::Delay),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🌊 Reverb",
-                                PaletteSelection::Effect(EffectType::Reverb),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🔥 Distortion",
-                                PaletteSelection::Effect(EffectType::Distortion),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🎭 Chorus",
-                                PaletteSelection::Effect(EffectType::Chorus),
-                                &mut selected,
-                            );
-                            ui.separator();
-                            Self::bg_menu_item(
-                                ui,
-                                "🌀 Flanger",
-                                PaletteSelection::Effect(EffectType::Flanger),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🔄 Phaser",
-                                PaletteSelection::Effect(EffectType::Phaser),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "📊 Compressor",
-                                PaletteSelection::Effect(EffectType::Compressor),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🎛 EQ",
-                                PaletteSelection::Effect(EffectType::Eq),
-                                &mut selected,
-                            );
-                            ui.separator();
-                            Self::bg_menu_item(
-                                ui,
-                                "🔊 Waveshaper",
-                                PaletteSelection::Effect(EffectType::Waveshaper),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "📼 BBD Delay",
-                                PaletteSelection::Effect(EffectType::BbdDelay),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🧱 Limiter",
-                                PaletteSelection::Effect(EffectType::Limiter),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "↔ Mid/Side",
-                                PaletteSelection::Effect(EffectType::MidSide),
-                                &mut selected,
-                            );
-                            ui.separator();
-                            Self::bg_menu_item(
-                                ui,
-                                "🏛 Convolver",
-                                PaletteSelection::Effect(EffectType::Convolver),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🔬 Phase Vocoder",
-                                PaletteSelection::Effect(EffectType::PhaseVocoder),
-                                &mut selected,
-                            );
-                            Self::bg_menu_item(
-                                ui,
-                                "🔀 Freq Shifter",
-                                PaletteSelection::Effect(EffectType::FrequencyShifter),
-                                &mut selected,
-                            );
-                        });
-
-                        // Visualizer submenu
-                        let viz_color = category_color(ModuleCategory::Visualizer);
-                        ui.menu_button(
-                            egui::RichText::new("📊 Visualizer").color(viz_color),
-                            |ui| {
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📈 Oscilloscope",
-                                    PaletteSelection::Visualizer(
-                                        PaletteVisualizerType::Oscilloscope,
-                                    ),
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📊 Level Meter",
-                                    PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter),
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📊 Spectrum",
-                                    PaletteSelection::Visualizer(
-                                        PaletteVisualizerType::SpectrumAnalyzer,
-                                    ),
-                                    &mut selected,
-                                );
-                                ui.separator();
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔍 Signal Monitor",
-                                    PaletteSelection::SignalMonitor,
-                                    &mut selected,
-                                );
-                            },
-                        );
-
-                        // Modulation submenu
-                        let mod_color = category_color(ModuleCategory::Utility);
-                        ui.menu_button(
-                            egui::RichText::new("🔀 Modulation").color(mod_color),
-                            |ui| {
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔔 Ring Mod",
-                                    PaletteSelection::RingMod,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📈 Env Follower",
-                                    PaletteSelection::EnvelopeFollower,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "📐 MSEG",
-                                    PaletteSelection::Mseg,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🏃 Kinetic Mod",
-                                    PaletteSelection::KineticModulator,
-                                    &mut selected,
-                                );
-                            },
-                        );
-
-                        // Generative submenu
-                        let gen_color = category_color(ModuleCategory::LFO);
-                        ui.menu_button(
-                            egui::RichText::new("🎲 Generative").color(gen_color),
-                            |ui| {
-                                Self::bg_menu_item(
-                                    ui,
-                                    "⊕ Euclidean",
-                                    PaletteSelection::Euclidean,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔀 Turing Machine",
-                                    PaletteSelection::TuringMachine,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🎲 Random Gates",
-                                    PaletteSelection::RandomGates,
-                                    &mut selected,
-                                );
-                            },
-                        );
-
-                        // Physical submenu
-                        let phys_color = category_color(ModuleCategory::PhysicalModeling);
-                        ui.menu_button(
-                            egui::RichText::new("🎹 Physical").color(phys_color),
-                            |ui| {
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🎹 Keyboard Panner",
-                                    PaletteSelection::KeyboardPanner,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🪵 Body Resonance",
-                                    PaletteSelection::BodyResonance,
-                                    &mut selected,
-                                );
-                                Self::bg_menu_item(
-                                    ui,
-                                    "🔧 Mechanical Noise",
-                                    PaletteSelection::MechanicalNoise,
-                                    &mut selected,
-                                );
-                            },
-                        );
-
-                        ui.separator();
-
-                        // Output & Mod Matrix as direct buttons
-                        let out_color = category_color(ModuleCategory::Output);
-                        if ui
-                            .button(egui::RichText::new("🔈 Output").color(out_color))
-                            .clicked()
-                        {
-                            selected = Some(PaletteSelection::StereoOutput);
-                        }
-                        let util_color = category_color(ModuleCategory::Utility);
-                        if ui
-                            .button(egui::RichText::new("🔀 Mod Matrix").color(util_color))
-                            .clicked()
-                        {
-                            selected = Some(PaletteSelection::ModMatrix);
-                        }
-                    });
+            // Effect submenu
+            let fx_color = category_color(ModuleCategory::Effect);
+            ui.menu_button(egui::RichText::new("✨ Effect").color(fx_color), |ui| {
+                Self::bg_menu_item(
+                    ui,
+                    "🔁 Delay",
+                    PaletteSelection::Effect(EffectType::Delay),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🌊 Reverb",
+                    PaletteSelection::Effect(EffectType::Reverb),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🔥 Distortion",
+                    PaletteSelection::Effect(EffectType::Distortion),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🎭 Chorus",
+                    PaletteSelection::Effect(EffectType::Chorus),
+                    &mut selected,
+                );
+                ui.separator();
+                Self::bg_menu_item(
+                    ui,
+                    "🌀 Flanger",
+                    PaletteSelection::Effect(EffectType::Flanger),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🔄 Phaser",
+                    PaletteSelection::Effect(EffectType::Phaser),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "📊 Compressor",
+                    PaletteSelection::Effect(EffectType::Compressor),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🎛 EQ",
+                    PaletteSelection::Effect(EffectType::Eq),
+                    &mut selected,
+                );
+                ui.separator();
+                Self::bg_menu_item(
+                    ui,
+                    "🔊 Waveshaper",
+                    PaletteSelection::Effect(EffectType::Waveshaper),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "📼 BBD Delay",
+                    PaletteSelection::Effect(EffectType::BbdDelay),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🧱 Limiter",
+                    PaletteSelection::Effect(EffectType::Limiter),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "↔ Mid/Side",
+                    PaletteSelection::Effect(EffectType::MidSide),
+                    &mut selected,
+                );
+                ui.separator();
+                Self::bg_menu_item(
+                    ui,
+                    "🏛 Convolver",
+                    PaletteSelection::Effect(EffectType::Convolver),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🔬 Phase Vocoder",
+                    PaletteSelection::Effect(EffectType::PhaseVocoder),
+                    &mut selected,
+                );
+                Self::bg_menu_item(
+                    ui,
+                    "🔀 Freq Shifter",
+                    PaletteSelection::Effect(EffectType::FrequencyShifter),
+                    &mut selected,
+                );
             });
+
+            // Visualizer submenu
+            let viz_color = category_color(ModuleCategory::Visualizer);
+            ui.menu_button(
+                egui::RichText::new("📊 Visualizer").color(viz_color),
+                |ui| {
+                    Self::bg_menu_item(
+                        ui,
+                        "📈 Oscilloscope",
+                        PaletteSelection::Visualizer(PaletteVisualizerType::Oscilloscope),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "📊 Level Meter",
+                        PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "📊 Spectrum",
+                        PaletteSelection::Visualizer(PaletteVisualizerType::SpectrumAnalyzer),
+                        &mut selected,
+                    );
+                    ui.separator();
+                    Self::bg_menu_item(
+                        ui,
+                        "🔍 Signal Monitor",
+                        PaletteSelection::SignalMonitor,
+                        &mut selected,
+                    );
+                },
+            );
+
+            // Modulation submenu
+            let mod_color = category_color(ModuleCategory::Utility);
+            ui.menu_button(
+                egui::RichText::new("🔀 Modulation").color(mod_color),
+                |ui| {
+                    Self::bg_menu_item(ui, "🔔 Ring Mod", PaletteSelection::RingMod, &mut selected);
+                    Self::bg_menu_item(
+                        ui,
+                        "📈 Env Follower",
+                        PaletteSelection::EnvelopeFollower,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(ui, "📐 MSEG", PaletteSelection::Mseg, &mut selected);
+                    Self::bg_menu_item(
+                        ui,
+                        "🏃 Kinetic Mod",
+                        PaletteSelection::KineticModulator,
+                        &mut selected,
+                    );
+                },
+            );
+
+            // Generative submenu
+            let gen_color = category_color(ModuleCategory::LFO);
+            ui.menu_button(
+                egui::RichText::new("🎲 Generative").color(gen_color),
+                |ui| {
+                    Self::bg_menu_item(
+                        ui,
+                        "⊕ Euclidean",
+                        PaletteSelection::Euclidean,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🔀 Turing Machine",
+                        PaletteSelection::TuringMachine,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🎲 Random Gates",
+                        PaletteSelection::RandomGates,
+                        &mut selected,
+                    );
+                },
+            );
+
+            // Physical submenu
+            let phys_color = category_color(ModuleCategory::PhysicalModeling);
+            ui.menu_button(
+                egui::RichText::new("🎹 Physical").color(phys_color),
+                |ui| {
+                    Self::bg_menu_item(
+                        ui,
+                        "🎹 Keyboard Panner",
+                        PaletteSelection::KeyboardPanner,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🪵 Body Resonance",
+                        PaletteSelection::BodyResonance,
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        "🔧 Mechanical Noise",
+                        PaletteSelection::MechanicalNoise,
+                        &mut selected,
+                    );
+                },
+            );
+
+            ui.separator();
+
+            // Output & Mod Matrix as direct buttons
+            let out_color = category_color(ModuleCategory::Output);
+            if ui
+                .button(egui::RichText::new("🔈 Output").color(out_color))
+                .clicked()
+            {
+                selected = Some(PaletteSelection::StereoOutput);
+                ui.close();
+            }
+            let util_color = category_color(ModuleCategory::Utility);
+            if ui
+                .button(egui::RichText::new("🔀 Mod Matrix").color(util_color))
+                .clicked()
+            {
+                selected = Some(PaletteSelection::ModMatrix);
+                ui.close();
+            }
+        });
 
         if cable_action_taken {
             self.bg_context_menu = None;
-            self.bg_menu_just_opened = false;
             return;
         }
 
         if let Some(sel) = selected {
             result.context_add = Some((sel, world_pos, menu_cable));
             self.bg_context_menu = None;
-            self.bg_menu_just_opened = false;
-            return;
         }
 
-        // On the frame the menu was opened, skip the close check
-        if self.bg_menu_just_opened {
-            self.bg_menu_just_opened = false;
-            return;
-        }
-
-        // Close on any click outside the menu area
-        let menu_rect = area_resp.response.rect;
-        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-        let any_click = ui.input(|i| {
-            i.pointer.button_clicked(egui::PointerButton::Primary)
-                || i.pointer.button_clicked(egui::PointerButton::Secondary)
-        });
-        let clicked_outside =
-            any_click && pointer_pos.map(|p| !menu_rect.contains(p)).unwrap_or(false);
-
-        if clicked_outside {
+        // Clear stored state when context menu closes
+        if !response.context_menu_opened() {
             self.bg_context_menu = None;
         }
     }
