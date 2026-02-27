@@ -637,9 +637,12 @@ impl eframe::App for SynthApp {
                     // View selector buttons
                     let t = theme();
                     let views = [
-                        (AppView::Rack, "Rack"),
-                        (AppView::AcousticWorld, "AWE"),
-                        (AppView::Sequencer, "Seq"),
+                        (AppView::Rack, format!("{} Rack", ri::LAYOUT_GRID_FILL)),
+                        (
+                            AppView::AcousticWorld,
+                            format!("{} AWE", ri::SURROUND_SOUND_FILL),
+                        ),
+                        (AppView::Sequencer, format!("{} Seq", ri::PLAY_LIST_FILL)),
                     ];
                     for (view, label) in views {
                         let is_active = self.active_view == view;

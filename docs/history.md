@@ -7,7 +7,10 @@
 - **Module header icons replaced** — source/sink indicators, connectivity status, power/bypass, close buttons
 - **File menu icons replaced** — New Patch, Open Patch, Save, Load Built-in, Example Patches, Settings, Quit
 - **MIDI dropdown + instrument rack** — piano icons, active/inactive radio buttons
-- Remaining: transport controls, tab icons, sequencer/awe_view icons
+- **Transport controls replaced** — Play, Pause, Stop, Skip Back in sequencer
+- **Tab icons added** — Rack, AWE, Seq view buttons now have icons
+- **Piano roll close button** — replaced "X" with Remix Icon
+- All GUI emoji replaced — only `⚠` in console text output remains
 
 ## [0.184.0] - 2026-02-27
 ### Complete TODO 2.1 — Remove module toolbar, native context menus

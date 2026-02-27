@@ -103,10 +103,10 @@
 - [x] Replace context menu icons (all palette items, submenu headers)
 - [x] Replace MIDI dropdown icons
 - [x] Replace instrument rack radio buttons
-- [ ] Replace transport controls (play/stop/seek)
-- [ ] Replace tab icons (Seq/AWE/Rack)
-- [ ] Replace remaining emoji in sequencer/awe_view
-- Remaining: ~10 icon replacements in sequencer and awe_view.
+- [x] Replace transport controls (play/stop/seek/pause)
+- [x] Replace tab icons (Seq/AWE/Rack)
+- [x] Replace all remaining emoji/Unicode symbols
+- Only remaining emoji: `⚠` in console.rs (text-only output, not GUI).
 
 ### 3.3 Improve module knobs
 - [ ] Better visual design — consider: gradient fill, shadow, tick marks, value tooltip

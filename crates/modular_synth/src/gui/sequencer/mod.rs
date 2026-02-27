@@ -211,6 +211,7 @@ fn draw_transport_bar(
     handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
 ) -> bool {
+    use egui_remixicon::icons as ri;
     let t = theme();
     let state = &handle.state;
     let is_playing = state.transport.is_playing();
@@ -237,7 +238,7 @@ fn draw_transport_bar(
 
         // Go to start
         if ui
-            .button(RichText::new("|<").color(t.colors.text_primary))
+            .button(RichText::new(ri::SKIP_BACK_MINI_FILL).color(t.colors.text_primary))
             .on_hover_text("Go to start")
             .clicked()
         {
@@ -247,14 +248,14 @@ fn draw_transport_bar(
         // Play / Pause toggle
         if is_playing {
             if ui
-                .button(RichText::new("||").color(t.colors.accent_yellow))
+                .button(RichText::new(ri::PAUSE_FILL).color(t.colors.accent_yellow))
                 .on_hover_text("Pause")
                 .clicked()
             {
                 handle.send(EngineCommand::Pause);
             }
         } else if ui
-            .button(RichText::new(" > ").color(t.colors.accent_green))
+            .button(RichText::new(ri::PLAY_FILL).color(t.colors.accent_green))
             .on_hover_text("Play")
             .clicked()
         {
@@ -263,7 +264,7 @@ fn draw_transport_bar(
 
         // Stop
         if ui
-            .button(RichText::new("[]").color(if is_playing {
+            .button(RichText::new(ri::STOP_FILL).color(if is_playing {
                 t.colors.accent_red
             } else {
                 t.colors.text_dim
@@ -1052,7 +1053,7 @@ fn draw_piano_roll(
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .button(RichText::new("X").color(t.colors.accent_red))
+                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
                 .on_hover_text("Close piano roll")
                 .clicked()
             {
