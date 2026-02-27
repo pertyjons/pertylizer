@@ -634,25 +634,105 @@ impl eframe::App for SynthApp {
                     );
                     ui.separator();
 
-                    // View selector buttons
-                    let t = theme();
-                    let views = [
-                        (AppView::Rack, format!("{} Rack", ri::LAYOUT_GRID_FILL)),
-                        (
-                            AppView::AcousticWorld,
-                            format!("{} AWE", ri::SURROUND_SOUND_FILL),
-                        ),
-                        (AppView::Sequencer, format!("{} Seq", ri::PLAY_LIST_FILL)),
-                    ];
-                    for (view, label) in views {
-                        let is_active = self.active_view == view;
-                        let color = if is_active {
-                            t.colors.accent_primary
-                        } else {
-                            t.colors.text_dim
-                        };
-                        if ui.button(RichText::new(label).color(color)).clicked() {
-                            self.active_view = view;
+                    // View selector — segmented control
+                    {
+                        let t = theme();
+                        let views: [(AppView, &str); 3] = [
+                            (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
+                            (
+                                AppView::AcousticWorld,
+                                &format!("{} AWE", ri::SURROUND_SOUND_FILL),
+                            ),
+                            (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
+                        ];
+                        let seg_w = 80.0_f32;
+                        let seg_h = 22.0_f32;
+                        let rounding: u8 = 5;
+                        let total_w = seg_w * views.len() as f32;
+                        let (outer_rect, _) = ui
+                            .allocate_exact_size(egui::vec2(total_w, seg_h), egui::Sense::hover());
+                        let painter = ui.painter_at(outer_rect);
+
+                        // Outer border with pill rounding
+                        painter.rect_stroke(
+                            outer_rect,
+                            egui::CornerRadius::same(rounding),
+                            egui::Stroke::new(1.0, t.colors.border),
+                            egui::StrokeKind::Inside,
+                        );
+
+                        for (i, (view, label)) in views.iter().enumerate() {
+                            let is_active = self.active_view == *view;
+                            let x = outer_rect.left() + seg_w * i as f32;
+                            let seg_rect = egui::Rect::from_min_size(
+                                egui::pos2(x, outer_rect.top()),
+                                egui::vec2(seg_w, seg_h),
+                            );
+
+                            // Rounding: first segment left-rounded, last right-rounded
+                            let seg_rounding = if i == 0 {
+                                egui::CornerRadius {
+                                    nw: rounding,
+                                    sw: rounding,
+                                    ne: 0,
+                                    se: 0,
+                                }
+                            } else if i == views.len() - 1 {
+                                egui::CornerRadius {
+                                    nw: 0,
+                                    sw: 0,
+                                    ne: rounding,
+                                    se: rounding,
+                                }
+                            } else {
+                                egui::CornerRadius::ZERO
+                            };
+
+                            // Active fill
+                            if is_active {
+                                painter.rect_filled(
+                                    seg_rect,
+                                    seg_rounding,
+                                    t.colors.accent_primary.gamma_multiply(0.55),
+                                );
+                            }
+
+                            // Divider lines between inactive segments
+                            if i > 0 {
+                                let prev_active = self.active_view == views[i - 1].0;
+                                if !is_active && !prev_active {
+                                    let top = seg_rect.top() + 4.0;
+                                    let bot = seg_rect.bottom() - 4.0;
+                                    painter.line_segment(
+                                        [egui::pos2(x, top), egui::pos2(x, bot)],
+                                        egui::Stroke::new(1.0, t.colors.border),
+                                    );
+                                }
+                            }
+
+                            // Text
+                            let text_color = if is_active {
+                                t.colors.text_primary
+                            } else {
+                                t.colors.text_dim
+                            };
+                            painter.text(
+                                seg_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                label,
+                                egui::FontId::proportional(13.0),
+                                text_color,
+                            );
+
+                            // Click interaction
+                            let resp = ui.interact(
+                                seg_rect,
+                                ui.id().with(("view_seg", i)),
+                                egui::Sense::click(),
+                            );
+                            if resp.clicked() {
+                                self.active_view = *view;
+                            }
                         }
                     }
                     ui.separator();

@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.186.0)
+# TODO - Modular Synth (v0.187.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -57,9 +57,9 @@
 - [x] Move octave +/- controls inline with the keyboard or into a compact row to eliminate the full-width control row
 
 ### 2.3 Tab buttons — make Seq/AWE/Rack clearer
-- [ ] Use larger, styled tab buttons with icons (once egui-remixicon is available)
-- [ ] Consider: icons + text, active tab underline/highlight, or segmented control style
-- Alternatives: Sidebar navigation, or top-bar integrated tabs
+- [x] Use larger, styled tab buttons with icons (once egui-remixicon is available)
+- [x] Consider: icons + text, active tab underline/highlight, or segmented control style
+- Implemented as segmented control: pill-shaped connected buttons with filled active tab (v0.187.0)
 
 ### 2.4 MCP connection status indicator
 - [ ] Show MCP status icon next to MIDI status in top bar

@@ -1,5 +1,12 @@
 # Version History
 
+## [0.187.0] - 2026-02-27
+### TODO 2.3 — Segmented control tab buttons for Rack/AWE/Seq
+- **Segmented control** — view selector buttons replaced with custom-painted connected pill-shaped segments
+- Active tab gets filled accent color background, inactive tabs show dim text
+- Vertical dividers between inactive segments, pill rounding on outer edges
+- Click interaction via `allocate_exact_size` + `Sense::click()` per segment
+
 ## [0.186.0] - 2026-02-27
 ### Complete TODO 1.5 — Sequencer track & pattern management from GUI
 - **Track management** — Add/remove/rename tracks from GUI with "+" button and right-click context menu
