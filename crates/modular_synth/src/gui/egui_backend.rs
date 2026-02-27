@@ -928,6 +928,7 @@ impl eframe::App for SynthApp {
                     &mut self.handle,
                     &self.song,
                     &mut self.sequencer_view_state,
+                    &self.instruments,
                 );
             }
         }

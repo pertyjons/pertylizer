@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.185.0)
+# TODO - Modular Synth (v0.186.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -26,15 +26,15 @@
 - [x] Remove `debug_graph` entry from CLAUDE.md debug tools table
 
 ### 1.5 Sequencer — Track & pattern management from GUI
-- [ ] Add/remove/rename tracks from GUI (currently MCP-only)
-- [ ] Add/remove/rename patterns from GUI
-- [ ] Edit pattern length from GUI
+- [x] Add/remove/rename tracks from GUI (currently MCP-only)
+- [x] Add/remove/rename patterns from GUI
+- [x] Edit pattern length from GUI
 - [ ] Edit track length from GUI
-- [ ] Assign instrument to track from GUI
-- [ ] Show which instrument is selected/active in piano roll (header or color coding)
-- [ ] Add mute/solo buttons per track in track header
-- [ ] Add repeat/loop toggle checkbox for playback
-- This is the biggest functional gap — sequencer is usable via MCP but not self-contained in the GUI.
+- [x] Assign instrument to track from GUI
+- [x] Show which instrument is selected/active in piano roll (header or color coding)
+- [x] Add mute/solo buttons per track in track header
+- [x] Add repeat/loop toggle checkbox for playback
+- Sequencer is now self-contained in the GUI (v0.186.0)
 
 ---
 

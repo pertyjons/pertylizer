@@ -467,6 +467,15 @@ impl Clone for EngineCommand {
             Self::PlayFromPattern { pattern_id } => Self::PlayFromPattern {
                 pattern_id: *pattern_id,
             },
+            Self::SetLoop {
+                start,
+                end,
+                enabled,
+            } => Self::SetLoop {
+                start: *start,
+                end: *end,
+                enabled: *enabled,
+            },
             Self::Reset => Self::Reset,
             Self::ClearAllModules => Self::ClearAllModules,
             Self::SetMasterVolume(v) => Self::SetMasterVolume(*v),

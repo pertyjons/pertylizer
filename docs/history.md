@@ -1,5 +1,19 @@
 # Version History
 
+## [0.186.0] - 2026-02-27
+### Complete TODO 1.5 — Sequencer track & pattern management from GUI
+- **Track management** — Add/remove/rename tracks from GUI with "+" button and right-click context menu
+- **Mute/Solo buttons** — per-track M/S toggle buttons in track headers
+- **Pattern management** — right-click timeline to create new patterns, place existing patterns, remove placements, delete patterns
+- **Pattern length editing** — "Set Length" submenu in placement context menu (1/2/4/8/16 bars)
+- **Pattern rename** — double-click pattern name in piano roll toolbar, or right-click "Rename Pattern" on placement
+- **Instrument assignment** — ComboBox dropdown in track header to assign instruments to tracks
+- **Piano roll instrument display** — shows assigned instrument name `[InstrumentName]` in piano roll toolbar
+- **Loop toggle** — loop button in transport bar using `SetLoop` engine command
+- **`EngineCommand::SetLoop`** — new variant routed to `SequencerEngine::set_loop()`
+- **Empty state improved** — "Empty song" view now shows "Add Track" button instead of "Use MCP..." message
+- Arrangement view refactored: track headers use egui widgets (SidePanel) for interactivity, timeline remains painter-based
+
 ## [0.185.0] - 2026-02-27
 ### Switch to egui-remixicon for icons (TODO 3.2, phase 1)
 - **`egui-remixicon` 0.33 added** — Remix Icon font registered as fallback in `setup_custom_fonts()`

@@ -350,7 +350,8 @@ impl EngineHub {
             | EngineCommand::SetSong { .. }
             | EngineCommand::Seek { .. }
             | EngineCommand::PlayPattern { .. }
-            | EngineCommand::PlayFromPattern { .. } => perms.can_control_transport,
+            | EngineCommand::PlayFromPattern { .. }
+            | EngineCommand::SetLoop { .. } => perms.can_control_transport,
 
             // Note events - require param permission
             EngineCommand::NoteOn { .. }

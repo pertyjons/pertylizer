@@ -845,6 +845,13 @@ impl SynthEngine {
                 let _ = self.sequencer.seek(tick);
                 self.state.transport.set_ticks(tick.0);
             }
+            EngineCommand::SetLoop {
+                start,
+                end,
+                enabled,
+            } => {
+                self.sequencer.set_loop(start, end, enabled);
+            }
             EngineCommand::PlayPattern { pattern_id } => {
                 // Find pattern in arrangement and get boundaries
                 let bounds = self

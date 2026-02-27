@@ -141,6 +141,16 @@ pub struct SequencerViewState {
     drag: Option<DragState>,
     /// Currently selected automation lane (None = automation zone hidden).
     selected_automation: Option<AutomationTarget>,
+    /// Track currently being renamed (inline text edit).
+    editing_track_name: Option<(TrackId, String)>,
+    /// Pattern currently being renamed (inline text edit).
+    editing_pattern_name: Option<(PatternId, String)>,
+    /// Loop playback enabled.
+    loop_enabled: bool,
+    /// Loop start position.
+    loop_start: Tick,
+    /// Loop end position.
+    loop_end: Tick,
 }
 
 impl SequencerViewState {
@@ -151,6 +161,11 @@ impl SequencerViewState {
             edit_tool: EditTool::Draw,
             drag: None,
             selected_automation: None,
+            editing_track_name: None,
+            editing_pattern_name: None,
+            loop_enabled: false,
+            loop_start: Tick::ZERO,
+            loop_end: Tick::ZERO,
         }
     }
 }
@@ -210,6 +225,7 @@ fn draw_transport_bar(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
 ) -> bool {
     use egui_remixicon::icons as ri;
     let t = theme();
@@ -315,6 +331,31 @@ fn draw_transport_bar(
 
         ui.separator();
 
+        // Loop toggle
+        let loop_icon = if view_state.loop_enabled {
+            RichText::new(ri::REPEAT_FILL).color(t.colors.accent_primary)
+        } else {
+            RichText::new(ri::REPEAT_LINE).color(t.colors.text_dim)
+        };
+        if ui
+            .button(loop_icon)
+            .on_hover_text(if view_state.loop_enabled {
+                "Disable loop"
+            } else {
+                "Enable loop"
+            })
+            .clicked()
+        {
+            view_state.loop_enabled = !view_state.loop_enabled;
+            handle.send(EngineCommand::SetLoop {
+                start: view_state.loop_start,
+                end: view_state.loop_end,
+                enabled: view_state.loop_enabled,
+            });
+        }
+
+        ui.separator();
+
         // Status indicator
         if is_playing {
             ui.label(RichText::new("PLAYING").color(t.colors.meter_green));
@@ -339,6 +380,14 @@ struct TrackInfo {
     color: Color32,
     mute: bool,
     solo: bool,
+    instrument_id: Option<SeqInstrumentId>,
+}
+
+/// Snapshot of a pattern in the song (for pattern management UI).
+struct PatternInfo {
+    id: PatternId,
+    name: String,
+    length_ticks: u32,
 }
 
 /// Snapshot of a pattern placement for rendering.
@@ -356,6 +405,7 @@ struct PlacementInfo {
 struct ArrangementData {
     tracks: Vec<TrackInfo>,
     placements: Vec<PlacementInfo>,
+    patterns: Vec<PatternInfo>,
     time_sig: TimeSignature,
     song_end_tick: u64,
 }
@@ -372,6 +422,16 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
             color: track_color_to_egui(t.color),
             mute: t.mute,
             solo: t.solo,
+            instrument_id: t.instrument,
+        })
+        .collect();
+
+    let patterns: Vec<PatternInfo> = song
+        .patterns()
+        .map(|p| PatternInfo {
+            id: p.id,
+            name: p.name.clone(),
+            length_ticks: p.length.0,
         })
         .collect();
 
@@ -408,6 +468,7 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
     Some(ArrangementData {
         tracks,
         placements,
+        patterns,
         time_sig,
         song_end_tick,
     })
@@ -420,10 +481,15 @@ fn draw_arrangement(
     ui: &mut egui::Ui,
     data: &ArrangementData,
     current_tick: u64,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
 ) -> Option<PatternId> {
+    use egui_remixicon::icons as ri;
     let t = theme();
     let track_count = data.tracks.len();
 
+    // ── Empty state: show "Add Track" button ──
     if track_count == 0 {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
@@ -432,8 +498,17 @@ fn draw_arrangement(
                     .size(16.0)
                     .color(t.colors.text_dim),
             );
-            ui.add_space(4.0);
-            ui.label(RichText::new("Use MCP to add tracks and patterns").color(t.colors.text_dim));
+            ui.add_space(8.0);
+            if ui
+                .button(
+                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                        .color(t.colors.accent_green),
+                )
+                .clicked()
+                && let Ok(mut song_w) = song.write()
+            {
+                song_w.create_track("Track 1");
+            }
         });
         return None;
     }
@@ -443,35 +518,218 @@ fn draw_arrangement(
     let ticks_per_beat = data.time_sig.ticks_per_beat() as u64;
     let beats_per_bar = data.time_sig.numerator as u64;
 
-    // Song end in bars (at least MIN_VISIBLE_BARS)
     let song_bars = if ticks_per_bar > 0 {
         data.song_end_tick.div_ceil(ticks_per_bar) as u32
     } else {
         MIN_VISIBLE_BARS
     };
-    let total_bars = song_bars.max(MIN_VISIBLE_BARS) + 2; // extra padding
+    let total_bars = song_bars.max(MIN_VISIBLE_BARS) + 2;
     let total_beats = total_bars as f32 * beats_per_bar as f32;
     let timeline_width = total_beats * PIXELS_PER_BEAT;
 
     let mut double_clicked_pattern: Option<PatternId> = None;
 
-    // Scrollable timeline
+    // ── Track header panel (left side, uses egui widgets) ──
+    egui::SidePanel::left("seq_track_headers")
+        .exact_width(TRACK_HEADER_WIDTH)
+        .resizable(false)
+        .show_inside(ui, |ui| {
+            // Ruler corner placeholder
+            ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
+
+            for (i, track) in data.tracks.iter().enumerate() {
+                let bg = if i % 2 == 0 {
+                    t.colors.bg_module
+                } else {
+                    t.colors.bg_panel
+                };
+
+                let frame = egui::Frame::new()
+                    .fill(bg)
+                    .inner_margin(egui::Margin::symmetric(4, 2));
+
+                frame.show(ui, |ui| {
+                    ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
+                    ui.set_max_width(TRACK_HEADER_WIDTH - 8.0);
+
+                    // Color indicator + name row
+                    ui.horizontal(|ui| {
+                        // Color indicator
+                        let (color_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(4.0, TRACK_ROW_HEIGHT - 8.0),
+                            Sense::hover(),
+                        );
+                        ui.painter().rect_filled(color_rect, 2.0, track.color);
+
+                        ui.vertical(|ui| {
+                            // Track name (editable on click)
+                            if view_state.editing_track_name.as_ref().map(|(id, _)| *id)
+                                == Some(track.id)
+                            {
+                                if let Some((_, ref mut name_buf)) = view_state.editing_track_name {
+                                    let resp = ui.add(
+                                        egui::TextEdit::singleline(name_buf)
+                                            .desired_width(80.0)
+                                            .font(egui::FontId::proportional(12.0)),
+                                    );
+                                    if resp.lost_focus()
+                                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                    {
+                                        let new_name = name_buf.clone();
+                                        let tid = track.id;
+                                        if let Ok(mut song_w) = song.write()
+                                            && let Some(t) = song_w.track_mut(tid)
+                                        {
+                                            t.name = new_name;
+                                        }
+                                        view_state.editing_track_name = None;
+                                    } else {
+                                        resp.request_focus();
+                                    }
+                                }
+                            } else {
+                                let name_resp = ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&track.name)
+                                            .size(12.0)
+                                            .color(t.colors.text_primary),
+                                    )
+                                    .sense(Sense::click()),
+                                );
+                                if name_resp.double_clicked() {
+                                    view_state.editing_track_name =
+                                        Some((track.id, track.name.clone()));
+                                }
+
+                                // Right-click context menu on track name
+                                name_resp.context_menu(|ui| {
+                                    if ui.button("Rename").clicked() {
+                                        view_state.editing_track_name =
+                                            Some((track.id, track.name.clone()));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(
+                                            RichText::new("Delete Track")
+                                                .color(t.colors.accent_red),
+                                        )
+                                        .clicked()
+                                    {
+                                        if let Ok(mut song_w) = song.write() {
+                                            song_w.delete_track(track.id);
+                                        }
+                                        // close even if write fails
+                                        ui.close();
+                                    }
+                                });
+                            }
+
+                            // Mute / Solo / Instrument row
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                // Mute button
+                                let m_color = if track.mute {
+                                    t.colors.accent_red
+                                } else {
+                                    t.colors.text_dim
+                                };
+                                if ui
+                                    .button(RichText::new("M").size(10.0).color(m_color))
+                                    .on_hover_text("Mute")
+                                    .clicked()
+                                    && let Ok(mut song_w) = song.write()
+                                    && let Some(trk) = song_w.track_mut(track.id)
+                                {
+                                    trk.toggle_mute();
+                                }
+
+                                // Solo button
+                                let s_color = if track.solo {
+                                    t.colors.accent_yellow
+                                } else {
+                                    t.colors.text_dim
+                                };
+                                if ui
+                                    .button(RichText::new("S").size(10.0).color(s_color))
+                                    .on_hover_text("Solo")
+                                    .clicked()
+                                    && let Ok(mut song_w) = song.write()
+                                    && let Some(trk) = song_w.track_mut(track.id)
+                                {
+                                    trk.toggle_solo();
+                                }
+
+                                // Instrument selector
+                                let instr_label = track
+                                    .instrument_id
+                                    .and_then(|seq_id| {
+                                        instruments.iter().find(|inst| inst.id.0 == seq_id.0 as u64)
+                                    })
+                                    .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
+
+                                egui::ComboBox::from_id_salt(
+                                    ui.id().with("instr").with(track.id.0),
+                                )
+                                .selected_text(RichText::new(&instr_label).size(10.0))
+                                .width(60.0)
+                                .show_ui(ui, |ui| {
+                                    // "None" option
+                                    if ui
+                                        .selectable_label(track.instrument_id.is_none(), "---")
+                                        .clicked()
+                                        && let Ok(mut song_w) = song.write()
+                                        && let Some(trk) = song_w.track_mut(track.id)
+                                    {
+                                        trk.instrument = None;
+                                    }
+                                    for inst in instruments {
+                                        let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
+                                        let selected = track.instrument_id == Some(seq_id);
+                                        if ui.selectable_label(selected, &inst.name).clicked()
+                                            && let Ok(mut song_w) = song.write()
+                                            && let Some(trk) = song_w.track_mut(track.id)
+                                        {
+                                            trk.instrument = Some(seq_id);
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    });
+                });
+            }
+
+            // "+" button to add track
+            ui.add_space(4.0);
+            if ui
+                .button(
+                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                        .size(11.0)
+                        .color(t.colors.accent_green),
+                )
+                .clicked()
+                && let Ok(mut song_w) = song.write()
+            {
+                let count = song_w.track_count();
+                song_w.create_track(format!("Track {}", count + 1));
+            }
+        });
+
+    // ── Timeline area (right side, uses painter for performance) ──
     let scroll_id = ui.id().with("seq_scroll");
     egui::ScrollArea::horizontal()
         .id_salt(scroll_id)
         .show(ui, |ui| {
             let total_size = Vec2::new(
-                TRACK_HEADER_WIDTH + timeline_width,
+                timeline_width,
                 RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
             );
             let (response, painter) = ui.allocate_painter(total_size, Sense::click());
             let painter_rect = response.rect;
 
-            let origin = painter_rect.min;
-            let tl_x = origin.x + TRACK_HEADER_WIDTH;
-            let tl_y = origin.y;
+            let tl_x = painter_rect.min.x;
+            let tl_y = painter_rect.min.y;
 
-            // Helper: tick to x position
             let tick_to_x = |tick_val: u64| -> f32 {
                 if ticks_per_beat == 0 {
                     return tl_x;
@@ -480,96 +738,14 @@ fn draw_arrangement(
                 tl_x + beats * PIXELS_PER_BEAT
             };
 
-            // ── Track headers (drawn on top of scroll, at fixed offset) ──
-            // Background for header column
-            painter.rect_filled(
-                Rect::from_min_size(
-                    origin,
-                    Vec2::new(
-                        TRACK_HEADER_WIDTH,
-                        RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
-                    ),
-                ),
-                0.0,
-                t.colors.bg_panel,
-            );
-
-            // Ruler corner
-            painter.rect_filled(
-                Rect::from_min_size(origin, Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT)),
-                0.0,
-                t.colors.bg_dark,
-            );
-
-            for (i, track) in data.tracks.iter().enumerate() {
-                let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
-                let row_rect = Rect::from_min_size(
-                    Pos2::new(origin.x, row_y),
-                    Vec2::new(TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT),
-                );
-
-                // Row background (alternating)
-                let bg = if i % 2 == 0 {
-                    t.colors.bg_module
-                } else {
-                    t.colors.bg_panel
-                };
-                painter.rect_filled(row_rect, 0.0, bg);
-
-                // Track color indicator
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(origin.x + 2.0, row_y + 2.0),
-                        Vec2::new(4.0, TRACK_ROW_HEIGHT - 4.0),
-                    ),
-                    2.0,
-                    track.color,
-                );
-
-                // Track name
-                painter.text(
-                    Pos2::new(origin.x + 12.0, row_y + 8.0),
-                    egui::Align2::LEFT_TOP,
-                    &track.name,
-                    egui::FontId::proportional(13.0),
-                    t.colors.text_primary,
-                );
-
-                // Mute/Solo indicators
-                let mut indicator_x = origin.x + 12.0;
-                let indicator_y = row_y + 26.0;
-                if track.mute {
-                    painter.text(
-                        Pos2::new(indicator_x, indicator_y),
-                        egui::Align2::LEFT_TOP,
-                        "M",
-                        egui::FontId::proportional(11.0),
-                        t.colors.accent_red,
-                    );
-                    indicator_x += 16.0;
+            // Helper: x position to tick
+            let x_to_tick = |x: f32| -> u64 {
+                if ticks_per_beat == 0 {
+                    return 0;
                 }
-                if track.solo {
-                    painter.text(
-                        Pos2::new(indicator_x, indicator_y),
-                        egui::Align2::LEFT_TOP,
-                        "S",
-                        egui::FontId::proportional(11.0),
-                        t.colors.accent_yellow,
-                    );
-                }
-
-                // Row separator
-                painter.line_segment(
-                    [
-                        Pos2::new(origin.x, row_y + TRACK_ROW_HEIGHT),
-                        Pos2::new(
-                            origin.x + TRACK_HEADER_WIDTH + timeline_width,
-                            row_y + TRACK_ROW_HEIGHT,
-                        ),
-                    ],
-                    Stroke::new(0.5, t.colors.border),
-                );
-            }
+                let beats = (x - tl_x) / PIXELS_PER_BEAT;
+                (beats * ticks_per_beat as f32).max(0.0) as u64
+            };
 
             // ── Ruler (bar/beat numbers) ──
             let ruler_rect = Rect::from_min_size(
@@ -582,7 +758,6 @@ fn draw_arrangement(
                 let bar_tick = bar_idx as u64 * ticks_per_bar;
                 let x = tick_to_x(bar_tick);
 
-                // Bar number
                 painter.text(
                     Pos2::new(x + 4.0, tl_y + 4.0),
                     egui::Align2::LEFT_TOP,
@@ -591,14 +766,12 @@ fn draw_arrangement(
                     t.colors.text_secondary,
                 );
 
-                // Bar line (strong)
                 let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
                 painter.line_segment(
                     [Pos2::new(x, tl_y + RULER_HEIGHT), Pos2::new(x, line_bottom)],
                     Stroke::new(1.0, t.colors.border),
                 );
 
-                // Beat lines (subtle)
                 for beat in 1..beats_per_bar {
                     let beat_tick = bar_tick + beat * ticks_per_beat;
                     let bx = tick_to_x(beat_tick);
@@ -612,7 +785,7 @@ fn draw_arrangement(
                 }
             }
 
-            // ── Track row backgrounds for timeline area ──
+            // ── Track row backgrounds ──
             for i in 0..track_count {
                 let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
                 let bg = if i % 2 == 0 {
@@ -628,13 +801,20 @@ fn draw_arrangement(
                     0.0,
                     bg,
                 );
+                // Row separator
+                painter.line_segment(
+                    [
+                        Pos2::new(tl_x, row_y + TRACK_ROW_HEIGHT),
+                        Pos2::new(tl_x + timeline_width, row_y + TRACK_ROW_HEIGHT),
+                    ],
+                    Stroke::new(0.5, t.colors.border),
+                );
             }
 
-            // ── Pattern placements (build rects for double-click detection) ──
-            let mut placement_rects: Vec<(Rect, PatternId)> = Vec::new();
+            // ── Pattern placements ──
+            let mut placement_rects: Vec<(Rect, PatternId, TrackId, u64)> = Vec::new();
 
             for placement in &data.placements {
-                // Find track row index
                 let Some(row_idx) = data.tracks.iter().position(|t| t.id == placement.track_id)
                 else {
                     continue;
@@ -651,9 +831,13 @@ fn draw_arrangement(
                     Vec2::new((x_end - x_start).max(4.0), height),
                 );
 
-                placement_rects.push((rect, placement.pattern_id));
+                placement_rects.push((
+                    rect,
+                    placement.pattern_id,
+                    placement.track_id,
+                    placement.start_tick,
+                ));
 
-                // Fill with track color (semi-transparent)
                 let fill = Color32::from_rgba_unmultiplied(
                     placement.color.r(),
                     placement.color.g(),
@@ -661,8 +845,6 @@ fn draw_arrangement(
                     100,
                 );
                 painter.rect_filled(rect, 3.0, fill);
-
-                // Border
                 painter.rect_stroke(
                     rect,
                     3.0,
@@ -670,7 +852,6 @@ fn draw_arrangement(
                     egui::StrokeKind::Inside,
                 );
 
-                // Pattern name (clipped to box)
                 let text_clip = Rect::from_min_max(
                     Pos2::new(rect.min.x + 4.0, rect.min.y),
                     Pos2::new(rect.max.x - 2.0, rect.max.y),
@@ -683,8 +864,6 @@ fn draw_arrangement(
                         egui::FontId::proportional(11.0),
                         t.colors.text_primary,
                     );
-
-                    // Note count
                     if text_clip.width() > 50.0 {
                         painter.with_clip_rect(text_clip).text(
                             Pos2::new(rect.min.x + 4.0, rect.min.y + 18.0),
@@ -697,11 +876,11 @@ fn draw_arrangement(
                 }
             }
 
-            // ── Double-click detection on placements ──
+            // ── Double-click → open piano roll ──
             if response.double_clicked()
                 && let Some(pos) = response.interact_pointer_pos()
             {
-                for (rect, pattern_id) in &placement_rects {
+                for (rect, pattern_id, _, _) in &placement_rects {
                     if rect.contains(pos) {
                         double_clicked_pattern = Some(*pattern_id);
                         break;
@@ -713,11 +892,149 @@ fn draw_arrangement(
             if response.hovered()
                 && let Some(pos) = ui.ctx().pointer_hover_pos()
             {
-                let on_placement = placement_rects.iter().any(|(r, _)| r.contains(pos));
+                let on_placement = placement_rects.iter().any(|(r, _, _, _)| r.contains(pos));
                 if on_placement {
-                    response.on_hover_text("Double-click to open piano roll");
+                    ui.ctx().output_mut(|o| {
+                        o.cursor_icon = CursorIcon::PointingHand;
+                    });
                 }
             }
+
+            // ── Right-click context menu on timeline ──
+            response.context_menu(|ui| {
+                let click_pos = ui.min_rect().min;
+                // Determine which track row was clicked
+                let hover_pos = ui.ctx().pointer_hover_pos().unwrap_or(click_pos);
+
+                // Check if right-click is on an existing placement
+                let clicked_placement = placement_rects
+                    .iter()
+                    .find(|(r, _, _, _)| r.contains(hover_pos));
+
+                if let Some((_, pat_id, trk_id, start_tick)) = clicked_placement {
+                    let pat_id = *pat_id;
+                    let trk_id = *trk_id;
+                    let start_tick = *start_tick;
+
+                    if ui.button("Open in Piano Roll").clicked() {
+                        double_clicked_pattern = Some(pat_id);
+                        ui.close();
+                    }
+                    if ui.button("Rename Pattern").clicked() {
+                        // Get current name
+                        let current_name = data
+                            .patterns
+                            .iter()
+                            .find(|p| p.id == pat_id)
+                            .map_or_else(String::new, |p| p.name.clone());
+                        view_state.editing_pattern_name = Some((pat_id, current_name));
+                        ui.close();
+                    }
+
+                    // Pattern length editing
+                    ui.menu_button("Set Length", |ui| {
+                        for &(label, bars) in &[
+                            ("1 bar", 1_u32),
+                            ("2 bars", 2),
+                            ("4 bars", 4),
+                            ("8 bars", 8),
+                            ("16 bars", 16),
+                        ] {
+                            if ui.button(label).clicked() {
+                                let new_len = SeqDuration::WHOLE * bars;
+                                if let Ok(mut song_w) = song.write()
+                                    && let Some(pat) = song_w.pattern_mut(pat_id)
+                                {
+                                    pat.length = new_len;
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
+
+                    ui.separator();
+                    if ui.button("Remove from Timeline").clicked() {
+                        if let Ok(mut song_w) = song.write() {
+                            song_w.remove_placement(pat_id, trk_id, Tick(start_tick));
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .button(RichText::new("Delete Pattern").color(t.colors.accent_red))
+                        .clicked()
+                    {
+                        if let Ok(mut song_w) = song.write() {
+                            song_w.delete_pattern(pat_id);
+                        }
+                        ui.close();
+                    }
+                } else {
+                    // Clicked on empty area — figure out track + tick
+                    let row_offset = hover_pos.y - (tl_y + RULER_HEIGHT);
+                    let row_idx = if TRACK_ROW_HEIGHT > 0.0 {
+                        (row_offset / TRACK_ROW_HEIGHT) as usize
+                    } else {
+                        0
+                    };
+                    let click_tick = x_to_tick(hover_pos.x);
+                    // Quantize to bar boundary
+                    let bar_tick = if ticks_per_bar > 0 {
+                        (click_tick / ticks_per_bar) * ticks_per_bar
+                    } else {
+                        click_tick
+                    };
+
+                    if row_idx < data.tracks.len() {
+                        let target_track = data.tracks[row_idx].id;
+                        ui.label(
+                            RichText::new(format!(
+                                "Bar {}",
+                                if ticks_per_bar > 0 {
+                                    bar_tick / ticks_per_bar + 1
+                                } else {
+                                    1
+                                }
+                            ))
+                            .color(t.colors.text_dim),
+                        );
+                        ui.separator();
+
+                        if ui
+                            .button(format!("{} New Pattern Here", ri::ADD_LINE))
+                            .clicked()
+                        {
+                            if let Ok(mut song_w) = song.write() {
+                                let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
+                                song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
+                            }
+                            ui.close();
+                        }
+
+                        // Place existing pattern submenu
+                        if !data.patterns.is_empty() {
+                            ui.menu_button("Place Existing Pattern", |ui| {
+                                for pat in &data.patterns {
+                                    let beats = pat.length_ticks as f32
+                                        / synth_sequencer::TICKS_PER_QUARTER as f32;
+                                    if ui
+                                        .button(format!("{} ({:.0} beats)", pat.name, beats))
+                                        .clicked()
+                                    {
+                                        if let Ok(mut song_w) = song.write() {
+                                            song_w.place_pattern(
+                                                pat.id,
+                                                target_track,
+                                                Tick(bar_tick),
+                                            );
+                                        }
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            });
 
             // ── Playhead ──
             if current_tick > 0 || data.song_end_tick > 0 {
@@ -725,7 +1042,6 @@ fn draw_arrangement(
                 let line_top = tl_y;
                 let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
 
-                // Playhead line
                 painter.line_segment(
                     [
                         Pos2::new(playhead_x, line_top),
@@ -734,7 +1050,6 @@ fn draw_arrangement(
                     Stroke::new(2.0, t.colors.accent_primary),
                 );
 
-                // Playhead triangle in ruler
                 let tri_size = 6.0;
                 painter.add(egui::Shape::convex_polygon(
                     vec![
@@ -747,26 +1062,11 @@ fn draw_arrangement(
                 ));
             }
 
-            // ── Header/timeline separator ──
-            painter.line_segment(
-                [
-                    Pos2::new(tl_x, tl_y),
-                    Pos2::new(
-                        tl_x,
-                        tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
-                    ),
-                ],
-                Stroke::new(1.0, t.colors.border),
-            );
-
             // Ruler bottom border
             painter.line_segment(
                 [
-                    Pos2::new(origin.x, tl_y + RULER_HEIGHT),
-                    Pos2::new(
-                        origin.x + TRACK_HEADER_WIDTH + timeline_width,
-                        tl_y + RULER_HEIGHT,
-                    ),
+                    Pos2::new(tl_x, tl_y + RULER_HEIGHT),
+                    Pos2::new(tl_x + timeline_width, tl_y + RULER_HEIGHT),
                 ],
                 Stroke::new(1.0, t.colors.border),
             );
@@ -959,6 +1259,7 @@ fn draw_piano_roll(
     current_tick: u64,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
+    instrument_name: Option<&str>,
 ) -> bool {
     let t = theme();
     let mut keep_open = true;
@@ -966,11 +1267,51 @@ fn draw_piano_roll(
     // ── Toolbar ──
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.label(
-            RichText::new(&data.pattern_name)
-                .size(14.0)
-                .color(t.colors.accent_cyan),
-        );
+
+        // Pattern name (editable via rename context menu)
+        if view_state.editing_pattern_name.as_ref().map(|(id, _)| *id) == Some(data.pattern_id) {
+            if let Some((_, ref mut name_buf)) = view_state.editing_pattern_name {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(name_buf)
+                        .desired_width(120.0)
+                        .font(egui::FontId::proportional(14.0)),
+                );
+                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let new_name = name_buf.clone();
+                    let pid = data.pattern_id;
+                    if let Ok(mut song_w) = song.write()
+                        && let Some(pat) = song_w.pattern_mut(pid)
+                    {
+                        pat.name = new_name;
+                    }
+                    view_state.editing_pattern_name = None;
+                } else {
+                    resp.request_focus();
+                }
+            }
+        } else {
+            let name_resp = ui.add(
+                egui::Label::new(
+                    RichText::new(&data.pattern_name)
+                        .size(14.0)
+                        .color(t.colors.accent_cyan),
+                )
+                .sense(Sense::click()),
+            );
+            if name_resp.double_clicked() {
+                view_state.editing_pattern_name =
+                    Some((data.pattern_id, data.pattern_name.clone()));
+            }
+        }
+
+        // Show instrument name if assigned
+        if let Some(name) = instrument_name {
+            ui.label(
+                RichText::new(format!("[{}]", name))
+                    .size(12.0)
+                    .color(t.colors.text_secondary),
+            );
+        }
         ui.separator();
 
         // Tool selector
@@ -2274,10 +2615,11 @@ pub fn draw_sequencer_view(
     handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
+    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
 ) {
     // Transport bar at the top
     let is_playing = egui::TopBottomPanel::top("sequencer_transport")
-        .show(ctx, |ui| draw_transport_bar(ui, handle, song))
+        .show(ctx, |ui| draw_transport_bar(ui, handle, song, view_state))
         .inner;
 
     // Request repaint during playback for smooth position updates
@@ -2295,6 +2637,23 @@ pub fn draw_sequencer_view(
     if let Some(pattern_id) = view_state.opened_pattern {
         let piano_roll_data = collect_piano_roll_data(song, pattern_id);
 
+        // Find track info for this pattern's track (for instrument display)
+        let track_instrument_name = arrangement_data.as_ref().and_then(|ad| {
+            // Find a placement with this pattern to get the track
+            ad.placements
+                .iter()
+                .find(|p| p.pattern_id == pattern_id)
+                .and_then(|p| ad.tracks.iter().find(|t| t.id == p.track_id))
+                .and_then(|track| {
+                    track.instrument_id.and_then(|seq_id| {
+                        instruments
+                            .iter()
+                            .find(|inst| inst.id.0 == seq_id.0 as u64)
+                            .map(|inst| inst.name.clone())
+                    })
+                })
+        });
+
         egui::TopBottomPanel::bottom("piano_roll")
             .resizable(true)
             .default_height(PIANO_ROLL_HEIGHT)
@@ -2302,7 +2661,14 @@ pub fn draw_sequencer_view(
             .max_height(600.0)
             .show(ctx, |ui| {
                 if let Some(data) = &piano_roll_data {
-                    if !draw_piano_roll(ui, data, current_tick, song, view_state) {
+                    if !draw_piano_roll(
+                        ui,
+                        data,
+                        current_tick,
+                        song,
+                        view_state,
+                        track_instrument_name.as_deref(),
+                    ) {
                         view_state.opened_pattern = None;
                         view_state.selected_notes.clear();
                         view_state.drag = None;
@@ -2318,7 +2684,9 @@ pub fn draw_sequencer_view(
     // Main content: arrangement view
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(data) = &arrangement_data {
-            if let Some(pattern_id) = draw_arrangement(ui, data, current_tick) {
+            if let Some(pattern_id) =
+                draw_arrangement(ui, data, current_tick, song, view_state, instruments)
+            {
                 // Clear selection when switching patterns
                 if view_state.opened_pattern != Some(pattern_id) {
                     view_state.selected_notes.clear();

@@ -427,6 +427,13 @@ pub enum EngineCommand {
     /// Seek to a specific tick position during playback.
     Seek { tick: Tick },
 
+    /// Set loop boundaries and enable/disable looping.
+    SetLoop {
+        start: Tick,
+        end: Tick,
+        enabled: bool,
+    },
+
     /// Play only the specified pattern in a loop.
     /// Finds pattern in arrangement, sets loop boundaries, and starts playing.
     PlayPattern { pattern_id: PatternId },
@@ -890,6 +897,16 @@ impl std::fmt::Debug for EngineCommand {
             Self::Rewind => write!(f, "Rewind"),
 
             Self::Seek { tick } => write!(f, "Seek({tick:?})"),
+            Self::SetLoop {
+                start,
+                end,
+                enabled,
+            } => f
+                .debug_struct("SetLoop")
+                .field("start", start)
+                .field("end", end)
+                .field("enabled", enabled)
+                .finish(),
             Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),
             Self::Reset => write!(f, "Reset"),
