@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.181.0)
+# TODO - Modular Synth (v0.182.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -18,7 +18,14 @@
 - [x] Author info in Settings dialog: name, email, website, license
 - Later expansion: MIDI device preferences, default BPM, audio buffer size, etc.
 
-### 1.4 Sequencer — Track & pattern management from GUI
+### 1.4 Remove debug module — superseded by MCP
+- [x] Remove `crates/modular_synth/src/debug/` (4 tools, ~2100 lines)
+- [x] Remove `debug-tools` feature from `Cargo.toml`
+- [x] Remove `#[cfg(feature = "debug-tools")] pub mod debug;` from `lib.rs`
+- [x] Remove example programs: `examples/debug_graph.rs`, `examples/midi_test.rs`
+- [x] Remove `debug_graph` entry from CLAUDE.md debug tools table
+
+### 1.5 Sequencer — Track & pattern management from GUI
 - [ ] Add/remove/rename tracks from GUI (currently MCP-only)
 - [ ] Add/remove/rename patterns from GUI
 - [ ] Edit pattern length from GUI

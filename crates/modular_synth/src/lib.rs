@@ -14,8 +14,6 @@
 #![allow(clippy::similar_names)]
 
 pub mod audio;
-#[cfg(feature = "debug-tools")]
-pub mod debug;
 #[cfg(feature = "gui-egui")]
 pub mod gui;
 pub mod io;

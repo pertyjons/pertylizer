@@ -1,5 +1,11 @@
 # Version History
 
+## [0.182.0] - 2026-02-27
+### Cleanup: remove debug module, English CLAUDE.md & README
+- **Debug module removed** (TODO 1.4) — `src/debug/` (GraphDebugger, VoiceDebugger, SequencerDebugger, SignalProbe, ~2100 lines), `debug-tools` feature, and example programs (`debug_graph.rs`, `midi_test.rs`) all removed. MCP tools provide the same inspection capabilities.
+- **CLAUDE.md translated to English** — trimmed generic Rust advice, added English language policy
+- **README.md rewritten** — added feature overview, tech stack, build instructions, workspace crate table
+
 ## [0.181.0] - 2026-02-27
 ### Keyboard area cleanup (TODO 2.2)
 - **PANIC button moved to top menu bar** — right-aligned with red styling, always accessible
