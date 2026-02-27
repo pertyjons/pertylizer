@@ -1,13 +1,13 @@
 # Version History
 
-## [0.183.0] - 2026-02-27
-### Remove module toolbar, improve right-click menu (TODO 2.1)
-- **Module toolbar removed** — `TopBottomPanel::top("toolbar")` row with `ModulePalette` buttons deleted, freeing vertical space
-- **Glide slider + module/connection counts moved to menu bar** — compact display in right-aligned section, Rack view only
-- **Right-click context menu reworked** — frameless buttons for Filter, Envelope, LFO, VCA, Mixer replaced with standard `ui.button()` for consistent styling; Output and Mod Matrix also fixed
+## [0.184.0] - 2026-02-27
+### Complete TODO 2.1 — Remove module toolbar, native context menus
+- **Module toolbar removed** — `TopBottomPanel::top("toolbar")` row deleted, Glide slider + counts moved to menu bar
+- **Native egui menu styling** — both background and port right-click menus now use `response.context_menu()` / `egui::Popup` with `PopupKind::Menu`, matching File/Help menu styling
+- **Shared `palette_label()` function** — single source of truth for module icons, names, and colors across all context menus
+- **Port context menu improved** — same icons, colors, and layout as the background "Add module" menu
 - **Swedish strings translated** — "Ta bort sladd" → "Delete cable", "Stoppa in Signal Monitor" → "Insert Signal Monitor"
-- **`ModulePalette` struct removed** — no longer needed; all module adding via right-click context menu
-- **Dead toolbar methods removed** — `add_module_of_category`, `add_voice_module_via_session`, 20+ `add_*_module` wrappers
+- **`ModulePalette` struct + 20+ dead `add_*_module` methods removed**
 
 ## [0.182.0] - 2026-02-27
 ### Cleanup: remove debug module, English CLAUDE.md & README
