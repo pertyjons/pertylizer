@@ -135,6 +135,9 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         .or_default()
         .insert(0, "ShareTechMono".to_owned());
 
+    // Register Remix Icon font (icon glyphs as fallback)
+    egui_remixicon::add_to_fonts(&mut fonts);
+
     ctx.set_fonts(fonts);
 }
 
@@ -367,6 +370,7 @@ impl SynthApp {
 
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        use egui_remixicon::icons as ri;
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
 
@@ -434,21 +438,33 @@ impl eframe::App for SynthApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("📄 New Patch").clicked() {
+                    if ui
+                        .button(format!("{} New Patch", ri::FILE_ADD_LINE))
+                        .clicked()
+                    {
                         self.reset_to_new_patch();
                         self.dialog_state
                             .set_status("New patch created".to_string());
                         ui.close();
                     }
-                    if ui.button("📂 Open Patch...").clicked() {
+                    if ui
+                        .button(format!("{} Open Patch...", ri::FOLDER_OPEN_LINE))
+                        .clicked()
+                    {
                         self.dialog_state.open_open_patch_dialog();
                         ui.close();
                     }
-                    if ui.button("📋 Load Built-in...").clicked() {
+                    if ui
+                        .button(format!("{} Load Built-in...", ri::FOLDER_OPEN_LINE))
+                        .clicked()
+                    {
                         self.dialog_state.show_load_patch = true;
                         ui.close();
                     }
-                    if ui.button("💾 Save Patch...").clicked() {
+                    if ui
+                        .button(format!("{} Save Patch...", ri::SAVE_LINE))
+                        .clicked()
+                    {
                         let default_name = format!(
                             "{}.json",
                             self.current_patch_name.to_lowercase().replace(' ', "_")
@@ -457,7 +473,7 @@ impl eframe::App for SynthApp {
                         ui.close();
                     }
                     ui.separator();
-                    ui.menu_button("📋 Example Patches", |ui| {
+                    ui.menu_button(format!("{} Example Patches", ri::FILE_LIST_LINE), |ui| {
                         for (category, patches) in categorized_patches() {
                             ui.menu_button(category, |ui| {
                                 for patch in patches {
@@ -473,12 +489,15 @@ impl eframe::App for SynthApp {
                         }
                     });
                     ui.separator();
-                    if ui.button("⚙ Settings...").clicked() {
+                    if ui
+                        .button(format!("{} Settings...", ri::SETTINGS_LINE))
+                        .clicked()
+                    {
                         self.dialog_state.show_settings = true;
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("🚪 Quit").clicked() {
+                    if ui.button(format!("{} Quit", ri::SHUT_DOWN_LINE)).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
@@ -569,10 +588,11 @@ impl eframe::App for SynthApp {
                         } else {
                             port_name.to_string()
                         };
-                        RichText::new(format!("🎹 {} ▼", short_name))
+                        RichText::new(format!("{} {} ▼", ri::PIANO_FILL, short_name))
                             .color(theme().colors.meter_green)
                     } else {
-                        RichText::new("🎹 MIDI ▼").color(theme().colors.text_dim)
+                        RichText::new(format!("{} MIDI ▼", ri::PIANO_LINE))
+                            .color(theme().colors.text_dim)
                     };
 
                     ui.menu_button(midi_label, |ui| {
@@ -588,8 +608,12 @@ impl eframe::App for SynthApp {
                                 let is_current =
                                     self.midi_handler.port_name() == Some(port.as_str());
                                 let label = if is_current {
-                                    RichText::new(format!("● {}", port))
-                                        .color(theme().colors.meter_green)
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                                        port
+                                    ))
+                                    .color(theme().colors.meter_green)
                                 } else {
                                     RichText::new(format!("  {}", port))
                                 };

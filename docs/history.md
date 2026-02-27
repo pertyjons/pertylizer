@@ -1,5 +1,14 @@
 # Version History
 
+## [0.185.0] - 2026-02-27
+### Switch to egui-remixicon for icons (TODO 3.2, phase 1)
+- **`egui-remixicon` 0.33 added** — Remix Icon font registered as fallback in `setup_custom_fonts()`
+- **All palette/context menu icons replaced** — 40+ emoji → Remix Icon via shared `palette_label()` function
+- **Module header icons replaced** — source/sink indicators, connectivity status, power/bypass, close buttons
+- **File menu icons replaced** — New Patch, Open Patch, Save, Load Built-in, Example Patches, Settings, Quit
+- **MIDI dropdown + instrument rack** — piano icons, active/inactive radio buttons
+- Remaining: transport controls, tab icons, sequencer/awe_view icons
+
 ## [0.184.0] - 2026-02-27
 ### Complete TODO 2.1 — Remove module toolbar, native context menus
 - **Module toolbar removed** — `TopBottomPanel::top("toolbar")` row deleted, Glide slider + counts moved to menu bar

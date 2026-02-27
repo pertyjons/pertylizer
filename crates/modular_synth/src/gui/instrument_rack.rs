@@ -202,7 +202,11 @@ pub fn show_instrument_rack(
                             ui.horizontal(|ui| {
                                 // Selection indicator / radio button
                                 // Active instrument receives keyboard input
-                                let btn_text = if is_active { "●" } else { "○" };
+                                let btn_text = if is_active {
+                                    egui_remixicon::icons::CHECKBOX_BLANK_CIRCLE_FILL
+                                } else {
+                                    egui_remixicon::icons::CHECKBOX_BLANK_CIRCLE_LINE
+                                };
                                 let btn_color = if is_active {
                                     theme().colors.accent_orange
                                 } else {

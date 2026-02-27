@@ -407,6 +407,7 @@ impl PatchEditor {
         handle: &EngineHandle,
         instrument_id: u64,
     ) -> PatchEditorResult {
+        use egui_remixicon::icons as ri;
         let mut result = PatchEditorResult::default();
         let content_size = self.calculate_content_size();
 
@@ -759,7 +760,7 @@ impl PatchEditor {
                         ui.painter().text(
                             close_rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "\u{2715}",
+                            ri::CLOSE_LINE,
                             egui::FontId::proportional(10.0),
                             close_color,
                         );
@@ -831,55 +832,61 @@ impl PatchEditor {
                         if is_source {
                             ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new("▸")
+                                    egui::RichText::new(ri::ARROW_RIGHT_S_FILL)
                                         .color(Color32::from_rgb(100, 200, 100))
                                         .size(10.0),
                                 )
                                 .frame(false)
                                 .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text("📤 Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.");
+                            .on_hover_text(format!(
+                                "{} Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.",
+                                ri::UPLOAD_2_FILL
+                            ));
                         }
 
                         // Sink indicator (no outputs)
                         if is_sink {
                             ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new("◼")
+                                    egui::RichText::new(ri::STOP_MINI_FILL)
                                         .color(Color32::from_rgb(200, 100, 100))
                                         .size(10.0),
                                 )
                                 .frame(false)
                                 .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text("📥 Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.");
+                            .on_hover_text(format!(
+                                "{} Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.",
+                                ri::DOWNLOAD_2_FILL
+                            ));
                         }
 
                         // Connectivity status indicator
-                        let (conn_icon, conn_color, conn_tooltip) = if is_global_module {
+                        let (conn_icon, conn_color, conn_tooltip): (_, _, String) = if is_global_module {
                             let tooltip =
                                 if descriptor.category == ModuleCategory::Utility {
-                                    "⚡ Internal Routing\nRoutes modulation internally — no cables needed."
+                                    format!("{} Internal Routing\nRoutes modulation internally — no cables needed.", ri::FLASHLIGHT_FILL)
                                 } else {
-                                    "⚡ Global Module\nProcessed automatically via effect chain."
+                                    format!("{} Global Module\nProcessed automatically via effect chain.", ri::FLASHLIGHT_FILL)
                                 };
-                            ("◆", Color32::from_rgb(100, 180, 220), tooltip)
+                            (ri::CHECKBOX_BLANK_CIRCLE_FILL, Color32::from_rgb(100, 180, 220), tooltip)
                         } else {
                             match connectivity_status {
                                 ModuleConnectivity::Connected => (
-                                    "◆",
+                                    ri::CHECKBOX_BLANK_CIRCLE_FILL,
                                     Color32::from_rgb(100, 200, 100),
-                                    "🔗 Routed to Output\nAudio from this module reaches the output.",
+                                    format!("{} Routed to Output\nAudio from this module reaches the output.", ri::LINK),
                                 ),
                                 ModuleConnectivity::Orphaned => (
-                                    "◇",
+                                    ri::CHECKBOX_BLANK_CIRCLE_LINE,
                                     Color32::from_rgb(200, 200, 100),
-                                    "⚠ Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                                    format!("{} Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.", ri::ERROR_WARNING_LINE),
                                 ),
                                 ModuleConnectivity::Disconnected => (
-                                    "◇",
+                                    ri::CHECKBOX_BLANK_CIRCLE_LINE,
                                     Color32::from_rgb(100, 100, 100),
-                                    "⊘ Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                                    format!("{} Disconnected\nNo cables connected.\nDrag from ports to create connections.", ri::LINK_UNLINK),
                                 ),
                             }
                         };
@@ -896,14 +903,14 @@ impl PatchEditor {
 
                         // Power/bypass button
                         let (power_icon, power_color) = if is_bypassed {
-                            ("○", t.colors.text_dim)
+                            (ri::CHECKBOX_BLANK_CIRCLE_LINE, t.colors.text_dim)
                         } else {
-                            ("●", t.colors.accent_green)
+                            (ri::CHECKBOX_BLANK_CIRCLE_FILL, t.colors.accent_green)
                         };
                         let power_tooltip = if is_bypassed {
-                            "🔇 Bypassed\nModule output is muted.\nClick to activate."
+                            format!("{} Bypassed\nModule output is muted.\nClick to activate.", ri::VOLUME_MUTE_FILL)
                         } else {
-                            "🔊 Active\nModule is processing audio.\nClick to bypass."
+                            format!("{} Active\nModule is processing audio.\nClick to bypass.", ri::VOLUME_UP_FILL)
                         };
                         if ui
                             .add(
@@ -926,7 +933,7 @@ impl PatchEditor {
                         // Close button (only for disconnected modules)
                         if connectivity_status == ModuleConnectivity::Disconnected {
                             ui.separator();
-                            if ui.small_button("\u{2715}").clicked() {
+                            if ui.small_button(ri::CLOSE_LINE).clicked() {
                                 open = false;
                             }
                         }
@@ -946,9 +953,12 @@ impl PatchEditor {
                         if is_effect {
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    egui::RichText::new("⚡ Effect Chain")
-                                        .size(11.0)
-                                        .color(theme().colors.text_dim),
+                                    egui::RichText::new(format!(
+                                        "{} Effect Chain",
+                                        ri::FLASHLIGHT_FILL
+                                    ))
+                                    .size(11.0)
+                                    .color(theme().colors.text_dim),
                                 );
                             });
                             ui.label(
@@ -959,9 +969,12 @@ impl PatchEditor {
                         } else {
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    egui::RichText::new("📊 Visualizer")
-                                        .size(11.0)
-                                        .color(theme().colors.text_dim),
+                                    egui::RichText::new(format!(
+                                        "{} Visualizer",
+                                        egui_remixicon::icons::SPECTRUM_FILL
+                                    ))
+                                    .size(11.0)
+                                    .color(theme().colors.text_dim),
                                 );
                             });
                             ui.label(
@@ -1136,7 +1149,13 @@ impl PatchEditor {
                     .fill(theme().colors.bg_panel.gamma_multiply(0.95))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if ui.button("📐 Auto Layout").clicked() {
+                            if ui
+                                .button(format!(
+                                    "{} Auto Layout",
+                                    egui_remixicon::icons::LAYOUT_GRID_FILL
+                                ))
+                                .clicked()
+                            {
                                 result.request_auto_layout = true;
                             }
                         });
@@ -1401,6 +1420,7 @@ impl PatchEditor {
     /// Draw the background right-click context menu for adding modules.
     #[allow(clippy::too_many_lines)]
     fn draw_bg_context_menu(&mut self, response: &egui::Response, result: &mut PatchEditorResult) {
+        use egui_remixicon::icons as ri;
         let menu_state = self.bg_context_menu;
         let world_pos = menu_state.map(|s| s.world_pos).unwrap_or_default();
         let menu_cable = menu_state.and_then(|s| s.cable);
@@ -1446,7 +1466,7 @@ impl PatchEditor {
             // Oscillator submenu
             let osc_color = category_color(ModuleCategory::Oscillator);
             ui.menu_button(
-                egui::RichText::new("🎵 Oscillator").color(osc_color),
+                egui::RichText::new(format!("{} Oscillator", ri::MUSIC_2_FILL)).color(osc_color),
                 |ui| {
                     Self::bg_menu_item(
                         ui,
@@ -1478,87 +1498,90 @@ impl PatchEditor {
 
             // Effect submenu
             let fx_color = category_color(ModuleCategory::Effect);
-            ui.menu_button(egui::RichText::new("✨ Effect").color(fx_color), |ui| {
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Delay),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Reverb),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Distortion),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Chorus),
-                    &mut selected,
-                );
-                ui.separator();
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Flanger),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Phaser),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Compressor),
-                    &mut selected,
-                );
-                Self::bg_menu_item(ui, PaletteSelection::Effect(EffectType::Eq), &mut selected);
-                ui.separator();
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Waveshaper),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::BbdDelay),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Limiter),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::MidSide),
-                    &mut selected,
-                );
-                ui.separator();
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::Convolver),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::PhaseVocoder),
-                    &mut selected,
-                );
-                Self::bg_menu_item(
-                    ui,
-                    PaletteSelection::Effect(EffectType::FrequencyShifter),
-                    &mut selected,
-                );
-            });
+            ui.menu_button(
+                egui::RichText::new(format!("{} Effect", ri::SPARKLING_FILL)).color(fx_color),
+                |ui| {
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Delay),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Reverb),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Distortion),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Chorus),
+                        &mut selected,
+                    );
+                    ui.separator();
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Flanger),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Phaser),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Compressor),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(ui, PaletteSelection::Effect(EffectType::Eq), &mut selected);
+                    ui.separator();
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Waveshaper),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::BbdDelay),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Limiter),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::MidSide),
+                        &mut selected,
+                    );
+                    ui.separator();
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::Convolver),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::PhaseVocoder),
+                        &mut selected,
+                    );
+                    Self::bg_menu_item(
+                        ui,
+                        PaletteSelection::Effect(EffectType::FrequencyShifter),
+                        &mut selected,
+                    );
+                },
+            );
 
             // Visualizer submenu
             let viz_color = category_color(ModuleCategory::Visualizer);
             ui.menu_button(
-                egui::RichText::new("📊 Visualizer").color(viz_color),
+                egui::RichText::new(format!("{} Visualizer", ri::SPECTRUM_FILL)).color(viz_color),
                 |ui| {
                     Self::bg_menu_item(
                         ui,
@@ -1583,7 +1606,7 @@ impl PatchEditor {
             // Modulation submenu
             let mod_color = category_color(ModuleCategory::Utility);
             ui.menu_button(
-                egui::RichText::new("🔀 Modulation").color(mod_color),
+                egui::RichText::new(format!("{} Modulation", ri::SWAP_FILL)).color(mod_color),
                 |ui| {
                     Self::bg_menu_item(ui, PaletteSelection::RingMod, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::EnvelopeFollower, &mut selected);
@@ -1595,7 +1618,7 @@ impl PatchEditor {
             // Generative submenu
             let gen_color = category_color(ModuleCategory::LFO);
             ui.menu_button(
-                egui::RichText::new("🎲 Generative").color(gen_color),
+                egui::RichText::new(format!("{} Generative", ri::MAGIC_FILL)).color(gen_color),
                 |ui| {
                     Self::bg_menu_item(ui, PaletteSelection::Euclidean, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::TuringMachine, &mut selected);
@@ -1606,7 +1629,7 @@ impl PatchEditor {
             // Physical submenu
             let phys_color = category_color(ModuleCategory::PhysicalModeling);
             ui.menu_button(
-                egui::RichText::new("🎹 Physical").color(phys_color),
+                egui::RichText::new(format!("{} Physical", ri::PIANO_FILL)).color(phys_color),
                 |ui| {
                     Self::bg_menu_item(ui, PaletteSelection::KeyboardPanner, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::BodyResonance, &mut selected);
@@ -2948,140 +2971,236 @@ pub enum PaletteSelection {
     SignalMonitor,
 }
 
-/// Get the display label (with icon) and category color for a palette selection.
-fn palette_label(selection: PaletteSelection) -> (&'static str, Color32) {
-    match selection {
+/// Get the display label (with Remix Icon) and category color for a palette selection.
+fn palette_label(selection: PaletteSelection) -> (String, Color32) {
+    use egui_remixicon::icons as ri;
+
+    let (icon, text, color) = match selection {
         // Oscillators
-        PaletteSelection::Category(ModuleCategory::Oscillator) => {
-            ("🎵 Oscillator", category_color(ModuleCategory::Oscillator))
-        }
-        PaletteSelection::MathOscillator => {
-            ("🔢 Math Osc", category_color(ModuleCategory::Oscillator))
-        }
-        PaletteSelection::SubOscillator => {
-            ("🔈 Sub Osc", category_color(ModuleCategory::Oscillator))
-        }
-        PaletteSelection::Noise => ("🌫 Noise", category_color(ModuleCategory::Oscillator)),
-        PaletteSelection::WavetableOsc => {
-            ("📊 Wavetable", category_color(ModuleCategory::Oscillator))
-        }
-        PaletteSelection::AdditiveOsc => {
-            ("🎶 Additive", category_color(ModuleCategory::Oscillator))
-        }
-        PaletteSelection::GranularOsc => {
-            ("🌾 Granular", category_color(ModuleCategory::Oscillator))
-        }
+        PaletteSelection::Category(ModuleCategory::Oscillator) => (
+            ri::MUSIC_2_FILL,
+            "Oscillator",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::MathOscillator => (
+            ri::FUNCTION_FILL,
+            "Math Osc",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::SubOscillator => (
+            ri::VOLUME_DOWN_FILL,
+            "Sub Osc",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::Noise => (
+            ri::SIGNAL_WIFI_FILL,
+            "Noise",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::WavetableOsc => (
+            ri::BAR_CHART_FILL,
+            "Wavetable",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::AdditiveOsc => (
+            ri::MUSIC_FILL,
+            "Additive",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::GranularOsc => (
+            ri::RHYTHM_FILL,
+            "Granular",
+            category_color(ModuleCategory::Oscillator),
+        ),
         // Simple categories
-        PaletteSelection::Category(ModuleCategory::Filter) => {
-            ("🔊 Filter", category_color(ModuleCategory::Filter))
-        }
-        PaletteSelection::Category(ModuleCategory::Envelope) => {
-            ("📈 Envelope", category_color(ModuleCategory::Envelope))
-        }
+        PaletteSelection::Category(ModuleCategory::Filter) => (
+            ri::FILTER_FILL,
+            "Filter",
+            category_color(ModuleCategory::Filter),
+        ),
+        PaletteSelection::Category(ModuleCategory::Envelope) => (
+            ri::LINE_CHART_FILL,
+            "Envelope",
+            category_color(ModuleCategory::Envelope),
+        ),
         PaletteSelection::Category(ModuleCategory::LFO) => {
-            ("〰 LFO", category_color(ModuleCategory::LFO))
+            (ri::PULSE_FILL, "LFO", category_color(ModuleCategory::LFO))
         }
-        PaletteSelection::Category(ModuleCategory::Amplifier) => {
-            ("🔉 VCA", category_color(ModuleCategory::Amplifier))
-        }
-        PaletteSelection::Category(ModuleCategory::Mixer) => {
-            ("🎚 Mixer", category_color(ModuleCategory::Mixer))
-        }
+        PaletteSelection::Category(ModuleCategory::Amplifier) => (
+            ri::VOLUME_UP_FILL,
+            "VCA",
+            category_color(ModuleCategory::Amplifier),
+        ),
+        PaletteSelection::Category(ModuleCategory::Mixer) => (
+            ri::EQUALIZER_FILL,
+            "Mixer",
+            category_color(ModuleCategory::Mixer),
+        ),
         // Effects
-        PaletteSelection::Effect(EffectType::Delay) => {
-            ("🔁 Delay", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Reverb) => {
-            ("🌊 Reverb", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Distortion) => {
-            ("🔥 Distortion", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Chorus) => {
-            ("🎭 Chorus", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Flanger) => {
-            ("🌀 Flanger", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Phaser) => {
-            ("🔄 Phaser", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Compressor) => {
-            ("📊 Compressor", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Eq) => {
-            ("🎛 EQ", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Waveshaper) => {
-            ("🔊 Waveshaper", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::BbdDelay) => {
-            ("📼 BBD Delay", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Limiter) => {
-            ("🧱 Limiter", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::MidSide) => {
-            ("↔ Mid/Side", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::Convolver) => {
-            ("🏛 Convolver", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::PhaseVocoder) => {
-            ("🔬 Phase Vocoder", category_color(ModuleCategory::Effect))
-        }
-        PaletteSelection::Effect(EffectType::FrequencyShifter) => {
-            ("🔀 Freq Shifter", category_color(ModuleCategory::Effect))
-        }
+        PaletteSelection::Effect(EffectType::Delay) => (
+            ri::REPEAT_FILL,
+            "Delay",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Reverb) => (
+            ri::SURROUND_SOUND_FILL,
+            "Reverb",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Distortion) => (
+            ri::FIRE_FILL,
+            "Distortion",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Chorus) => (
+            ri::SPEED_FILL,
+            "Chorus",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Flanger) => (
+            ri::TORNADO_FILL,
+            "Flanger",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Phaser) => (
+            ri::LOOP_LEFT_FILL,
+            "Phaser",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Compressor) => (
+            ri::DASHBOARD_FILL,
+            "Compressor",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Eq) => (
+            ri::EQUALIZER_2_FILL,
+            "EQ",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Waveshaper) => (
+            ri::PULSE_FILL,
+            "Waveshaper",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::BbdDelay) => (
+            ri::DISC_FILL,
+            "BBD Delay",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Limiter) => (
+            ri::STOP_FILL,
+            "Limiter",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::MidSide) => (
+            ri::ARROW_LEFT_RIGHT_FILL,
+            "Mid/Side",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::Convolver) => (
+            ri::SOUND_MODULE_FILL,
+            "Convolver",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::PhaseVocoder) => (
+            ri::MICROSCOPE_FILL,
+            "Phase Vocoder",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::FrequencyShifter) => (
+            ri::SHUFFLE_FILL,
+            "Freq Shifter",
+            category_color(ModuleCategory::Effect),
+        ),
         // Visualizers
         PaletteSelection::Visualizer(PaletteVisualizerType::Oscilloscope) => (
-            "📈 Oscilloscope",
+            ri::PULSE_LINE,
+            "Oscilloscope",
             category_color(ModuleCategory::Visualizer),
         ),
-        PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter) => {
-            ("📊 Level Meter", category_color(ModuleCategory::Visualizer))
-        }
-        PaletteSelection::Visualizer(PaletteVisualizerType::SpectrumAnalyzer) => {
-            ("📊 Spectrum", category_color(ModuleCategory::Visualizer))
-        }
+        PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter) => (
+            ri::BAR_CHART_2_FILL,
+            "Level Meter",
+            category_color(ModuleCategory::Visualizer),
+        ),
+        PaletteSelection::Visualizer(PaletteVisualizerType::SpectrumAnalyzer) => (
+            ri::SPECTRUM_FILL,
+            "Spectrum",
+            category_color(ModuleCategory::Visualizer),
+        ),
         PaletteSelection::SignalMonitor => (
-            "🔍 Signal Monitor",
+            ri::SEARCH_LINE,
+            "Signal Monitor",
             category_color(ModuleCategory::Visualizer),
         ),
         // Modulation
-        PaletteSelection::RingMod => ("🔔 Ring Mod", category_color(ModuleCategory::Utility)),
-        PaletteSelection::EnvelopeFollower => {
-            ("📈 Env Follower", category_color(ModuleCategory::Utility))
-        }
-        PaletteSelection::Mseg => ("📐 MSEG", category_color(ModuleCategory::Utility)),
-        PaletteSelection::KineticModulator => {
-            ("🏃 Kinetic Mod", category_color(ModuleCategory::Utility))
-        }
+        PaletteSelection::RingMod => (
+            ri::SWAP_FILL,
+            "Ring Mod",
+            category_color(ModuleCategory::Utility),
+        ),
+        PaletteSelection::EnvelopeFollower => (
+            ri::LINE_CHART_FILL,
+            "Env Follower",
+            category_color(ModuleCategory::Utility),
+        ),
+        PaletteSelection::Mseg => (
+            ri::NODE_TREE,
+            "MSEG",
+            category_color(ModuleCategory::Utility),
+        ),
+        PaletteSelection::KineticModulator => (
+            ri::SPEED_UP_FILL,
+            "Kinetic Mod",
+            category_color(ModuleCategory::Utility),
+        ),
         // Generative
-        PaletteSelection::Euclidean => ("⊕ Euclidean", category_color(ModuleCategory::LFO)),
-        PaletteSelection::TuringMachine => {
-            ("🔀 Turing Machine", category_color(ModuleCategory::LFO))
-        }
-        PaletteSelection::RandomGates => ("🎲 Random Gates", category_color(ModuleCategory::LFO)),
+        PaletteSelection::Euclidean => (
+            ri::RECORD_CIRCLE_FILL,
+            "Euclidean",
+            category_color(ModuleCategory::LFO),
+        ),
+        PaletteSelection::TuringMachine => (
+            ri::SHUFFLE_FILL,
+            "Turing Machine",
+            category_color(ModuleCategory::LFO),
+        ),
+        PaletteSelection::RandomGates => (
+            ri::MAGIC_FILL,
+            "Random Gates",
+            category_color(ModuleCategory::LFO),
+        ),
         // Physical modeling
         PaletteSelection::KeyboardPanner => (
-            "🎹 Keyboard Panner",
+            ri::PIANO_FILL,
+            "Keyboard Panner",
             category_color(ModuleCategory::PhysicalModeling),
         ),
         PaletteSelection::BodyResonance => (
-            "🪵 Body Resonance",
+            ri::SOUND_MODULE_FILL,
+            "Body Resonance",
             category_color(ModuleCategory::PhysicalModeling),
         ),
         PaletteSelection::MechanicalNoise => (
-            "🔧 Mechanical Noise",
+            ri::WRENCH_FILL,
+            "Mechanical Noise",
             category_color(ModuleCategory::PhysicalModeling),
         ),
         // Output / Utility
-        PaletteSelection::StereoOutput => ("🔈 Output", category_color(ModuleCategory::Output)),
-        PaletteSelection::ModMatrix => ("🔀 Mod Matrix", category_color(ModuleCategory::Utility)),
+        PaletteSelection::StereoOutput => (
+            ri::SPEAKER_FILL,
+            "Output",
+            category_color(ModuleCategory::Output),
+        ),
+        PaletteSelection::ModMatrix => (
+            ri::NODE_TREE,
+            "Mod Matrix",
+            category_color(ModuleCategory::Utility),
+        ),
         // Fallback for any other category
-        PaletteSelection::Category(cat) => ("Module", category_color(cat)),
-    }
+        PaletteSelection::Category(cat) => (ri::SOUND_MODULE_FILL, "Module", category_color(cat)),
+    };
+    (format!("{icon} {text}"), color)
 }
 
 /// Convert from core PortType to widget PortType.

@@ -210,7 +210,8 @@
       "Bash(pgrep:*)",
       "WebFetch(domain:institute.sfeir.com)",
       "Bash(npm update:*)",
-      "Bash($MCP:*)"
+      "Bash($MCP:*)",
+      "Bash(cargo fetch:*)"
     ],
     "deny": [],
     "ask": []

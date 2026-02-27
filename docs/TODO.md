@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.184.0)
+# TODO - Modular Synth (v0.185.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -96,14 +96,17 @@
   MCP builds patches via `session.add_module_with_id()` — positions are GUI-only state.
 
 ### 3.2 Switch to egui-remixicon for all icons
-- [ ] Add `egui-remixicon` dependency
-- [ ] **Test phase:** Replace one icon set (e.g., module category icons) and verify rendering
-- [ ] Replace module header icons (source/sink indicators, connectivity, power/bypass, close)
+- [x] Add `egui-remixicon` dependency
+- [x] **Test phase:** Replace one icon set (e.g., module category icons) and verify rendering
+- [x] Replace module header icons (source/sink indicators, connectivity, power/bypass, close)
+- [x] Replace File menu icons (New, Open, Save, Settings, Quit, Example Patches)
+- [x] Replace context menu icons (all palette items, submenu headers)
+- [x] Replace MIDI dropdown icons
+- [x] Replace instrument rack radio buttons
 - [ ] Replace transport controls (play/stop/seek)
 - [ ] Replace tab icons (Seq/AWE/Rack)
-- [ ] Replace all remaining emoji/Unicode symbols
-- Current icons: Mix of Unicode symbols and emoji — inconsistent across platforms.
-- Scope: ~30-40 icon replacements across patch_editor, keyboard, sequencer, awe_view.
+- [ ] Replace remaining emoji in sequencer/awe_view
+- Remaining: ~10 icon replacements in sequencer and awe_view.
 
 ### 3.3 Improve module knobs
 - [ ] Better visual design — consider: gradient fill, shadow, tick marks, value tooltip

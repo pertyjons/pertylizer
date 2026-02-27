@@ -65,6 +65,7 @@ eframe = { version = "0.33.3", default-features = false, features = [
 egui = { version = "0.33.3" }
 egui_extras = { version = "0.33.3" }
 egui-file-dialog = { version = "0.12.0" }
+egui-remixicon = { version = "0.33" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
