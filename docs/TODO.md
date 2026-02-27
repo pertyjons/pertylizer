@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.182.0)
+# TODO - Modular Synth (v0.183.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -40,11 +40,14 @@
 
 ## Priority 2 — UI Structure & Layout
 
-### 2.1 Replace context menus with top-bar menus
-- [ ] Remove the "Add module" row at top of Rack view
-- [ ] Move "Add module" to top menu bar with categorized submenus (Sources, Filters, Envelopes, Effects, etc.)
-- [ ] Move other right-click actions to appropriate top-bar menus
-- Benefit: More discoverable, consistent UX. Right-click can remain as shortcut.
+### 2.1 Remove module toolbar + improve right-click context menu
+- [x] **Remove the "Add module" toolbar** — the `TopBottomPanel::top("toolbar")` row below the menu bar. Move the Glide slider and module/connection counts into the menu bar (right-aligned section, Rack view only).
+- [x] **Rework the right-click context menu** in `patch_editor.rs`:
+  - Replace the current frameless buttons (Filter, Envelope, LFO, VCA, Mixer) with proper `ui.menu_button()` submenus or standard menu items with consistent styling
+  - All module categories should use `ui.menu_button()` with submenus when there are multiple choices, or a single `ui.button()` menu item when there's only one option (e.g. Output)
+  - Cable actions (Delete cable, Insert Signal Monitor) should also be proper menu items
+  - Translate remaining Swedish strings to English ("Ta bort sladd", "Stoppa in Signal Monitor")
+- [x] **Keep right-click as the primary way to add modules** — no "Add" menu in top menu bar needed
 
 ### 2.2 Keyboard area cleanup
 - [x] Fix gap between piano keys and visualizers (persistent spacing issue)

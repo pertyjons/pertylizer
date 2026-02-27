@@ -1,5 +1,14 @@
 # Version History
 
+## [0.183.0] - 2026-02-27
+### Remove module toolbar, improve right-click menu (TODO 2.1)
+- **Module toolbar removed** — `TopBottomPanel::top("toolbar")` row with `ModulePalette` buttons deleted, freeing vertical space
+- **Glide slider + module/connection counts moved to menu bar** — compact display in right-aligned section, Rack view only
+- **Right-click context menu reworked** — frameless buttons for Filter, Envelope, LFO, VCA, Mixer replaced with standard `ui.button()` for consistent styling; Output and Mod Matrix also fixed
+- **Swedish strings translated** — "Ta bort sladd" → "Delete cable", "Stoppa in Signal Monitor" → "Insert Signal Monitor"
+- **`ModulePalette` struct removed** — no longer needed; all module adding via right-click context menu
+- **Dead toolbar methods removed** — `add_module_of_category`, `add_voice_module_via_session`, 20+ `add_*_module` wrappers
+
 ## [0.182.0] - 2026-02-27
 ### Cleanup: remove debug module, English CLAUDE.md & README
 - **Debug module removed** (TODO 1.4) — `src/debug/` (GraphDebugger, VoiceDebugger, SequencerDebugger, SignalProbe, ~2100 lines), `debug-tools` feature, and example programs (`debug_graph.rs`, `midi_test.rs`) all removed. MCP tools provide the same inspection capabilities.

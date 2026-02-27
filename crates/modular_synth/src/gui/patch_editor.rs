@@ -1432,14 +1432,14 @@ impl PatchEditor {
 
                         // Cable actions (shown when right-clicking on a hovered cable)
                         if let Some(connection) = menu_cable {
-                            if ui.button("Ta bort sladd").clicked() {
+                            if ui.button("Delete cable").clicked() {
                                 self.connections.retain(|c| c != &connection);
                                 result.connections_to_remove.push(connection);
                                 self.calculate_connectivity();
                                 cable_action_taken = true;
                             }
 
-                            if ui.button("Stoppa in Signal Monitor").clicked() {
+                            if ui.button("Insert Signal Monitor").clicked() {
                                 self.connections.retain(|c| c != &connection);
                                 result.connections_to_remove.push(connection);
                                 result.insert_signal_monitor_at.push(connection);
@@ -1514,7 +1514,7 @@ impl PatchEditor {
                             },
                         );
 
-                        // Simple categories
+                        // Simple categories (single module type each)
                         let categories = [
                             (ModuleCategory::Filter, "🔊 Filter"),
                             (ModuleCategory::Envelope, "📈 Envelope"),
@@ -1524,13 +1524,7 @@ impl PatchEditor {
                         ];
                         for (cat, label) in categories {
                             let color = category_color(cat);
-                            if ui
-                                .add(
-                                    egui::Button::new(egui::RichText::new(label).color(color))
-                                        .frame(false),
-                                )
-                                .clicked()
-                            {
+                            if ui.button(egui::RichText::new(label).color(color)).clicked() {
                                 selected = Some(PaletteSelection::Category(cat));
                             }
                         }
@@ -1761,24 +1755,14 @@ impl PatchEditor {
                         // Output & Mod Matrix as direct buttons
                         let out_color = category_color(ModuleCategory::Output);
                         if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new("🔈 Output").color(out_color),
-                                )
-                                .frame(false),
-                            )
+                            .button(egui::RichText::new("🔈 Output").color(out_color))
                             .clicked()
                         {
                             selected = Some(PaletteSelection::StereoOutput);
                         }
                         let util_color = category_color(ModuleCategory::Utility);
                         if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new("🔀 Mod Matrix").color(util_color),
-                                )
-                                .frame(false),
-                            )
+                            .button(egui::RichText::new("🔀 Mod Matrix").color(util_color))
                             .clicked()
                         {
                             selected = Some(PaletteSelection::ModMatrix);
@@ -3190,9 +3174,6 @@ fn is_mod_choice_available(choice_id: &str, is_source: bool, analysis: &PatchAna
     }
 }
 
-/// Available modules that can be added.
-pub struct ModulePalette;
-
 // Re-export EffectType from commands for GUI use
 pub use synth_engine::commands::EffectType;
 
@@ -3234,254 +3215,6 @@ pub enum PaletteSelection {
     GranularOsc,
     KineticModulator,
     SignalMonitor,
-}
-
-impl ModulePalette {
-    /// Show the module palette (for adding new modules).
-    pub fn show(ui: &mut Ui) -> Option<PaletteSelection> {
-        let mut selected = None;
-
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Add Module:").color(theme().colors.text_secondary));
-
-            // Oscillator submenu (Basic, Math, Sub, Noise)
-            let osc_color = category_color(ModuleCategory::Oscillator);
-            ui.menu_button(
-                egui::RichText::new("🎵 Oscillator").color(osc_color),
-                |ui| {
-                    if ui.button("🎵 Basic").clicked() {
-                        selected = Some(PaletteSelection::Category(ModuleCategory::Oscillator));
-                        ui.close();
-                    }
-                    if ui.button("🔢 Math").clicked() {
-                        selected = Some(PaletteSelection::MathOscillator);
-                        ui.close();
-                    }
-                    if ui.button("🔈 Sub").clicked() {
-                        selected = Some(PaletteSelection::SubOscillator);
-                        ui.close();
-                    }
-                    if ui.button("🌫 Noise").clicked() {
-                        selected = Some(PaletteSelection::Noise);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("📊 Wavetable").clicked() {
-                        selected = Some(PaletteSelection::WavetableOsc);
-                        ui.close();
-                    }
-                    if ui.button("🎶 Additive").clicked() {
-                        selected = Some(PaletteSelection::AdditiveOsc);
-                        ui.close();
-                    }
-                    if ui.button("🌾 Granular").clicked() {
-                        selected = Some(PaletteSelection::GranularOsc);
-                        ui.close();
-                    }
-                },
-            );
-
-            let other_categories = [
-                (ModuleCategory::Filter, "Filter", "🔊"),
-                (ModuleCategory::Envelope, "Envelope", "📈"),
-                (ModuleCategory::LFO, "LFO", "〰"),
-                (ModuleCategory::Amplifier, "VCA", "🔉"),
-                (ModuleCategory::Mixer, "Mixer", "🎚"),
-            ];
-
-            for (category, name, icon) in other_categories {
-                let color = category_color(category);
-                let button = egui::Button::new(
-                    egui::RichText::new(format!("{} {}", icon, name)).color(color),
-                );
-
-                if ui.add(button).clicked() {
-                    selected = Some(PaletteSelection::Category(category));
-                }
-            }
-
-            // Effect submenu
-            let effect_color = category_color(ModuleCategory::Effect);
-            ui.menu_button(egui::RichText::new("✨ Effect").color(effect_color), |ui| {
-                if ui.button("🔁 Delay").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Delay));
-                    ui.close();
-                }
-                if ui.button("🌊 Reverb").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Reverb));
-                    ui.close();
-                }
-                if ui.button("🔥 Distortion").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Distortion));
-                    ui.close();
-                }
-                if ui.button("🎭 Chorus").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Chorus));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("🌀 Flanger").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Flanger));
-                    ui.close();
-                }
-                if ui.button("🔄 Phaser").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Phaser));
-                    ui.close();
-                }
-                if ui.button("📊 Compressor").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Compressor));
-                    ui.close();
-                }
-                if ui.button("🎛 EQ").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Eq));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("🔊 Waveshaper").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Waveshaper));
-                    ui.close();
-                }
-                if ui.button("📼 BBD Delay").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::BbdDelay));
-                    ui.close();
-                }
-                if ui.button("🧱 Limiter").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Limiter));
-                    ui.close();
-                }
-                if ui.button("↔ Mid/Side").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::MidSide));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("🏛 Convolver").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::Convolver));
-                    ui.close();
-                }
-                if ui.button("🔬 Phase Vocoder").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::PhaseVocoder));
-                    ui.close();
-                }
-                if ui.button("🔀 Freq Shifter").clicked() {
-                    selected = Some(PaletteSelection::Effect(EffectType::FrequencyShifter));
-                    ui.close();
-                }
-            });
-
-            // Visualizer submenu
-            let viz_color = category_color(ModuleCategory::Visualizer);
-            ui.menu_button(
-                egui::RichText::new("📊 Visualizer").color(viz_color),
-                |ui| {
-                    if ui.button("📈 Oscilloscope").clicked() {
-                        selected = Some(PaletteSelection::Visualizer(
-                            PaletteVisualizerType::Oscilloscope,
-                        ));
-                        ui.close();
-                    }
-                    if ui.button("📊 Level Meter").clicked() {
-                        selected = Some(PaletteSelection::Visualizer(
-                            PaletteVisualizerType::LevelMeter,
-                        ));
-                        ui.close();
-                    }
-                    if ui.button("📊 Spectrum").clicked() {
-                        selected = Some(PaletteSelection::Visualizer(
-                            PaletteVisualizerType::SpectrumAnalyzer,
-                        ));
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("🔍 Signal Monitor").clicked() {
-                        selected = Some(PaletteSelection::SignalMonitor);
-                        ui.close();
-                    }
-                },
-            );
-
-            // Modulation submenu
-            let mod_color = category_color(ModuleCategory::Utility);
-            ui.menu_button(
-                egui::RichText::new("🔀 Modulation").color(mod_color),
-                |ui| {
-                    if ui.button("🔔 Ring Mod").clicked() {
-                        selected = Some(PaletteSelection::RingMod);
-                        ui.close();
-                    }
-                    if ui.button("📈 Env Follower").clicked() {
-                        selected = Some(PaletteSelection::EnvelopeFollower);
-                        ui.close();
-                    }
-                    if ui.button("📐 MSEG").clicked() {
-                        selected = Some(PaletteSelection::Mseg);
-                        ui.close();
-                    }
-                    if ui.button("🏃 Kinetic Mod").clicked() {
-                        selected = Some(PaletteSelection::KineticModulator);
-                        ui.close();
-                    }
-                },
-            );
-
-            // Generative submenu
-            let gen_color = category_color(ModuleCategory::LFO);
-            ui.menu_button(
-                egui::RichText::new("🎲 Generative").color(gen_color),
-                |ui| {
-                    if ui.button("⊕ Euclidean").clicked() {
-                        selected = Some(PaletteSelection::Euclidean);
-                        ui.close();
-                    }
-                    if ui.button("🔀 Turing Machine").clicked() {
-                        selected = Some(PaletteSelection::TuringMachine);
-                        ui.close();
-                    }
-                    if ui.button("🎲 Random Gates").clicked() {
-                        selected = Some(PaletteSelection::RandomGates);
-                        ui.close();
-                    }
-                },
-            );
-
-            // Physical modeling submenu
-            let phys_color = category_color(ModuleCategory::PhysicalModeling);
-            ui.menu_button(
-                egui::RichText::new("🎹 Physical").color(phys_color),
-                |ui| {
-                    if ui.button("🎹 Keyboard Panner").clicked() {
-                        selected = Some(PaletteSelection::KeyboardPanner);
-                        ui.close();
-                    }
-                    if ui.button("🪵 Body Resonance").clicked() {
-                        selected = Some(PaletteSelection::BodyResonance);
-                        ui.close();
-                    }
-                    if ui.button("🔧 Mechanical Noise").clicked() {
-                        selected = Some(PaletteSelection::MechanicalNoise);
-                        ui.close();
-                    }
-                },
-            );
-
-            // Stereo Output button
-            let output_color = category_color(ModuleCategory::Output);
-            let output_button =
-                egui::Button::new(egui::RichText::new("🔈 Output").color(output_color));
-            if ui.add(output_button).clicked() {
-                selected = Some(PaletteSelection::StereoOutput);
-            }
-
-            // Mod Matrix button
-            let utility_color = category_color(ModuleCategory::Utility);
-            let mod_matrix_button =
-                egui::Button::new(egui::RichText::new("🔀 Mod Matrix").color(utility_color));
-            if ui.add(mod_matrix_button).clicked() {
-                selected = Some(PaletteSelection::ModMatrix);
-            }
-        });
-
-        selected
-    }
 }
 
 /// Convert from core PortType to widget PortType.

@@ -24,8 +24,7 @@ use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{
-    EffectType, ModulePalette, PaletteSelection, PaletteVisualizerType, PatchEditor,
-    QuickAddRequest,
+    EffectType, PaletteSelection, PaletteVisualizerType, PatchEditor, QuickAddRequest,
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
@@ -504,6 +503,39 @@ impl eframe::App for SynthApp {
                     }
                     ui.separator();
 
+                    // Glide + module/connection counts (Rack view only)
+                    if self.active_view == AppView::Rack {
+                        let (conn_count, module_count) = self
+                            .active_patch_editor_ref()
+                            .map(|e| (e.connections().len(), e.module_ids().len()))
+                            .unwrap_or((0, 0));
+                        ui.label(
+                            RichText::new(format!("M:{} C:{}", module_count, conn_count))
+                                .color(theme().colors.text_dim),
+                        );
+                        ui.separator();
+
+                        ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
+                        let glide_response = ui.add(
+                            egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
+                                .suffix(" s")
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| {
+                                    if v < 0.001 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{v:.2}s")
+                                    }
+                                }),
+                        );
+                        if glide_response.changed() {
+                            self.handle.send(EngineCommand::SetGlideTime(
+                                synth_core::Seconds::new(self.glide_time),
+                            ));
+                        }
+                        ui.separator();
+                    }
+
                     // Status indicators
                     let cpu = self.handle.cpu_usage();
                     let cpu_color = if cpu > 0.8 {
@@ -600,125 +632,6 @@ impl eframe::App for SynthApp {
                 });
             });
         });
-
-        // Toolbar for adding modules (only show in Rack view)
-        if self.active_view == AppView::Rack {
-            egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(selection) = ModulePalette::show(ui) {
-                        match selection {
-                            PaletteSelection::Category(category) => {
-                                self.add_module_of_category(category);
-                            }
-                            PaletteSelection::MathOscillator => {
-                                self.add_math_oscillator_module();
-                            }
-                            PaletteSelection::SubOscillator => {
-                                self.add_sub_oscillator_module();
-                            }
-                            PaletteSelection::Noise => {
-                                self.add_noise_module();
-                            }
-                            PaletteSelection::ModMatrix => {
-                                self.add_mod_matrix_module();
-                            }
-                            PaletteSelection::Effect(effect_type) => {
-                                self.add_effect_module(effect_type);
-                            }
-                            PaletteSelection::Visualizer(viz_type) => {
-                                self.add_visualizer_module(viz_type);
-                            }
-                            PaletteSelection::StereoOutput => {
-                                self.add_stereo_output_module();
-                            }
-                            // Modulation / Utility
-                            PaletteSelection::RingMod => {
-                                self.add_ring_mod_module();
-                            }
-                            PaletteSelection::EnvelopeFollower => {
-                                self.add_envelope_follower_module();
-                            }
-                            PaletteSelection::WavetableOsc => {
-                                self.add_wavetable_osc_module();
-                            }
-                            // Physical modeling
-                            PaletteSelection::KeyboardPanner => {
-                                self.add_keyboard_panner_module();
-                            }
-                            PaletteSelection::BodyResonance => {
-                                self.add_body_resonance_module();
-                            }
-                            PaletteSelection::MechanicalNoise => {
-                                self.add_mechanical_noise_module();
-                            }
-                            // New modules
-                            PaletteSelection::Mseg => {
-                                self.add_mseg_module();
-                            }
-                            PaletteSelection::AdditiveOsc => {
-                                self.add_additive_osc_module();
-                            }
-                            PaletteSelection::Euclidean => {
-                                self.add_euclidean_module();
-                            }
-                            PaletteSelection::TuringMachine => {
-                                self.add_turing_machine_module();
-                            }
-                            PaletteSelection::RandomGates => {
-                                self.add_random_gates_module();
-                            }
-                            PaletteSelection::GranularOsc => {
-                                self.add_granular_osc_module();
-                            }
-                            PaletteSelection::KineticModulator => {
-                                self.add_kinetic_modulator_module();
-                            }
-                            PaletteSelection::SignalMonitor => {
-                                self.add_signal_monitor_module();
-                            }
-                        }
-                    }
-
-                    ui.separator();
-
-                    // Glide/Portamento control
-                    ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
-                    let glide_response = ui.add(
-                        egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
-                            .suffix(" s")
-                            .fixed_decimals(2)
-                            .custom_formatter(|v, _| {
-                                if v < 0.001 {
-                                    "Off".to_string()
-                                } else {
-                                    format!("{:.2}s", v)
-                                }
-                            }),
-                    );
-                    if glide_response.changed() {
-                        self.handle
-                            .send(EngineCommand::SetGlideTime(synth_core::Seconds::new(
-                                self.glide_time,
-                            )));
-                    }
-
-                    ui.separator();
-
-                    // Connection info (from active instrument's patch editor)
-                    let (conn_count, module_count) = self
-                        .active_patch_editor_ref()
-                        .map(|e| (e.connections().len(), e.module_ids().len()))
-                        .unwrap_or((0, 0));
-                    ui.label(
-                        RichText::new(format!(
-                            "Modules: {} | Connections: {}",
-                            module_count, conn_count
-                        ))
-                        .color(theme().colors.text_dim),
-                    );
-                });
-            });
-        } // end if Rack view - toolbar
 
         // Bottom panel with keyboard (always visible)
         egui::TopBottomPanel::bottom("keyboard_panel")
@@ -1024,143 +937,6 @@ impl eframe::App for SynthApp {
 }
 
 impl SynthApp {
-    /// Add a new module of the given category via session.
-    fn add_module_of_category(&mut self, category: ModuleCategory) {
-        let module_type = match category {
-            ModuleCategory::Oscillator => TypedModuleType::Oscillator,
-            ModuleCategory::Filter => TypedModuleType::Filter,
-            ModuleCategory::Envelope => TypedModuleType::Envelope,
-            ModuleCategory::LFO => TypedModuleType::Lfo,
-            ModuleCategory::Amplifier => TypedModuleType::Amplifier,
-            ModuleCategory::Mixer => TypedModuleType::Mixer,
-            _ => return,
-        };
-
-        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
-            return;
-        };
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-    }
-
-    /// Add a voice module of the given type via session.
-    fn add_voice_module_via_session(&mut self, module_type: TypedModuleType) {
-        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
-            return;
-        };
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-    }
-
-    fn add_math_oscillator_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::MathOscillator);
-    }
-
-    fn add_sub_oscillator_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::SubOscillator);
-    }
-
-    fn add_noise_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::Noise);
-    }
-
-    fn add_mod_matrix_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::ModMatrix);
-    }
-
-    fn add_keyboard_panner_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::KeyboardPanner);
-    }
-
-    fn add_body_resonance_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::BodyResonance);
-    }
-
-    fn add_mechanical_noise_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::MechanicalNoise);
-    }
-
-    fn add_ring_mod_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::RingMod);
-    }
-
-    fn add_envelope_follower_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::EnvelopeFollower);
-    }
-
-    fn add_wavetable_osc_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::WavetableOsc);
-    }
-
-    fn add_mseg_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::Mseg);
-    }
-
-    fn add_additive_osc_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::AdditiveOsc);
-    }
-
-    fn add_euclidean_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::Euclidean);
-    }
-
-    fn add_turing_machine_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::TuringMachine);
-    }
-
-    fn add_random_gates_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::RandomGates);
-    }
-
-    fn add_granular_osc_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::GranularOsc);
-    }
-
-    fn add_kinetic_modulator_module(&mut self) {
-        self.add_voice_module_via_session(TypedModuleType::KineticModulator);
-    }
-
-    fn add_signal_monitor_module(&mut self) {
-        // SignalMonitor needs GUI-specific VisualizationBuffer — create directly
-        let mut m = synth_modules::SignalMonitor::new();
-        let descriptor = m.descriptor();
-
-        // Use session for ID generation only (not add_module since it would create a second instance)
-        let next_id = {
-            use synth_core::ModuleType;
-            let mut counters = self.session.counters_lock();
-            let counter = counters
-                .entry((self.active_instrument_id, ModuleType::SignalMonitor))
-                .or_insert(0);
-            *counter += 1;
-            ModuleId::new(TypedModuleType::SignalMonitor, *counter)
-        };
-        // Register in session so reconciliation doesn't remove it
-        self.session
-            .register_descriptor(self.active_instrument_id, next_id, descriptor.clone());
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        // Create shared vis buffer and inject into module as trait object
-        let buffer = std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-        self.handle
-            .add_visualization_buffer(next_id, buffer.clone());
-        m.set_vis_sink(buffer);
-
-        let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-        self.handle.send(EngineCommand::AddModuleInstance {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            module,
-        });
-    }
-
     /// Handle a quick-add request: create module via session, place it, and auto-connect.
     fn handle_quick_add(
         session: &crate::session::SynthSession,
@@ -1512,94 +1288,6 @@ impl SynthApp {
                 }
             }
         }
-    }
-
-    fn add_effect_module(&mut self, effect_type: EffectType) {
-        let module_type = match effect_type {
-            EffectType::Delay => TypedModuleType::Delay,
-            EffectType::Reverb => TypedModuleType::Reverb,
-            EffectType::Distortion => TypedModuleType::Distortion,
-            EffectType::Chorus => TypedModuleType::Chorus,
-            EffectType::Phaser => TypedModuleType::Phaser,
-            EffectType::Flanger => TypedModuleType::Flanger,
-            EffectType::Compressor => TypedModuleType::Compressor,
-            EffectType::Eq => TypedModuleType::Eq,
-            EffectType::Waveshaper => TypedModuleType::Waveshaper,
-            EffectType::MidSide => TypedModuleType::MidSide,
-            EffectType::BbdDelay => TypedModuleType::BbdDelay,
-            EffectType::Limiter => TypedModuleType::Limiter,
-            EffectType::Convolver => TypedModuleType::Convolver,
-            EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
-            EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
-        };
-
-        let Some((next_id, descriptor)) = self.session_add_module(module_type) else {
-            return;
-        };
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-    }
-
-    fn add_visualizer_module(&mut self, viz_type: PaletteVisualizerType) {
-        let (descriptor, module_type) = match viz_type {
-            PaletteVisualizerType::Oscilloscope => (
-                Oscilloscope::new().descriptor(),
-                TypedModuleType::Oscilloscope,
-            ),
-            PaletteVisualizerType::LevelMeter => {
-                (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
-            }
-            PaletteVisualizerType::SpectrumAnalyzer => (
-                SpectrumAnalyzer::new().descriptor(),
-                TypedModuleType::SpectrumAnalyzer,
-            ),
-        };
-
-        // Visualizers need GUI-specific VisualizationBuffer — use session for ID only
-        let next_id = {
-            use synth_core::ModuleType;
-            let mt = match viz_type {
-                PaletteVisualizerType::Oscilloscope => ModuleType::Oscilloscope,
-                PaletteVisualizerType::LevelMeter => ModuleType::LevelMeter,
-                PaletteVisualizerType::SpectrumAnalyzer => ModuleType::SpectrumAnalyzer,
-            };
-            let mut counters = self.session.counters_lock();
-            let counter = counters.entry((self.active_instrument_id, mt)).or_insert(0);
-            *counter += 1;
-            ModuleId::new(module_type, *counter)
-        };
-        let Some(editor) = self.active_patch_editor() else {
-            return;
-        };
-        editor.add_module(next_id, descriptor);
-
-        // Create shared visualization buffer wrapped in Arc
-        let buffer = std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-
-        // Store Arc clone in our handle for GUI access (same buffer!)
-        self.handle
-            .add_visualization_buffer(next_id, buffer.clone());
-
-        // Convert GUI PaletteVisualizerType to engine VisualizerType
-        let engine_viz_type = match viz_type {
-            PaletteVisualizerType::Oscilloscope => {
-                synth_engine::commands::VisualizerType::Oscilloscope
-            }
-            PaletteVisualizerType::LevelMeter => synth_engine::commands::VisualizerType::LevelMeter,
-            PaletteVisualizerType::SpectrumAnalyzer => {
-                synth_engine::commands::VisualizerType::SpectrumAnalyzer
-            }
-        };
-
-        // Send command to active instrument's effect chain
-        self.handle.send(EngineCommand::AddVisualizer {
-            instrument_id: Some(self.active_instrument_id),
-            id: next_id,
-            visualizer_type: engine_viz_type,
-            buffer,
-        });
     }
 
     fn add_stereo_output_module(&mut self) {
