@@ -902,6 +902,7 @@ fn draw_arrangement(
 
             // ── Right-click context menu on timeline ──
             response.context_menu(|ui| {
+                ui.set_min_width(180.0);
                 let click_pos = ui.min_rect().min;
                 // Determine which track row was clicked
                 let hover_pos = ui.ctx().pointer_hover_pos().unwrap_or(click_pos);
