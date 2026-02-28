@@ -1,5 +1,34 @@
 # Version History
 
+## [0.193.0] - 2026-02-28
+### Group templates, MCP auto layout, settings expansion
+
+**Group templates:**
+- **Save Group as Template** — right-click a group header → "Save as Template" to export as JSON with metadata (name, description, category)
+- **Group Template Browser** — insert saved templates via right-click on background → "Insert Template", with search filter and category display
+- **Template instantiation** — full ID remapping so templates can be inserted multiple times without conflicts
+- **`GroupTemplateManager`** — scans template directory, loads/saves group template JSON files
+- **New types:** `GroupTemplate`, `GroupCategory` in patch.rs
+
+**MCP auto layout:**
+- **New `auto_layout` MCP tool** — triggers GUI auto-layout of modules via `pending_auto_layout` AtomicBool on `McpSharedState`
+- GUI polls the flag each frame and applies layout with actual rendered sizes
+
+**Settings expansion:**
+- **`DirectorySettings`** in `AppSettings` — stores custom patches dir, last open/save dirs
+- **File dialogs remember last directory** — Open/Save start in last-used directory
+- **Directories section in Settings dialog** — shows patches dir (with Reset) and settings file path
+- **Renamed "Close" to "Save & Close"** in Settings dialog
+
+## [0.192.0] - 2026-02-28
+### Settings expansion — directories & file dialog memory
+- **Added `DirectorySettings`** to `AppSettings` — stores custom patches dir, last open dir, last save dir
+- **File dialogs remember last directory** — Open and Save dialogs now start in the last-used directory
+- **Directories section in Settings dialog** — shows patches directory (with Reset button) and settings file path
+- **Renamed "Close" to "Save & Close"** in Settings dialog for clarity
+- **Made `settings_path()` public** so the dialog can display it
+- **Fallback chain** for initial directory: last used dir → custom patches dir → default patches dir
+
 ## [0.191.0] - 2026-02-28
 ### Group menu icon replaces right-click
 - **Added ⋯ (more) icon** to both expanded and collapsed group headers for accessing rename, color, ungroup, and delete actions

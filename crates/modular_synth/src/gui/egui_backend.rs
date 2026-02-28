@@ -16,21 +16,25 @@ use eframe::egui::{self, Color32, Pos2, RichText, Stroke, Vec2};
 use crate::audio::AudioHostTrait;
 use crate::gui::app::state::AppView;
 use crate::gui::dialogs::{
-    DialogState, FileDialogMode, FileDialogResult, LoadPatchResult, show_about_dialog,
-    show_load_patch_dialog, show_settings_dialog, show_status_toast,
+    DialogState, FileDialogMode, FileDialogResult, GroupTemplateBrowserResult, LoadPatchResult,
+    SaveGroupTemplateResult, SettingsAction, show_about_dialog, show_group_template_browser,
+    show_load_patch_dialog, show_save_group_template_dialog, show_settings_dialog,
+    show_status_toast,
 };
 use crate::gui::input::handle_keyboard_input;
 use crate::gui::instrument_rack::{InstrumentUiState, show_instrument_rack};
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{
-    EffectType, PaletteSelection, PaletteVisualizerType, PatchEditor, QuickAddRequest,
+    EffectType, GroupTemplateAction, PaletteSelection, PaletteVisualizerType, PatchEditor,
+    QuickAddRequest,
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
-use crate::io::MidiHandler;
-use crate::patch::{Patch, categorized_patches};
+use crate::io::settings::AppSettings;
+use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
+use crate::patch::{GroupCategory, Patch, categorized_patches};
 use synth_core::Velocity;
 #[cfg(feature = "mcp")]
 use synth_core::{BipolarValue, Gain};
@@ -424,6 +428,16 @@ impl eframe::App for SynthApp {
             }
         }
 
+        // Poll MCP pending auto-layout
+        #[cfg(feature = "mcp")]
+        let mcp_auto_layout = self.mcp_shared.as_ref().is_some_and(|shared| {
+            shared
+                .pending_auto_layout
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+        });
+        #[cfg(not(feature = "mcp"))]
+        let mcp_auto_layout = false;
+
         // Reconcile with session: detect modules added/removed by MCP
         #[cfg(feature = "mcp")]
         self.reconcile_with_session();
@@ -451,7 +465,9 @@ impl eframe::App for SynthApp {
                         .button(format!("{} Open Patch...", ri::FOLDER_OPEN_LINE))
                         .clicked()
                     {
-                        self.dialog_state.open_open_patch_dialog();
+                        let initial_dir = self.resolve_open_dir();
+                        self.dialog_state
+                            .open_open_patch_dialog(initial_dir.as_deref());
                         ui.close();
                     }
                     if ui
@@ -469,7 +485,9 @@ impl eframe::App for SynthApp {
                             "{}.json",
                             self.current_patch_name.to_lowercase().replace(' ', "_")
                         );
-                        self.dialog_state.open_save_patch_dialog(&default_name);
+                        let initial_dir = self.resolve_save_dir();
+                        self.dialog_state
+                            .open_save_patch_dialog(&default_name, initial_dir.as_deref());
                         ui.close();
                     }
                     ui.separator();
@@ -493,6 +511,9 @@ impl eframe::App for SynthApp {
                         .button(format!("{} Settings...", ri::SETTINGS_LINE))
                         .clicked()
                     {
+                        // Reload settings from disk to pick up changes
+                        // made outside the dialog (e.g. last_open_dir)
+                        self.settings = AppSettings::load();
                         self.dialog_state.show_settings = true;
                         ui.close();
                     }
@@ -1017,8 +1038,28 @@ impl eframe::App for SynthApp {
                 );
             }
 
-            // Handle auto-layout request
-            if result.request_auto_layout
+            // Handle group template actions (open browser / save template)
+            if let Some(action) = result.group_template_action {
+                match action {
+                    GroupTemplateAction::OpenBrowser { drop_pos } => {
+                        self.dialog_state.show_group_templates = true;
+                        self.dialog_state.group_template_drop_pos = Some(drop_pos);
+                        self.dialog_state.group_template_selected = None;
+                    }
+                    GroupTemplateAction::SaveGroup { group_id } => {
+                        self.dialog_state.show_save_group_template = true;
+                        self.dialog_state.group_template_save_group = Some(group_id);
+                        if let Some(name) = patch_editor.group_name(group_id) {
+                            self.dialog_state.group_template_save_name = name;
+                        }
+                        self.dialog_state.group_template_save_description.clear();
+                        self.dialog_state.group_template_save_category = GroupCategory::default();
+                    }
+                }
+            }
+
+            // Handle auto-layout request (from GUI menu or MCP)
+            if (result.request_auto_layout || mcp_auto_layout)
                 && let Some(canvas_rect) = result.canvas_rect
             {
                 patch_editor.apply_auto_layout(canvas_rect);
@@ -1567,13 +1608,20 @@ impl SynthApp {
         self.dialog_state.update();
 
         // Settings dialog
-        if show_settings_dialog(
+        match show_settings_dialog(
             ctx,
             &mut self.dialog_state.show_settings,
             &mut self.dialog_state.current_theme,
             &mut self.settings,
         ) {
-            self.settings.save();
+            SettingsAction::LiveChange | SettingsAction::SaveAndClose => {
+                self.settings.save();
+            }
+            SettingsAction::CloseWithoutSave => {
+                // Discard unsaved edits by reloading from disk
+                self.settings = AppSettings::load();
+            }
+            SettingsAction::None => {}
         }
 
         // About dialog
@@ -1590,10 +1638,111 @@ impl SynthApp {
             LoadPatchResult::Cancelled | LoadPatchResult::None => {}
         }
 
+        // Group template browser dialog
+        if self.dialog_state.show_group_templates {
+            let manager = GroupTemplateManager::default();
+            let templates = manager.list_templates().unwrap_or_default();
+            match show_group_template_browser(
+                ctx,
+                &mut self.dialog_state.show_group_templates,
+                &templates,
+                &mut self.dialog_state.group_template_search,
+                &mut self.dialog_state.group_template_selected,
+            ) {
+                GroupTemplateBrowserResult::Selected(path) => {
+                    match manager.load_template(&path) {
+                        Ok(template) => {
+                            self.insert_group_template(&template);
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Error loading template: {e}"));
+                        }
+                    }
+                    self.dialog_state.group_template_selected = None;
+                }
+                GroupTemplateBrowserResult::Browse => {
+                    let initial_dir = self.resolve_group_templates_dir();
+                    self.dialog_state
+                        .open_open_group_template_dialog(initial_dir.as_deref());
+                    self.dialog_state.group_template_selected = None;
+                }
+                GroupTemplateBrowserResult::Cancelled => {
+                    self.dialog_state.group_template_drop_pos = None;
+                    self.dialog_state.group_template_selected = None;
+                }
+                GroupTemplateBrowserResult::None => {}
+            }
+        }
+
+        // Save group template dialog
+        if self.dialog_state.show_save_group_template {
+            match show_save_group_template_dialog(
+                ctx,
+                &mut self.dialog_state.show_save_group_template,
+                &mut self.dialog_state.group_template_save_name,
+                &mut self.dialog_state.group_template_save_description,
+                &mut self.dialog_state.group_template_save_category,
+            ) {
+                SaveGroupTemplateResult::Save => {
+                    let group_id = self.dialog_state.group_template_save_group;
+                    if let (Some(group_id), Some(editor)) =
+                        (group_id, self.active_patch_editor_ref())
+                    {
+                        let author = self.settings.author.name.trim();
+                        let author = if author.is_empty() {
+                            None
+                        } else {
+                            Some(author.to_string())
+                        };
+                        let description = self
+                            .dialog_state
+                            .group_template_save_description
+                            .trim()
+                            .to_string();
+                        let description = if description.is_empty() {
+                            None
+                        } else {
+                            Some(description)
+                        };
+                        let template = editor.build_group_template(
+                            group_id,
+                            Some(self.dialog_state.group_template_save_category),
+                            description,
+                            author,
+                        );
+                        if let Some(template) = template {
+                            let manager = GroupTemplateManager::default();
+                            match manager.save_template(&template) {
+                                Ok(path) => {
+                                    self.dialog_state
+                                        .set_status(format!("Saved template: {}", path.display()));
+                                }
+                                Err(e) => {
+                                    self.dialog_state
+                                        .set_status(format!("Error saving template: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    self.dialog_state.group_template_save_group = None;
+                }
+                SaveGroupTemplateResult::Cancelled => {
+                    self.dialog_state.group_template_save_group = None;
+                }
+                SaveGroupTemplateResult::None => {}
+            }
+        }
+
         // File dialog (open/save/import)
         if let Some(result) = self.dialog_state.update_file_dialog(ctx) {
             match result {
                 FileDialogResult::Picked(path, Some(FileDialogMode::OpenPatch)) => {
+                    // Remember the directory for next time
+                    if let Some(parent) = path.parent() {
+                        self.settings.directories.last_open_dir = Some(parent.to_path_buf());
+                        self.settings.save();
+                    }
                     match Patch::load(&path) {
                         Ok(patch) => {
                             self.load_patch_data(&patch);
@@ -1608,6 +1757,11 @@ impl SynthApp {
                     }
                 }
                 FileDialogResult::Saved(path, Some(FileDialogMode::SavePatch)) => {
+                    // Remember the directory for next time
+                    if let Some(parent) = path.parent() {
+                        self.settings.directories.last_save_dir = Some(parent.to_path_buf());
+                        self.settings.save();
+                    }
                     if let Some(patch) = self.create_patch_from_rack() {
                         if let Err(e) = patch.save(&path) {
                             self.dialog_state.set_status(format!("Error saving: {e}"));
@@ -1625,12 +1779,83 @@ impl SynthApp {
                         }
                     }
                 }
+                FileDialogResult::Picked(path, Some(FileDialogMode::OpenGroupTemplate)) => {
+                    let manager = GroupTemplateManager::default();
+                    match manager.load_template(&path) {
+                        Ok(template) => {
+                            self.insert_group_template(&template);
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Error loading template: {e}"));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
 
         // Status message toast
         show_status_toast(ctx, &mut self.dialog_state);
+    }
+
+    /// Resolve the initial directory for the Open file dialog.
+    ///
+    /// Priority: last open dir > custom patches dir > default patches dir.
+    fn resolve_open_dir(&self) -> Option<PathBuf> {
+        self.settings
+            .directories
+            .last_open_dir
+            .clone()
+            .or_else(|| self.settings.directories.patches_dir.clone())
+            .or_else(|| PatchManager::default_patches_dir().ok())
+    }
+
+    /// Resolve the initial directory for the Save file dialog.
+    ///
+    /// Priority: last save dir > custom patches dir > default patches dir.
+    fn resolve_save_dir(&self) -> Option<PathBuf> {
+        self.settings
+            .directories
+            .last_save_dir
+            .clone()
+            .or_else(|| self.settings.directories.patches_dir.clone())
+            .or_else(|| PatchManager::default_patches_dir().ok())
+    }
+
+    /// Resolve the initial directory for the Group Template file dialog.
+    fn resolve_group_templates_dir(&self) -> Option<PathBuf> {
+        GroupTemplateManager::default_templates_dir().ok()
+    }
+
+    /// Insert a group template at the last remembered drop position.
+    fn insert_group_template(&mut self, template: &crate::patch::GroupTemplate) {
+        let drop_pos = self
+            .dialog_state
+            .group_template_drop_pos
+            .take()
+            .unwrap_or(Pos2::new(100.0, 100.0));
+        let active_id = self.active_instrument_id;
+        let session = self.session.clone();
+        let (handle, instruments) = (&mut self.handle, &mut self.instruments);
+        if let Some(editor) = instruments
+            .iter_mut()
+            .find(|i| i.id == active_id)
+            .map(|i| &mut i.patch_editor)
+        {
+            match patch_bridge::insert_group_template(
+                template, drop_pos, editor, &session, handle, active_id,
+            ) {
+                Ok(_) => {
+                    self.dialog_state
+                        .set_status(format!("Inserted template: {}", template.name));
+                }
+                Err(e) => {
+                    self.dialog_state
+                        .set_status(format!("Template insert failed: {e}"));
+                }
+            }
+        }
     }
 
     /// Load a patch into the active instrument's rack view.

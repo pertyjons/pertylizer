@@ -12,7 +12,9 @@ use eframe::egui::Pos2;
 
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
-use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch};
+use crate::patch::{
+    ConnectionState, ExposedPortState, GroupId, GroupTemplate, ModuleState, ParamValue, Patch,
+};
 use crate::session::SynthSession;
 use synth_core::ModuleType;
 use synth_core::{Describable, ModuleDescriptor};
@@ -438,4 +440,176 @@ pub fn get_effect_type_from_module(
     module_id: ModuleId,
 ) -> Option<EffectType> {
     EffectType::from_module_type(module_id.module_type)
+}
+
+/// Insert a group template into an existing instrument, remapping all IDs.
+///
+/// `drop_pos` is the top-left origin (world coords) where the template's
+/// internal layout should be placed.
+pub fn insert_group_template(
+    template: &GroupTemplate,
+    drop_pos: Pos2,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+) -> Result<GroupId, String> {
+    use crate::gui::patch_editor::ExposedPort;
+    use synth_core::PortName;
+
+    if template.modules.is_empty() {
+        return Err("Template has no modules".to_string());
+    }
+
+    let mut id_map: HashMap<String, ModuleId> = HashMap::new();
+    let mut new_members: Vec<ModuleId> = Vec::new();
+
+    // Helper to allocate a new module ID for this instrument/type.
+    let next_id = |module_type: ModuleType| {
+        let mut counters = session.counters_lock();
+        let counter = counters.entry((instrument_id, module_type)).or_insert(0);
+        *counter += 1;
+        ModuleId::new(module_type, *counter)
+    };
+
+    for module_state in &template.modules {
+        let module_type = module_state.module_type;
+        let module_id = next_id(module_type);
+        let position = Pos2::new(
+            module_state.position.0 + drop_pos.x,
+            module_state.position.1 + drop_pos.y,
+        );
+
+        let descriptor = match module_type {
+            ModuleType::SignalMonitor => {
+                let mut m = synth_modules::SignalMonitor::new();
+                let d = m.descriptor();
+                session.register_descriptor(instrument_id, module_id, d.clone());
+                patch_editor.add_module_at(module_id, d.clone(), position);
+
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                m.set_vis_sink(buffer);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    module: Box::new(m),
+                });
+                d
+            }
+            ModuleType::Oscilloscope => {
+                let descriptor = Oscilloscope::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::Oscilloscope,
+                    buffer,
+                });
+                descriptor
+            }
+            ModuleType::LevelMeter => {
+                let descriptor = LevelMeter::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::LevelMeter,
+                    buffer,
+                });
+                descriptor
+            }
+            ModuleType::SpectrumAnalyzer => {
+                let descriptor = SpectrumAnalyzer::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                    buffer,
+                });
+                descriptor
+            }
+            _ => {
+                let descriptor = session
+                    .add_module_with_id(instrument_id, module_id, module_type)
+                    .map_err(|e| format!("Failed to create module {module_type:?}: {e}"))?;
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                descriptor
+            }
+        };
+
+        let effect_type = EffectType::from_module_type(module_type);
+        apply_module_parameters(
+            module_id,
+            &descriptor,
+            &module_state.parameters,
+            effect_type,
+            patch_editor,
+            handle,
+            instrument_id,
+        );
+
+        id_map.insert(module_state.id.clone(), module_id);
+        new_members.push(module_id);
+    }
+
+    // Add connections with remapped IDs
+    for conn in &template.connections {
+        let Some(from_id) = id_map.get(&conn.from.0) else {
+            continue;
+        };
+        let Some(to_id) = id_map.get(&conn.to.0) else {
+            continue;
+        };
+        let connection = Connection::new(*from_id, &*conn.from.1, *to_id, &*conn.to.1);
+        patch_editor.add_connection(connection);
+        let _ = session.connect(
+            instrument_id,
+            connection.from_module,
+            connection.from_port,
+            connection.to_module,
+            connection.to_port,
+        );
+    }
+
+    // Map exposed ports to new IDs
+    let map_port = |p: &ExposedPortState| -> Option<ExposedPort> {
+        let new_id = *id_map.get(&p.module_id)?;
+        let port_name: PortName = p.port.clone().into();
+        Some(ExposedPort {
+            label: p.label.clone(),
+            module_id: new_id,
+            port_name,
+        })
+    };
+
+    let exposed_inputs: Vec<ExposedPort> = template
+        .exposed_inputs
+        .iter()
+        .filter_map(map_port)
+        .collect();
+    let exposed_outputs: Vec<ExposedPort> = template
+        .exposed_outputs
+        .iter()
+        .filter_map(map_port)
+        .collect();
+
+    let group_id = patch_editor.insert_group(
+        template.name.clone(),
+        template.color.clone(),
+        new_members,
+        exposed_inputs,
+        exposed_outputs,
+        false,
+        drop_pos,
+    );
+
+    Ok(group_id)
 }

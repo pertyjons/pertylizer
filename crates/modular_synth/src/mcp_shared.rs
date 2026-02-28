@@ -21,6 +21,8 @@ pub struct McpSharedState {
     pub mcp_listening: AtomicBool,
     /// Number of active MCP sessions. Wrapped in Arc so it can be shared with the MCP server.
     pub mcp_active_sessions: Arc<AtomicUsize>,
+    /// Auto-layout requested by MCP (consumed by GUI each frame).
+    pub pending_auto_layout: AtomicBool,
 }
 
 impl McpSharedState {
@@ -32,6 +34,7 @@ impl McpSharedState {
             song: Arc::new(RwLock::new(Song::new("Untitled"))),
             mcp_listening: AtomicBool::new(false),
             mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
+            pending_auto_layout: AtomicBool::new(false),
         }
     }
 
@@ -44,6 +47,7 @@ impl McpSharedState {
             song,
             mcp_listening: AtomicBool::new(false),
             mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
+            pending_auto_layout: AtomicBool::new(false),
         }
     }
 

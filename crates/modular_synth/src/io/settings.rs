@@ -23,8 +23,23 @@ pub struct AppSettings {
     /// Composer / author information.
     pub author: AuthorInfo,
 
+    /// Directory preferences.
+    pub directories: DirectorySettings,
+
     /// Main window state.
     pub window: WindowSettings,
+}
+
+/// Directory preferences for file dialogs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DirectorySettings {
+    /// Custom patches directory (None = platform default).
+    pub patches_dir: Option<PathBuf>,
+    /// Last directory used for opening patches.
+    pub last_open_dir: Option<PathBuf>,
+    /// Last directory used for saving patches.
+    pub last_save_dir: Option<PathBuf>,
 }
 
 /// Author / composer information embedded in saved songs.
@@ -106,7 +121,7 @@ impl AppSettings {
 }
 
 /// Platform-appropriate settings file path.
-fn settings_path() -> Result<PathBuf, &'static str> {
+pub fn settings_path() -> Result<PathBuf, &'static str> {
     let base = dirs::data_dir()
         .or_else(dirs::home_dir)
         .ok_or("could not determine home directory")?;

@@ -1,12 +1,15 @@
-# TODO - Modular Synth (v0.191.0)
+# TODO - Modular Synth (v0.193.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
 ### 1.1 Settings expansion
-- [ ] Remember last used directory when loading/saving patches
-- [ ] Show all directory paths in Settings dialog (patches, settings file, etc.) with ability to change them
-- [ ] Add explicit Save button in Settings dialog
-- [ ] Show the settings file path in Settings dialog
+- [x] Remember last used directory when loading/saving patches
+- [x] Show all directory paths in Settings dialog (patches, settings file, etc.) with ability to change them
+- [x] Show group templates directory in Settings dialog
+- [x] Add explicit Save button in Settings dialog
+- [x] Show the settings file path in Settings dialog
+- [x] Auto-save last used directory to settings when loading or saving a patch
+- [ ] Add Browse button in Settings dialog to change patches directory (needs `rfd` dependency or reuse `egui-file-dialog` with directory picker)
 
 ### 1.2 Undo/Redo
 - [ ] Implement undo/redo for module operations (add, delete, move, parameter changes)
@@ -22,6 +25,13 @@
 - [ ] Render arrangement to WAV file (offline, faster-than-realtime)
 - [ ] Export dialog: file path, sample rate, bit depth, duration/range
 - [ ] Progress bar during render
+
+### 1.5 Template library (groups + patches) — see `docs/Template-Library-Plan.md`
+- [x] Show all group templates from the template directory in one list (no curated/user split)
+- [x] Add `Save as Template` in Group Modules menu (write group template JSON with metadata)
+- [ ] Add patch template directory and `Save Patch as Template` action
+- [ ] Add Patch Template browser (or File menu section) to load patch templates
+- [ ] Support optional `license` and `min_app_version` metadata in group templates
 
 ---
 
@@ -48,8 +58,9 @@
 - [x] Phase 1: Rename groups + group color picker
 - [x] Phase 1: Group port rendering (hover + connected state)
 - [x] Phase 1: Collapsed group ports mirror module orientation + expand/collapse icon
-- [ ] Phase 2: Group templates (format, storage, browser)
-- [ ] Phase 2: Template instantiation with full ID remapping + drop-point layout
+- [x] Phase 2: Group templates (format, storage, browser)
+- [x] Phase 2: Template instantiation with full ID remapping + drop-point layout
+- [x] Phase 2: Group template browser supports file picker (Browse...)
 - [ ] Phase 2: Template variants (parameter presets with remap)
 - [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
 - [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type
@@ -154,5 +165,12 @@
 
 ### Reduce module-type registration boilerplate (v0.190.0)
 - [x] Removed `PatchModuleType`, `ModuleState` uses `synth_core::ModuleType` directly
+
+### MCP auto layout (v0.193.0)
+- [x] New `auto_layout` MCP tool triggers GUI auto-layout via shared AtomicBool
+
+### Group template browser & save (v0.193.0)
+- [x] Save group as template (JSON with metadata)
+- [x] Template browser dialog with search and insert
 
 </details>

@@ -16,7 +16,10 @@ use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
-use crate::patch::{ExposedPortState, GroupId, HexColor, ModuleGroupState};
+use crate::patch::{
+    ConnectionState, ExposedPortState, GroupCategory, GroupId, GroupTemplate, HexColor,
+    ModuleGroupState, ModuleState, ParamValue,
+};
 
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
@@ -229,6 +232,15 @@ struct PortContextMenuState {
 struct GroupContextMenuState {
     group_id: GroupId,
     menu_pos: Pos2,
+}
+
+/// Actions requested by the group template UI.
+#[derive(Debug, Clone, Copy)]
+pub enum GroupTemplateAction {
+    /// Open the template browser and insert at drop position (world coords).
+    OpenBrowser { drop_pos: Pos2 },
+    /// Save a specific group as a template.
+    SaveGroup { group_id: GroupId },
 }
 
 struct GroupLayout {
@@ -553,6 +565,131 @@ impl PatchEditor {
             .collect();
         groups.sort_by_key(|g| g.id.0);
         groups
+    }
+
+    /// Get the display name for a group.
+    pub fn group_name(&self, group_id: GroupId) -> Option<String> {
+        self.groups.get(&group_id).map(|g| g.name.clone())
+    }
+
+    /// Insert a group with pre-defined members and exposed ports.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_group(
+        &mut self,
+        name: String,
+        color: Option<HexColor>,
+        mut members: Vec<ModuleId>,
+        exposed_inputs: Vec<ExposedPort>,
+        exposed_outputs: Vec<ExposedPort>,
+        collapsed: bool,
+        position: Pos2,
+    ) -> GroupId {
+        let id = self.allocate_group_id();
+        members.sort_by_key(|m| m.to_string());
+
+        for mid in &members {
+            self.remove_from_group(*mid);
+        }
+        for mid in &members {
+            self.module_to_group.insert(*mid, id);
+        }
+
+        let group = ModuleGroup {
+            id,
+            name,
+            color,
+            members,
+            collapsed,
+            position,
+            exposed_inputs,
+            exposed_outputs,
+        };
+        self.groups.insert(id, group);
+        self.selected_group = Some(id);
+        self.selected_modules.clear();
+        self.selected_module = None;
+        id
+    }
+
+    /// Build a reusable group template from an existing group.
+    pub fn build_group_template(
+        &self,
+        group_id: GroupId,
+        category: Option<GroupCategory>,
+        description: Option<String>,
+        author: Option<String>,
+    ) -> Option<GroupTemplate> {
+        let group = self.groups.get(&group_id)?;
+        if group.members.is_empty() {
+            return None;
+        }
+
+        let mut min = Pos2::new(f32::MAX, f32::MAX);
+        for mid in &group.members {
+            if let Some((_desc, pos, _params)) = self.get_module_data(*mid) {
+                min.x = min.x.min(pos.x);
+                min.y = min.y.min(pos.y);
+            }
+        }
+        if !min.x.is_finite() || !min.y.is_finite() {
+            return None;
+        }
+
+        let mut modules: Vec<ModuleState> = Vec::new();
+        for mid in &group.members {
+            if let Some((_desc, pos, params)) = self.get_module_data(*mid) {
+                let mut param_map = HashMap::new();
+                for (name, value) in params {
+                    param_map.insert(name, ParamValue::Float(value));
+                }
+                modules.push(ModuleState {
+                    id: mid.to_string(),
+                    module_type: mid.module_type,
+                    position: (pos.x - min.x, pos.y - min.y),
+                    parameters: param_map,
+                });
+            }
+        }
+
+        let member_set: HashSet<ModuleId> = group.members.iter().copied().collect();
+        let connections: Vec<ConnectionState> = self
+            .connections
+            .iter()
+            .filter(|c| member_set.contains(&c.from_module) && member_set.contains(&c.to_module))
+            .map(ConnectionState::from)
+            .collect();
+
+        let exposed_inputs = group
+            .exposed_inputs
+            .iter()
+            .map(|p| ExposedPortState {
+                label: p.label.clone(),
+                module_id: p.module_id.to_string(),
+                port: String::from(p.port_name),
+            })
+            .collect();
+        let exposed_outputs = group
+            .exposed_outputs
+            .iter()
+            .map(|p| ExposedPortState {
+                label: p.label.clone(),
+                module_id: p.module_id.to_string(),
+                port: String::from(p.port_name),
+            })
+            .collect();
+
+        Some(GroupTemplate {
+            name: group.name.clone(),
+            author,
+            description,
+            category,
+            tags: Vec::new(),
+            color: group.color.clone(),
+            modules,
+            connections,
+            exposed_inputs,
+            exposed_outputs,
+        })
     }
 
     fn parse_exposed_ports(
@@ -2615,6 +2752,18 @@ impl PatchEditor {
                 ui.separator();
             }
 
+            if ui
+                .button(format!("{} Insert Group Template", ri::FOLDER_ADD_LINE))
+                .clicked()
+            {
+                result.group_template_action = Some(GroupTemplateAction::OpenBrowser {
+                    drop_pos: world_pos,
+                });
+                ui.close();
+            }
+
+            ui.separator();
+
             // Cable actions (shown when right-clicking on a hovered cable)
             if let Some(connection) = menu_cable {
                 if ui.button("Delete cable").clicked() {
@@ -3092,6 +3241,7 @@ impl PatchEditor {
         let mut close_menu = false;
         let mut commit_name: Option<String> = None;
         let mut color_update: Option<Option<HexColor>> = None;
+        let mut do_save_template = false;
         let mut do_ungroup = false;
         let mut do_delete = false;
 
@@ -3156,6 +3306,11 @@ impl PatchEditor {
 
             ui.separator();
 
+            if ui.button("Save group as template").clicked() {
+                do_save_template = true;
+                close_menu = true;
+            }
+
             if ui.button("Ungroup").clicked() {
                 do_ungroup = true;
                 close_menu = true;
@@ -3177,6 +3332,12 @@ impl PatchEditor {
             && let Some(g) = self.groups.get_mut(&state.group_id)
         {
             g.color = color_opt;
+        }
+
+        if do_save_template {
+            result.group_template_action = Some(GroupTemplateAction::SaveGroup {
+                group_id: state.group_id,
+            });
         }
 
         if do_ungroup {
@@ -3561,6 +3722,8 @@ pub struct PatchEditorResult {
     /// Context menu request: add a module at a specific world position.
     /// Third value = cable to break and insert the module inline (if from cable context menu).
     pub context_add: Option<(PaletteSelection, Pos2, Option<Connection>)>,
+    /// Requests to open template browser or save group templates.
+    pub group_template_action: Option<GroupTemplateAction>,
 }
 
 /// Simplified panel result for parameters only.

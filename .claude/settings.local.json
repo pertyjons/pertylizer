@@ -215,7 +215,11 @@
       "mcp__synth__get_engine_status",
       "mcp__synth__list_instruments",
       "mcp__synth__set_song",
-      "mcp__synth__seq_play"
+      "mcp__synth__seq_play",
+      "mcp__synth__list_example_patches",
+      "mcp__synth__load_example_patch",
+      "mcp__synth__auto_layout",
+      "mcp__synth__get_ui_snapshot"
     ],
     "deny": [],
     "ask": []

@@ -112,6 +112,67 @@ pub struct ModuleGroupState {
     pub exposed_outputs: Vec<ExposedPortState>,
 }
 
+/// Template category for grouping common building blocks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupCategory {
+    Voice,
+    Effect,
+    #[default]
+    Utility,
+    Tutorial,
+}
+
+impl GroupCategory {
+    pub const ALL: [GroupCategory; 4] = [
+        GroupCategory::Voice,
+        GroupCategory::Effect,
+        GroupCategory::Utility,
+        GroupCategory::Tutorial,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupCategory::Voice => "Voice",
+            GroupCategory::Effect => "Effect",
+            GroupCategory::Utility => "Utility",
+            GroupCategory::Tutorial => "Tutorial",
+        }
+    }
+}
+
+/// Reusable group template stored on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupTemplate {
+    /// Template name.
+    pub name: String,
+    /// Optional author metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Optional description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional category (Voice / Effect / Utility / Tutorial).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<GroupCategory>,
+    /// Tags for search/filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Optional group color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<HexColor>,
+    /// Modules in the template (positions are relative to template origin).
+    pub modules: Vec<ModuleState>,
+    /// Connections between template modules.
+    pub connections: Vec<ConnectionState>,
+    /// Exposed input ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exposed_inputs: Vec<ExposedPortState>,
+    /// Exposed output ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exposed_outputs: Vec<ExposedPortState>,
+}
+
 /// Parameter value for serialization.
 /// Supports all types including string choices for waveforms, filter modes, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]

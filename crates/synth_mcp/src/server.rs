@@ -900,6 +900,16 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next frame, arranging modules by signal flow."
+    )]
+    async fn auto_layout(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.request_auto_layout() {
+            Ok(msg) => msg,
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
         description = "Get a snapshot of the current UI layout: module positions, sizes, connections, and overlap analysis for debugging"
     )]
     async fn get_ui_snapshot(&self, params: Parameters<InstrumentIdParam>) -> String {

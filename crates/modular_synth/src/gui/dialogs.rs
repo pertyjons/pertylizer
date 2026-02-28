@@ -3,16 +3,17 @@
 //! This module provides reusable dialog components for settings,
 //! about information, and patch management.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, Pos2, RichText};
 use egui_file_dialog::FileDialog;
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
-use crate::io::settings::AppSettings;
-use crate::patch::{Patch, example_patches};
+use crate::io::settings::{AppSettings, settings_path};
+use crate::io::{GroupTemplateInfo, GroupTemplateManager, PatchManager};
+use crate::patch::{GroupCategory, GroupId, Patch, example_patches};
 
 /// Type of file dialog operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,8 @@ pub enum FileDialogMode {
     OpenPatch,
     /// Saving a patch file.
     SavePatch,
+    /// Opening a group template file.
+    OpenGroupTemplate,
 }
 
 /// State for all application dialogs.
@@ -31,6 +34,24 @@ pub struct DialogState {
     pub show_about: bool,
     /// Show load patch dialog (built-in patches).
     pub show_load_patch: bool,
+    /// Show group template browser dialog.
+    pub show_group_templates: bool,
+    /// Search filter for group template browser.
+    pub group_template_search: String,
+    /// Currently selected group template path in browser.
+    pub group_template_selected: Option<PathBuf>,
+    /// Drop position for inserting a template.
+    pub group_template_drop_pos: Option<Pos2>,
+    /// Show save group template dialog.
+    pub show_save_group_template: bool,
+    /// Group ID to save as a template.
+    pub group_template_save_group: Option<GroupId>,
+    /// Template name when saving.
+    pub group_template_save_name: String,
+    /// Template description when saving.
+    pub group_template_save_description: String,
+    /// Template category when saving.
+    pub group_template_save_category: GroupCategory,
     /// Name for saving patch.
     pub patch_save_name: String,
     /// Status message with timestamp.
@@ -49,6 +70,15 @@ impl Default for DialogState {
             show_settings: false,
             show_about: false,
             show_load_patch: false,
+            show_group_templates: false,
+            group_template_search: String::new(),
+            group_template_selected: None,
+            group_template_drop_pos: None,
+            show_save_group_template: false,
+            group_template_save_group: None,
+            group_template_save_name: String::new(),
+            group_template_save_description: String::new(),
+            group_template_save_category: GroupCategory::default(),
             patch_save_name: String::new(),
             status_message: None,
             current_theme: ThemePreset::default(),
@@ -79,27 +109,51 @@ impl DialogState {
     }
 
     /// Open the file dialog for opening a patch.
-    pub fn open_open_patch_dialog(&mut self) {
+    pub fn open_open_patch_dialog(&mut self, initial_dir: Option<&Path>) {
         self.file_dialog_mode = Some(FileDialogMode::OpenPatch);
-        self.file_dialog = FileDialog::new()
+        let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Patch files",
                 Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
             )
             .add_file_filter("All files", Arc::new(|_| true));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
         self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for saving a patch.
-    pub fn open_save_patch_dialog(&mut self, default_name: &str) {
+    pub fn open_save_patch_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
         self.file_dialog_mode = Some(FileDialogMode::SavePatch);
-        self.file_dialog = FileDialog::new()
+        let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Patch files",
                 Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
             )
             .default_file_name(default_name);
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
         self.file_dialog.save_file();
+    }
+
+    /// Open the file dialog for opening a group template.
+    pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::OpenGroupTemplate);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "Group templates",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.pick_file();
     }
 
     /// Update the file dialog and return any completed result.
@@ -142,20 +196,56 @@ pub enum LoadPatchResult {
     Cancelled,
 }
 
+/// Result from group template browser dialog.
+pub enum GroupTemplateBrowserResult {
+    /// No action taken.
+    None,
+    /// User cancelled.
+    Cancelled,
+    /// User selected a template file.
+    Selected(PathBuf),
+    /// User wants to browse for a template file.
+    Browse,
+}
+
+/// Result from save group template dialog.
+pub enum SaveGroupTemplateResult {
+    /// No action taken.
+    None,
+    /// User cancelled.
+    Cancelled,
+    /// User confirmed save.
+    Save,
+}
+
+/// Result from the settings dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsAction {
+    /// No action (dialog still open, nothing changed).
+    None,
+    /// A setting was changed live (e.g. theme) — save immediately.
+    LiveChange,
+    /// User clicked "Save & Close".
+    SaveAndClose,
+    /// User clicked "Close" without saving.
+    CloseWithoutSave,
+}
+
 /// Show the settings dialog.
 ///
-/// Returns `true` if any setting was changed (caller should save).
+/// Returns a [`SettingsAction`] indicating what happened.
 pub fn show_settings_dialog(
     ctx: &egui::Context,
     open: &mut bool,
     current_theme: &mut ThemePreset,
     settings: &mut AppSettings,
-) -> bool {
+) -> SettingsAction {
     if !*open {
-        return false;
+        return SettingsAction::None;
     }
 
     let mut changed = false;
+    let mut action = SettingsAction::None;
 
     egui::Window::new("Settings")
         .collapsible(false)
@@ -258,6 +348,65 @@ pub fn show_settings_dialog(
             ui.add_space(12.0);
             ui.separator();
 
+            // --- Directories ---
+            ui.heading("Directories");
+            ui.add_space(4.0);
+
+            egui::Grid::new("directories_grid")
+                .num_columns(2)
+                .spacing([8.0, 4.0])
+                .min_col_width(80.0)
+                .show(ui, |ui| {
+                    // Patches directory
+                    ui.label("Patches dir:");
+                    ui.horizontal(|ui| {
+                        let default_dir =
+                            PatchManager::default_patches_dir().ok().unwrap_or_default();
+                        let is_custom = settings.directories.patches_dir.is_some();
+                        let display_path = settings
+                            .directories
+                            .patches_dir
+                            .as_ref()
+                            .unwrap_or(&default_dir);
+                        let label = if is_custom {
+                            display_path.display().to_string()
+                        } else {
+                            format!("{} (default)", display_path.display())
+                        };
+                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                        if is_custom && ui.small_button("Reset").clicked() {
+                            settings.directories.patches_dir = None;
+                            changed = true;
+                        }
+                    });
+                    ui.end_row();
+
+                    // Group templates directory
+                    ui.label("Group templates dir:");
+                    ui.horizontal(|ui| {
+                        let default_dir = GroupTemplateManager::default_templates_dir()
+                            .ok()
+                            .unwrap_or_default();
+                        let label = format!("{} (default)", default_dir.display());
+                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                    });
+                    ui.end_row();
+
+                    // Settings file path (read-only)
+                    ui.label("Settings file:");
+                    let settings_display = settings_path()
+                        .map_or_else(|_| "(unknown)".to_string(), |p| p.display().to_string());
+                    ui.label(
+                        RichText::new(settings_display)
+                            .small()
+                            .color(theme().colors.text_dim),
+                    );
+                    ui.end_row();
+                });
+
+            ui.add_space(12.0);
+            ui.separator();
+
             // --- Keyboard ---
             ui.heading("Keyboard Layout");
             ui.label("Lower row (Z-M): C3-B3");
@@ -265,12 +414,22 @@ pub fn show_settings_dialog(
             ui.label("-/+ keys: Change octave");
 
             ui.add_space(16.0);
-            if ui.button("Close").clicked() {
-                *open = false;
-            }
+            ui.horizontal(|ui| {
+                if ui.button("Save & Close").clicked() {
+                    action = SettingsAction::SaveAndClose;
+                    *open = false;
+                }
+                if ui.button("Close").clicked() {
+                    action = SettingsAction::CloseWithoutSave;
+                    *open = false;
+                }
+            });
         });
 
-    changed
+    if changed && action == SettingsAction::None {
+        return SettingsAction::LiveChange;
+    }
+    action
 }
 
 /// Show the about dialog.
@@ -354,6 +513,167 @@ pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatch
                 result = LoadPatchResult::Cancelled;
                 *open = false;
             }
+        });
+
+    result
+}
+
+/// Show the group template browser dialog.
+pub fn show_group_template_browser(
+    ctx: &egui::Context,
+    open: &mut bool,
+    templates: &[GroupTemplateInfo],
+    search: &mut String,
+    selected: &mut Option<PathBuf>,
+) -> GroupTemplateBrowserResult {
+    if !*open {
+        return GroupTemplateBrowserResult::None;
+    }
+
+    let mut result = GroupTemplateBrowserResult::None;
+
+    egui::Window::new("Group Templates")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Search");
+                ui.text_edit_singleline(search);
+                if ui.button("Clear").clicked() {
+                    search.clear();
+                }
+            });
+            ui.add_space(8.0);
+
+            let needle = search.to_lowercase();
+            let mut shown = 0;
+
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for template in templates {
+                        let hay_name = template.name.to_lowercase();
+                        let hay_desc = template
+                            .description
+                            .as_ref()
+                            .map(|d| d.to_lowercase())
+                            .unwrap_or_default();
+                        if !needle.is_empty()
+                            && !hay_name.contains(&needle)
+                            && !hay_desc.contains(&needle)
+                        {
+                            continue;
+                        }
+
+                        shown += 1;
+                        ui.horizontal(|ui| {
+                            let is_selected =
+                                selected.as_ref().is_some_and(|path| path == &template.path);
+                            if ui.selectable_label(is_selected, &template.name).clicked() {
+                                *selected = Some(template.path.clone());
+                            }
+                            if let Some(cat) = template.category {
+                                ui.label(
+                                    RichText::new(cat.label())
+                                        .small()
+                                        .color(theme().colors.text_dim),
+                                );
+                            }
+                            if let Some(ref desc) = template.description {
+                                ui.label(
+                                    RichText::new(desc).small().color(theme().colors.text_dim),
+                                );
+                            }
+                        });
+                    }
+                });
+
+            if shown == 0 {
+                ui.label(
+                    RichText::new("No templates found")
+                        .small()
+                        .color(theme().colors.text_dim),
+                );
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let can_load = selected.is_some();
+                if ui
+                    .add_enabled(can_load, egui::Button::new("Load"))
+                    .clicked()
+                    && let Some(path) = selected.clone()
+                {
+                    result = GroupTemplateBrowserResult::Selected(path);
+                    *open = false;
+                }
+                if ui.button("Browse...").clicked() {
+                    result = GroupTemplateBrowserResult::Browse;
+                    *open = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    result = GroupTemplateBrowserResult::Cancelled;
+                    *open = false;
+                }
+            });
+        });
+
+    result
+}
+
+/// Show the save group template dialog.
+pub fn show_save_group_template_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    name: &mut String,
+    description: &mut String,
+    category: &mut GroupCategory,
+) -> SaveGroupTemplateResult {
+    if !*open {
+        return SaveGroupTemplateResult::None;
+    }
+
+    let mut result = SaveGroupTemplateResult::None;
+
+    egui::Window::new("Save Group Template")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label("Template name");
+            ui.text_edit_singleline(name);
+
+            ui.add_space(6.0);
+            ui.label("Category");
+            egui::ComboBox::from_id_salt("group_template_category")
+                .selected_text(category.label())
+                .show_ui(ui, |ui| {
+                    for cat in GroupCategory::ALL {
+                        ui.selectable_value(category, cat, cat.label());
+                    }
+                });
+
+            ui.add_space(6.0);
+            ui.label("Description");
+            ui.text_edit_multiline(description);
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    result = SaveGroupTemplateResult::Cancelled;
+                    *open = false;
+                }
+
+                let can_save = !name.trim().is_empty();
+                if ui
+                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .clicked()
+                {
+                    result = SaveGroupTemplateResult::Save;
+                    *open = false;
+                }
+            });
         });
 
     result

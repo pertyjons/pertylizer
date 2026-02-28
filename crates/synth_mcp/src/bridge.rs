@@ -239,6 +239,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Get a snapshot of the current UI layout (module positions, sizes, connections).
     fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError>;
 
+    /// Request auto-layout of modules in the patch view (GUI applies it next frame).
+    fn request_auto_layout(&self) -> Result<String, McpBridgeError>;
+
     // === Module management ===
 
     /// List all available module types with their ports and parameters.
