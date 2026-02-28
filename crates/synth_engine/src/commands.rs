@@ -566,6 +566,12 @@ pub enum EffectType {
     Convolver,
     PhaseVocoder,
     FrequencyShifter,
+    EnsembleChorus,
+    ShimmerReverb,
+    GranularFx,
+    SpectralBlur,
+    ModalResonator,
+    ReverseGateReverb,
 }
 
 impl EffectType {
@@ -588,6 +594,12 @@ impl EffectType {
             MT::Convolver => Some(Self::Convolver),
             MT::PhaseVocoder => Some(Self::PhaseVocoder),
             MT::FrequencyShifter => Some(Self::FrequencyShifter),
+            MT::EnsembleChorus => Some(Self::EnsembleChorus),
+            MT::ShimmerReverb => Some(Self::ShimmerReverb),
+            MT::GranularFx => Some(Self::GranularFx),
+            MT::SpectralBlur => Some(Self::SpectralBlur),
+            MT::ModalResonator => Some(Self::ModalResonator),
+            MT::ReverseGateReverb => Some(Self::ReverseGateReverb),
             _ => None,
         }
     }
@@ -613,6 +625,12 @@ impl EffectType {
             Self::Convolver => MT::Convolver,
             Self::PhaseVocoder => MT::PhaseVocoder,
             Self::FrequencyShifter => MT::FrequencyShifter,
+            Self::EnsembleChorus => MT::EnsembleChorus,
+            Self::ShimmerReverb => MT::ShimmerReverb,
+            Self::GranularFx => MT::GranularFx,
+            Self::SpectralBlur => MT::SpectralBlur,
+            Self::ModalResonator => MT::ModalResonator,
+            Self::ReverseGateReverb => MT::ReverseGateReverb,
         }
     }
 }

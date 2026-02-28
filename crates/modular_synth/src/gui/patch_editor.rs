@@ -3112,6 +3112,36 @@ fn palette_label(selection: PaletteSelection) -> (String, Color32) {
             "Freq Shifter",
             category_color(ModuleCategory::Effect),
         ),
+        PaletteSelection::Effect(EffectType::EnsembleChorus) => (
+            ri::SPEED_FILL,
+            "Ensemble Chorus",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::ShimmerReverb) => (
+            ri::SPARKLING_2_FILL,
+            "Shimmer Reverb",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::GranularFx) => (
+            ri::RHYTHM_FILL,
+            "Granular FX",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::SpectralBlur) => (
+            ri::BLUR_OFF_FILL,
+            "Spectral Blur",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::ModalResonator) => (
+            ri::SOUND_MODULE_FILL,
+            "Modal Resonator",
+            category_color(ModuleCategory::Effect),
+        ),
+        PaletteSelection::Effect(EffectType::ReverseGateReverb) => (
+            ri::REWIND_FILL,
+            "Reverse/Gate",
+            category_color(ModuleCategory::Effect),
+        ),
         // Visualizers
         PaletteSelection::Visualizer(PaletteVisualizerType::Oscilloscope) => (
             ri::PULSE_LINE,

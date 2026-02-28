@@ -196,6 +196,18 @@ impl MasterEffectParams {
                 mode: 0.0,
                 mix: 1.0,
             },
+            // New effects use generic params — controlled via descriptor system
+            EffectType::EnsembleChorus
+            | EffectType::ShimmerReverb
+            | EffectType::GranularFx
+            | EffectType::SpectralBlur
+            | EffectType::ModalResonator
+            | EffectType::ReverseGateReverb => Self::Reverb {
+                room_size: 0.5,
+                damping: 0.5,
+                width: 1.0,
+                mix: 0.5,
+            },
         }
     }
 }
@@ -247,6 +259,12 @@ impl MasterEffectUiState {
             EffectType::Convolver => "Convolver",
             EffectType::PhaseVocoder => "Phase Vocoder",
             EffectType::FrequencyShifter => "Freq Shifter",
+            EffectType::EnsembleChorus => "Ensemble Chorus",
+            EffectType::ShimmerReverb => "Shimmer Reverb",
+            EffectType::GranularFx => "Granular FX",
+            EffectType::SpectralBlur => "Spectral Blur",
+            EffectType::ModalResonator => "Modal Resonator",
+            EffectType::ReverseGateReverb => "Reverse/Gate",
         }
     }
 }

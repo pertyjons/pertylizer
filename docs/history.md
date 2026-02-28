@@ -1,5 +1,16 @@
 # Version History
 
+## [0.189.0] - 2026-02-28
+### 6 new audio effects
+- **Ensemble Chorus** (`enc`) — Juno-style BBD chorus with 2-3 voices, inverted LFO phases for stereo spread, one-pole tone filter, BBD clock noise, mid/side width processing
+- **Shimmer Reverb** (`shr`) — FDN reverb with pitch-shifted feedback via granular ring-buffer pitch shifter, configurable pre-delay and shimmer amount
+- **Granular FX** (`gfx`) — Input-driven granular processor with stereo ring buffer, 64 pre-allocated Hann-windowed grains, position/pitch/pan spread, freeze mode
+- **Spectral Blur** (`sbl`) — STFT-based spectral smearing with temporal IIR smoothing per bin, spectral FIR smoothing across bins, freeze mode
+- **Modal Resonator** (`mdr`) — Bank of 16 biquad bandpass resonators at harmonic frequencies with inharmonicity spread, brightness control
+- **Reverse/Gate Reverb** (`rgr`) — Buffer capture with reverse/gate/stutter playback modes, periodic or threshold triggering, envelope shaping
+- All effects follow `AudioEffect` trait with type-safe parameters, pre-allocated buffers, RT-safe processing
+- Full registration: parameter enums, `ModuleType`/`Param` wiring, `EffectType`, factory, patch serialization, GUI palette labels
+
 ## [0.188.0] - 2026-02-28
 ### TODO 2.4 — MCP connection status indicator
 - **MCP status in top bar** — robot icon shows connection state next to MIDI selector

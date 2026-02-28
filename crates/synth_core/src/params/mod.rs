@@ -46,7 +46,9 @@ pub use additive::AdditiveParam;
 pub use convolver::{ConvolverParam, ImpulseResponse};
 pub use effects::{
     BbdDelayParam, ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode,
-    DistortionParam, EqParam, FlangerParam, LimiterParam, MidSideParam, PhaserParam, ReverbParam,
+    DistortionParam, EnsembleChorusParam, EqParam, FlangerParam, GranularFxParam, LimiterParam,
+    MidSideParam, ModalResonatorParam, PhaserParam, ReverbParam, ReverseGateMode,
+    ReverseGateReverbParam, ReverseGateTrigger, ShimmerReverbParam, SpectralBlurParam,
 };
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
@@ -147,6 +149,13 @@ pub enum ModuleType {
     LaSynth,
     // Utility
     PitchTracker,
+    // New effects (v0.189.0)
+    EnsembleChorus,
+    ShimmerReverb,
+    GranularFx,
+    SpectralBlur,
+    ModalResonator,
+    ReverseGateReverb,
 }
 
 impl ModuleType {
@@ -224,6 +233,12 @@ impl ModuleType {
                 | Self::Convolver
                 | Self::PhaseVocoder
                 | Self::FrequencyShifter
+                | Self::EnsembleChorus
+                | Self::ShimmerReverb
+                | Self::GranularFx
+                | Self::SpectralBlur
+                | Self::ModalResonator
+                | Self::ReverseGateReverb
         )
     }
 
@@ -304,6 +319,12 @@ impl ModuleType {
             Self::VectorMixer => "Vector Mixer",
             Self::LaSynth => "LA Synth",
             Self::PitchTracker => "Pitch Tracker",
+            Self::EnsembleChorus => "Ensemble Chorus",
+            Self::ShimmerReverb => "Shimmer Reverb",
+            Self::GranularFx => "Granular FX",
+            Self::SpectralBlur => "Spectral Blur",
+            Self::ModalResonator => "Modal Resonator",
+            Self::ReverseGateReverb => "Reverse/Gate Reverb",
         }
     }
 
@@ -360,6 +381,12 @@ impl ModuleType {
             Self::VectorMixer => "vec",
             Self::LaSynth => "las",
             Self::PitchTracker => "ptr",
+            Self::EnsembleChorus => "enc",
+            Self::ShimmerReverb => "shr",
+            Self::GranularFx => "gfx",
+            Self::SpectralBlur => "sbl",
+            Self::ModalResonator => "mdr",
+            Self::ReverseGateReverb => "rgr",
         }
     }
 
@@ -416,6 +443,12 @@ impl ModuleType {
             "vec" => Some(Self::VectorMixer),
             "las" => Some(Self::LaSynth),
             "ptr" => Some(Self::PitchTracker),
+            "enc" => Some(Self::EnsembleChorus),
+            "shr" => Some(Self::ShimmerReverb),
+            "gfx" => Some(Self::GranularFx),
+            "sbl" => Some(Self::SpectralBlur),
+            "mdr" => Some(Self::ModalResonator),
+            "rgr" => Some(Self::ReverseGateReverb),
             _ => None,
         }
     }
@@ -494,6 +527,13 @@ pub enum Param {
     LaSynth(LaSynthParam),
     // Utility
     PitchTracker(PitchTrackerParam),
+    // New effects (v0.189.0)
+    EnsembleChorus(EnsembleChorusParam),
+    ShimmerReverb(ShimmerReverbParam),
+    GranularFx(GranularFxParam),
+    SpectralBlur(SpectralBlurParam),
+    ModalResonator(ModalResonatorParam),
+    ReverseGateReverb(ReverseGateReverbParam),
 }
 
 impl Param {
@@ -558,6 +598,12 @@ impl Param {
             (Self::VectorMixer(a), Self::VectorMixer(b)) => a.same_kind(b),
             (Self::LaSynth(a), Self::LaSynth(b)) => a.same_kind(b),
             (Self::PitchTracker(a), Self::PitchTracker(b)) => a.same_kind(b),
+            (Self::EnsembleChorus(a), Self::EnsembleChorus(b)) => a.same_kind(b),
+            (Self::ShimmerReverb(a), Self::ShimmerReverb(b)) => a.same_kind(b),
+            (Self::GranularFx(a), Self::GranularFx(b)) => a.same_kind(b),
+            (Self::SpectralBlur(a), Self::SpectralBlur(b)) => a.same_kind(b),
+            (Self::ModalResonator(a), Self::ModalResonator(b)) => a.same_kind(b),
+            (Self::ReverseGateReverb(a), Self::ReverseGateReverb(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -614,6 +660,12 @@ impl Param {
             Self::VectorMixer(_) => ModuleType::VectorMixer,
             Self::LaSynth(_) => ModuleType::LaSynth,
             Self::PitchTracker(_) => ModuleType::PitchTracker,
+            Self::EnsembleChorus(_) => ModuleType::EnsembleChorus,
+            Self::ShimmerReverb(_) => ModuleType::ShimmerReverb,
+            Self::GranularFx(_) => ModuleType::GranularFx,
+            Self::SpectralBlur(_) => ModuleType::SpectralBlur,
+            Self::ModalResonator(_) => ModuleType::ModalResonator,
+            Self::ReverseGateReverb(_) => ModuleType::ReverseGateReverb,
         }
     }
 
@@ -669,6 +721,12 @@ impl Param {
             Self::VectorMixer(p) => p.name(),
             Self::LaSynth(p) => p.name(),
             Self::PitchTracker(p) => p.name(),
+            Self::EnsembleChorus(p) => p.name(),
+            Self::ShimmerReverb(p) => p.name(),
+            Self::GranularFx(p) => p.name(),
+            Self::SpectralBlur(p) => p.name(),
+            Self::ModalResonator(p) => p.name(),
+            Self::ReverseGateReverb(p) => p.name(),
         }
     }
 
@@ -724,6 +782,12 @@ impl Param {
             Self::VectorMixer(p) => p.as_f32(),
             Self::LaSynth(p) => p.as_f32(),
             Self::PitchTracker(p) => p.as_f32(),
+            Self::EnsembleChorus(p) => p.as_f32(),
+            Self::ShimmerReverb(p) => p.as_f32(),
+            Self::GranularFx(p) => p.as_f32(),
+            Self::SpectralBlur(p) => p.as_f32(),
+            Self::ModalResonator(p) => p.as_f32(),
+            Self::ReverseGateReverb(p) => p.as_f32(),
         }
     }
 
@@ -779,6 +843,12 @@ impl Param {
             Self::VectorMixer(p) => Self::VectorMixer(p.with_f32(value)),
             Self::LaSynth(p) => Self::LaSynth(p.with_f32(value)),
             Self::PitchTracker(p) => Self::PitchTracker(p.with_f32(value)),
+            Self::EnsembleChorus(p) => Self::EnsembleChorus(p.with_f32(value)),
+            Self::ShimmerReverb(p) => Self::ShimmerReverb(p.with_f32(value)),
+            Self::GranularFx(p) => Self::GranularFx(p.with_f32(value)),
+            Self::SpectralBlur(p) => Self::SpectralBlur(p.with_f32(value)),
+            Self::ModalResonator(p) => Self::ModalResonator(p.with_f32(value)),
+            Self::ReverseGateReverb(p) => Self::ReverseGateReverb(p.with_f32(value)),
         }
     }
 }

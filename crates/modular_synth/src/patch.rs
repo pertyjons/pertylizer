@@ -131,6 +131,13 @@ pub enum PatchModuleType {
     LaSynth,
     PitchTracker,
     FrequencyShifter,
+    // New effects (v0.189.0)
+    EnsembleChorus,
+    ShimmerReverb,
+    GranularFx,
+    SpectralBlur,
+    ModalResonator,
+    ReverseGateReverb,
 }
 
 impl PatchModuleType {
@@ -182,6 +189,12 @@ impl PatchModuleType {
             Self::LaSynth => "la_synth",
             Self::PitchTracker => "pitch_tracker",
             Self::FrequencyShifter => "frequency_shifter",
+            Self::EnsembleChorus => "ensemble_chorus",
+            Self::ShimmerReverb => "shimmer_reverb",
+            Self::GranularFx => "granular_fx",
+            Self::SpectralBlur => "spectral_blur",
+            Self::ModalResonator => "modal_resonator",
+            Self::ReverseGateReverb => "reverse_gate_reverb",
         }
     }
 
@@ -234,6 +247,12 @@ impl PatchModuleType {
             Self::LaSynth => "las",
             Self::PitchTracker => "ptr",
             Self::FrequencyShifter => "fsf",
+            Self::EnsembleChorus => "enc",
+            Self::ShimmerReverb => "shr",
+            Self::GranularFx => "gfx",
+            Self::SpectralBlur => "sbl",
+            Self::ModalResonator => "mdr",
+            Self::ReverseGateReverb => "rgr",
         }
     }
 
@@ -256,6 +275,12 @@ impl PatchModuleType {
                 | Self::Convolver
                 | Self::PhaseVocoder
                 | Self::FrequencyShifter
+                | Self::EnsembleChorus
+                | Self::ShimmerReverb
+                | Self::GranularFx
+                | Self::SpectralBlur
+                | Self::ModalResonator
+                | Self::ReverseGateReverb
         )
     }
 
@@ -312,6 +337,12 @@ impl PatchModuleType {
             Self::LaSynth => Some(MT::LaSynth),
             Self::PitchTracker => Some(MT::PitchTracker),
             Self::FrequencyShifter => Some(MT::FrequencyShifter),
+            Self::EnsembleChorus => Some(MT::EnsembleChorus),
+            Self::ShimmerReverb => Some(MT::ShimmerReverb),
+            Self::GranularFx => Some(MT::GranularFx),
+            Self::SpectralBlur => Some(MT::SpectralBlur),
+            Self::ModalResonator => Some(MT::ModalResonator),
+            Self::ReverseGateReverb => Some(MT::ReverseGateReverb),
             // GUI-only modules
             Self::Oscilloscope
             | Self::LevelMeter

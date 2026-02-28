@@ -1125,6 +1125,12 @@ impl SynthApp {
                 EffectType::Convolver => TypedModuleType::Convolver,
                 EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
                 EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
+                EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
+                EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
+                EffectType::GranularFx => TypedModuleType::GranularFx,
+                EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
+                EffectType::ModalResonator => TypedModuleType::ModalResonator,
+                EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
             }),
             PaletteSelection::SignalMonitor => {
                 // SignalMonitor needs GUI-specific VisualizationBuffer
@@ -1411,6 +1417,12 @@ impl SynthApp {
                         EffectType::Convolver => TypedModuleType::Convolver,
                         EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
                         EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
+                        EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
+                        EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
+                        EffectType::GranularFx => TypedModuleType::GranularFx,
+                        EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
+                        EffectType::ModalResonator => TypedModuleType::ModalResonator,
+                        EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
                     }),
                     _ => None,
                 };

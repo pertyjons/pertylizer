@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.188.0)
+# TODO - Modular Synth (v0.189.0)
 
 ## Priority 1 — Foundation & Core Functionality
 

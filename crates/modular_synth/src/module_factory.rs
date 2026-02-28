@@ -240,6 +240,36 @@ pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, M
             let d = e.descriptor();
             Some((Box::new(e), d))
         }
+        ModuleType::EnsembleChorus => {
+            let e = synth_modules::effects::EnsembleChorus::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::ShimmerReverb => {
+            let e = synth_modules::effects::ShimmerReverb::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::GranularFx => {
+            let e = synth_modules::effects::GranularFx::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::SpectralBlur => {
+            let e = synth_modules::effects::SpectralBlur::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::ModalResonator => {
+            let e = synth_modules::effects::ModalResonator::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::ReverseGateReverb => {
+            let e = synth_modules::effects::ReverseGateReverb::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
         _ => None,
     }
 }
@@ -319,6 +349,12 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::Convolver,
     ModuleType::PhaseVocoder,
     ModuleType::FrequencyShifter,
+    ModuleType::EnsembleChorus,
+    ModuleType::ShimmerReverb,
+    ModuleType::GranularFx,
+    ModuleType::SpectralBlur,
+    ModuleType::ModalResonator,
+    ModuleType::ReverseGateReverb,
     // Visualizers
     ModuleType::Oscilloscope,
     ModuleType::LevelMeter,

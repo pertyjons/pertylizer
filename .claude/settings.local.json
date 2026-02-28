@@ -211,7 +211,11 @@
       "WebFetch(domain:institute.sfeir.com)",
       "Bash(npm update:*)",
       "Bash($MCP:*)",
-      "Bash(cargo fetch:*)"
+      "Bash(cargo fetch:*)",
+      "mcp__synth__get_engine_status",
+      "mcp__synth__list_instruments",
+      "mcp__synth__set_song",
+      "mcp__synth__seq_play"
     ],
     "deny": [],
     "ask": []
