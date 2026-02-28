@@ -1,6 +1,7 @@
 //! FM Bell - Bright, bell-like FM synthesis sound.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// FM Bell - Bright, bell-like FM synthesis sound.
 pub fn patch_fm_bell() -> Patch {
@@ -47,7 +48,7 @@ more "chime-like", lower notes more "gong-like".
 
     // OSC1 - Carrier (sine) (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(250.0, 50.0)
             .waveform("sine")
             .param_f("level", 0.7)
@@ -56,7 +57,7 @@ more "chime-like", lower notes more "gong-like".
 
     // OSC2 - Modulator (sine) (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sine")
             .param_f("level", 0.5)
@@ -66,7 +67,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Modulator Envelope - Controls FM depth (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.5)
@@ -77,7 +78,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Amp Envelope - Bell-like (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 2.0)
@@ -88,7 +89,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Modulator Amplifier - Envelopes FM depth (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(150.0, 50.0)
             .param_f("level", 0.8)
             .build(),
@@ -96,7 +97,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Carrier Amplifier (amp-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Amplifier)
+        ModuleBuilder::new(2, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -104,7 +105,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Reverb - Large space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.8)
             .param_f("damping", 0.2)
@@ -114,7 +115,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -123,7 +124,7 @@ more "chime-like", lower notes more "gong-like".
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

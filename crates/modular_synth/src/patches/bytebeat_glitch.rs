@@ -1,6 +1,7 @@
 //! Bytebeat Glitch - Retro digital music formula.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Bytebeat Glitch - Retro digital music formula.
 pub fn patch_bytebeat_glitch() -> Patch {
@@ -40,7 +41,7 @@ Small changes can create vastly different musical results!
 
     // Math Oscillator - Bytebeat (mth-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::MathOscillator)
+        ModuleBuilder::new(1, ModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("bytebeat")
             .param_f("param_a", 0.4) // Bitshift A
@@ -52,7 +53,7 @@ Small changes can create vastly different musical results!
 
     // Filter - Tame harsh highs (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3000.0)
@@ -62,7 +63,7 @@ Small changes can create vastly different musical results!
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.1)
@@ -73,7 +74,7 @@ Small changes can create vastly different musical results!
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.5)
             .build(),
@@ -81,7 +82,7 @@ Small changes can create vastly different musical results!
 
     // Delay - Add rhythm (dly-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Delay)
+        ModuleBuilder::new(1, ModuleType::Delay)
             .position(650.0, 50.0)
             .delay_mode("ping_pong")
             .param_f("time", 0.15)
@@ -92,7 +93,7 @@ Small changes can create vastly different musical results!
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -101,7 +102,7 @@ Small changes can create vastly different musical results!
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

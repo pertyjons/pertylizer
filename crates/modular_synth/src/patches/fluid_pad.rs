@@ -1,6 +1,7 @@
 //! Fluid Pad - Evolving pad with morphing filter character.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Fluid Pad - Lush evolving pad using the Fluid filter's morph crossfade.
 pub fn patch_fluid_pad() -> Patch {
@@ -38,7 +39,7 @@ Increase drive for warmer, more saturated character.
 
     // Oscillator - Triangle with 5-voice unison (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("triangle")
             .param_f("level", 0.85)
@@ -51,7 +52,7 @@ Increase drive for warmer, more saturated character.
 
     // Filter - Fluid model with morph (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("fluid")
             .param_f("morph", 0.15)
@@ -63,7 +64,7 @@ Increase drive for warmer, more saturated character.
 
     // Amp Envelope - Slow pad (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.6)
             .param_f("decay", 0.5)
@@ -74,7 +75,7 @@ Increase drive for warmer, more saturated character.
 
     // Filter Envelope - Brightness on attack (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.8)
@@ -85,7 +86,7 @@ Increase drive for warmer, more saturated character.
 
     // LFO - Slow morph sweep (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(450.0, 300.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.12)
@@ -95,7 +96,7 @@ Increase drive for warmer, more saturated character.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.65)
             .build(),
@@ -103,7 +104,7 @@ Increase drive for warmer, more saturated character.
 
     // Mod Matrix - LFO->Morph, Env2->Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(650.0, 300.0)
             .param_choice("grid size", "2x2")
             .param_choice("slot 1 source", "lfo1")
@@ -117,7 +118,7 @@ Increase drive for warmer, more saturated character.
 
     // Reverb (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.85)
             .param_f("damping", 0.4)
@@ -127,7 +128,7 @@ Increase drive for warmer, more saturated character.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

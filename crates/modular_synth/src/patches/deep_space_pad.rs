@@ -1,6 +1,7 @@
 //! Deep Space Pad - Evolving atmospheric pad with multiple modulation sources.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Deep Space Pad - Evolving atmospheric pad with multiple modulation sources.
 pub fn patch_deep_space_pad() -> Patch {
@@ -38,7 +39,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // OSC1 - Main sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
@@ -48,7 +49,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // OSC2 - Detuned sawtooth (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 200.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
@@ -58,7 +59,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Mixer for oscillators (mix-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Mixer)
+        ModuleBuilder::new(1, ModuleType::Mixer)
             .position(250.0, 100.0)
             .param_f("master", 0.8)
             .build(),
@@ -66,7 +67,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Filter - Lowpass with resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 100.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 800.0)
@@ -76,7 +77,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Amp Envelope - Slow pad envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 1.5)
             .param_f("decay", 0.5)
@@ -87,7 +88,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Filter Envelope - Brighter on attack (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.8)
             .param_f("decay", 1.5)
@@ -98,7 +99,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // LFO1 - Filter modulation (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(450.0, 400.0)
             .waveform("sine")
             .param_f("rate", 0.1)
@@ -108,7 +109,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // LFO2 - Pitch modulation for OSC2 (lfo-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Lfo)
+        ModuleBuilder::new(2, ModuleType::Lfo)
             .position(650.0, 400.0)
             .waveform("triangle")
             .param_f("rate", 0.08)
@@ -118,7 +119,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 100.0)
             .param_f("level", 0.6)
             .build(),
@@ -126,7 +127,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Chorus - For width (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Chorus)
+        ModuleBuilder::new(1, ModuleType::Chorus)
             .position(850.0, 100.0)
             .param_f("rate", 0.5)
             .param_f("depth", 0.4)
@@ -136,7 +137,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Reverb - Large space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(1050.0, 100.0)
             .param_f("room_size", 0.85)
             .param_f("damping", 0.3)
@@ -146,7 +147,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(1250.0, 100.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -155,7 +156,7 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1450.0, 100.0)
             .param_f("master level", 0.8)
             .build(),

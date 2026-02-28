@@ -1,6 +1,7 @@
 //! Screamer Lead - Aggressive MS-20 style lead with diode distortion.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Screamer Lead - Raw, aggressive lead with MS-20 inspired diode clipping.
 pub fn patch_screamer_lead() -> Patch {
@@ -38,7 +39,7 @@ Lower cutoff for darker, growling character.
 
     // Oscillator - Saw wave (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.9)
@@ -47,7 +48,7 @@ Lower cutoff for darker, growling character.
 
     // Filter - Screamer model with high resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("screamer")
             .param_f("cutoff", 800.0)
@@ -58,7 +59,7 @@ Lower cutoff for darker, growling character.
 
     // Amp Envelope - Snappy (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.003)
             .param_f("decay", 0.2)
@@ -69,7 +70,7 @@ Lower cutoff for darker, growling character.
 
     // Filter Envelope - Aggressive sweep (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.18)
@@ -80,7 +81,7 @@ Lower cutoff for darker, growling character.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -88,7 +89,7 @@ Lower cutoff for darker, growling character.
 
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
@@ -99,7 +100,7 @@ Lower cutoff for darker, growling character.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

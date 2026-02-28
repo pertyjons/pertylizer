@@ -1,6 +1,7 @@
 //! Kick Drum - Classic electronic kick with punch.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Kick Drum - Classic electronic kick with punch.
 pub fn patch_drum_kick() -> Patch {
@@ -44,7 +45,7 @@ kick characters. Works well in the lowest octave.
 
     // OSC - Sine for pure sub (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sine")
             .param_f("level", 1.0)
@@ -53,7 +54,7 @@ kick characters. Works well in the lowest octave.
 
     // Pitch Envelope - Fast sweep with punchy curve (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 250.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.05)
@@ -67,7 +68,7 @@ kick characters. Works well in the lowest octave.
 
     // Amp Envelope with punchy curves (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 250.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.15)
@@ -81,7 +82,7 @@ kick characters. Works well in the lowest octave.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(250.0, 50.0)
             .param_f("level", 0.9)
             .build(),
@@ -89,7 +90,7 @@ kick characters. Works well in the lowest octave.
 
     // Soft clip for warmth (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Distortion)
+        ModuleBuilder::new(1, ModuleType::Distortion)
             .position(450.0, 50.0)
             .distortion_mode("soft_clip")
             .param_f("drive", 0.2)
@@ -99,7 +100,7 @@ kick characters. Works well in the lowest octave.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(650.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -108,7 +109,7 @@ kick characters. Works well in the lowest octave.
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

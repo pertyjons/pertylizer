@@ -1,6 +1,7 @@
 //! Fluid Keys - Warm electric piano with morphing filter overtones.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Fluid Keys - Warm keys with Fluid filter morph creating bell-like overtones.
 pub fn patch_fluid_keys() -> Patch {
@@ -38,7 +39,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Oscillator - Saw wave (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
@@ -47,7 +48,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Filter - Fluid model with mid morph (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("fluid")
             .param_f("morph", 0.4)
@@ -60,7 +61,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Amp Envelope - Piano-like (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.6)
@@ -71,7 +72,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Filter Envelope - Brightness decay (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.35)
@@ -82,7 +83,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -90,7 +91,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
@@ -101,7 +102,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Chorus - Subtle width (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Chorus)
+        ModuleBuilder::new(1, ModuleType::Chorus)
             .position(650.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.2)
@@ -111,7 +112,7 @@ Longer envelope decay for Rhodes-like tine sustain.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

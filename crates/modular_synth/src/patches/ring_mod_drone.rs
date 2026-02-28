@@ -1,6 +1,7 @@
 //! Ring Mod Drone - Evolving metallic drone with LFO-modulated ring mod.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Ring Mod Drone - Deep evolving drone with slowly shifting ring modulation.
 pub fn patch_ring_mod_drone() -> Patch {
@@ -45,7 +46,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Oscillator - Rich sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
@@ -54,7 +55,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Ring Mod - Triangle carrier, no keyboard tracking (rng-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::RingMod)
+        ModuleBuilder::new(1, ModuleType::RingMod)
             .position(250.0, 50.0)
             .param_choice("carrier_wave", "triangle")
             .param_f("carrier_freq", 180.0)
@@ -66,7 +67,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Filter - Lowpass to tame highs (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
@@ -76,7 +77,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Amp Envelope - Very slow drone (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 3.0)
             .param_f("decay", 0.5)
@@ -87,7 +88,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // LFO - Slow carrier frequency modulation (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.06)
@@ -97,7 +98,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 50.0)
             .param_f("level", 0.55)
             .build(),
@@ -105,7 +106,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Reverb - Deep space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(850.0, 50.0)
             .param_f("room_size", 0.92)
             .param_f("damping", 0.3)
@@ -115,7 +116,7 @@ Play clusters of notes for dense, shimmering drones.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master level", 0.65)
             .build(),

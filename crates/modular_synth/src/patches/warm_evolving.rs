@@ -1,6 +1,7 @@
 //! Warm Evolving - Slowly morphing ambient texture with warm wavetable.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Warm Evolving - Gentle ambient texture with slow wavetable scanning.
 pub fn patch_warm_evolving() -> Patch {
@@ -42,7 +43,7 @@ Layer multiple notes for rich ambient textures.
 
     // Wavetable Oscillator - Warm bank (wtb-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::WavetableOsc)
+        ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
             .param_choice("table", "warm")
             .param_f("position", 0.3)
@@ -52,7 +53,7 @@ Layer multiple notes for rich ambient textures.
 
     // Filter - Fluid model for gentle warmth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("fluid")
             .param_f("cutoff", 3000.0)
@@ -64,7 +65,7 @@ Layer multiple notes for rich ambient textures.
 
     // Amp Envelope - Very slow ambient (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 2.0)
             .param_f("decay", 0.5)
@@ -75,7 +76,7 @@ Layer multiple notes for rich ambient textures.
 
     // LFO 1 - Very slow position sweep (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.03)
@@ -85,7 +86,7 @@ Layer multiple notes for rich ambient textures.
 
     // LFO 2 - Subtle filter morph movement (lfo-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Lfo)
+        ModuleBuilder::new(2, ModuleType::Lfo)
             .position(450.0, 300.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.07)
@@ -95,7 +96,7 @@ Layer multiple notes for rich ambient textures.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -103,7 +104,7 @@ Layer multiple notes for rich ambient textures.
 
     // Reverb - Deep immersive space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.95)
             .param_f("damping", 0.25)
@@ -113,7 +114,7 @@ Layer multiple notes for rich ambient textures.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

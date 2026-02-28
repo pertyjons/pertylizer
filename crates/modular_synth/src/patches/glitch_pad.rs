@@ -1,6 +1,7 @@
 //! Glitch Pad - Evolving textured pad with wavefold waveshaping and LFO modulation.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Glitch Pad - Digital, textured pad with movement.
 pub fn patch_glitch_pad() -> Patch {
@@ -42,7 +43,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Oscillator - Triangle wave (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("triangle")
             .param_f("level", 0.8)
@@ -51,7 +52,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Waveshaper - Fold (wsh-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Waveshaper)
+        ModuleBuilder::new(1, ModuleType::Waveshaper)
             .position(250.0, 50.0)
             .waveshaper_curve("fold")
             .param_f("drive", 0.4)
@@ -63,7 +64,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Filter - Lowpass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 4000.0)
@@ -73,7 +74,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Amp Envelope - Slow pad envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.4)
             .param_f("decay", 0.5)
@@ -84,7 +85,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // LFO - Slow modulation (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.3)
@@ -94,7 +95,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -102,7 +103,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Mod Matrix - LFO -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "lfo1")
@@ -113,7 +114,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

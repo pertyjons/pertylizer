@@ -585,14 +585,12 @@ impl SynthSession {
 
         // Add modules
         for module_state in &patch.modules {
-            let module_type = match module_state.module_type.to_module_type() {
-                Some(mt) => mt,
-                None => {
-                    // Visualizer/signal monitor — skip silently
-                    result.module_ids.push(None);
-                    continue;
-                }
-            };
+            let module_type = module_state.module_type;
+            if module_type.is_visualizer() || module_type == ModuleType::SignalMonitor {
+                // Visualizer/signal monitor — skip (requires GUI-specific setup)
+                result.module_ids.push(None);
+                continue;
+            }
 
             let module_id: ModuleId = match module_state.id.parse() {
                 Ok(id) => id,

@@ -1,6 +1,7 @@
 //! Stereo Unison Pad - Wide, evolving pad using stereo unison outputs directly.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Stereo Unison Pad - Immersive, wide ambient pad with direct stereo routing.
 pub fn patch_stereo_unison_pad() -> Patch {
@@ -44,7 +45,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // Oscillator - 5-voice triangle unison (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("triangle")
             .param_f("level", 0.9)
@@ -57,7 +58,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // Amp Envelope - Slow, dreamy pad (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.8)
             .param_f("decay", 0.6)
@@ -68,7 +69,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // LFO - Slow pitch drift (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.15)
@@ -78,7 +79,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // Amplifier - Stereo input (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(250.0, 50.0)
             .param_f("level", 0.65)
             .build(),
@@ -86,7 +87,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // Reverb - Large space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(450.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.3)
@@ -96,7 +97,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

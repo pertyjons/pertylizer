@@ -1,6 +1,7 @@
 //! LA Synth Pluck — Linear Arithmetic synthesis with percussive attack transient.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// LA Synth Pluck — sharp attack transient crossfades into a filtered sustain tone.
 pub fn patch_la_synth_pluck() -> Patch {
@@ -47,7 +48,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Oscillator - Sawtooth sustain signal (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.7)
@@ -56,7 +57,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // LA Synth - Attack transient + crossfade (las-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::LaSynth)
+        ModuleBuilder::new(1, ModuleType::LaSynth)
             .position(250.0, 50.0)
             .param_f("attack type", 0.66) // pluck
             .param_f("attack time", 25.0) // 25ms
@@ -68,7 +69,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Filter - Lowpass for warmth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 2500.0)
@@ -78,7 +79,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.8)
@@ -89,7 +90,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // LFO - Slow filter movement (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_f("rate", 0.4)
             .param_f("depth", 0.3)
@@ -98,7 +99,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 50.0)
             .param_f("level", 0.8)
             .build(),
@@ -106,7 +107,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
@@ -114,7 +115,7 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 
     // Reverb effect for space
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(850.0, 200.0)
             .param_f("mix", 0.25)
             .param_f("decay", 2.5)

@@ -1,6 +1,7 @@
 //! Velocity Pad - Expressive pad using Mod Matrix for velocity-sensitive filtering.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Velocity Pad - Warm pad with velocity-controlled brightness and dynamics.
 pub fn patch_velocity_pad() -> Patch {
@@ -46,7 +47,7 @@ Use the mod wheel for additional expression.
 
     // OSC1 - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.45)
@@ -56,7 +57,7 @@ Use the mod wheel for additional expression.
 
     // OSC2 - Sawtooth, detuned (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 200.0)
             .waveform("sawtooth")
             .param_f("level", 0.45)
@@ -66,7 +67,7 @@ Use the mod wheel for additional expression.
 
     // Filter - Lowpass, starts fairly closed (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 100.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 300.0)
@@ -76,7 +77,7 @@ Use the mod wheel for additional expression.
 
     // Amp Envelope - Slow pad attack (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 0.15)
             .param_f("decay", 0.5)
@@ -87,7 +88,7 @@ Use the mod wheel for additional expression.
 
     // Filter Envelope - Faster attack for brightness contour (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.05)
             .param_f("decay", 0.8)
@@ -98,7 +99,7 @@ Use the mod wheel for additional expression.
 
     // LFO - Slow sine for gentle movement (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(450.0, 400.0)
             .waveform("sine")
             .param_f("rate", 0.25)
@@ -108,7 +109,7 @@ Use the mod wheel for additional expression.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 100.0)
             .param_f("level", 0.7)
             .build(),
@@ -116,7 +117,7 @@ Use the mod wheel for additional expression.
 
     // Mod Matrix - The key module! (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(650.0, 300.0)
             .param_choice("grid size", "2x2")
             // Slot 1: Velocity → Filter Cutoff, amount +0.6
@@ -140,7 +141,7 @@ Use the mod wheel for additional expression.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 100.0)
             .param_f("master level", 0.8)
             .build(),

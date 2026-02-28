@@ -1,6 +1,7 @@
 //! Unison Sync Lead - Aggressive sync lead with tight unison for cutting solos.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Unison Sync Lead - Hard sync combined with unison for a cutting, aggressive lead.
 pub fn patch_unison_sync_lead() -> Patch {
@@ -49,7 +50,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Slave Oscillator - 3-voice unison saw with sync input (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.85)
@@ -62,7 +63,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Master Oscillator - Square wave for sync (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 200.0)
             .waveform("square")
             .param_f("level", 0.0) // Silent — only used as sync source
@@ -71,7 +72,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Waveshaper - Soft clip saturation (wsh-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Waveshaper)
+        ModuleBuilder::new(1, ModuleType::Waveshaper)
             .position(250.0, 50.0)
             .waveshaper_curve("soft_clip")
             .param_f("drive", 0.5)
@@ -83,7 +84,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Filter - Lowpass, envelope-controlled (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1200.0)
@@ -93,7 +94,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.2)
@@ -104,7 +105,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Filter Envelope - Opens filter aggressively on attack (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.3)
@@ -115,7 +116,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -123,7 +124,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 400.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
@@ -134,7 +135,7 @@ Increase unison detune for a rougher, more aggressive texture.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

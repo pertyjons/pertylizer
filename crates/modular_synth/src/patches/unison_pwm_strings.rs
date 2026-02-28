@@ -1,6 +1,7 @@
 //! Unison PWM Strings - Lush string ensemble using pulse-width modulation and unison.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Unison PWM Strings - Rich, animated string section with PWM and stereo unison.
 pub fn patch_unison_pwm_strings() -> Patch {
@@ -51,7 +52,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Oscillator - Pulse wave with 5-voice unison (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("pulse")
             .param_f("pulse width", 0.5)
@@ -65,7 +66,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Filter - Gentle lowpass for warmth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3500.0)
@@ -75,7 +76,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Amp Envelope - Slow string attack (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.5)
             .param_f("decay", 0.4)
@@ -86,7 +87,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // PWM LFO - Slow pulse width sweep (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.4)
@@ -96,7 +97,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Vibrato LFO - Subtle pitch movement (lfo-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Lfo)
+        ModuleBuilder::new(2, ModuleType::Lfo)
             .position(450.0, 300.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 5.0)
@@ -106,7 +107,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.65)
             .build(),
@@ -114,7 +115,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Mod Matrix - Velocity -> Amp Level (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(650.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "velocity")
@@ -125,7 +126,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Chorus - Extra ensemble width (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Chorus)
+        ModuleBuilder::new(1, ModuleType::Chorus)
             .position(650.0, 50.0)
             .param_f("rate", 0.3)
             .param_f("depth", 0.4)
@@ -135,7 +136,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Reverb - Concert hall (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(850.0, 50.0)
             .param_f("room_size", 0.8)
             .param_f("damping", 0.35)
@@ -145,7 +146,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

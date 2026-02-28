@@ -1,6 +1,7 @@
 //! Wave Folder Bass - West coast synthesis bass.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Wave Folder Bass - West coast synthesis bass.
 pub fn patch_wave_folder_bass() -> Patch {
@@ -40,7 +41,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Math Oscillator - Wave folder (mth-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::MathOscillator)
+        ModuleBuilder::new(1, ModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("wave_folder")
             .param_f("param_a", 0.4) // Fold amount
@@ -52,7 +53,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Filter - Shape the bass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 600.0)
@@ -62,7 +63,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.2)
@@ -73,7 +74,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Filter Envelope (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.15)
@@ -84,7 +85,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.8)
             .build(),
@@ -92,7 +93,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Distortion - Add grit (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Distortion)
+        ModuleBuilder::new(1, ModuleType::Distortion)
             .position(650.0, 50.0)
             .distortion_mode("tube")
             .param_f("drive", 0.3)
@@ -102,7 +103,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(850.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -111,7 +112,7 @@ Low values = warm, high values = aggressive and metallic.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

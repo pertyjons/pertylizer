@@ -1,6 +1,7 @@
 //! Expressive Lead - Performance lead using Mod Matrix for MIDI expression.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Expressive Lead - Mono lead with mod wheel, aftertouch, and velocity expression.
 pub fn patch_expressive_lead() -> Patch {
@@ -52,7 +53,7 @@ during held notes.
 
     // OSC1 - Sawtooth lead (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.65)
@@ -61,7 +62,7 @@ during held notes.
 
     // OSC2 - Square, slightly detuned for width (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 200.0)
             .waveform("square")
             .param_f("level", 0.35)
@@ -71,7 +72,7 @@ during held notes.
 
     // Filter - Resonant lowpass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 100.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 800.0)
@@ -81,7 +82,7 @@ during held notes.
 
     // Amp Envelope - Snappy lead (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 0.003)
             .param_f("decay", 0.15)
@@ -92,7 +93,7 @@ during held notes.
 
     // Filter Envelope - Attack bite (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.25)
@@ -103,7 +104,7 @@ during held notes.
 
     // Vibrato LFO (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(450.0, 400.0)
             .waveform("sine")
             .param_f("rate", 5.5)
@@ -113,7 +114,7 @@ during held notes.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 100.0)
             .param_f("level", 0.75)
             .build(),
@@ -121,7 +122,7 @@ during held notes.
 
     // Mod Matrix - 6 active performance routings (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(650.0, 300.0)
             .param_choice("grid size", "3x3")
             // Slot 1: Mod Wheel → LFO 1 Depth (vibrato amount)
@@ -153,7 +154,7 @@ during held notes.
 
     // Delay effect (dly-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Delay)
+        ModuleBuilder::new(1, ModuleType::Delay)
             .position(850.0, 100.0)
             .delay_mode("ping_pong")
             .param_f("time", 0.3)
@@ -164,7 +165,7 @@ during held notes.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 100.0)
             .param_f("master level", 0.8)
             .build(),

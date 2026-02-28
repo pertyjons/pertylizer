@@ -1,6 +1,7 @@
 //! Punchy Stab - Aggressive synth stab showcasing envelope curves.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Punchy Stab - Demonstrates the power of envelope curve parameters.
 pub fn patch_punchy_stab() -> Patch {
@@ -51,7 +52,7 @@ give each note maximum impact and punch.
 
     // OSC1 - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.6)
@@ -60,7 +61,7 @@ give each note maximum impact and punch.
 
     // OSC2 - Detuned Sawtooth (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 200.0)
             .waveform("sawtooth")
             .param_f("detune", 12.0) // +12 cents for thickness
@@ -70,7 +71,7 @@ give each note maximum impact and punch.
 
     // Filter - Resonant lowpass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 100.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 800.0)
@@ -80,7 +81,7 @@ give each note maximum impact and punch.
 
     // Amp Envelope - Maximum punch (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.15)
@@ -94,7 +95,7 @@ give each note maximum impact and punch.
 
     // Filter Envelope - Fast zap (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.1)
@@ -108,7 +109,7 @@ give each note maximum impact and punch.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 100.0)
             .param_f("level", 0.8)
             .build(),
@@ -116,7 +117,7 @@ give each note maximum impact and punch.
 
     // Distortion - Adds edge (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Distortion)
+        ModuleBuilder::new(1, ModuleType::Distortion)
             .position(650.0, 100.0)
             .distortion_mode("tube")
             .param_f("drive", 0.4)
@@ -127,7 +128,7 @@ give each note maximum impact and punch.
 
     // Oscilloscope (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(850.0, 100.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -136,7 +137,7 @@ give each note maximum impact and punch.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 100.0)
             .param_f("master level", 0.75)
             .build(),

@@ -604,8 +604,6 @@ impl EffectType {
         }
     }
 
-    // NOTE: from_patch_module_type moved to modular_synth crate where PatchModuleType is defined
-
     /// Convert to typed_params::ModuleType.
     pub fn to_module_type(self) -> synth_core::ModuleType {
         use synth_core::ModuleType as MT;

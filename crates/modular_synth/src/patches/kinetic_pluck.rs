@@ -1,6 +1,7 @@
 //! Kinetic Pluck — short, percussive pluck using Kinetic Modulator.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Kinetic Pluck — CubicOut easing drives filter and amp for a natural pluck.
 pub fn patch_kinetic_pluck() -> Patch {
@@ -12,7 +13,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // OSC - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
@@ -21,7 +22,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Filter (flt-1) - High cutoff swept down by kinetic mod
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 800.0)
@@ -31,7 +32,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Kinetic Modulator (kin-1) - CubicOut, 150ms, OneShot
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::KineticModulator)
+        ModuleBuilder::new(1, ModuleType::KineticModulator)
             .position(50.0, 300.0)
             .param_f("duration", 0.15)
             .param_choice("curve", "cubic_out")
@@ -44,7 +45,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Mod Matrix (mmx-1) - KineticPos -> FilterCutoff + AmpLevel
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(250.0, 300.0)
             .param_choice("grid size", "2x2")
             // Slot 1: KineticPos -> Filter Cutoff
@@ -60,7 +61,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Amp Envelope (env-1) - Short pluck shape
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 200.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.2)
@@ -71,7 +72,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -79,7 +80,7 @@ pub fn patch_kinetic_pluck() -> Patch {
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

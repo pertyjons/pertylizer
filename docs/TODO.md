@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.189.0)
+# TODO - Modular Synth (v0.190.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -164,5 +164,5 @@
 - [x] Eliminate `create_patch_from_rack` `type_id`-match (~60 lines) — replaced with `PatchModuleType::from_module_type(module_id.module_type)`
 - [x] Eliminate `get_effect_type_from_module` `type_id`-match (~20 lines) — replaced with `EffectType::from_module_type(module_id.module_type)`
 - [x] Add missing `PatchModuleType` variants: Phaser, Flanger, Compressor, Eq (could never be saved in patches before)
-- [ ] Consider removing `PatchModuleType` entirely — replace with `ModuleType` prefix strings in patch JSON (already works: `ModuleType::from_prefix()` + `ModuleType::prefix()`)
+- [x] Remove `PatchModuleType` entirely — `ModuleState.module_type` now uses `synth_core::ModuleType` directly with `#[serde(rename_all = "snake_case")]`
 - Note: parameter application is already centralized in `SynthSession::set_parameter()` — no duplication there

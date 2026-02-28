@@ -1,6 +1,7 @@
 //! Auto-Wah Bass - Dynamic filter bass using envelope follower.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Auto-Wah Bass - Funky bass with envelope follower driving filter cutoff.
 pub fn patch_auto_wah_bass() -> Patch {
@@ -44,7 +45,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Oscillator - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.85)
@@ -53,7 +54,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Envelope Follower - Track oscillator amplitude (efl-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::EnvelopeFollower)
+        ModuleBuilder::new(1, ModuleType::EnvelopeFollower)
             .position(50.0, 300.0)
             .param_f("attack", 2.0)
             .param_f("release", 80.0)
@@ -63,7 +64,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Filter - Acid model for squelchy resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("acid")
             .filter_mode("lowpass")
@@ -75,7 +76,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Amp Envelope - Snappy bass (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.3)
@@ -86,7 +87,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -94,7 +95,7 @@ Play staccato for funky quack, legato for smooth sweep.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

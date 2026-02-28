@@ -1,6 +1,7 @@
 //! Shepard Riser - Infinite rising tone effect.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Shepard Riser - Infinite rising tone effect.
 pub fn patch_shepard_riser() -> Patch {
@@ -41,7 +42,7 @@ to control speed, or set it negative for a falling effect.
 
     // Math Oscillator - Shepard tone (mth-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::MathOscillator)
+        ModuleBuilder::new(1, ModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("shepard")
             .param_f("param_a", 0.5) // Center frequency
@@ -53,7 +54,7 @@ to control speed, or set it negative for a falling effect.
 
     // Filter - Smooth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 4000.0)
@@ -63,7 +64,7 @@ to control speed, or set it negative for a falling effect.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 1.0)
             .param_f("decay", 0.5)
@@ -74,7 +75,7 @@ to control speed, or set it negative for a falling effect.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -82,7 +83,7 @@ to control speed, or set it negative for a falling effect.
 
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(650.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -91,7 +92,7 @@ to control speed, or set it negative for a falling effect.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

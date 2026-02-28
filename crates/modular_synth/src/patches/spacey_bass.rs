@@ -1,6 +1,7 @@
 //! Spacey Bass - Classic subtractive bass with detuned oscillators.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Spacey Bass - Classic subtractive bass with two detuned oscillators.
 pub fn patch_spacey_bass() -> Patch {
@@ -36,7 +37,7 @@ and resonance for different tonal characters.
 
     // Oscillator 1 - Sawtooth, main sound (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.6)
@@ -45,7 +46,7 @@ and resonance for different tonal characters.
 
     // Oscillator 2 - Sawtooth, detuned for thickness (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 150.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
@@ -55,7 +56,7 @@ and resonance for different tonal characters.
 
     // Filter - Low pass with moderate resonance (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
@@ -65,7 +66,7 @@ and resonance for different tonal characters.
 
     // Amp Envelope - Punchy bass envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.2)
@@ -76,7 +77,7 @@ and resonance for different tonal characters.
 
     // Filter Envelope - Opens filter on attack (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.3)
@@ -87,7 +88,7 @@ and resonance for different tonal characters.
 
     // LFO - Slow sine for movement (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(450.0, 300.0)
             .param_f("rate", 0.3)
             .param_f("depth", 0.25)
@@ -96,7 +97,7 @@ and resonance for different tonal characters.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -104,7 +105,7 @@ and resonance for different tonal characters.
 
     // Stereo Output - Final destination (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(650.0, 50.0)
             .param_f("master level", 0.8)
             .build(),

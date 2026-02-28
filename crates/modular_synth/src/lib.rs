@@ -34,7 +34,7 @@ pub use synth_modules;
 pub use synth_sequencer;
 
 // Re-export commonly used items
-pub use patch::{Patch, PatchModuleType};
+pub use patch::Patch;
 
 // Re-export from synth_engine
 pub use synth_engine::{

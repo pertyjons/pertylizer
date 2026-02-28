@@ -1,5 +1,15 @@
 # Version History
 
+## [0.190.0] - 2026-02-28
+### Remove `PatchModuleType` — use `ModuleType` directly for patch serialization
+- **Removed `PatchModuleType` enum** (~370 lines) — was a redundant mirror of `synth_core::ModuleType`
+- **`ModuleState.module_type`** now uses `synth_core::ModuleType` directly with `#[serde(rename_all = "snake_case")]`
+- **Eliminated per-type boilerplate**: `as_str()`, `prefix()`, `from_module_type()`, `to_module_type()`, `is_effect_chain_module()`, `is_visualizer()`, `hides_ports()` — all already existed on `ModuleType`
+- **Updated all 49 example patches** to use `ModuleType` instead of `PatchModuleType`
+- **Simplified `create_patch_from_rack`** — uses `module_id.module_type` directly (no conversion needed)
+- **Removed dead `load_inline_signal_monitor`** function from patch_bridge
+- Adding new module types now requires updating only `ModuleType` — no separate patch enum needed
+
 ## [0.189.0] - 2026-02-28
 ### 6 new audio effects
 - **Ensemble Chorus** (`enc`) — Juno-style BBD chorus with 2-3 voices, inverted LFO phases for stereo spread, one-pole tone filter, BBD clock noise, mid/side width processing

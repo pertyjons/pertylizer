@@ -12,8 +12,9 @@ use eframe::egui::Pos2;
 
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
-use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch, PatchModuleType};
+use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch};
 use crate::session::SynthSession;
+use synth_core::ModuleType;
 use synth_core::{Describable, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
@@ -140,7 +141,7 @@ fn load_module(
 
     // Special cases: modules that need VisualizationBuffer injection (GUI-only)
     match module_state.module_type {
-        PatchModuleType::SignalMonitor => {
+        ModuleType::SignalMonitor => {
             load_signal_monitor(
                 module_id,
                 module_state,
@@ -152,18 +153,7 @@ fn load_module(
             );
             return;
         }
-        PatchModuleType::InlineSignalMonitor => {
-            load_inline_signal_monitor(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-            );
-            return;
-        }
-        PatchModuleType::Oscilloscope => {
+        ModuleType::Oscilloscope => {
             load_visualizer(
                 module_id,
                 patch_editor,
@@ -176,7 +166,7 @@ fn load_module(
             );
             return;
         }
-        PatchModuleType::LevelMeter => {
+        ModuleType::LevelMeter => {
             load_visualizer(
                 module_id,
                 patch_editor,
@@ -189,7 +179,7 @@ fn load_module(
             );
             return;
         }
-        PatchModuleType::SpectrumAnalyzer => {
+        ModuleType::SpectrumAnalyzer => {
             load_visualizer(
                 module_id,
                 patch_editor,
@@ -276,46 +266,6 @@ fn load_signal_monitor(
         handle,
         instrument_id,
     );
-}
-
-/// Load an InlineSignalMonitor module (compact pass-through with vis buffer).
-fn load_inline_signal_monitor(
-    module_id: ModuleId,
-    patch_editor: &mut PatchEditor,
-    session: &SynthSession,
-    handle: &mut EngineHandle,
-    instrument_id: InstrumentId,
-    position: Pos2,
-) {
-    let mut m = synth_modules::SignalMonitor::new();
-    let inline_descriptor = synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
-        .description("Inline signal monitor (compact pass-through)")
-        .category(synth_core::ModuleCategory::Utility)
-        .port(synth_core::PortDescriptor::audio_input("in", "In"))
-        .port(synth_core::PortDescriptor::audio_output("out", "Out"));
-
-    // Update session counter
-    {
-        let mut counters = session.counters_lock();
-        let counter = counters
-            .entry((instrument_id, module_id.module_type))
-            .or_insert(0);
-        if module_id.instance > *counter {
-            *counter = module_id.instance;
-        }
-    }
-
-    patch_editor.add_module_at(module_id, inline_descriptor, position);
-
-    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-    handle.add_visualization_buffer(module_id, buffer.clone());
-    m.set_vis_sink(buffer);
-
-    handle.send(EngineCommand::AddModuleInstance {
-        instrument_id: Some(instrument_id),
-        id: module_id,
-        module: Box::new(m),
-    });
 }
 
 /// Load a visualizer module (Oscilloscope, LevelMeter, SpectrumAnalyzer).
@@ -441,11 +391,6 @@ pub fn create_patch_from_rack(
     // Add modules
     for module_id in patch_editor.module_ids() {
         if let Some((_descriptor, position, params)) = patch_editor.get_module_data(module_id) {
-            // Derive PatchModuleType from the ModuleId's module_type (always in sync)
-            let Some(module_type) = PatchModuleType::from_module_type(module_id.module_type) else {
-                continue;
-            };
-
             // params is now HashMap<String, f32>
             let mut param_map = HashMap::new();
             for (name, value) in params {
@@ -454,7 +399,7 @@ pub fn create_patch_from_rack(
 
             patch.modules.push(ModuleState {
                 id: module_id.to_string(),
-                module_type,
+                module_type: module_id.module_type,
                 position: (position.x, position.y),
                 parameters: param_map,
             });

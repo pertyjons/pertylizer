@@ -1,6 +1,7 @@
 //! Harmonic Lead - Expressive lead using harmonics wavetable scanning.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Harmonic Lead - Bright lead with envelope-driven harmonic sweep.
 pub fn patch_harmonic_lead() -> Patch {
@@ -43,7 +44,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Wavetable Oscillator - Harmonics bank (wtb-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::WavetableOsc)
+        ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
             .param_choice("table", "harmonics")
             .param_f("position", 0.1)
@@ -53,7 +54,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Filter - Screamer for aggressive character (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("screamer")
             .param_f("cutoff", 3000.0)
@@ -64,7 +65,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Amp Envelope - Lead with bite (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.2)
@@ -75,7 +76,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Position/Filter Envelope - Harmonic sweep (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.5)
@@ -86,7 +87,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.65)
             .build(),
@@ -94,7 +95,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Delay - Rhythmic echo (dly-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Delay)
+        ModuleBuilder::new(1, ModuleType::Delay)
             .position(650.0, 50.0)
             .delay_mode("stereo")
             .param_f("time", 0.35)
@@ -105,7 +106,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.75)
             .build(),

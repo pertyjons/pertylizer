@@ -88,6 +88,7 @@ pub use wavetable::{WavetableParam, WavetableSelect};
 
 /// Strongly-typed module type identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModuleType {
     Oscillator,
     MathOscillator,
@@ -452,9 +453,6 @@ impl ModuleType {
             _ => None,
         }
     }
-
-    // Note: to_patch_module_type() moved to modular_synth crate
-    // since PatchModuleType is crate-specific for serialization
 }
 
 // ============================================================================

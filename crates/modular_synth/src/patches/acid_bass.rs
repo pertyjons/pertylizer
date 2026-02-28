@@ -1,6 +1,7 @@
 //! Acid Bass - Classic 303-style acid bass with Steiner-Parker filter.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Acid Bass - Squelchy acid bass with variable saturation and resonance sweep.
 pub fn patch_acid_bass() -> Patch {
@@ -32,7 +33,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Oscillator - Square wave (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("square")
             .param_f("level", 0.9)
@@ -41,7 +42,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Filter - Acid model, LP mode (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("acid")
             .filter_mode("lowpass")
@@ -54,7 +55,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Amp Envelope - Punchy (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.3)
@@ -65,7 +66,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Filter Envelope - Fast squelchy sweep (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.12)
@@ -76,7 +77,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -84,7 +85,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
@@ -95,7 +96,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Distortion - Light crunch (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Distortion)
+        ModuleBuilder::new(1, ModuleType::Distortion)
             .position(650.0, 50.0)
             .distortion_mode("soft_clip")
             .param_f("drive", 0.4)
@@ -105,7 +106,7 @@ Switch filter type to BP for a thinner, more nasal acid sound.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

@@ -1,6 +1,7 @@
 //! Vector Pad — four-oscillator pad with LFO-driven vector crossfading.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Vector Pad — four distinct waveforms blended via XY vector mixer with slow LFO sweep.
 pub fn patch_vector_pad() -> Patch {
@@ -49,7 +50,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Oscillator A - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
@@ -58,7 +59,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Oscillator B - Triangle (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 150.0)
             .waveform("triangle")
             .param_f("level", 0.8)
@@ -67,7 +68,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Oscillator C - Square (osc-3)
     patch.add_module(
-        ModuleBuilder::new(3, PatchModuleType::Oscillator)
+        ModuleBuilder::new(3, ModuleType::Oscillator)
             .position(50.0, 250.0)
             .waveform("square")
             .param_f("detune", -5.0)
@@ -77,7 +78,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Oscillator D - Triangle detuned (osc-4)
     patch.add_module(
-        ModuleBuilder::new(4, PatchModuleType::Oscillator)
+        ModuleBuilder::new(4, ModuleType::Oscillator)
             .position(50.0, 350.0)
             .waveform("triangle")
             .param_f("detune", 2.0)
@@ -87,7 +88,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Vector Mixer (vec-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::VectorMixer)
+        ModuleBuilder::new(1, ModuleType::VectorMixer)
             .position(250.0, 150.0)
             .param_f("x", 0.5)
             .param_f("y", 0.5)
@@ -96,7 +97,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // LFO 1 - Slow sine for X axis (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 400.0)
             .param_f("rate", 0.15)
             .param_f("depth", 1.0)
@@ -105,7 +106,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // LFO 2 - Slow sine for Y axis (lfo-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Lfo)
+        ModuleBuilder::new(2, ModuleType::Lfo)
             .position(450.0, 400.0)
             .param_f("rate", 0.23)
             .param_f("depth", 1.0)
@@ -114,7 +115,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Filter (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 150.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3000.0)
@@ -124,7 +125,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Amp Envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(250.0, 550.0)
             .param_f("attack", 0.8)
             .param_f("decay", 1.0)
@@ -135,7 +136,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 150.0)
             .param_f("level", 0.7)
             .build(),
@@ -143,7 +144,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 150.0)
             .param_f("master level", 0.8)
             .build(),
@@ -151,7 +152,7 @@ Speed up the LFOs for more dramatic morphing. Add reverb for lush ambience.
 
     // Reverb for lush ambience
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(850.0, 300.0)
             .param_f("mix", 0.35)
             .param_f("decay", 3.0)

@@ -1,6 +1,7 @@
 //! Spectral Drone — detuned saws through Frequency Shifter for inharmonic shimmer.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Spectral Drone — two detuned saws processed by a frequency shifter for metallic, evolving textures.
 pub fn patch_spectral_drone() -> Patch {
@@ -52,7 +53,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Oscillator 1 - Sawtooth (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.7)
@@ -61,7 +62,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Oscillator 2 - Sawtooth detuned (osc-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Oscillator)
+        ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 150.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
@@ -71,14 +72,14 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Mixer (mix-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Mixer)
+        ModuleBuilder::new(1, ModuleType::Mixer)
             .position(250.0, 50.0)
             .build(),
     );
 
     // Filter - Lowpass for warmth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
@@ -88,7 +89,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Amp Envelope - Slow drone envelope (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 2.0)
             .param_f("decay", 2.0)
@@ -99,7 +100,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(650.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -107,7 +108,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
@@ -115,7 +116,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Frequency Shifter effect — auto-routed, no manual connections
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::FrequencyShifter)
+        ModuleBuilder::new(1, ModuleType::FrequencyShifter)
             .position(850.0, 200.0)
             .param_f("shift", 3.0) // 3 Hz shift for subtle beating
             .param_f("mix", 0.6) // Blend with dry
@@ -125,7 +126,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
 
     // Reverb for space
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(850.0, 350.0)
             .param_f("mix", 0.4)
             .param_f("decay", 4.0)

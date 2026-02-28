@@ -1,6 +1,7 @@
 //! Sub Bass - Deep, weighty bass using the sub-oscillator.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Sub Bass - Deep bass patch showcasing the sub-oscillator module.
 pub fn patch_sub_bass() -> Patch {
@@ -47,7 +48,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Main OSC - Sawtooth for harmonics (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
@@ -56,7 +57,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Sub-Oscillator - Pure sine one octave down (sub-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::SubOscillator)
+        ModuleBuilder::new(1, ModuleType::SubOscillator)
             .position(50.0, 200.0)
             .param_choice("waveform", "sine") // Pure fundamental
             .param_choice("octave", "minus1") // One octave down
@@ -66,7 +67,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Filter - Lowpass (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 100.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 300.0)
@@ -76,7 +77,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Amp Envelope with punchy curves (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 400.0)
             .param_f("attack", 0.003)
             .param_f("decay", 0.2)
@@ -90,7 +91,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Filter Envelope (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.3)
@@ -104,7 +105,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 100.0)
             .param_f("level", 0.85)
             .build(),
@@ -112,7 +113,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Soft clip for warmth (dst-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Distortion)
+        ModuleBuilder::new(1, ModuleType::Distortion)
             .position(650.0, 100.0)
             .distortion_mode("soft_clip")
             .param_f("drive", 0.15)
@@ -122,7 +123,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Oscilloscope (scp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscilloscope)
+        ModuleBuilder::new(1, ModuleType::Oscilloscope)
             .position(850.0, 100.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
@@ -131,7 +132,7 @@ dubstep, EDM, or any music needing powerful low end.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1050.0, 100.0)
             .param_f("master level", 0.8)
             .build(),

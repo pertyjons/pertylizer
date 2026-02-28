@@ -1,6 +1,7 @@
 //! Vocal Pad - Ethereal vowel pad using formant wavetable scanning.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Vocal Pad - Lush choir-like pad with formant wavetable morphing.
 pub fn patch_vocal_pad() -> Patch {
@@ -40,7 +41,7 @@ Increase filter resonance for more vocal character.
 
     // Wavetable Oscillator - Formant bank (wtb-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::WavetableOsc)
+        ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
             .param_choice("table", "formant")
             .param_f("position", 0.2)
@@ -50,7 +51,7 @@ Increase filter resonance for more vocal character.
 
     // Filter - Fluid model for warmth (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_model("fluid")
             .param_f("cutoff", 2500.0)
@@ -62,7 +63,7 @@ Increase filter resonance for more vocal character.
 
     // Amp Envelope - Slow pad (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.8)
             .param_f("decay", 0.4)
@@ -73,7 +74,7 @@ Increase filter resonance for more vocal character.
 
     // LFO - Slow position sweep (lfo-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Lfo)
+        ModuleBuilder::new(1, ModuleType::Lfo)
             .position(250.0, 300.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.08)
@@ -83,7 +84,7 @@ Increase filter resonance for more vocal character.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.65)
             .build(),
@@ -91,7 +92,7 @@ Increase filter resonance for more vocal character.
 
     // Reverb - Large lush space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(650.0, 50.0)
             .param_f("room_size", 0.85)
             .param_f("damping", 0.3)
@@ -101,7 +102,7 @@ Increase filter resonance for more vocal character.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),

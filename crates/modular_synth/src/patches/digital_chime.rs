@@ -1,6 +1,7 @@
 //! Digital Chime - Crystalline chime with envelope-scanned wavetable.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Digital Chime - Sparkling digital chime with position sweep on attack.
 pub fn patch_digital_chime() -> Patch {
@@ -40,7 +41,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Wavetable Oscillator - Digital bank (wtb-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::WavetableOsc)
+        ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
             .param_choice("table", "digital")
             .param_f("position", 0.0)
@@ -50,7 +51,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Filter - Highpass to keep it sparkly (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 6000.0)
@@ -60,7 +61,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Amp Envelope - Percussive chime (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 1.2)
@@ -71,7 +72,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Position Envelope - Fast sweep through wavetable (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.4)
@@ -82,7 +83,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.6)
             .build(),
@@ -90,7 +91,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Chorus - Stereo shimmer (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Chorus)
+        ModuleBuilder::new(1, ModuleType::Chorus)
             .position(650.0, 50.0)
             .param_f("rate", 1.5)
             .param_f("depth", 0.4)
@@ -100,7 +101,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Reverb - Bright space (rev-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Reverb)
+        ModuleBuilder::new(1, ModuleType::Reverb)
             .position(650.0, 200.0)
             .param_f("room_size", 0.75)
             .param_f("damping", 0.15)
@@ -110,7 +111,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.75)
             .build(),

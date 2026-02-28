@@ -1,6 +1,7 @@
 //! Unison Supersaw - Classic trance/EDM supersaw lead using intra-voice unison.
 
-use crate::patch::{ModuleBuilder, Patch, PatchModuleType};
+use crate::patch::{ModuleBuilder, Patch};
+use synth_core::ModuleType;
 
 /// Unison Supersaw - Massive, wide supersaw lead.
 pub fn patch_unison_supersaw() -> Patch {
@@ -39,7 +40,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Oscillator - 7-voice unison saw (osc-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Oscillator)
+        ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
@@ -52,7 +53,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Filter - Lowpass with envelope modulation (flt-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Filter)
+        ModuleBuilder::new(1, ModuleType::Filter)
             .position(250.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
@@ -62,7 +63,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Amp Envelope - Snappy attack, moderate sustain (env-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Envelope)
+        ModuleBuilder::new(1, ModuleType::Envelope)
             .position(50.0, 300.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.4)
@@ -73,7 +74,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Filter Envelope - Bright attack that decays (env-2)
     patch.add_module(
-        ModuleBuilder::new(2, PatchModuleType::Envelope)
+        ModuleBuilder::new(2, ModuleType::Envelope)
             .position(250.0, 300.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.5)
@@ -84,7 +85,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Amplifier (amp-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Amplifier)
+        ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
@@ -92,7 +93,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::ModMatrix)
+        ModuleBuilder::new(1, ModuleType::ModMatrix)
             .position(450.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
@@ -103,7 +104,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Chorus - Extra width (chr-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::Chorus)
+        ModuleBuilder::new(1, ModuleType::Chorus)
             .position(650.0, 50.0)
             .param_f("rate", 0.6)
             .param_f("depth", 0.3)
@@ -113,7 +114,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
 
     // Stereo Output (out-1)
     patch.add_module(
-        ModuleBuilder::new(1, PatchModuleType::StereoOutput)
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(850.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
