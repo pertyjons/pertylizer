@@ -92,6 +92,10 @@ pub enum PatchModuleType {
     Reverb,
     Distortion,
     Chorus,
+    Phaser,
+    Flanger,
+    Compressor,
+    Eq,
     Waveshaper,
     MidSide,
     // Visualizers
@@ -157,6 +161,10 @@ impl PatchModuleType {
             Self::Reverb => "reverb",
             Self::Distortion => "distortion",
             Self::Chorus => "chorus",
+            Self::Phaser => "phaser",
+            Self::Flanger => "flanger",
+            Self::Compressor => "compressor",
+            Self::Eq => "eq",
             Self::Waveshaper => "waveshaper",
             Self::MidSide => "mid_side",
             Self::Oscilloscope => "oscilloscope",
@@ -215,6 +223,10 @@ impl PatchModuleType {
             Self::Reverb => "rev",
             Self::Distortion => "dst",
             Self::Chorus => "chr",
+            Self::Phaser => "phs",
+            Self::Flanger => "fln",
+            Self::Compressor => "cmp",
+            Self::Eq => "eq_",
             Self::Waveshaper => "wsh",
             Self::MidSide => "mds",
             Self::Oscilloscope => "scp",
@@ -268,6 +280,10 @@ impl PatchModuleType {
                 | Self::Reverb
                 | Self::Distortion
                 | Self::Chorus
+                | Self::Phaser
+                | Self::Flanger
+                | Self::Compressor
+                | Self::Eq
                 | Self::Waveshaper
                 | Self::MidSide
                 | Self::BbdDelay
@@ -293,6 +309,67 @@ impl PatchModuleType {
         )
     }
 
+    /// Convert from engine `ModuleType`. Returns `None` for types that
+    /// don't have a `PatchModuleType` equivalent (currently none — all are covered).
+    #[must_use]
+    pub fn from_module_type(mt: synth_core::ModuleType) -> Option<Self> {
+        use synth_core::ModuleType as MT;
+        Some(match mt {
+            MT::Oscillator => Self::Oscillator,
+            MT::MathOscillator => Self::MathOscillator,
+            MT::SubOscillator => Self::SubOscillator,
+            MT::Noise => Self::Noise,
+            MT::Filter => Self::Filter,
+            MT::Envelope => Self::Envelope,
+            MT::Lfo => Self::Lfo,
+            MT::Amplifier => Self::Amplifier,
+            MT::Mixer => Self::Mixer,
+            MT::StereoOutput => Self::StereoOutput,
+            MT::Delay => Self::Delay,
+            MT::Reverb => Self::Reverb,
+            MT::Distortion => Self::Distortion,
+            MT::Chorus => Self::Chorus,
+            MT::Phaser => Self::Phaser,
+            MT::Flanger => Self::Flanger,
+            MT::Compressor => Self::Compressor,
+            MT::Eq => Self::Eq,
+            MT::Waveshaper => Self::Waveshaper,
+            MT::MidSide => Self::MidSide,
+            MT::Oscilloscope => Self::Oscilloscope,
+            MT::LevelMeter => Self::LevelMeter,
+            MT::SpectrumAnalyzer => Self::SpectrumAnalyzer,
+            MT::ModMatrix => Self::ModMatrix,
+            MT::RingMod => Self::RingMod,
+            MT::EnvelopeFollower => Self::EnvelopeFollower,
+            MT::WavetableOsc => Self::WavetableOsc,
+            MT::KeyboardPanner => Self::KeyboardPanner,
+            MT::BodyResonance => Self::BodyResonance,
+            MT::MechanicalNoise => Self::MechanicalNoise,
+            MT::Mseg => Self::Mseg,
+            MT::AdditiveOsc => Self::AdditiveOsc,
+            MT::BbdDelay => Self::BbdDelay,
+            MT::Limiter => Self::Limiter,
+            MT::Euclidean => Self::Euclidean,
+            MT::TuringMachine => Self::TuringMachine,
+            MT::RandomGates => Self::RandomGates,
+            MT::GranularOsc => Self::GranularOsc,
+            MT::Convolver => Self::Convolver,
+            MT::PhaseVocoder => Self::PhaseVocoder,
+            MT::KineticModulator => Self::KineticModulator,
+            MT::SignalMonitor => Self::SignalMonitor,
+            MT::VectorMixer => Self::VectorMixer,
+            MT::LaSynth => Self::LaSynth,
+            MT::PitchTracker => Self::PitchTracker,
+            MT::FrequencyShifter => Self::FrequencyShifter,
+            MT::EnsembleChorus => Self::EnsembleChorus,
+            MT::ShimmerReverb => Self::ShimmerReverb,
+            MT::GranularFx => Self::GranularFx,
+            MT::SpectralBlur => Self::SpectralBlur,
+            MT::ModalResonator => Self::ModalResonator,
+            MT::ReverseGateReverb => Self::ReverseGateReverb,
+        })
+    }
+
     /// Convert to engine `ModuleType`. Returns `None` for visualizers and
     /// signal monitors (they require GUI-specific setup).
     #[must_use]
@@ -313,6 +390,10 @@ impl PatchModuleType {
             Self::Reverb => Some(MT::Reverb),
             Self::Distortion => Some(MT::Distortion),
             Self::Chorus => Some(MT::Chorus),
+            Self::Phaser => Some(MT::Phaser),
+            Self::Flanger => Some(MT::Flanger),
+            Self::Compressor => Some(MT::Compressor),
+            Self::Eq => Some(MT::Eq),
             Self::Waveshaper => Some(MT::Waveshaper),
             Self::MidSide => Some(MT::MidSide),
             Self::ModMatrix => Some(MT::ModMatrix),

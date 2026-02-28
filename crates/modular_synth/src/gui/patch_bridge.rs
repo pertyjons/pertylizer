@@ -14,7 +14,7 @@ use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
 use crate::patch::{ConnectionState, ModuleState, ParamValue, Patch, PatchModuleType};
 use crate::session::SynthSession;
-use synth_core::{Describable, ModuleCategory, ModuleDescriptor};
+use synth_core::{Describable, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
@@ -440,70 +440,10 @@ pub fn create_patch_from_rack(
 
     // Add modules
     for module_id in patch_editor.module_ids() {
-        if let Some((descriptor, position, params)) = patch_editor.get_module_data(module_id) {
-            let module_type = match descriptor.category {
-                ModuleCategory::Oscillator => {
-                    // Distinguish oscillator subtypes by type_id
-                    match descriptor.type_id.0.as_str() {
-                        "math_oscillator" => PatchModuleType::MathOscillator,
-                        "sub_oscillator" => PatchModuleType::SubOscillator,
-                        "noise" => PatchModuleType::Noise,
-                        "ring_mod" => PatchModuleType::RingMod,
-                        "wavetable_osc" => PatchModuleType::WavetableOsc,
-                        "additive_osc" => PatchModuleType::AdditiveOsc,
-                        "la_synth" => PatchModuleType::LaSynth,
-                        _ => PatchModuleType::Oscillator,
-                    }
-                }
-                ModuleCategory::Filter => PatchModuleType::Filter,
-                ModuleCategory::Envelope => match descriptor.type_id.0.as_str() {
-                    "mseg" => PatchModuleType::Mseg,
-                    _ => PatchModuleType::Envelope,
-                },
-                ModuleCategory::LFO => match descriptor.type_id.0.as_str() {
-                    "euclidean" => PatchModuleType::Euclidean,
-                    "turing_machine" => PatchModuleType::TuringMachine,
-                    "random_gates" => PatchModuleType::RandomGates,
-                    "kinetic_modulator" => PatchModuleType::KineticModulator,
-                    _ => PatchModuleType::Lfo,
-                },
-                ModuleCategory::Amplifier => PatchModuleType::Amplifier,
-                ModuleCategory::Mixer => PatchModuleType::Mixer,
-                ModuleCategory::Output => PatchModuleType::StereoOutput,
-                ModuleCategory::Effect => match descriptor.type_id.0.as_str() {
-                    "delay" => PatchModuleType::Delay,
-                    "reverb" => PatchModuleType::Reverb,
-                    "distortion" => PatchModuleType::Distortion,
-                    "chorus" => PatchModuleType::Chorus,
-                    "waveshaper" => PatchModuleType::Waveshaper,
-                    "mid_side" => PatchModuleType::MidSide,
-                    "bbd_delay" => PatchModuleType::BbdDelay,
-                    "limiter" => PatchModuleType::Limiter,
-                    "frequency_shifter" => PatchModuleType::FrequencyShifter,
-                    _ => PatchModuleType::Delay, // Fallback for other effects
-                },
-                ModuleCategory::Utility => match descriptor.type_id.0.as_str() {
-                    "mod_matrix" => PatchModuleType::ModMatrix,
-                    "envelope_follower" => PatchModuleType::EnvelopeFollower,
-                    "signal_monitor" => PatchModuleType::SignalMonitor,
-                    "inline_signal_monitor" => PatchModuleType::InlineSignalMonitor,
-                    "vector_mixer" => PatchModuleType::VectorMixer,
-                    "pitch_tracker" => PatchModuleType::PitchTracker,
-                    _ => continue,
-                },
-                ModuleCategory::PhysicalModeling => match descriptor.type_id.0.as_str() {
-                    "keyboard_panner" => PatchModuleType::KeyboardPanner,
-                    "body_resonance" => PatchModuleType::BodyResonance,
-                    "mechanical_noise" => PatchModuleType::MechanicalNoise,
-                    _ => continue,
-                },
-                ModuleCategory::Visualizer => match descriptor.type_id.0.as_str() {
-                    "oscilloscope" => PatchModuleType::Oscilloscope,
-                    "level_meter" => PatchModuleType::LevelMeter,
-                    "spectrum_analyzer" => PatchModuleType::SpectrumAnalyzer,
-                    _ => continue,
-                },
-                _ => continue,
+        if let Some((_descriptor, position, params)) = patch_editor.get_module_data(module_id) {
+            // Derive PatchModuleType from the ModuleId's module_type (always in sync)
+            let Some(module_type) = PatchModuleType::from_module_type(module_id.module_type) else {
+                continue;
             };
 
             // params is now HashMap<String, f32>
@@ -541,30 +481,10 @@ pub fn create_patch_from_rack(
     Some(patch)
 }
 
-/// Get the EffectType for a module from its descriptor.
+/// Get the EffectType for a module from its ModuleId.
 pub fn get_effect_type_from_module(
-    patch_editor: &PatchEditor,
+    _patch_editor: &PatchEditor,
     module_id: ModuleId,
 ) -> Option<EffectType> {
-    let desc = patch_editor.module_descriptor(module_id)?;
-
-    // Match based on type_id
-    match desc.type_id.0.as_str() {
-        "chorus" => Some(EffectType::Chorus),
-        "delay" => Some(EffectType::Delay),
-        "reverb" => Some(EffectType::Reverb),
-        "distortion" => Some(EffectType::Distortion),
-        "phaser" => Some(EffectType::Phaser),
-        "flanger" => Some(EffectType::Flanger),
-        "compressor" => Some(EffectType::Compressor),
-        "eq" => Some(EffectType::Eq),
-        "waveshaper" => Some(EffectType::Waveshaper),
-        "mid_side" => Some(EffectType::MidSide),
-        "bbd_delay" => Some(EffectType::BbdDelay),
-        "limiter" => Some(EffectType::Limiter),
-        "convolver" => Some(EffectType::Convolver),
-        "phase_vocoder" => Some(EffectType::PhaseVocoder),
-        "frequency_shifter" => Some(EffectType::FrequencyShifter),
-        _ => None,
-    }
+    EffectType::from_module_type(module_id.module_type)
 }

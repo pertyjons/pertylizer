@@ -103,7 +103,7 @@ pub struct GroupId(u32);
 pub struct ModuleGroup {
     id: GroupId,
     name: String,
-    color: Option<Color32>,          // Visuell färgkodning
+    color: Option<HexColor>,         // Serialiseras som "#RRGGBB" eller "#RRGGBBAA"
     members: Vec<ModuleId>,          // Vilka moduler som ingår
     collapsed: bool,                 // Kollapsad = visas som en box
     position: (f32, f32),            // Position i rack (när kollapsad)
@@ -131,6 +131,21 @@ pub struct ExposedPort {
   - Dra modul in/ut ur grupp
   - Högerklicka port → "Exponera port" / "Dölj port"
 
+### 1.2.1 Invarians och regler (MVP)
+
+- En modul kan bara tillhöra en grupp.
+- En exponerad port måste referera till en modul som är medlem i gruppen.
+- En port får exponeras max en gång per grupp.
+- Alla kopplingar som korsar gruppgräns måste gå via exponerade portar, både när gruppen är kollapsad **och** expanderad.
+- Att dölja en exponerad port som har aktiva externa kopplingar ska blockeras med förklaring.
+- Om sista medlemmen lämnar gruppen tas gruppen bort automatiskt.
+
+### 1.2.2 Kopplingsbeteende vid gränser (MVP)
+
+- Koppling som korsar gräns skapar auto-exponering om porten saknar exponering.
+- Externa kablar ritas alltid till gruppens port-nod (aldrig direkt till intern modulport).
+- När en modul flyttas mellan grupper uppdateras gränskopplingar till rätt exponerade portar.
+
 ### 1.3 Patch-serialisering
 
 ```json
@@ -157,6 +172,11 @@ pub struct ExposedPort {
 }
 ```
 
+### 1.3.1 Gruppoperationer (MVP)
+
+- **Ta bort grupp:** Raderar gruppen och alla dess moduler + kopplingar.
+- **Avgruppera:** Tar bort gruppen men behåller moduler och kopplingar.
+
 ### 1.4 Uppgifter
 
 - [ ] Lägg till `ModuleGroup` och `GroupId` typer
@@ -164,6 +184,15 @@ pub struct ExposedPort {
 - [ ] Implementera grupp-rendering i `PatchEditor` (expanderad/kollapsad)
 - [ ] Implementera grupp-interaktion (skapa, expandera, kollapsa, exponera portar)
 - [ ] Kopplingsritning mellan kollapsade grupper och fristående moduler
+
+### 1.5 Acceptanskriterier (Fas 1)
+
+- En modul kan inte tillhöra mer än en grupp samtidigt.
+- Ingen gränskoppling kan existera utan exponerad port.
+- Auto-exponering sker när användaren skapar en gränskoppling.
+- Kollapsad grupp visar endast box + exponerade portar; expanderad visar moduler + grupp-ram + port-noder.
+- **Ta bort grupp** raderar moduler och kopplingar; **Avgruppera** lämnar moduler och kopplingar kvar.
+- Patchar med grupper round-trippar via save/load utan att tappa grupper eller kopplingar.
 
 ---
 
@@ -199,10 +228,12 @@ pub enum GroupCategory {
 ### 2.2 Instansiering
 
 Vid insättning av en template i en patch:
-1. Remappa alla `ModuleId` för att undvika konflikter (osc-1 → osc-3 om osc-1/osc-2 redan finns)
+1. Remappa alla `ModuleId` **och** skapa nytt `GroupId`
 2. Skapa moduler via `PatchBridge::load_module()`
 3. Skapa kopplingar med remappade ID:n
 4. Skapa `ModuleGroup` med de nya modulerna
+5. Remappa exponerade portar och variant-parametrar till nya ID:n
+6. Placera moduler relativt en drop‑punkt (template‑layout sparas relativt gruppens bounding box)
 
 ### 2.3 Gruppbibliotek
 
@@ -255,6 +286,13 @@ Samma gruppstruktur (moduler + kopplingar) med olika parametervärden:
 - [ ] Spara/ladda custom templates
 - [ ] Implementera gruppvarianter (parameter-presets per template)
 
+### 2.6 Acceptanskriterier (Fas 2)
+
+- Instansiering skapar inga `ModuleId`- eller `GroupId`-kollisioner.
+- Exponerade portar i instansen fungerar direkt utan manuell fix.
+- Variant-parametrar appliceras korrekt efter remapping.
+- Template-layout placeras korrekt utifrån drop‑punkt.
+
 ---
 
 ## Fas 3: Realtidsvisualisering (probes)
@@ -282,14 +320,15 @@ Varje koppling inom en expanderad grupp kan visa en liten realtidsvisning:
 
 ### 3.2 Signal-typ-anpassad rendering
 
-Probes detekterar automatiskt signaltyp och anpassar visningen:
+Probes använder `PortType`/port-metadata för signaltyp (inte frekvensdetektion):
 
 | Signaltyp | Detektion | Visning |
 |-----------|-----------|---------|
-| Audio (snabb) | Frekvens > 20 Hz | Waveform + spektrum |
-| CV/Modulation (långsam) | Frekvens < 20 Hz | Kurva över tid + aktuellt värde i siffror |
-| Gate (on/off) | Binärt 0/1-mönster | Pulsindikator med on/off-status |
-| Trigger (kort puls) | Korta transienter | Blinkande punkt vid trigger |
+| Audio | PortType = Audio | Waveform + spektrum |
+| CV/Modulation | PortType = CV/Modulation | Kurva över tid + aktuellt värde i siffror |
+| Gate | PortType = Gate | Pulsindikator med on/off-status |
+| Trigger | PortType = Trigger | Blinkande punkt vid trigger |
+| Okänd | Fallback | Waveform |
 
 ### 3.3 Dataflöde (realtidssäkert)
 
@@ -306,6 +345,12 @@ Audio-tråd                          GUI-tråd
 - GUI-tråden läser och renderar i sin egen takt (60 fps)
 - Probes aktiveras **bara** för expanderade gruppers kopplingar (ingen overhead för kollapsade)
 - Befintlig infrastruktur: `Oscilloscope`-modulen använder redan liknande mekanism
+ - Ringbuffer allokeras/aktiveras utanför audio-tråden (inga locks/allokeringar i audio-tråd)
+
+### 3.3.1 Polyfoni (MVP)
+
+- Probes visar **summa av röster** när polyfoni är aktiv (mix-down).
+- Ingen röst‑val UI i fas 3.
 
 ### 3.4 Port-info-vy
 
@@ -351,6 +396,13 @@ Kopplingar i grupp-vyn färgas automatiskt baserat på `PortType`.
 - [ ] Signalflödes-animation (tjocklek + ljusstyrka baserat på nivå)
 - [ ] Färgkodning av kopplingar baserat på `PortType`
 - [ ] Port-info-panel (peak, RMS, grundfrekvens)
+
+### 3.8 Acceptanskriterier (Fas 3)
+
+- Probes är endast aktiva i expanderade grupper.
+- Audio‑tråden gör inga allokeringar eller lås vid probe‑toggle.
+- Signaltyp/färg baseras på `PortType` eller fallback, aldrig frekvensdetektion.
+- Polyfoni visas som summa av röster.
 
 ---
 

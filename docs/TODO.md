@@ -85,6 +85,19 @@
 - [ ] Ensure module positions settle before user interaction
 - Related: Save/restore module positions (see 3.1)
 
+### 2.8 Module Groups — Phases 1–3 (see `docs/Module-Groups-Plan.md`)
+- [ ] Phase 1: Visual grouping data model + patch serialization (`groups`)
+- [ ] Phase 1: UI for create/expand/collapse, expose ports, drag in/out
+- [ ] Phase 1: Enforce exclusivity (module belongs to one group)
+- [ ] Phase 1: Enforce boundary rule (all external connections via exposed ports, always)
+- [ ] Phase 1: Group operations — delete group (delete contents) and ungroup (keep contents)
+- [ ] Phase 2: Group templates (format, storage, browser)
+- [ ] Phase 2: Template instantiation with full ID remapping + drop-point layout
+- [ ] Phase 2: Template variants (parameter presets with remap)
+- [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
+- [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type
+- [ ] Phase 3: Polyphony probes = sum of voices (mixdown)
+
 ---
 
 ## Priority 3 — Visual Polish
@@ -147,7 +160,9 @@
 - [ ] Consider: Tabbed interface, mixer-style vertical strips, or collapsible panels
 - [ ] TBD: Gather more specific requirements
 
-### 5.2 Patch/MCP serialization unification
-- [ ] Audit: Compare file-based patch format with MCP's `build_instrument` / `apply_example_patch` format
-- [ ] Goal: Single serialization path for save/load/MCP, reducing duplication
-- [ ] `patch_bridge.rs` already bridges between formats — evaluate if it can be the single source of truth
+### 5.2 Reduce module-type registration boilerplate
+- [ ] Eliminate `create_patch_from_rack` `type_id`-match (~60 lines) — derive `PatchModuleType` from `ModuleType` directly (already available on `ModuleId`)
+- [ ] Eliminate `get_effect_type_from_module` `type_id`-match (~20 lines) — `EffectType::from_module_type()` already exists, use it instead of string matching
+- [ ] Consider removing `PatchModuleType` entirely — replace with `ModuleType` prefix strings in patch JSON (already works: `ModuleType::from_prefix()` + `ModuleType::prefix()`)
+- Current problem: adding a new module type requires updating ~6 manual match arms across patch.rs, patch_bridge.rs, master_effects.rs. Several are already out of sync (e.g. `create_patch_from_rack` missing new effects).
+- Note: parameter application is already centralized in `SynthSession::set_parameter()` — no duplication there
