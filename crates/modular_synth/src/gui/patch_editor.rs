@@ -1884,40 +1884,8 @@ impl PatchEditor {
         }
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
-        self.draw_toolbar_foreground(ui, visible_rect, &mut result);
 
         result
-    }
-
-    /// Draw the toolbar overlay in the foreground layer.
-    fn draw_toolbar_foreground(
-        &self,
-        ui: &mut Ui,
-        canvas_rect: Rect,
-        result: &mut PatchEditorResult,
-    ) {
-        use egui::{Area, Frame, Order};
-
-        Area::new(egui::Id::new("patch_toolbar"))
-            .order(Order::Foreground)
-            .fixed_pos(canvas_rect.min + Vec2::new(10.0, 10.0))
-            .show(ui.ctx(), |ui| {
-                Frame::popup(ui.style())
-                    .fill(theme().colors.bg_panel.gamma_multiply(0.95))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(format!(
-                                    "{} Auto Layout",
-                                    egui_remixicon::icons::LAYOUT_GRID_FILL
-                                ))
-                                .clicked()
-                            {
-                                result.request_auto_layout = true;
-                            }
-                        });
-                    });
-            });
     }
 
     /// Draw a vertical column of ports (input or output side).
@@ -2623,6 +2591,22 @@ impl PatchEditor {
         let mut cable_action_taken = false;
 
         response.context_menu(|ui| {
+            // --- Layout ---
+            ui.label(
+                egui::RichText::new("Layout")
+                    .color(theme().colors.text_secondary)
+                    .size(11.0),
+            );
+            if ui
+                .button(format!("{} Auto Layout", ri::LAYOUT_GRID_FILL))
+                .clicked()
+            {
+                result.request_auto_layout = true;
+                ui.close();
+            }
+
+            ui.separator();
+
             if !self.selected_modules.is_empty() {
                 if ui.button("Create group from selection").clicked() {
                     self.create_group_from_selection();
