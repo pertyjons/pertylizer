@@ -1,5 +1,27 @@
 # Version History
 
+## [0.194.0] - 2026-02-28
+### Built-in group templates, groups in example patches
+
+**Built-in group templates:**
+- **12 hardcoded group templates** organized by category (Voice, Effect, Utility, Tutorial)
+- Voice: Basic Synth Voice, Dual Oscillator Voice, FM Pair
+- Effect: Chorus + Reverb, Delay + Reverb, Distortion + EQ
+- Utility: Filter Sweep, Vibrato LFO, Slow Modulation, Dual Envelope
+- Tutorial: Subtractive 101, AM Synthesis
+- **`GroupTemplate` builder methods** — `new()`, `add_module()`, `add_connection()`, `expose_input()`, `expose_output()`
+- **`Patch::add_group()` helper** — add groups to patches with auto-positioned group box
+
+**Template browser integration:**
+- **`GroupTemplateSource` enum** — `BuiltIn(index)` / `File(path)` to distinguish built-in from user-saved templates
+- **Template browser shows both** built-in and file-based templates, grouped by category
+- **"Built-in" badge** on built-in templates in the browser
+- **Category sections** in the browser (Voice, Effect, Utility, Tutorial, Other)
+
+**Groups in example patches:**
+- Added module groups to 5 patches: Deep Space Pad, String Ensemble, Acid Bass, Vintage Lead, FM Bell
+- Groups showcase Voice/Modulation/FM Engine/Output groupings with colored borders
+
 ## [0.193.0] - 2026-02-28
 ### Group templates, MCP auto layout, settings expansion
 

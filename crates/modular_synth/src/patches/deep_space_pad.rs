@@ -175,5 +175,18 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
     patch.settings.octave_offset = -1;
+
+    // Groups
+    patch.add_group(
+        "Voice",
+        Some("#4A90D9"),
+        &["osc-1", "osc-2", "mix-1", "flt-1", "amp-1"],
+    );
+    patch.add_group(
+        "Modulation",
+        Some("#50C878"),
+        &["env-1", "env-2", "lfo-1", "lfo-2"],
+    );
+
     patch
 }

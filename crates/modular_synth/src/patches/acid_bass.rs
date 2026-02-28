@@ -120,5 +120,12 @@ Switch filter type to BP for a thinner, more nasal acid sound.
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 
+    // Groups
+    patch.add_group(
+        "Voice",
+        Some("#D96A4A"),
+        &["osc-1", "flt-1", "amp-1", "env-1", "env-2", "mmx-1"],
+    );
+
     patch
 }

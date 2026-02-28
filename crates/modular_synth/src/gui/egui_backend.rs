@@ -1641,7 +1641,7 @@ impl SynthApp {
         // Group template browser dialog
         if self.dialog_state.show_group_templates {
             let manager = GroupTemplateManager::default();
-            let templates = manager.list_templates().unwrap_or_default();
+            let templates = manager.list_all_templates();
             match show_group_template_browser(
                 ctx,
                 &mut self.dialog_state.show_group_templates,
@@ -1649,8 +1649,8 @@ impl SynthApp {
                 &mut self.dialog_state.group_template_search,
                 &mut self.dialog_state.group_template_selected,
             ) {
-                GroupTemplateBrowserResult::Selected(path) => {
-                    match manager.load_template(&path) {
+                GroupTemplateBrowserResult::Selected(source) => {
+                    match Self::resolve_group_template(&manager, &source) {
                         Ok(template) => {
                             self.insert_group_template(&template);
                         }
@@ -1826,6 +1826,24 @@ impl SynthApp {
     /// Resolve the initial directory for the Group Template file dialog.
     fn resolve_group_templates_dir(&self) -> Option<PathBuf> {
         GroupTemplateManager::default_templates_dir().ok()
+    }
+
+    /// Resolve a group template source to the actual template data.
+    fn resolve_group_template(
+        manager: &GroupTemplateManager,
+        source: &crate::io::GroupTemplateSource,
+    ) -> Result<crate::patch::GroupTemplate, crate::patch::PatchError> {
+        match source {
+            crate::io::GroupTemplateSource::BuiltIn(index) => {
+                let all = crate::group_templates::builtin_group_templates();
+                all.into_iter().nth(*index).ok_or_else(|| {
+                    crate::patch::PatchError::Io(format!(
+                        "Built-in template index {index} out of range"
+                    ))
+                })
+            }
+            crate::io::GroupTemplateSource::File(path) => manager.load_template(path),
+        }
     }
 
     /// Insert a group template at the last remembered drop position.

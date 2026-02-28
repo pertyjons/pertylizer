@@ -173,6 +173,55 @@ pub struct GroupTemplate {
     pub exposed_outputs: Vec<ExposedPortState>,
 }
 
+impl GroupTemplate {
+    /// Create a new empty group template.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            author: None,
+            description: None,
+            category: None,
+            tags: Vec::new(),
+            color: None,
+            modules: Vec::new(),
+            connections: Vec::new(),
+            exposed_inputs: Vec::new(),
+            exposed_outputs: Vec::new(),
+        }
+    }
+
+    /// Add a module to the template.
+    pub fn add_module(&mut self, module: ModuleState) {
+        self.modules.push(module);
+    }
+
+    /// Add a connection between modules in the template.
+    pub fn add_connection(&mut self, from_id: &str, from_port: &str, to_id: &str, to_port: &str) {
+        self.connections.push(ConnectionState {
+            from: (from_id.to_string(), from_port.to_string()),
+            to: (to_id.to_string(), to_port.to_string()),
+        });
+    }
+
+    /// Expose an input port on the group boundary.
+    pub fn expose_input(&mut self, label: &str, module_id: &str, port: &str) {
+        self.exposed_inputs.push(ExposedPortState {
+            label: label.to_string(),
+            module_id: module_id.to_string(),
+            port: port.to_string(),
+        });
+    }
+
+    /// Expose an output port on the group boundary.
+    pub fn expose_output(&mut self, label: &str, module_id: &str, port: &str) {
+        self.exposed_outputs.push(ExposedPortState {
+            label: label.to_string(),
+            module_id: module_id.to_string(),
+            port: port.to_string(),
+        });
+    }
+}
+
 /// Parameter value for serialization.
 /// Supports all types including string choices for waveforms, filter modes, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +342,36 @@ impl Patch {
             to: (to_id.to_string(), to_port.to_string()),
         });
     }
+
+    /// Add a module group to the patch.
+    ///
+    /// Automatically assigns a group ID based on the current number of groups.
+    pub fn add_group(&mut self, name: &str, color: Option<&str>, members: &[&str]) {
+        let id = GroupId(self.groups.len() as u32 + 1);
+        // Compute average position of member modules for group placement.
+        let (sum_x, sum_y, count) = self
+            .modules
+            .iter()
+            .filter(|m| members.contains(&m.id.as_str()))
+            .fold((0.0_f32, 0.0_f32, 0u32), |(sx, sy, c), m| {
+                (sx + m.position.0, sy + m.position.1, c + 1)
+            });
+        let position = if count > 0 {
+            (sum_x / count as f32, sum_y / count as f32)
+        } else {
+            (0.0, 0.0)
+        };
+        self.groups.push(ModuleGroupState {
+            id,
+            name: name.to_string(),
+            color: color.map(String::from),
+            members: members.iter().map(|s| (*s).to_string()).collect(),
+            collapsed: false,
+            position,
+            exposed_inputs: Vec::new(),
+            exposed_outputs: Vec::new(),
+        });
+    }
 }
 
 /// Errors that can occur when loading/saving patches.
@@ -411,4 +490,5 @@ impl ModuleBuilder {
 // EXAMPLE PATCHES (re-exported from patches module)
 // ============================================================================
 
+pub use crate::group_templates::categorized_group_templates;
 pub use crate::patches::{categorized_patches, example_patches};

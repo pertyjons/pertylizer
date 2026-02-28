@@ -12,7 +12,7 @@ use egui_file_dialog::FileDialog;
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
 use crate::io::settings::{AppSettings, settings_path};
-use crate::io::{GroupTemplateInfo, GroupTemplateManager, PatchManager};
+use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
 use crate::patch::{GroupCategory, GroupId, Patch, example_patches};
 
 /// Type of file dialog operation.
@@ -38,8 +38,8 @@ pub struct DialogState {
     pub show_group_templates: bool,
     /// Search filter for group template browser.
     pub group_template_search: String,
-    /// Currently selected group template path in browser.
-    pub group_template_selected: Option<PathBuf>,
+    /// Currently selected group template in browser.
+    pub group_template_selected: Option<GroupTemplateSource>,
     /// Drop position for inserting a template.
     pub group_template_drop_pos: Option<Pos2>,
     /// Show save group template dialog.
@@ -202,8 +202,8 @@ pub enum GroupTemplateBrowserResult {
     None,
     /// User cancelled.
     Cancelled,
-    /// User selected a template file.
-    Selected(PathBuf),
+    /// User selected a template (built-in or file-based).
+    Selected(GroupTemplateSource),
     /// User wants to browse for a template file.
     Browse,
 }
@@ -524,7 +524,7 @@ pub fn show_group_template_browser(
     open: &mut bool,
     templates: &[GroupTemplateInfo],
     search: &mut String,
-    selected: &mut Option<PathBuf>,
+    selected: &mut Option<GroupTemplateSource>,
 ) -> GroupTemplateBrowserResult {
     if !*open {
         return GroupTemplateBrowserResult::None;
@@ -534,7 +534,8 @@ pub fn show_group_template_browser(
 
     egui::Window::new("Group Templates")
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
+        .min_width(420.0)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -550,42 +551,97 @@ pub fn show_group_template_browser(
             let mut shown = 0;
 
             egui::ScrollArea::vertical()
-                .max_height(320.0)
+                .max_height(380.0)
                 .show(ui, |ui| {
-                    for template in templates {
-                        let hay_name = template.name.to_lowercase();
-                        let hay_desc = template
-                            .description
-                            .as_ref()
-                            .map(|d| d.to_lowercase())
-                            .unwrap_or_default();
-                        if !needle.is_empty()
-                            && !hay_name.contains(&needle)
-                            && !hay_desc.contains(&needle)
-                        {
+                    // Group by category
+                    for category in GroupCategory::ALL {
+                        let category_templates: Vec<_> = templates
+                            .iter()
+                            .filter(|t| {
+                                t.category == Some(category) && {
+                                    let hay_name = t.name.to_lowercase();
+                                    let hay_desc = t
+                                        .description
+                                        .as_ref()
+                                        .map(|d| d.to_lowercase())
+                                        .unwrap_or_default();
+                                    needle.is_empty()
+                                        || hay_name.contains(&needle)
+                                        || hay_desc.contains(&needle)
+                                }
+                            })
+                            .collect();
+
+                        if category_templates.is_empty() {
                             continue;
                         }
 
-                        shown += 1;
-                        ui.horizontal(|ui| {
-                            let is_selected =
-                                selected.as_ref().is_some_and(|path| path == &template.path);
-                            if ui.selectable_label(is_selected, &template.name).clicked() {
-                                *selected = Some(template.path.clone());
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(category.label()).strong());
+                        ui.add_space(2.0);
+
+                        for template in &category_templates {
+                            shown += 1;
+                            ui.horizontal(|ui| {
+                                let is_selected =
+                                    selected.as_ref().is_some_and(|s| *s == template.source);
+                                if ui.selectable_label(is_selected, &template.name).clicked() {
+                                    *selected = Some(template.source.clone());
+                                }
+                                if matches!(template.source, GroupTemplateSource::BuiltIn(_)) {
+                                    ui.label(
+                                        RichText::new("Built-in")
+                                            .small()
+                                            .color(theme().colors.accent_green),
+                                    );
+                                }
+                                if let Some(ref desc) = template.description {
+                                    ui.label(
+                                        RichText::new(desc).small().color(theme().colors.text_dim),
+                                    );
+                                }
+                            });
+                        }
+                    }
+
+                    // Uncategorized templates (file-based with no category)
+                    let uncategorized: Vec<_> = templates
+                        .iter()
+                        .filter(|t| {
+                            t.category.is_none() && {
+                                let hay_name = t.name.to_lowercase();
+                                let hay_desc = t
+                                    .description
+                                    .as_ref()
+                                    .map(|d| d.to_lowercase())
+                                    .unwrap_or_default();
+                                needle.is_empty()
+                                    || hay_name.contains(&needle)
+                                    || hay_desc.contains(&needle)
                             }
-                            if let Some(cat) = template.category {
-                                ui.label(
-                                    RichText::new(cat.label())
-                                        .small()
-                                        .color(theme().colors.text_dim),
-                                );
-                            }
-                            if let Some(ref desc) = template.description {
-                                ui.label(
-                                    RichText::new(desc).small().color(theme().colors.text_dim),
-                                );
-                            }
-                        });
+                        })
+                        .collect();
+
+                    if !uncategorized.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Other").strong());
+                        ui.add_space(2.0);
+
+                        for template in &uncategorized {
+                            shown += 1;
+                            ui.horizontal(|ui| {
+                                let is_selected =
+                                    selected.as_ref().is_some_and(|s| *s == template.source);
+                                if ui.selectable_label(is_selected, &template.name).clicked() {
+                                    *selected = Some(template.source.clone());
+                                }
+                                if let Some(ref desc) = template.description {
+                                    ui.label(
+                                        RichText::new(desc).small().color(theme().colors.text_dim),
+                                    );
+                                }
+                            });
+                        }
                     }
                 });
 
@@ -603,9 +659,9 @@ pub fn show_group_template_browser(
                 if ui
                     .add_enabled(can_load, egui::Button::new("Load"))
                     .clicked()
-                    && let Some(path) = selected.clone()
+                    && let Some(source) = selected.clone()
                 {
-                    result = GroupTemplateBrowserResult::Selected(path);
+                    result = GroupTemplateBrowserResult::Selected(source);
                     *open = false;
                 }
                 if ui.button("Browse...").clicked() {

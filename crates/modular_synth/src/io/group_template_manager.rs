@@ -8,20 +8,29 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::patch::{GroupCategory, GroupTemplate, PatchError};
+use crate::patch::{GroupCategory, GroupTemplate, PatchError, categorized_group_templates};
 
-/// Information about a group template file without loading full content.
+/// Where a group template comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupTemplateSource {
+    /// A built-in template, referenced by its index in the flat list.
+    BuiltIn(usize),
+    /// A user-saved template on disk.
+    File(PathBuf),
+}
+
+/// Information about a group template without loading full content.
 #[derive(Debug, Clone)]
 pub struct GroupTemplateInfo {
-    /// File path.
-    pub path: PathBuf,
+    /// Where this template comes from.
+    pub source: GroupTemplateSource,
     /// Template name.
     pub name: String,
     /// Optional description if available.
     pub description: Option<String>,
     /// Optional category.
     pub category: Option<GroupCategory>,
-    /// File modification time.
+    /// File modification time (None for built-in templates).
     pub modified: Option<std::time::SystemTime>,
 }
 
@@ -108,12 +117,39 @@ impl GroupTemplateManager {
         let (name, description, category) = Self::extract_template_metadata(&content, path);
 
         Ok(GroupTemplateInfo {
-            path: path.to_path_buf(),
+            source: GroupTemplateSource::File(path.to_path_buf()),
             name,
             description,
             category,
             modified: metadata.modified().ok(),
         })
+    }
+
+    /// List all available templates: built-in first, then user-saved files.
+    pub fn list_all_templates(&self) -> Vec<GroupTemplateInfo> {
+        let mut all = Vec::new();
+
+        // Built-in templates
+        let mut index = 0;
+        for (category, templates) in categorized_group_templates() {
+            for t in templates {
+                all.push(GroupTemplateInfo {
+                    source: GroupTemplateSource::BuiltIn(index),
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    category: Some(category),
+                    modified: None,
+                });
+                index += 1;
+            }
+        }
+
+        // User-saved templates from disk
+        if let Ok(file_templates) = self.list_templates() {
+            all.extend(file_templates);
+        }
+
+        all
     }
 
     /// Load a group template from a file path.

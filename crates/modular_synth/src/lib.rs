@@ -14,6 +14,7 @@
 #![allow(clippy::similar_names)]
 
 pub mod audio;
+pub mod group_templates;
 #[cfg(feature = "gui-egui")]
 pub mod gui;
 pub mod io;

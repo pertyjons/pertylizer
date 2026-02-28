@@ -140,5 +140,14 @@ more "chime-like", lower notes more "gong-like".
     patch.add_connection("env-2", "out", "amp-2", "cv");
     patch.add_connection("amp-2", "left", "out-1", "in_l");
     patch.add_connection("amp-2", "right", "out-1", "in_r");
+
+    // Groups
+    patch.add_group(
+        "FM Engine",
+        Some("#D4A94A"),
+        &["osc-1", "osc-2", "amp-1", "env-1"],
+    );
+    patch.add_group("Output", Some("#7B68EE"), &["amp-2", "env-2"]);
+
     patch
 }
