@@ -81,8 +81,10 @@
 - Check: The glow effect (8px outer, 5px inner) may extend beyond clip rect
 
 ### 2.7 Auto-layout after patch load
-- [ ] Run auto-layout when a patch is loaded from file or selected from examples
-- [ ] Ensure module positions settle before user interaction
+- [x] Run auto-layout when a patch is loaded from file or selected from examples
+- [x] Ensure module positions settle before user interaction
+- `load_patch_data()` already called `request_initial_layout()` for File/Menu/MCP-queue loads
+- Added `request_initial_layout()` for startup patch and MCP reconciliation path
 - Related: Save/restore module positions (see 3.1)
 
 ### 2.8 Module Groups — Phases 1–3 (see `docs/Module-Groups-Plan.md`)
@@ -103,12 +105,11 @@
 ## Priority 3 — Visual Polish
 
 ### 3.1 Save module positions in patch JSON
-- [ ] Add `position: (x, y)` to `ModuleState` in patch serialization
-- [ ] Save positions when writing patch to disk
-- [ ] Restore positions when loading (fall back to auto-layout if missing)
-- Check: MCP patch format compatibility — ensure `PatchBridge` and file I/O share serialization.
-  Current patch format uses `serde_json` with `Patch { modules, connections, settings }`.
-  MCP builds patches via `session.add_module_with_id()` — positions are GUI-only state.
+- [x] Add `position: (x, y)` to `ModuleState` in patch serialization
+- [x] Save positions when writing patch to disk
+- [x] Restore positions when loading (fall back to auto-layout if missing)
+- Already implemented: `ModuleState.position` serialized, `create_patch_from_rack` saves, `load_module` restores
+- MCP patches use `session.apply_patch()` (positions are GUI-only state, auto-layout fills in)
 
 ### 3.2 Switch to egui-remixicon for all icons
 - [x] Add `egui-remixicon` dependency

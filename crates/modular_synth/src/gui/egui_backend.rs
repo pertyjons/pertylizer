@@ -292,6 +292,7 @@ impl SynthApp {
             &mut glide_time,
             active_instrument_id,
         );
+        default_instrument.patch_editor.request_initial_layout();
 
         let instruments = vec![default_instrument];
 
@@ -1763,6 +1764,9 @@ impl SynthApp {
             for conn in new_connections {
                 patch_editor.add_connection(conn);
             }
+
+            // Trigger auto-layout so MCP-added modules get proper positions
+            patch_editor.request_initial_layout();
         }
     }
 

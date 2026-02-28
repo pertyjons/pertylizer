@@ -1,4 +1,4 @@
-# Implementeringsplan: Modulgrupper
+    # Implementeringsplan: Modulgrupper
 
 > Status: PLANERING | Datum: 2026-02-16 | Basversion: 0.134.0
 
@@ -181,6 +181,7 @@ pub struct ExposedPort {
 
 - [ ] Lägg till `ModuleGroup` och `GroupId` typer
 - [ ] Utöka `Patch`-formatet med `groups`-fält (bakåtkompatibelt: tomt = inga grupper)
+- [ ] Serialisera grupper och spara/läs tillbaka gruppers positioner
 - [ ] Implementera grupp-rendering i `PatchEditor` (expanderad/kollapsad)
 - [ ] Implementera grupp-interaktion (skapa, expandera, kollapsa, exponera portar)
 - [ ] Kopplingsritning mellan kollapsade grupper och fristående moduler
@@ -192,6 +193,7 @@ pub struct ExposedPort {
 - Auto-exponering sker när användaren skapar en gränskoppling.
 - Kollapsad grupp visar endast box + exponerade portar; expanderad visar moduler + grupp-ram + port-noder.
 - **Ta bort grupp** raderar moduler och kopplingar; **Avgruppera** lämnar moduler och kopplingar kvar.
+- Gruppers data och positioner round-trippar via save/load utan att tappa information.
 - Patchar med grupper round-trippar via save/load utan att tappa grupper eller kopplingar.
 
 ---
