@@ -3,6 +3,7 @@
 //! `McpSharedState` is created in `main.rs` and shared via `Arc` to both
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::patch::Patch;
@@ -16,6 +17,10 @@ pub struct McpSharedState {
     pub ui_layout: Mutex<UiLayoutData>,
     /// Shared song data for sequencer (read/written by MCP, read by engine).
     pub song: Arc<RwLock<Song>>,
+    /// Whether the MCP HTTP server is listening.
+    pub mcp_listening: AtomicBool,
+    /// Number of active MCP sessions. Wrapped in Arc so it can be shared with the MCP server.
+    pub mcp_active_sessions: Arc<AtomicUsize>,
 }
 
 impl McpSharedState {
@@ -25,6 +30,8 @@ impl McpSharedState {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),
             song: Arc::new(RwLock::new(Song::new("Untitled"))),
+            mcp_listening: AtomicBool::new(false),
+            mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -35,7 +42,19 @@ impl McpSharedState {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),
             song,
+            mcp_listening: AtomicBool::new(false),
+            mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Check if the MCP server is listening.
+    pub fn is_listening(&self) -> bool {
+        self.mcp_listening.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of active MCP sessions.
+    pub fn active_sessions(&self) -> usize {
+        self.mcp_active_sessions.load(Ordering::Relaxed)
     }
 }
 

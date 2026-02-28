@@ -43,9 +43,12 @@ pub async fn serve_stdio(bridge: Arc<dyn SynthBridge>) -> Result<(), Box<dyn std
 ///
 /// Claude Code connects directly to `http://127.0.0.1:{port}/mcp`.
 /// No bridge process needed.
+///
+/// If `session_counter` is provided, each active MCP session will increment/decrement it.
 pub async fn serve_http(
     bridge: Arc<dyn SynthBridge>,
     port: u16,
+    session_counter: Option<Arc<std::sync::atomic::AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -54,7 +57,16 @@ pub async fn serve_http(
     let ct = tokio_util::sync::CancellationToken::new();
 
     let service = StreamableHttpService::new(
-        move || Ok(SynthMcpServer::new(Arc::clone(&bridge))),
+        move || {
+            if let Some(ref counter) = session_counter {
+                Ok(SynthMcpServer::with_session_counter(
+                    Arc::clone(&bridge),
+                    Arc::clone(counter),
+                ))
+            } else {
+                Ok(SynthMcpServer::new(Arc::clone(&bridge)))
+            }
+        },
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig {
             stateful_mode: true,

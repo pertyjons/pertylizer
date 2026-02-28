@@ -1,5 +1,13 @@
 # Version History
 
+## [0.188.0] - 2026-02-28
+### TODO 2.4 — MCP connection status indicator
+- **MCP status in top bar** — robot icon shows connection state next to MIDI selector
+- **Three states**: green filled icon + session count when active, dim outline when listening (idle), red when not running
+- **Hover tooltip** with detailed status text
+- **Session tracking** via `Arc<AtomicUsize>` shared between `McpSharedState` and `SynthMcpServer` (inc on create, dec on drop)
+- **Listening flag** via `AtomicBool` set when HTTP server starts
+
 ## [0.187.0] - 2026-02-27
 ### TODO 2.3 — Segmented control tab buttons for Rack/AWE/Seq
 - **Segmented control** — view selector buttons replaced with custom-painted connected pill-shaped segments

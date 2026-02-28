@@ -108,12 +108,20 @@ fn run_gui(gui_type: GuiType) -> Result<(), Box<dyn std::error::Error>> {
             std::sync::Arc::clone(&session),
             std::sync::Arc::clone(&shared),
         ));
+        let counter = std::sync::Arc::clone(&shared.mcp_active_sessions);
+        let shared_for_flag = std::sync::Arc::clone(&shared);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new()
                 .unwrap_or_else(|e| panic!("Failed to create tokio runtime: {e}"));
             rt.block_on(async {
-                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT).await {
+                shared_for_flag
+                    .mcp_listening
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT, Some(counter)).await {
                     eprintln!("MCP server error: {e}");
+                    shared_for_flag
+                        .mcp_listening
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             });
         });

@@ -697,6 +697,8 @@ pub struct ApplyExamplePatchParam {
 pub struct SynthMcpServer {
     bridge: Arc<dyn SynthBridge>,
     tool_router: ToolRouter<Self>,
+    /// Shared counter for active sessions (incremented on creation, decremented on drop).
+    session_counter: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl SynthMcpServer {
@@ -705,6 +707,28 @@ impl SynthMcpServer {
         Self {
             bridge,
             tool_router: Self::tool_router(),
+            session_counter: None,
+        }
+    }
+
+    /// Create a new MCP server with session tracking.
+    pub fn with_session_counter(
+        bridge: Arc<dyn SynthBridge>,
+        counter: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            bridge,
+            tool_router: Self::tool_router(),
+            session_counter: Some(counter),
+        }
+    }
+}
+
+impl Drop for SynthMcpServer {
+    fn drop(&mut self) {
+        if let Some(counter) = &self.session_counter {
+            counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

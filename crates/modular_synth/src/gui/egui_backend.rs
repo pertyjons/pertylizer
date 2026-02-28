@@ -627,6 +627,38 @@ impl eframe::App for SynthApp {
                         }
                     });
                     ui.separator();
+                    // MCP connection status indicator
+                    #[cfg(feature = "mcp")]
+                    if let Some(ref mcp) = self.mcp_shared {
+                        let listening = mcp.is_listening();
+                        let sessions = mcp.active_sessions();
+                        let (icon, label, color) = if sessions > 0 {
+                            (
+                                ri::ROBOT_2_FILL,
+                                format!("MCP ({})", sessions),
+                                theme().colors.meter_green,
+                            )
+                        } else if listening {
+                            (ri::ROBOT_2_LINE, "MCP".to_owned(), theme().colors.text_dim)
+                        } else {
+                            (
+                                ri::ROBOT_2_LINE,
+                                "MCP".to_owned(),
+                                theme().colors.accent_red,
+                            )
+                        };
+                        let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
+                        if resp.hovered() {
+                            resp.on_hover_text(if sessions > 0 {
+                                format!("MCP: {sessions} active session(s)")
+                            } else if listening {
+                                "MCP: listening (no active sessions)".to_owned()
+                            } else {
+                                "MCP: not running".to_owned()
+                            });
+                        }
+                        ui.separator();
+                    }
                     // Current patch name
                     ui.label(
                         RichText::new(format!("Patch: {}", self.current_patch_name))

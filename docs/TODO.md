@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.187.0)
+# TODO - Modular Synth (v0.188.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -62,9 +62,11 @@
 - Implemented as segmented control: pill-shaped connected buttons with filled active tab (v0.187.0)
 
 ### 2.4 MCP connection status indicator
-- [ ] Show MCP status icon next to MIDI status in top bar
-- [ ] States: connected (green dot), disconnected (gray dot), error (red dot)
-- Note: Check if MCP server state is accessible from GUI thread. May need an atomic flag or channel.
+- [x] Show MCP status icon next to MIDI status in top bar
+- [x] States: connected (green dot), disconnected (gray dot), error (red dot)
+- Implemented with `AtomicBool` (listening) and `Arc<AtomicUsize>` (active sessions) in `McpSharedState` (v0.188.0)
+- Robot icon: filled green when sessions active, dim outline when listening, red when not running
+- Hover tooltip shows detailed status
 
 ### 2.5 Effects section — visual separation from voice modules
 - [ ] Add a visual divider between voice modules and effects in the grid
