@@ -161,8 +161,8 @@
 - [ ] TBD: Gather more specific requirements
 
 ### 5.2 Reduce module-type registration boilerplate
-- [ ] Eliminate `create_patch_from_rack` `type_id`-match (~60 lines) — derive `PatchModuleType` from `ModuleType` directly (already available on `ModuleId`)
-- [ ] Eliminate `get_effect_type_from_module` `type_id`-match (~20 lines) — `EffectType::from_module_type()` already exists, use it instead of string matching
+- [x] Eliminate `create_patch_from_rack` `type_id`-match (~60 lines) — replaced with `PatchModuleType::from_module_type(module_id.module_type)`
+- [x] Eliminate `get_effect_type_from_module` `type_id`-match (~20 lines) — replaced with `EffectType::from_module_type(module_id.module_type)`
+- [x] Add missing `PatchModuleType` variants: Phaser, Flanger, Compressor, Eq (could never be saved in patches before)
 - [ ] Consider removing `PatchModuleType` entirely — replace with `ModuleType` prefix strings in patch JSON (already works: `ModuleType::from_prefix()` + `ModuleType::prefix()`)
-- Current problem: adding a new module type requires updating ~6 manual match arms across patch.rs, patch_bridge.rs, master_effects.rs. Several are already out of sync (e.g. `create_patch_from_rack` missing new effects).
 - Note: parameter application is already centralized in `SynthSession::set_parameter()` — no duplication there
