@@ -310,6 +310,81 @@ impl PatchEditor {
         self.calculate_connectivity();
     }
 
+    /// Delete a module and bypass its signal chain connections.
+    ///
+    /// If the module has exactly one audio input and one audio output port,
+    /// incoming connections are reconnected directly to outgoing connections
+    /// so the signal chain isn't broken (A→B→C becomes A→C when B is deleted).
+    fn bypass_and_remove(&mut self, module_id: ModuleId, result: &mut PatchEditorResult) {
+        // Check if this module can be bypassed (one audio in, one audio out)
+        if let Some(descriptor) = self.descriptors.get(&module_id).cloned() {
+            let audio_inputs: Vec<_> = descriptor
+                .ports
+                .iter()
+                .filter(|p| {
+                    p.direction == synth_core::PortDirection::Input
+                        && p.port_type == synth_core::PortType::Audio
+                })
+                .collect();
+            let audio_outputs: Vec<_> = descriptor
+                .ports
+                .iter()
+                .filter(|p| {
+                    p.direction == synth_core::PortDirection::Output
+                        && p.port_type == synth_core::PortType::Audio
+                })
+                .collect();
+
+            if audio_inputs.len() == 1 && audio_outputs.len() == 1 {
+                let in_port = &audio_inputs[0].name;
+                let out_port = &audio_outputs[0].name;
+
+                let incoming: Vec<_> = self
+                    .connections
+                    .iter()
+                    .filter(|c| c.to_module == module_id && c.to_port == *in_port)
+                    .cloned()
+                    .collect();
+                let outgoing: Vec<_> = self
+                    .connections
+                    .iter()
+                    .filter(|c| c.from_module == module_id && c.from_port == *out_port)
+                    .cloned()
+                    .collect();
+
+                // Create bypass connections (source → destination, skipping deleted module)
+                for inc in &incoming {
+                    for out in &outgoing {
+                        let bypass = Connection::new(
+                            inc.from_module,
+                            inc.from_port,
+                            out.to_module,
+                            out.to_port,
+                        );
+                        self.connections.push(bypass);
+                        result.connections_to_add.push(bypass);
+                    }
+                }
+            }
+        }
+
+        // Remove all connections to/from this module
+        let module_conns: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|c| c.from_module == module_id || c.to_module == module_id)
+            .cloned()
+            .collect();
+        for c in &module_conns {
+            result.connections_to_remove.push(*c);
+        }
+        self.connections
+            .retain(|c| c.from_module != module_id && c.to_module != module_id);
+
+        result.modules_to_remove.push(module_id);
+        self.calculate_connectivity();
+    }
+
     /// Bring a module to front.
     pub fn bring_to_front(&mut self, id: ModuleId) {
         self.z_order.retain(|&mid| mid != id);
@@ -766,45 +841,7 @@ impl PatchEditor {
                         );
 
                         if close_resp.clicked() {
-                            // Reconnect cables around this monitor before removing
-                            // Find incoming: something → this module "in"
-                            let incoming: Vec<_> = self.connections.iter()
-                                .filter(|c| c.to_module == module_id && c.to_port.as_str() == "in")
-                                .cloned()
-                                .collect();
-                            // Find outgoing: this module "out" → something
-                            let outgoing: Vec<_> = self.connections.iter()
-                                .filter(|c| c.from_module == module_id && c.from_port.as_str() == "out")
-                                .cloned()
-                                .collect();
-
-                            // Create bypass connections (from source directly to destination)
-                            for inc in &incoming {
-                                for out in &outgoing {
-                                    let bypass = Connection::new(
-                                        inc.from_module,
-                                        inc.from_port,
-                                        out.to_module,
-                                        out.to_port,
-                                    );
-                                    self.connections.push(bypass);
-                                    result.connections_to_add.push(bypass);
-                                }
-                            }
-
-                            // Remove all connections to/from this module
-                            let monitor_conns: Vec<_> = self.connections.iter()
-                                .filter(|c| c.from_module == module_id || c.to_module == module_id)
-                                .cloned()
-                                .collect();
-                            for c in &monitor_conns {
-                                result.connections_to_remove.push(*c);
-                            }
-                            self.connections.retain(|c| c.from_module != module_id && c.to_module != module_id);
-
-                            // Remove the module
-                            open = false;
-                            self.calculate_connectivity();
+                            self.bypass_and_remove(module_id, &mut result);
                         }
                     });
 
@@ -832,61 +869,53 @@ impl PatchEditor {
                         if is_source {
                             ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new(ri::ARROW_RIGHT_S_FILL)
+                                    egui::RichText::new(ri::UPLOAD_2_FILL)
                                         .color(Color32::from_rgb(100, 200, 100))
                                         .size(10.0),
                                 )
                                 .frame(false)
                                 .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text(format!(
-                                "{} Source Module\nGenerates signal (no incoming connections).\nOscillators, noise generators, etc.",
-                                ri::UPLOAD_2_FILL
-                            ));
+                            .on_hover_text("Source Module\nGenerates signal (no incoming connections).");
                         }
 
                         // Sink indicator (no outputs)
                         if is_sink {
                             ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new(ri::STOP_MINI_FILL)
+                                    egui::RichText::new(ri::DOWNLOAD_2_FILL)
                                         .color(Color32::from_rgb(200, 100, 100))
                                         .size(10.0),
                                 )
                                 .frame(false)
                                 .min_size(Vec2::new(14.0, 20.0)),
                             )
-                            .on_hover_text(format!(
-                                "{} Sink Module\nConsumes signal (no outgoing connections).\nOutput, visualizers, etc.",
-                                ri::DOWNLOAD_2_FILL
-                            ));
+                            .on_hover_text("Sink Module\nConsumes signal (no outgoing connections).");
                         }
 
                         // Connectivity status indicator
-                        let (conn_icon, conn_color, conn_tooltip): (_, _, String) = if is_global_module {
-                            let tooltip =
-                                if descriptor.category == ModuleCategory::Utility {
-                                    format!("{} Internal Routing\nRoutes modulation internally — no cables needed.", ri::FLASHLIGHT_FILL)
-                                } else {
-                                    format!("{} Global Module\nProcessed automatically via effect chain.", ri::FLASHLIGHT_FILL)
-                                };
-                            (ri::CHECKBOX_BLANK_CIRCLE_FILL, Color32::from_rgb(100, 180, 220), tooltip)
+                        let (conn_icon, conn_color, conn_tooltip): (_, _, &str) = if is_global_module {
+                            if descriptor.category == ModuleCategory::Utility {
+                                (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Internal Routing\nRoutes modulation internally — no cables needed.")
+                            } else {
+                                (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Global Module\nProcessed automatically via effect chain.")
+                            }
                         } else {
                             match connectivity_status {
                                 ModuleConnectivity::Connected => (
-                                    ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                                    ri::LINK,
                                     Color32::from_rgb(100, 200, 100),
-                                    format!("{} Routed to Output\nAudio from this module reaches the output.", ri::LINK),
+                                    "Routed to Output\nAudio from this module reaches the output.",
                                 ),
                                 ModuleConnectivity::Orphaned => (
-                                    ri::CHECKBOX_BLANK_CIRCLE_LINE,
+                                    ri::ERROR_WARNING_LINE,
                                     Color32::from_rgb(200, 200, 100),
-                                    format!("{} Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.", ri::ERROR_WARNING_LINE),
+                                    "Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
                                 ),
                                 ModuleConnectivity::Disconnected => (
-                                    ri::CHECKBOX_BLANK_CIRCLE_LINE,
+                                    ri::LINK_UNLINK,
                                     Color32::from_rgb(100, 100, 100),
-                                    format!("{} Disconnected\nNo cables connected.\nDrag from ports to create connections.", ri::LINK_UNLINK),
+                                    "Disconnected\nNo cables connected.\nDrag from ports to create connections.",
                                 ),
                             }
                         };
@@ -903,14 +932,14 @@ impl PatchEditor {
 
                         // Power/bypass button
                         let (power_icon, power_color) = if is_bypassed {
-                            (ri::CHECKBOX_BLANK_CIRCLE_LINE, t.colors.text_dim)
+                            (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
                         } else {
-                            (ri::CHECKBOX_BLANK_CIRCLE_FILL, t.colors.accent_green)
+                            (ri::VOLUME_UP_FILL, t.colors.accent_green)
                         };
                         let power_tooltip = if is_bypassed {
-                            format!("{} Bypassed\nModule output is muted.\nClick to activate.", ri::VOLUME_MUTE_FILL)
+                            "Bypassed\nModule output is muted.\nClick to activate."
                         } else {
-                            format!("{} Active\nModule is processing audio.\nClick to bypass.", ri::VOLUME_UP_FILL)
+                            "Active\nModule is processing audio.\nClick to bypass."
                         };
                         if ui
                             .add(
@@ -930,12 +959,21 @@ impl PatchEditor {
                             result.bypass_toggles.push((module_id, new_bypass_state));
                         }
 
-                        // Close button (only for disconnected modules)
-                        if connectivity_status == ModuleConnectivity::Disconnected {
-                            ui.separator();
-                            if ui.small_button(ri::CLOSE_LINE).clicked() {
-                                open = false;
-                            }
+                        // Close/delete button (always visible)
+                        ui.separator();
+                        if ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(ri::CLOSE_LINE)
+                                    .color(t.colors.text_dim)
+                                    .size(12.0),
+                            )
+                            .frame(false)
+                            .min_size(button_min_size),
+                        )
+                        .on_hover_text("Delete module")
+                        .clicked()
+                        {
+                            open = false;
                         }
                     });
 
@@ -1068,8 +1106,9 @@ impl PatchEditor {
             }
 
             // Handle close (delete module) — triggered by close button
+            // If the module is in a signal chain, bypass it (reconnect around it)
             if !open {
-                result.modules_to_remove.push(module_id);
+                self.bypass_and_remove(module_id, &mut result);
             }
 
             // Clear reposition flag after this module has been drawn
