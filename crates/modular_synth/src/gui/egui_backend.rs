@@ -292,7 +292,6 @@ impl SynthApp {
             &mut glide_time,
             active_instrument_id,
         );
-        default_instrument.patch_editor.request_initial_layout();
 
         let instruments = vec![default_instrument];
 
@@ -1661,9 +1660,6 @@ impl SynthApp {
             &mut self.glide_time,
             active_id,
         );
-
-        // Auto-layout after loading a new patch
-        patch_editor.request_initial_layout();
 
         // Restore AWE UI state from loaded patch
         if let Some(awe) = &patch.settings.awe {

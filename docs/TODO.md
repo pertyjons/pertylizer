@@ -81,10 +81,9 @@
 - Check: The glow effect (8px outer, 5px inner) may extend beyond clip rect
 
 ### 2.7 Auto-layout after patch load
-- [x] Run auto-layout when a patch is loaded from file or selected from examples
-- [x] Ensure module positions settle before user interaction
-- `load_patch_data()` already called `request_initial_layout()` for File/Menu/MCP-queue loads
-- Added `request_initial_layout()` for startup patch and MCP reconciliation path
+- [x] Run auto-layout when MCP adds modules (reconciliation path)
+- [x] Patches loaded from file/examples use their saved positions (no auto-layout override)
+- Auto-layout only triggers for MCP reconciliation where modules get placeholder positions
 - Related: Save/restore module positions (see 3.1)
 
 ### 2.8 Module Groups — Phases 1–3 (see `docs/Module-Groups-Plan.md`)

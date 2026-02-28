@@ -286,6 +286,8 @@ Samma gruppstruktur (moduler + kopplingar) med olika parametervärden:
 - [ ] Bygg grupp-browser i GUI (lista, sök, kategorier)
 - [ ] Skapa 5-10 inbyggda grupptemplates
 - [ ] Spara/ladda custom templates
+- [ ] Spara grupp från existerande instrument som template
+- [ ] Ladda template in i existerande instrument (merge, inte ersätta)
 - [ ] Implementera gruppvarianter (parameter-presets per template)
 
 ### 2.6 Acceptanskriterier (Fas 2)
@@ -294,6 +296,7 @@ Samma gruppstruktur (moduler + kopplingar) med olika parametervärden:
 - Exponerade portar i instansen fungerar direkt utan manuell fix.
 - Variant-parametrar appliceras korrekt efter remapping.
 - Template-layout placeras korrekt utifrån drop‑punkt.
+- Det går att spara en markerad grupp från ett existerande instrument som template och sedan ladda in den i ett existerande instrument utan att ersätta befintliga moduler.
 
 ---
 
