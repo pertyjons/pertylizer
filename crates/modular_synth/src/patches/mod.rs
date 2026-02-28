@@ -106,7 +106,7 @@ use crate::patch::Patch;
 
 /// Get the default patch (loaded on startup).
 pub fn default_patch() -> Patch {
-    patch_grand_piano()
+    patch_moog_resonant_sweep()
 }
 
 /// Get all example patches.
