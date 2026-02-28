@@ -8,12 +8,15 @@
 
 use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
+use egui_remixicon::icons as ri;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
-use synth_core::{ModuleCategory, ModuleDescriptor, PortName};
+use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
+
+use crate::patch::{ExposedPortState, GroupId, HexColor, ModuleGroupState};
 
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
@@ -24,6 +27,9 @@ use super::widgets::{
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
 pub(crate) const GRID_SIZE: f32 = 50.0;
+const GROUP_HEADER_HEIGHT: f32 = 24.0;
+const GROUP_PORT_MARGIN: f32 = 12.0;
+const GROUP_PADDING: f32 = 16.0;
 
 /// Trim sweep data to the last rising-edge crossing so the display
 /// always shows complete waveform cycles (no visual gap at the end).
@@ -47,6 +53,66 @@ fn snap_to_grid(pos: Pos2) -> Pos2 {
     Pos2::new(
         (pos.x / GRID_SIZE).round() * GRID_SIZE,
         (pos.y / GRID_SIZE).round() * GRID_SIZE,
+    )
+}
+
+fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
+    let port_rows = group
+        .exposed_inputs
+        .len()
+        .max(group.exposed_outputs.len())
+        .max(1);
+    let t = theme();
+    let height = GROUP_HEADER_HEIGHT
+        + GROUP_PORT_MARGIN * 2.0
+        + port_rows as f32 * t.sizes.port_vertical_spacing;
+    let height = height.max(t.sizes.module_min_height);
+    // Collapsed groups only show "N modules" text — use a smaller content width
+    let collapsed_content_width = 40.0;
+    let ports_width = t.sizes.port_column_width * 2.0 + collapsed_content_width;
+    let title_chars = group.name.chars().count() as f32;
+    let title_width = 14.0 + title_chars * 7.0; // accent + approximate glyph width
+    let header_actions = 2.0 * 20.0 + 8.0; // expand + delete buttons + spacing
+    let header_width = title_width + header_actions;
+    let width = ports_width.max(header_width);
+    Vec2::new(width, height)
+}
+
+fn parse_hex_color(hex: &str) -> Option<Color32> {
+    let s = hex.trim_start_matches('#');
+    let bytes = match s.len() {
+        6 => u32::from_str_radix(s, 16).ok().map(|v| (v << 8) | 0xFF),
+        8 => u32::from_str_radix(s, 16).ok(),
+        _ => None,
+    }?;
+    let r = ((bytes >> 24) & 0xFF) as u8;
+    let g = ((bytes >> 16) & 0xFF) as u8;
+    let b = ((bytes >> 8) & 0xFF) as u8;
+    let a = (bytes & 0xFF) as u8;
+    Some(Color32::from_rgba_unmultiplied(r, g, b, a))
+}
+
+fn color32_to_hex(color: Color32) -> HexColor {
+    format!(
+        "#{:02X}{:02X}{:02X}{:02X}",
+        color.r(),
+        color.g(),
+        color.b(),
+        color.a()
+    )
+}
+
+fn group_toggle_icon_rect(rect: Rect) -> Rect {
+    let size = Vec2::splat(16.0);
+    Rect::from_min_size(Pos2::new(rect.max.x - size.x - 6.0, rect.min.y + 4.0), size)
+}
+
+fn group_menu_icon_rect(rect: Rect) -> Rect {
+    let size = Vec2::splat(16.0);
+    let toggle = group_toggle_icon_rect(rect);
+    Rect::from_min_size(
+        Pos2::new(toggle.min.x - size.x - 4.0, rect.min.y + 4.0),
+        size,
     )
 }
 
@@ -97,6 +163,45 @@ pub enum ModuleConnectivity {
     Disconnected,
 }
 
+/// A port exposed on a group boundary (UI-level).
+#[derive(Debug, Clone)]
+pub(crate) struct ExposedPort {
+    pub label: String,
+    pub module_id: ModuleId,
+    pub port_name: PortName,
+}
+
+/// A group of modules in the patch editor (UI-level).
+#[derive(Debug, Clone)]
+pub(crate) struct ModuleGroup {
+    pub id: GroupId,
+    pub name: String,
+    pub color: Option<HexColor>,
+    pub members: Vec<ModuleId>,
+    pub collapsed: bool,
+    pub position: Pos2,
+    pub exposed_inputs: Vec<ExposedPort>,
+    pub exposed_outputs: Vec<ExposedPort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct GroupPortKey {
+    group_id: GroupId,
+    module_id: ModuleId,
+    port_name: PortName,
+    direction: WidgetPortDirection,
+}
+
+#[derive(Debug, Clone)]
+struct PortRenderInfo {
+    module_id: ModuleId,
+    port_name: PortName,
+    label: String,
+    description: String,
+    port_type: WidgetPortType,
+    is_connected: bool,
+}
+
 /// State for a pending connection being drawn.
 #[derive(Clone, Debug)]
 pub struct PendingConnection {
@@ -118,6 +223,18 @@ struct PortContextMenuState {
     port_type: WidgetPortType,
     direction: WidgetPortDirection,
     menu_pos: Pos2,
+}
+
+#[derive(Clone)]
+struct GroupContextMenuState {
+    group_id: GroupId,
+    menu_pos: Pos2,
+}
+
+struct GroupLayout {
+    rects_world: HashMap<GroupId, Rect>,
+    rects_screen: HashMap<GroupId, Rect>,
+    hidden_modules: HashSet<ModuleId>,
 }
 
 /// Request to create a new module and auto-connect it to an existing port.
@@ -152,8 +269,16 @@ pub struct PatchEditor {
     connections: Vec<Connection>,
     /// Port positions (updated each frame).
     port_positions: HashMap<(ModuleId, PortName), PortPosition>,
+    /// Exposed group port positions for collapsed groups (updated each frame).
+    group_port_positions: HashMap<GroupPortKey, PortPosition>,
     /// Currently selected module.
     selected_module: Option<ModuleId>,
+    /// Multi-selection for grouping.
+    selected_modules: HashSet<ModuleId>,
+    /// Currently selected group.
+    selected_group: Option<GroupId>,
+    /// In-progress rename buffer for group context menu.
+    group_name_edit: Option<(GroupId, String)>,
     /// Connection being drawn.
     pending_connection: Option<PendingConnection>,
     /// Module descriptors (cached).
@@ -166,6 +291,12 @@ pub struct PatchEditor {
     connectivity: HashMap<ModuleId, ModuleConnectivity>,
     /// Module bypass state (true = bypassed/off, false = active/on).
     bypassed: HashMap<ModuleId, bool>,
+    /// Module groups (UI-level metadata).
+    groups: HashMap<GroupId, ModuleGroup>,
+    /// Lookup: module -> group.
+    module_to_group: HashMap<ModuleId, GroupId>,
+    /// Next group id to allocate.
+    next_group_id: u32,
     /// Modules that need to be repositioned (after auto-layout).
     /// When a module is in this set, we use current_pos() instead of default_pos().
     needs_reposition: HashSet<ModuleId>,
@@ -177,6 +308,8 @@ pub struct PatchEditor {
     port_context_menu: Option<PortContextMenuState>,
     /// Right-click context menu on background (or cable). Contains cable if hovered.
     bg_context_menu: Option<BgContextMenuState>,
+    /// Right-click context menu on a group.
+    group_context_menu: Option<GroupContextMenuState>,
 }
 
 impl PatchEditor {
@@ -185,18 +318,26 @@ impl PatchEditor {
             panels: HashMap::new(),
             connections: Vec::new(),
             port_positions: HashMap::new(),
+            group_port_positions: HashMap::new(),
             selected_module: None,
+            selected_modules: HashSet::new(),
+            selected_group: None,
+            group_name_edit: None,
             pending_connection: None,
             descriptors: HashMap::new(),
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
             connectivity: HashMap::new(),
             bypassed: HashMap::new(),
+            groups: HashMap::new(),
+            module_to_group: HashMap::new(),
+            next_group_id: 1,
             needs_reposition: HashSet::new(),
             needs_initial_layout: true,
             hovered_cable: None,
             port_context_menu: None,
             bg_context_menu: None,
+            group_context_menu: None,
         }
     }
 
@@ -248,12 +389,20 @@ impl PatchEditor {
         self.descriptors.clear();
         self.connections.clear();
         self.port_positions.clear();
+        self.group_port_positions.clear();
         self.z_order.clear();
         self.connectivity.clear();
         self.bypassed.clear();
         self.selected_module = None;
+        self.selected_modules.clear();
+        self.selected_group = None;
+        self.group_name_edit = None;
         self.pending_connection = None;
         self.next_module_pos = Pos2::new(50.0, 50.0);
+        self.groups.clear();
+        self.module_to_group.clear();
+        self.next_group_id = 1;
+        self.group_context_menu = None;
     }
 
     /// Get module data for saving.
@@ -293,6 +442,7 @@ impl PatchEditor {
         self.z_order.retain(|&mid| mid != id);
         self.connectivity.remove(&id);
         self.bypassed.remove(&id);
+        self.selected_modules.remove(&id);
         // Remove connections involving this module
         self.connections
             .retain(|c| c.from_module != id && c.to_module != id);
@@ -307,7 +457,499 @@ impl PatchEditor {
         {
             self.pending_connection = None;
         }
+        // Remove from any group
+        if let Some(group_id) = self.module_to_group.remove(&id)
+            && let Some(group) = self.groups.get_mut(&group_id)
+        {
+            group.members.retain(|mid| *mid != id);
+            group.exposed_inputs.retain(|p| p.module_id != id);
+            group.exposed_outputs.retain(|p| p.module_id != id);
+            if group.members.is_empty() {
+                self.groups.remove(&group_id);
+                if self.selected_group == Some(group_id) {
+                    self.selected_group = None;
+                }
+            }
+        }
         self.calculate_connectivity();
+    }
+
+    /// Load groups from patch data (clears existing groups).
+    pub fn load_groups_from_patch(&mut self, groups: &[ModuleGroupState]) {
+        self.groups.clear();
+        self.module_to_group.clear();
+
+        let mut max_id = 0u32;
+        for g in groups {
+            max_id = max_id.max(g.id.0);
+            let mut members: Vec<ModuleId> = Vec::new();
+            for member in &g.members {
+                if let Ok(mid) = member.parse::<ModuleId>() {
+                    if !self.panels.contains_key(&mid) {
+                        continue;
+                    }
+                    if self.module_to_group.contains_key(&mid) {
+                        continue; // Enforce exclusivity
+                    }
+                    members.push(mid);
+                    self.module_to_group.insert(mid, g.id);
+                }
+            }
+            if members.is_empty() {
+                continue;
+            }
+
+            let member_set: HashSet<ModuleId> = members.iter().copied().collect();
+            let exposed_inputs = Self::parse_exposed_ports(&g.exposed_inputs, &member_set);
+            let exposed_outputs = Self::parse_exposed_ports(&g.exposed_outputs, &member_set);
+
+            let group = ModuleGroup {
+                id: g.id,
+                name: g.name.clone(),
+                color: g.color.clone(),
+                members,
+                collapsed: g.collapsed,
+                position: Pos2::new(g.position.0, g.position.1),
+                exposed_inputs,
+                exposed_outputs,
+            };
+            self.groups.insert(g.id, group);
+        }
+
+        self.next_group_id = max_id.saturating_add(1).max(1);
+    }
+
+    /// Export groups for patch serialization.
+    pub fn group_states(&self) -> Vec<ModuleGroupState> {
+        let mut groups: Vec<ModuleGroupState> = self
+            .groups
+            .values()
+            .map(|g| ModuleGroupState {
+                id: g.id,
+                name: g.name.clone(),
+                color: g.color.clone(),
+                members: g.members.iter().map(|m| m.to_string()).collect(),
+                collapsed: g.collapsed,
+                position: (g.position.x, g.position.y),
+                exposed_inputs: g
+                    .exposed_inputs
+                    .iter()
+                    .map(|p| ExposedPortState {
+                        label: p.label.clone(),
+                        module_id: p.module_id.to_string(),
+                        port: String::from(p.port_name),
+                    })
+                    .collect(),
+                exposed_outputs: g
+                    .exposed_outputs
+                    .iter()
+                    .map(|p| ExposedPortState {
+                        label: p.label.clone(),
+                        module_id: p.module_id.to_string(),
+                        port: String::from(p.port_name),
+                    })
+                    .collect(),
+            })
+            .collect();
+        groups.sort_by_key(|g| g.id.0);
+        groups
+    }
+
+    fn parse_exposed_ports(
+        ports: &[ExposedPortState],
+        members: &HashSet<ModuleId>,
+    ) -> Vec<ExposedPort> {
+        let mut result = Vec::new();
+        let mut seen: HashSet<(ModuleId, PortName)> = HashSet::new();
+        for p in ports {
+            let Ok(mid) = p.module_id.parse::<ModuleId>() else {
+                continue;
+            };
+            if !members.contains(&mid) {
+                continue;
+            }
+            let port_name: PortName = p.port.clone().into();
+            if !seen.insert((mid, port_name)) {
+                continue;
+            }
+            result.push(ExposedPort {
+                label: p.label.clone(),
+                module_id: mid,
+                port_name,
+            });
+        }
+        result
+    }
+
+    fn group_of(&self, module_id: ModuleId) -> Option<GroupId> {
+        self.module_to_group.get(&module_id).copied()
+    }
+
+    fn allocate_group_id(&mut self) -> GroupId {
+        let id = GroupId(self.next_group_id);
+        self.next_group_id = self.next_group_id.saturating_add(1);
+        id
+    }
+
+    fn remove_from_group(&mut self, module_id: ModuleId) {
+        if let Some(group_id) = self.module_to_group.remove(&module_id)
+            && let Some(group) = self.groups.get_mut(&group_id)
+        {
+            group.members.retain(|mid| *mid != module_id);
+            group.exposed_inputs.retain(|p| p.module_id != module_id);
+            group.exposed_outputs.retain(|p| p.module_id != module_id);
+            if group.members.is_empty() {
+                self.groups.remove(&group_id);
+                if self.selected_group == Some(group_id) {
+                    self.selected_group = None;
+                }
+                if self
+                    .group_context_menu
+                    .as_ref()
+                    .is_some_and(|m| m.group_id == group_id)
+                {
+                    self.group_context_menu = None;
+                }
+            }
+        }
+        self.refresh_exposed_for_module(module_id);
+    }
+
+    fn add_module_to_group(&mut self, group_id: GroupId, module_id: ModuleId) {
+        if let Some(group) = self.groups.get_mut(&group_id)
+            && !group.members.contains(&module_id)
+        {
+            group.members.push(module_id);
+        }
+        self.module_to_group.insert(module_id, group_id);
+        self.refresh_exposed_for_module(module_id);
+    }
+
+    fn refresh_exposed_for_module(&mut self, module_id: ModuleId) {
+        let connections: Vec<Connection> = self.connections.clone();
+        for conn in &connections {
+            if conn.from_module == module_id || conn.to_module == module_id {
+                self.ensure_exposed_for_connection(conn);
+            }
+        }
+    }
+
+    fn create_group_from_selection(&mut self) -> Option<GroupId> {
+        if self.selected_modules.is_empty() {
+            return None;
+        }
+        let id = self.allocate_group_id();
+        let mut members: Vec<ModuleId> = self.selected_modules.iter().copied().collect();
+        members.sort_by_key(|m| m.to_string());
+
+        for mid in &members {
+            self.remove_from_group(*mid);
+        }
+        for mid in &members {
+            self.module_to_group.insert(*mid, id);
+        }
+
+        let position = self.compute_group_default_position(&members);
+        let members_for_refresh = members.clone();
+
+        let group = ModuleGroup {
+            id,
+            name: format!("Group {}", id.0),
+            color: None,
+            members,
+            collapsed: false,
+            position,
+            exposed_inputs: Vec::new(),
+            exposed_outputs: Vec::new(),
+        };
+        self.groups.insert(id, group);
+        for mid in &members_for_refresh {
+            self.refresh_exposed_for_module(*mid);
+        }
+        self.selected_group = Some(id);
+        Some(id)
+    }
+
+    fn compute_group_default_position(&self, members: &[ModuleId]) -> Pos2 {
+        let mut min = Pos2::new(f32::MAX, f32::MAX);
+        let mut any = false;
+        for mid in members {
+            if let Some(panel) = self.panels.get(mid) {
+                let rect = Rect::from_min_size(panel.position, panel.size);
+                min.x = min.x.min(rect.min.x);
+                min.y = min.y.min(rect.min.y);
+                any = true;
+            }
+        }
+        if any { min } else { self.next_module_pos }
+    }
+
+    fn group_bounds_world(&self, group: &ModuleGroup) -> Option<Rect> {
+        let mut rect: Option<Rect> = None;
+        for mid in &group.members {
+            if let Some(panel) = self.panels.get(mid) {
+                let r = Rect::from_min_size(panel.position, panel.size);
+                rect = Some(rect.map_or(r, |acc| acc.union(r)));
+            }
+        }
+        let mut rect = rect?;
+        rect.min.x -= GROUP_PADDING;
+        rect.max.x += GROUP_PADDING;
+        rect.min.y -= GROUP_PADDING + GROUP_HEADER_HEIGHT;
+        rect.max.y += GROUP_PADDING;
+        Some(rect)
+    }
+
+    fn port_widget_type(&self, module_id: ModuleId, port_name: PortName) -> WidgetPortType {
+        if let Some(descriptor) = self.descriptors.get(&module_id)
+            && let Some(port) = descriptor.ports.iter().find(|p| p.name == port_name)
+        {
+            return match port.port_type {
+                PortType::Audio => WidgetPortType::Audio,
+                PortType::Control => WidgetPortType::Control,
+                PortType::Gate => WidgetPortType::Gate,
+                PortType::Midi => WidgetPortType::Midi,
+            };
+        }
+        WidgetPortType::Audio
+    }
+
+    fn compute_group_layout(&self, area_origin: Vec2, scroll_offset: Vec2) -> GroupLayout {
+        let mut rects_world = HashMap::new();
+        let mut rects_screen = HashMap::new();
+        let mut hidden_modules: HashSet<ModuleId> = HashSet::new();
+
+        let screen_offset = area_origin - scroll_offset;
+
+        for group in self.groups.values() {
+            let world_rect = if group.collapsed {
+                Rect::from_min_size(group.position, collapsed_group_size(group))
+            } else {
+                match self.group_bounds_world(group) {
+                    Some(r) => r,
+                    None => continue,
+                }
+            };
+            rects_world.insert(group.id, world_rect);
+            let rect_screen = world_rect.translate(screen_offset);
+            rects_screen.insert(group.id, rect_screen);
+
+            if group.collapsed {
+                hidden_modules.extend(group.members.iter().copied());
+            }
+        }
+
+        GroupLayout {
+            rects_world,
+            rects_screen,
+            hidden_modules,
+        }
+    }
+
+    fn delete_group(&mut self, group_id: GroupId, result: &mut PatchEditorResult) {
+        let Some(group) = self.groups.get(&group_id).cloned() else {
+            return;
+        };
+        for mid in group.members {
+            result.modules_to_remove.push(mid);
+            self.remove_module(mid);
+        }
+        self.groups.remove(&group_id);
+        if self.selected_group == Some(group_id) {
+            self.selected_group = None;
+        }
+        if self
+            .group_context_menu
+            .as_ref()
+            .is_some_and(|m| m.group_id == group_id)
+        {
+            self.group_context_menu = None;
+        }
+    }
+
+    fn ungroup(&mut self, group_id: GroupId) {
+        let Some(group) = self.groups.remove(&group_id) else {
+            return;
+        };
+        for mid in group.members {
+            self.module_to_group.remove(&mid);
+        }
+        if self.selected_group == Some(group_id) {
+            self.selected_group = None;
+        }
+        if self
+            .group_context_menu
+            .as_ref()
+            .is_some_and(|m| m.group_id == group_id)
+        {
+            self.group_context_menu = None;
+        }
+    }
+
+    fn is_port_exposed(
+        &self,
+        group_id: GroupId,
+        module_id: ModuleId,
+        port_name: PortName,
+        direction: WidgetPortDirection,
+    ) -> bool {
+        let Some(group) = self.groups.get(&group_id) else {
+            return false;
+        };
+        let list = match direction {
+            WidgetPortDirection::Input => &group.exposed_inputs,
+            WidgetPortDirection::Output => &group.exposed_outputs,
+        };
+        list.iter()
+            .any(|p| p.module_id == module_id && p.port_name == port_name)
+    }
+
+    fn expose_port(
+        &mut self,
+        group_id: GroupId,
+        module_id: ModuleId,
+        port_name: PortName,
+        direction: WidgetPortDirection,
+    ) -> bool {
+        let label = self
+            .port_label(module_id, port_name)
+            .unwrap_or_else(|| port_name.to_string());
+        let Some(group) = self.groups.get_mut(&group_id) else {
+            return false;
+        };
+        let list = match direction {
+            WidgetPortDirection::Input => &mut group.exposed_inputs,
+            WidgetPortDirection::Output => &mut group.exposed_outputs,
+        };
+        if list
+            .iter()
+            .any(|p| p.module_id == module_id && p.port_name == port_name)
+        {
+            return false;
+        }
+        list.push(ExposedPort {
+            label,
+            module_id,
+            port_name,
+        });
+        true
+    }
+
+    fn hide_port(
+        &mut self,
+        group_id: GroupId,
+        module_id: ModuleId,
+        port_name: PortName,
+        direction: WidgetPortDirection,
+    ) -> bool {
+        let Some(group) = self.groups.get_mut(&group_id) else {
+            return false;
+        };
+        let list = match direction {
+            WidgetPortDirection::Input => &mut group.exposed_inputs,
+            WidgetPortDirection::Output => &mut group.exposed_outputs,
+        };
+        let before = list.len();
+        list.retain(|p| !(p.module_id == module_id && p.port_name == port_name));
+        before != list.len()
+    }
+
+    fn has_external_connection_for_port(
+        &self,
+        group_id: GroupId,
+        module_id: ModuleId,
+        port_name: PortName,
+        direction: WidgetPortDirection,
+    ) -> bool {
+        self.connections.iter().any(|c| {
+            let (mid, p, other_mid) = match direction {
+                WidgetPortDirection::Input => (c.to_module, c.to_port, c.from_module),
+                WidgetPortDirection::Output => (c.from_module, c.from_port, c.to_module),
+            };
+            if mid != module_id || p != port_name {
+                return false;
+            }
+            let other_group = self.group_of(other_mid);
+            other_group != Some(group_id)
+        })
+    }
+
+    fn ensure_exposed_for_connection(&mut self, connection: &Connection) {
+        let from_group = self.group_of(connection.from_module);
+        let to_group = self.group_of(connection.to_module);
+        if from_group == to_group {
+            return;
+        }
+        if let Some(gid) = from_group {
+            let _ = self.expose_port(
+                gid,
+                connection.from_module,
+                connection.from_port,
+                WidgetPortDirection::Output,
+            );
+        }
+        if let Some(gid) = to_group {
+            let _ = self.expose_port(
+                gid,
+                connection.to_module,
+                connection.to_port,
+                WidgetPortDirection::Input,
+            );
+        }
+    }
+
+    fn port_label(&self, module_id: ModuleId, port_name: PortName) -> Option<String> {
+        let descriptor = self.descriptors.get(&module_id)?;
+        descriptor
+            .ports
+            .iter()
+            .find(|p| p.name == port_name)
+            .map(|p| p.label.clone())
+    }
+
+    fn group_color(&self, group: &ModuleGroup) -> Color32 {
+        group
+            .color
+            .as_ref()
+            .and_then(|c| parse_hex_color(c))
+            .unwrap_or_else(|| theme().colors.accent_cyan)
+    }
+
+    fn is_hidden_internal_connection(&self, connection: &Connection) -> bool {
+        let from_group = self.group_of(connection.from_module);
+        let to_group = self.group_of(connection.to_module);
+        if let Some(gid) = from_group
+            && from_group == to_group
+            && let Some(group) = self.groups.get(&gid)
+        {
+            return group.collapsed;
+        }
+        false
+    }
+
+    fn resolve_connection_endpoint(
+        &self,
+        module_id: ModuleId,
+        port_name: PortName,
+        other_module: ModuleId,
+        direction: WidgetPortDirection,
+    ) -> Option<PortPosition> {
+        if let Some(group_id) = self.group_of(module_id)
+            && self.group_of(other_module) != Some(group_id)
+            && let Some(group) = self.groups.get(&group_id)
+            && group.collapsed
+        {
+            let key = GroupPortKey {
+                group_id,
+                module_id,
+                port_name,
+                direction,
+            };
+            if let Some(pos) = self.group_port_positions.get(&key) {
+                return Some(pos.clone());
+            }
+        }
+        self.port_positions.get(&(module_id, port_name)).cloned()
     }
 
     /// Delete a module and bypass its signal chain connections.
@@ -400,6 +1042,7 @@ impl PatchEditor {
     /// Add a connection.
     pub fn add_connection(&mut self, connection: Connection) {
         if !self.connections.contains(&connection) {
+            self.ensure_exposed_for_connection(&connection);
             self.connections.push(connection);
             self.calculate_connectivity();
         }
@@ -459,14 +1102,21 @@ impl PatchEditor {
     /// Calculate the bounding box of all module positions + estimated size.
     /// Used to tell ScrollArea how large the content is.
     fn calculate_content_size(&self) -> Vec2 {
-        if self.panels.is_empty() {
-            return Vec2::new(800.0, 600.0);
-        }
         let mut max_x: f32 = 0.0;
         let mut max_y: f32 = 0.0;
         for panel in self.panels.values() {
             max_x = max_x.max(panel.position.x + 350.0);
             max_y = max_y.max(panel.position.y + 400.0);
+        }
+        for group in self.groups.values() {
+            if group.collapsed {
+                let size = collapsed_group_size(group);
+                max_x = max_x.max(group.position.x + size.x + 100.0);
+                max_y = max_y.max(group.position.y + size.y + 100.0);
+            }
+        }
+        if self.panels.is_empty() && self.groups.is_empty() {
+            return Vec2::new(800.0, 600.0);
         }
         Vec2::new(max_x + 100.0, max_y + 100.0)
     }
@@ -482,7 +1132,6 @@ impl PatchEditor {
         handle: &EngineHandle,
         instrument_id: u64,
     ) -> PatchEditorResult {
-        use egui_remixicon::icons as ri;
         let mut result = PatchEditorResult::default();
         let content_size = self.calculate_content_size();
 
@@ -527,15 +1176,31 @@ impl PatchEditor {
             self.apply_auto_layout(scroll_rect);
         }
 
+        // Compute group layout (bounds + hidden modules) before drawing cables
+        let group_layout = self.compute_group_layout(area_origin, scroll_offset);
+        let mut new_group_port_positions: HashMap<GroupPortKey, PortPosition> = HashMap::new();
+
         // Collect module screen rects from egui memory (persisted from previous frame)
         let module_rects: Vec<Rect> = self
             .panels
             .keys()
             .filter_map(|mid| {
+                if group_layout.hidden_modules.contains(mid) {
+                    return None;
+                }
                 let wid = Id::new((instrument_id, "module_window", mid.to_string()));
                 ui.ctx().memory(|mem| mem.area_rect(wid))
             })
             .collect();
+
+        // Draw group frames on the scroll area's layer BEFORE cables.
+        if let Some(layer_id) = scroll_layer_id {
+            let clip = scroll_clip_rect.unwrap_or(visible_rect);
+            self.draw_group_frames(ui, &group_layout, layer_id, clip);
+        }
+
+        // Handle interactions for expanded group frames.
+        self.handle_group_interactions(ui, &group_layout, &module_rects);
 
         // Draw cables on the scroll area's layer BEFORE module Areas are created.
         // This uses the previous frame's port_positions — one frame delay is
@@ -546,8 +1211,22 @@ impl PatchEditor {
             self.draw_connections(ui, time, layer_id, clip, &module_rects);
         }
 
+        // Draw collapsed group boxes (movable) after cables so they sit above.
+        self.draw_collapsed_groups(
+            ui,
+            &group_layout,
+            instrument_id,
+            visible_rect,
+            area_origin,
+            scroll_offset,
+            &mut result,
+            &mut new_group_port_positions,
+        );
+        self.group_port_positions = new_group_port_positions;
+
         // Draw context menus (Foreground) — must happen after hover detection above
         self.draw_port_context_menu(ui, &mut result);
+        self.draw_group_context_menu(ui, &mut result);
         if let Some(ref response) = canvas_response {
             self.draw_bg_context_menu(response, &mut result);
         }
@@ -580,6 +1259,9 @@ impl PatchEditor {
         // Draw modules as windows (in z-order)
         for module_id in &module_ids {
             let module_id = *module_id;
+            if group_layout.hidden_modules.contains(&module_id) {
+                continue;
+            }
             let connected_ports = connected_ports_map
                 .get(&module_id)
                 .cloned()
@@ -597,7 +1279,7 @@ impl PatchEditor {
             };
 
             let accent_color = category_color(descriptor.category);
-            let is_selected = self.selected_module == Some(module_id);
+            let is_selected = self.selected_modules.contains(&module_id);
             let connectivity_status = self.get_connectivity(module_id);
             let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
 
@@ -852,132 +1534,128 @@ impl PatchEditor {
 
                 frame.show(ui, |ui| {
                     // Title bar: name + status icons + close button (single row)
-                    ui.horizontal(|ui| {
-                        // Accent color indicator
-                        let (rect, _) =
-                            ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
-                        ui.painter().rect_filled(rect, 2.0, dimmed_accent);
+                    Self::draw_panel_header_row(
+                        ui,
+                        dimmed_accent,
+                        &title,
+                        Some(format!("ID: {module_id}")),
+                        |ui| {
+                            let t = theme();
+                            let button_min_size = Vec2::new(20.0, 20.0);
 
-                        // Module name
-                        ui.label(egui::RichText::new(&title).strong().color(dimmed_accent))
-                            .on_hover_text(format!("ID: {module_id}"));
-
-                        let t = theme();
-                        let button_min_size = Vec2::new(20.0, 20.0);
-
-                        // Source indicator (no inputs)
-                        if is_source {
-                            ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(ri::UPLOAD_2_FILL)
-                                        .color(Color32::from_rgb(100, 200, 100))
-                                        .size(10.0),
+                            // Source indicator (no inputs)
+                            if is_source {
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::UPLOAD_2_FILL)
+                                            .color(Color32::from_rgb(100, 200, 100))
+                                            .size(10.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(Vec2::new(14.0, 20.0)),
                                 )
-                                .frame(false)
-                                .min_size(Vec2::new(14.0, 20.0)),
-                            )
-                            .on_hover_text("Source Module\nGenerates signal (no incoming connections).");
-                        }
+                                .on_hover_text("Source Module\nGenerates signal (no incoming connections).");
+                            }
 
-                        // Sink indicator (no outputs)
-                        if is_sink {
-                            ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(ri::DOWNLOAD_2_FILL)
-                                        .color(Color32::from_rgb(200, 100, 100))
-                                        .size(10.0),
+                            // Sink indicator (no outputs)
+                            if is_sink {
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::DOWNLOAD_2_FILL)
+                                            .color(Color32::from_rgb(200, 100, 100))
+                                            .size(10.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(Vec2::new(14.0, 20.0)),
                                 )
-                                .frame(false)
-                                .min_size(Vec2::new(14.0, 20.0)),
-                            )
-                            .on_hover_text("Sink Module\nConsumes signal (no outgoing connections).");
-                        }
+                                .on_hover_text("Sink Module\nConsumes signal (no outgoing connections).");
+                            }
 
-                        // Connectivity status indicator
-                        let (conn_icon, conn_color, conn_tooltip): (_, _, &str) = if is_global_module {
-                            if descriptor.category == ModuleCategory::Utility {
-                                (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Internal Routing\nRoutes modulation internally — no cables needed.")
+                            // Connectivity status indicator
+                            let (conn_icon, conn_color, conn_tooltip): (_, _, &str) = if is_global_module {
+                                if descriptor.category == ModuleCategory::Utility {
+                                    (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Internal Routing\nRoutes modulation internally — no cables needed.")
+                                } else {
+                                    (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Global Module\nProcessed automatically via effect chain.")
+                                }
                             } else {
-                                (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Global Module\nProcessed automatically via effect chain.")
-                            }
-                        } else {
-                            match connectivity_status {
-                                ModuleConnectivity::Connected => (
-                                    ri::LINK,
-                                    Color32::from_rgb(100, 200, 100),
-                                    "Routed to Output\nAudio from this module reaches the output.",
-                                ),
-                                ModuleConnectivity::Orphaned => (
-                                    ri::ERROR_WARNING_LINE,
-                                    Color32::from_rgb(200, 200, 100),
-                                    "Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
-                                ),
-                                ModuleConnectivity::Disconnected => (
-                                    ri::LINK_UNLINK,
-                                    Color32::from_rgb(100, 100, 100),
-                                    "Disconnected\nNo cables connected.\nDrag from ports to create connections.",
-                                ),
-                            }
-                        };
-                        ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(conn_icon)
-                                    .color(conn_color)
-                                    .size(12.0),
-                            )
-                            .frame(false)
-                            .min_size(button_min_size),
-                        )
-                        .on_hover_text(conn_tooltip);
-
-                        // Power/bypass button
-                        let (power_icon, power_color) = if is_bypassed {
-                            (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
-                        } else {
-                            (ri::VOLUME_UP_FILL, t.colors.accent_green)
-                        };
-                        let power_tooltip = if is_bypassed {
-                            "Bypassed\nModule output is muted.\nClick to activate."
-                        } else {
-                            "Active\nModule is processing audio.\nClick to bypass."
-                        };
-                        if ui
-                            .add(
+                                match connectivity_status {
+                                    ModuleConnectivity::Connected => (
+                                        ri::LINK,
+                                        Color32::from_rgb(100, 200, 100),
+                                        "Routed to Output\nAudio from this module reaches the output.",
+                                    ),
+                                    ModuleConnectivity::Orphaned => (
+                                        ri::ERROR_WARNING_LINE,
+                                        Color32::from_rgb(200, 200, 100),
+                                        "Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
+                                    ),
+                                    ModuleConnectivity::Disconnected => (
+                                        ri::LINK_UNLINK,
+                                        Color32::from_rgb(100, 100, 100),
+                                        "Disconnected\nNo cables connected.\nDrag from ports to create connections.",
+                                    ),
+                                }
+                            };
+                            ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new(power_icon)
-                                        .color(power_color)
-                                        .size(14.0),
+                                    egui::RichText::new(conn_icon)
+                                        .color(conn_color)
+                                        .size(12.0),
                                 )
                                 .frame(false)
                                 .min_size(button_min_size),
                             )
-                            .on_hover_text(power_tooltip)
-                            .clicked()
-                        {
-                            let new_bypass_state = !is_bypassed;
-                            self.bypassed.insert(module_id, new_bypass_state);
-                            result.bypass_toggles.push((module_id, new_bypass_state));
-                        }
+                            .on_hover_text(conn_tooltip);
 
-                        // Close/delete button (always visible)
-                        ui.separator();
-                        if ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(ri::CLOSE_LINE)
-                                    .color(t.colors.text_dim)
-                                    .size(12.0),
-                            )
-                            .frame(false)
-                            .min_size(button_min_size),
-                        )
-                        .on_hover_text("Delete module")
-                        .clicked()
-                        {
-                            open = false;
-                        }
-                    });
+                            // Power/bypass button
+                            let (power_icon, power_color) = if is_bypassed {
+                                (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
+                            } else {
+                                (ri::VOLUME_UP_FILL, t.colors.accent_green)
+                            };
+                            let power_tooltip = if is_bypassed {
+                                "Bypassed\nModule output is muted.\nClick to activate."
+                            } else {
+                                "Active\nModule is processing audio.\nClick to bypass."
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(power_icon)
+                                            .color(power_color)
+                                            .size(14.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text(power_tooltip)
+                                .clicked()
+                            {
+                                let new_bypass_state = !is_bypassed;
+                                self.bypassed.insert(module_id, new_bypass_state);
+                                result.bypass_toggles.push((module_id, new_bypass_state));
+                            }
 
-                    ui.separator();
+                            // Close/delete button (always visible)
+                            ui.separator();
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::CLOSE_LINE)
+                                            .color(t.colors.text_dim)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text("Delete module")
+                                .clicked()
+                            {
+                                open = false;
+                            }
+                        },
+                    );
 
                     // Check if this is a global module (no ports to show in columns)
                     let is_global = matches!(
@@ -1101,8 +1779,46 @@ impl PatchEditor {
 
             // Bring to front on click
             if area_response.response.clicked() || area_response.response.drag_started() {
+                let modifiers = ui.input(|i| i.modifiers);
+                if modifiers.shift || modifiers.ctrl {
+                    if self.selected_modules.contains(&module_id) {
+                        self.selected_modules.remove(&module_id);
+                    } else {
+                        self.selected_modules.insert(module_id);
+                    }
+                } else {
+                    self.selected_modules.clear();
+                    self.selected_modules.insert(module_id);
+                }
                 self.selected_module = Some(module_id);
+                self.selected_group = None;
                 bring_to_front = Some(module_id);
+            }
+
+            if area_response.response.drag_stopped()
+                && let Some(panel_state) = self.panels.get(&module_id)
+            {
+                let center = panel_state.position + panel_state.size / 2.0;
+                let mut target_group: Option<GroupId> = None;
+                for (gid, rect) in &group_layout.rects_world {
+                    if rect.contains(center) {
+                        target_group = Some(*gid);
+                        break;
+                    }
+                }
+                match target_group {
+                    Some(gid) => {
+                        if self.group_of(module_id) != Some(gid) {
+                            self.remove_from_group(module_id);
+                            self.add_module_to_group(gid, module_id);
+                        }
+                    }
+                    None => {
+                        if self.group_of(module_id).is_some() {
+                            self.remove_from_group(module_id);
+                        }
+                    }
+                }
             }
 
             // Handle close (delete module) — triggered by close button
@@ -1139,6 +1855,8 @@ impl PatchEditor {
             && response.clicked()
         {
             self.selected_module = None;
+            self.selected_modules.clear();
+            self.selected_group = None;
         }
 
         // Right-click on background (or cable) → capture state for context menu
@@ -1203,39 +1921,46 @@ impl PatchEditor {
     }
 
     /// Draw a vertical column of ports (input or output side).
-    fn draw_port_column(
-        &mut self,
+    fn draw_panel_header_row<F>(
         ui: &mut Ui,
-        module_id: ModuleId,
-        descriptor: &ModuleDescriptor,
-        direction: WidgetPortDirection,
-        connected_ports: &[PortName],
-    ) {
-        use synth_core::PortDirection as CorePortDirection;
+        accent_color: Color32,
+        title: &str,
+        hover_text: Option<String>,
+        actions: F,
+    ) where
+        F: FnOnce(&mut Ui),
+    {
+        ui.horizontal(|ui| {
+            // Accent color indicator
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, accent_color);
 
+            // Title
+            let response = ui.label(egui::RichText::new(title).strong().color(accent_color));
+            if let Some(hover) = hover_text {
+                response.on_hover_text(hover);
+            }
+
+            actions(ui);
+        });
+
+        ui.separator();
+    }
+
+    fn draw_port_column_with<F>(
+        ui: &mut Ui,
+        direction: WidgetPortDirection,
+        ports: &[PortRenderInfo],
+        pending_info: Option<(ModuleId, WidgetPortType, WidgetPortDirection)>,
+        mut store_position: F,
+    ) where
+        F: FnMut(&PortRenderInfo, Pos2),
+    {
         let t = theme();
         let col_width = t.sizes.port_column_width;
         let spacing = t.sizes.port_vertical_spacing;
 
-        let core_dir = match direction {
-            WidgetPortDirection::Input => CorePortDirection::Input,
-            WidgetPortDirection::Output => CorePortDirection::Output,
-        };
-
-        let ports: Vec<_> = descriptor
-            .ports
-            .iter()
-            .filter(|p| p.direction == core_dir)
-            .collect();
-
-        // Check if we have a pending connection for highlighting
-        let pending_info = self
-            .pending_connection
-            .as_ref()
-            .map(|p| (p.from_module, p.from_type, p.from_direction));
-
         ui.vertical(|ui| {
-            // Small label at top
             let label = match direction {
                 WidgetPortDirection::Input => "IN",
                 WidgetPortDirection::Output => "OUT",
@@ -1250,14 +1975,12 @@ impl PatchEditor {
                 });
             }
 
-            // Draw each port centered in the column
-            for port in &ports {
-                let port_type = convert_port_type(port.port_type);
-                let is_connected = connected_ports.contains(&port.name);
-
+            for port in ports {
                 let is_highlighted = pending_info
                     .map(|(from_module, from_type, from_dir)| {
-                        from_module != module_id && from_dir != direction && from_type == port_type
+                        from_module != port.module_id
+                            && from_dir != direction
+                            && from_type == port.port_type
                     })
                     .unwrap_or(false);
 
@@ -1265,24 +1988,13 @@ impl PatchEditor {
                     ui.allocate_ui(Vec2::new(col_width, spacing), |ui| {
                         ui.centered_and_justified(|ui| {
                             let (response, center) =
-                                super::widgets::PortWidget::new(port_type, direction)
-                                    .connected(is_connected)
+                                super::widgets::PortWidget::new(port.port_type, direction)
+                                    .connected(port.is_connected)
                                     .highlighted(is_highlighted)
                                     .show(ui);
 
-                            // Store port position for cable rendering
-                            self.port_positions.insert(
-                                (module_id, port.name),
-                                PortPosition {
-                                    module_id,
-                                    port_name: port.name,
-                                    position: center,
-                                    port_type,
-                                    direction,
-                                },
-                            );
+                            store_position(port, center);
 
-                            // Show label and description as tooltip
                             let tooltip = if port.description.is_empty() {
                                 port.label.clone()
                             } else {
@@ -1293,6 +2005,106 @@ impl PatchEditor {
                     });
                 });
             }
+        });
+    }
+
+    fn draw_port_column(
+        &mut self,
+        ui: &mut Ui,
+        module_id: ModuleId,
+        descriptor: &ModuleDescriptor,
+        direction: WidgetPortDirection,
+        connected_ports: &[PortName],
+    ) {
+        use synth_core::PortDirection as CorePortDirection;
+
+        let core_dir = match direction {
+            WidgetPortDirection::Input => CorePortDirection::Input,
+            WidgetPortDirection::Output => CorePortDirection::Output,
+        };
+
+        let ports: Vec<PortRenderInfo> = descriptor
+            .ports
+            .iter()
+            .filter(|p| p.direction == core_dir)
+            .map(|p| PortRenderInfo {
+                module_id,
+                port_name: p.name,
+                label: p.label.clone(),
+                description: p.description.clone(),
+                port_type: convert_port_type(p.port_type),
+                is_connected: connected_ports.contains(&p.name),
+            })
+            .collect();
+
+        let pending_info = self
+            .pending_connection
+            .as_ref()
+            .map(|p| (p.from_module, p.from_type, p.from_direction));
+        let port_positions = &mut self.port_positions;
+        Self::draw_port_column_with(ui, direction, &ports, pending_info, |port, center| {
+            port_positions.insert(
+                (module_id, port.port_name),
+                PortPosition {
+                    module_id,
+                    port_name: port.port_name,
+                    position: center,
+                    port_type: port.port_type,
+                    direction,
+                },
+            );
+        });
+    }
+
+    fn draw_group_port_column(
+        &mut self,
+        ui: &mut Ui,
+        group: &ModuleGroup,
+        direction: WidgetPortDirection,
+        new_positions: &mut HashMap<GroupPortKey, PortPosition>,
+    ) {
+        let ports = match direction {
+            WidgetPortDirection::Input => &group.exposed_inputs,
+            WidgetPortDirection::Output => &group.exposed_outputs,
+        };
+
+        let ports: Vec<PortRenderInfo> = ports
+            .iter()
+            .map(|p| PortRenderInfo {
+                module_id: p.module_id,
+                port_name: p.port_name,
+                label: p.label.clone(),
+                description: String::new(),
+                port_type: self.port_widget_type(p.module_id, p.port_name),
+                is_connected: self.has_external_connection_for_port(
+                    group.id,
+                    p.module_id,
+                    p.port_name,
+                    direction,
+                ),
+            })
+            .collect();
+
+        let pending_info = self
+            .pending_connection
+            .as_ref()
+            .map(|p| (p.from_module, p.from_type, p.from_direction));
+        Self::draw_port_column_with(ui, direction, &ports, pending_info, |port, center| {
+            new_positions.insert(
+                GroupPortKey {
+                    group_id: group.id,
+                    module_id: port.module_id,
+                    port_name: port.port_name,
+                    direction,
+                },
+                PortPosition {
+                    module_id: port.module_id,
+                    port_name: port.port_name,
+                    position: center,
+                    port_type: port.port_type,
+                    direction,
+                },
+            );
         });
     }
 
@@ -1356,6 +2168,9 @@ impl PatchEditor {
         // then spread cables within each group so they don't overlap.
         let mut dest_count: HashMap<ModuleId, usize> = HashMap::new();
         for c in &self.connections {
+            if self.is_hidden_internal_connection(c) {
+                continue;
+            }
             *dest_count.entry(c.to_module).or_default() += 1;
         }
         let mut dest_index: HashMap<ModuleId, usize> = HashMap::new();
@@ -1371,18 +2186,28 @@ impl PatchEditor {
         let mut cable_infos: Vec<CableInfo> = Vec::new();
 
         for (i, connection) in self.connections.iter().enumerate() {
+            if self.is_hidden_internal_connection(connection) {
+                continue;
+            }
             let idx = dest_index.entry(connection.to_module).or_default();
             let n = dest_count.get(&connection.to_module).copied().unwrap_or(1);
             let spread = (*idx as f32 - (n as f32 - 1.0) / 2.0) * CABLE_SPREAD;
             *dest_index.get_mut(&connection.to_module).unwrap_or(&mut 0) += 1;
 
-            let from_key = (connection.from_module, connection.from_port);
-            let to_key = (connection.to_module, connection.to_port);
+            let from_pos = self.resolve_connection_endpoint(
+                connection.from_module,
+                connection.from_port,
+                connection.to_module,
+                WidgetPortDirection::Output,
+            );
+            let to_pos = self.resolve_connection_endpoint(
+                connection.to_module,
+                connection.to_port,
+                connection.from_module,
+                WidgetPortDirection::Input,
+            );
 
-            if let (Some(from_pos), Some(to_pos)) = (
-                self.port_positions.get(&from_key),
-                self.port_positions.get(&to_key),
-            ) {
+            if let (Some(from_pos), Some(to_pos)) = (from_pos, to_pos) {
                 cable_infos.push(CableInfo {
                     index: i,
                     spread,
@@ -1456,6 +2281,337 @@ impl PatchEditor {
         }
     }
 
+    fn draw_group_frames(&self, ui: &Ui, layout: &GroupLayout, layer_id: LayerId, clip_rect: Rect) {
+        let painter = eframe::egui::Painter::new(ui.ctx().clone(), layer_id, clip_rect);
+        for group in self.groups.values() {
+            if group.collapsed {
+                continue;
+            }
+            let Some(rect) = layout.rects_screen.get(&group.id) else {
+                continue;
+            };
+            let base_color = self.group_color(group);
+            let stroke_width = if self.selected_group == Some(group.id) {
+                2.0
+            } else {
+                1.0
+            };
+            let stroke = egui::Stroke::new(stroke_width, base_color.gamma_multiply(0.6));
+            painter.rect(
+                *rect,
+                6.0,
+                Color32::from_rgba_unmultiplied(0, 0, 0, 0),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+
+            // Header strip
+            let header_rect =
+                Rect::from_min_size(rect.min, Vec2::new(rect.width(), GROUP_HEADER_HEIGHT));
+            painter.rect_filled(header_rect, 6.0, base_color.gamma_multiply(0.15));
+            painter.text(
+                header_rect.min + Vec2::new(8.0, 4.0),
+                egui::Align2::LEFT_TOP,
+                &group.name,
+                egui::FontId::proportional(12.0),
+                base_color.gamma_multiply(0.9),
+            );
+
+            // Menu icon (⋯)
+            let menu_rect = group_menu_icon_rect(*rect);
+            painter.rect_stroke(
+                menu_rect,
+                3.0,
+                egui::Stroke::new(1.0, base_color.gamma_multiply(0.5)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                menu_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                ri::MORE_LINE,
+                egui::FontId::proportional(12.0),
+                base_color.gamma_multiply(0.9),
+            );
+
+            // Collapse icon
+            let icon_rect = group_toggle_icon_rect(*rect);
+            painter.rect_stroke(
+                icon_rect,
+                3.0,
+                egui::Stroke::new(1.0, base_color.gamma_multiply(0.5)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                icon_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                ri::SUBTRACT_LINE,
+                egui::FontId::proportional(12.0),
+                base_color.gamma_multiply(0.9),
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_collapsed_groups(
+        &mut self,
+        ui: &Ui,
+        layout: &GroupLayout,
+        instrument_id: u64,
+        visible_rect: Rect,
+        area_origin: Vec2,
+        scroll_offset: Vec2,
+        result: &mut PatchEditorResult,
+        new_positions: &mut HashMap<GroupPortKey, PortPosition>,
+    ) {
+        let group_ids: Vec<GroupId> = self.groups.keys().copied().collect();
+        for group_id in group_ids {
+            let Some(group) = self.groups.get(&group_id).cloned() else {
+                continue;
+            };
+            if !group.collapsed {
+                continue;
+            }
+
+            let rect_screen = layout
+                .rects_screen
+                .get(&group_id)
+                .copied()
+                .unwrap_or_else(|| {
+                    let size = collapsed_group_size(&group);
+                    Rect::from_min_size(group.position + area_origin - scroll_offset, size)
+                });
+
+            let area_id = Id::new((instrument_id, "group_box", group_id.0));
+            let area = egui::Area::new(area_id)
+                .order(Order::Background)
+                .movable(true)
+                .current_pos(rect_screen.min);
+
+            let mut toggle_clicked = false;
+            let mut delete_clicked = false;
+            let mut menu_clicked = false;
+            let mut menu_pos = Pos2::ZERO;
+            let response = area.show(ui.ctx(), |ui| {
+                ui.set_clip_rect(visible_rect);
+                let base_color = self.group_color(&group);
+                let stroke_width = if self.selected_group == Some(group_id) {
+                    2.0
+                } else {
+                    1.0
+                };
+                let frame = egui::Frame::window(&ui.ctx().style())
+                    .fill(ui.ctx().style().visuals.window_fill())
+                    .stroke(egui::Stroke::new(
+                        stroke_width,
+                        base_color.gamma_multiply(0.6),
+                    ))
+                    .corner_radius(6.0);
+                frame.show(ui, |ui| {
+                    let button_min_size = Vec2::new(20.0, 20.0);
+                    let t = theme();
+                    Self::draw_panel_header_row(
+                        ui,
+                        base_color.gamma_multiply(0.9),
+                        &group.name,
+                        Some(format!("Group ID: {}", group_id.0)),
+                        |ui| {
+                            ui.separator();
+                            let menu_resp = ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::MORE_LINE)
+                                            .color(t.colors.text_dim)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text("Group menu");
+                            if menu_resp.clicked() {
+                                menu_clicked = true;
+                                menu_pos = menu_resp.rect.left_bottom();
+                            }
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::ADD_LINE)
+                                            .color(t.colors.text_dim)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text("Expand group")
+                                .clicked()
+                            {
+                                toggle_clicked = true;
+                            }
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::CLOSE_LINE)
+                                            .color(t.colors.text_dim)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text("Delete group")
+                                .clicked()
+                            {
+                                delete_clicked = true;
+                            }
+                        },
+                    );
+
+                    ui.horizontal(|ui| {
+                        // Left port column (IN)
+                        ui.vertical(|ui| {
+                            ui.set_width(t.sizes.port_column_width);
+                            self.draw_group_port_column(
+                                ui,
+                                &group,
+                                WidgetPortDirection::Input,
+                                new_positions,
+                            );
+                        });
+
+                        // Content column
+                        ui.vertical(|ui| {
+                            ui.set_min_width(40.0);
+                            ui.label(
+                                egui::RichText::new(format!("{} modules", group.members.len()))
+                                    .size(10.0)
+                                    .color(t.colors.text_dim),
+                            );
+                            if group.exposed_inputs.is_empty() && group.exposed_outputs.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("No exposed ports")
+                                        .size(9.0)
+                                        .color(t.colors.text_dim.gamma_multiply(0.7)),
+                                );
+                            }
+                        });
+
+                        // Right port column (OUT)
+                        ui.vertical(|ui| {
+                            ui.set_width(t.sizes.port_column_width);
+                            self.draw_group_port_column(
+                                ui,
+                                &group,
+                                WidgetPortDirection::Output,
+                                new_positions,
+                            );
+                        });
+                    });
+                });
+            });
+
+            if delete_clicked {
+                self.delete_group(group_id, result);
+                continue;
+            }
+
+            if let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(area_id))
+                && let Some(group_mut) = self.groups.get_mut(&group_id)
+            {
+                let logical_pos = area_rect.min - area_origin + scroll_offset;
+                group_mut.position = snap_to_grid(logical_pos);
+            }
+
+            if toggle_clicked && let Some(group_mut) = self.groups.get_mut(&group_id) {
+                group_mut.collapsed = false;
+                continue;
+            }
+
+            if menu_clicked {
+                self.group_context_menu = Some(GroupContextMenuState { group_id, menu_pos });
+            }
+
+            if response.response.clicked() {
+                self.selected_group = Some(group_id);
+                self.selected_modules.clear();
+                self.selected_module = None;
+            }
+            if response.response.double_clicked()
+                && let Some(group_mut) = self.groups.get_mut(&group_id)
+            {
+                group_mut.collapsed = false;
+            }
+        }
+    }
+
+    fn handle_group_interactions(&mut self, ui: &Ui, layout: &GroupLayout, module_rects: &[Rect]) {
+        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+        let Some(pos) = pointer_pos else {
+            return;
+        };
+        let over_module = module_rects.iter().any(|r| r.contains(pos));
+        if over_module {
+            return;
+        }
+
+        let mut target_group: Option<GroupId> = None;
+        for (gid, rect) in &layout.rects_screen {
+            if rect.contains(pos)
+                && let Some(group) = self.groups.get(gid)
+                && !group.collapsed
+            {
+                target_group = Some(*gid);
+                break;
+            }
+        }
+
+        let Some(group_id) = target_group else {
+            return;
+        };
+
+        if let Some(rect) = layout.rects_screen.get(&group_id) {
+            let primary_clicked =
+                ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
+
+            // Menu icon (⋯) click
+            let menu_rect = group_menu_icon_rect(*rect);
+            if menu_rect.contains(pos) && primary_clicked {
+                self.group_context_menu = Some(GroupContextMenuState {
+                    group_id,
+                    menu_pos: Pos2::new(menu_rect.left(), menu_rect.bottom()),
+                });
+                return;
+            }
+
+            // Collapse icon click
+            let icon_rect = group_toggle_icon_rect(*rect);
+            if icon_rect.contains(pos) && primary_clicked {
+                if let Some(group) = self.groups.get_mut(&group_id) {
+                    group.collapsed = true;
+                    if let Some(rect_world) = layout.rects_world.get(&group_id) {
+                        group.position = rect_world.min;
+                    }
+                }
+                return;
+            }
+        }
+
+        if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+            self.selected_group = Some(group_id);
+            self.selected_modules.clear();
+            self.selected_module = None;
+        }
+        if ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        }) && let Some(group) = self.groups.get_mut(&group_id)
+        {
+            group.collapsed = true;
+            if let Some(rect) = layout.rects_world.get(&group_id) {
+                group.position = rect.min;
+            }
+        }
+    }
+
     /// Draw the background right-click context menu for adding modules.
     #[allow(clippy::too_many_lines)]
     fn draw_bg_context_menu(&mut self, response: &egui::Response, result: &mut PatchEditorResult) {
@@ -1467,6 +2623,14 @@ impl PatchEditor {
         let mut cable_action_taken = false;
 
         response.context_menu(|ui| {
+            if !self.selected_modules.is_empty() {
+                if ui.button("Create group from selection").clicked() {
+                    self.create_group_from_selection();
+                    ui.close();
+                }
+                ui.separator();
+            }
+
             // Cable actions (shown when right-clicking on a hovered cable)
             if let Some(connection) = menu_cable {
                 if ui.button("Delete cable").clicked() {
@@ -1757,6 +2921,33 @@ impl PatchEditor {
             );
             ui.separator();
 
+            // Group exposure controls (if the module belongs to a group)
+            if let Some(group_id) = self.group_of(target_module) {
+                let is_exposed =
+                    self.is_port_exposed(group_id, target_module, target_port, target_direction);
+                if is_exposed {
+                    let can_hide = !self.has_external_connection_for_port(
+                        group_id,
+                        target_module,
+                        target_port,
+                        target_direction,
+                    );
+                    let resp = ui.add_enabled(can_hide, egui::Button::new("Hide group port"));
+                    if resp.clicked() {
+                        let _ =
+                            self.hide_port(group_id, target_module, target_port, target_direction);
+                        close_menu = true;
+                    } else if !can_hide {
+                        resp.on_hover_text("Port has external connections");
+                    }
+                } else if ui.button("Expose as group port").clicked() {
+                    let _ =
+                        self.expose_port(group_id, target_module, target_port, target_direction);
+                    close_menu = true;
+                }
+                ui.separator();
+            }
+
             // Build menu items based on port type + direction
             match target_direction {
                 WidgetPortDirection::Input => {
@@ -1903,6 +3094,126 @@ impl PatchEditor {
         }
     }
 
+    fn draw_group_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
+        let Some(state) = self.group_context_menu.clone() else {
+            return;
+        };
+        let Some(group) = self.groups.get(&state.group_id).cloned() else {
+            self.group_context_menu = None;
+            return;
+        };
+
+        let menu_id = egui::Id::new("group_context_menu");
+        let mut open = true;
+        let mut close_menu = false;
+        let mut commit_name: Option<String> = None;
+        let mut color_update: Option<Option<HexColor>> = None;
+        let mut do_ungroup = false;
+        let mut do_delete = false;
+
+        let mut name_buf = self
+            .group_name_edit
+            .take()
+            .and_then(|(gid, name)| {
+                if gid == state.group_id {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| group.name.clone());
+
+        egui::Popup::new(
+            menu_id,
+            ui.ctx().clone(),
+            egui::PopupAnchor::Position(state.menu_pos),
+            ui.layer_id(),
+        )
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .style(egui::containers::menu::menu_style)
+        .gap(0.0)
+        .open_bool(&mut open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.label(
+                egui::RichText::new(&group.name)
+                    .color(theme().colors.text_secondary)
+                    .size(11.0),
+            );
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label("Name");
+                let resp = ui.text_edit_singleline(&mut name_buf);
+                if (resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    && !name_buf.trim().is_empty()
+                {
+                    commit_name = Some(name_buf.trim().to_string());
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Color");
+                let mut color = self.group_color(&group);
+                let changed = egui::color_picker::color_edit_button_srgba(
+                    ui,
+                    &mut color,
+                    egui::color_picker::Alpha::BlendOrAdditive,
+                )
+                .changed();
+                if changed {
+                    color_update = Some(Some(color32_to_hex(color)));
+                }
+                if ui.button("Clear").clicked() {
+                    color_update = Some(None);
+                }
+            });
+
+            ui.separator();
+
+            if ui.button("Ungroup").clicked() {
+                do_ungroup = true;
+                close_menu = true;
+            }
+
+            if ui.button("Delete group").clicked() {
+                do_delete = true;
+                close_menu = true;
+            }
+        });
+
+        if let Some(new_name) = commit_name
+            && let Some(g) = self.groups.get_mut(&state.group_id)
+        {
+            g.name = new_name;
+        }
+
+        if let Some(color_opt) = color_update
+            && let Some(g) = self.groups.get_mut(&state.group_id)
+        {
+            g.color = color_opt;
+        }
+
+        if do_ungroup {
+            self.ungroup(state.group_id);
+        }
+
+        if do_delete {
+            self.delete_group(state.group_id, result);
+        }
+
+        if !close_menu && open {
+            self.group_name_edit = Some((state.group_id, name_buf));
+        } else {
+            self.group_name_edit = None;
+        }
+
+        if close_menu || !open {
+            self.group_context_menu = None;
+        }
+    }
+
     /// Helper: render a list of menu buttons that push `QuickAddRequest`s.
     /// Uses shared `palette_label` for consistent icons and colors.
     #[allow(clippy::too_many_arguments)]
@@ -1984,6 +3295,59 @@ impl PatchEditor {
                     self.port_context_menu = Some(PortContextMenuState {
                         module_id: *module_id,
                         port_name: *port_name,
+                        port_type: port_pos.port_type,
+                        direction: port_pos.direction,
+                        menu_pos: pos,
+                    });
+                }
+            }
+        }
+
+        // Check for group port clicks
+        for port_pos in self.group_port_positions.values() {
+            let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
+
+            if let Some(pos) = pointer_pos
+                && port_rect.contains(pos)
+            {
+                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                    if let Some(ref pending) = self.pending_connection {
+                        if self.can_connect(pending, port_pos) {
+                            let connection =
+                                if pending.from_direction == WidgetPortDirection::Output {
+                                    Connection::new(
+                                        pending.from_module,
+                                        pending.from_port,
+                                        port_pos.module_id,
+                                        port_pos.port_name,
+                                    )
+                                } else {
+                                    Connection::new(
+                                        port_pos.module_id,
+                                        port_pos.port_name,
+                                        pending.from_module,
+                                        pending.from_port,
+                                    )
+                                };
+                            result.connections_to_add.push(connection);
+                        }
+                        self.pending_connection = None;
+                    } else {
+                        self.pending_connection = Some(PendingConnection {
+                            from_module: port_pos.module_id,
+                            from_port: port_pos.port_name,
+                            from_position: port_pos.position,
+                            from_type: port_pos.port_type,
+                            from_direction: port_pos.direction,
+                            current_pos: pos,
+                        });
+                    }
+                }
+
+                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+                    self.port_context_menu = Some(PortContextMenuState {
+                        module_id: port_pos.module_id,
+                        port_name: port_pos.port_name,
                         port_type: port_pos.port_type,
                         direction: port_pos.direction,
                         menu_pos: pos,

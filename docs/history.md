@@ -1,5 +1,11 @@
 # Version History
 
+## [0.191.0] - 2026-02-28
+### Group menu icon replaces right-click
+- **Added ⋯ (more) icon** to both expanded and collapsed group headers for accessing rename, color, ungroup, and delete actions
+- **Removed right-click context menu trigger** — menu is now accessible via the visible icon only
+- **Removed expand/collapse from context menu** — dedicated +/− icons already handle this
+
 ## [0.190.0] - 2026-02-28
 ### Remove `PatchModuleType` — use `ModuleType` directly for patch serialization
 - **Removed `PatchModuleType` enum** (~370 lines) — was a redundant mirror of `synth_core::ModuleType`

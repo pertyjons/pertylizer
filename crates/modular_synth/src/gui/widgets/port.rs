@@ -28,7 +28,7 @@ pub enum WidgetPortType {
 /// Port direction for widget rendering.
 ///
 /// For signal routing definitions, see `modules::core::PortDirection`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WidgetPortDirection {
     Input,
     Output,

@@ -48,6 +48,9 @@ pub struct Patch {
     pub modules: Vec<ModuleState>,
     /// Connections between modules.
     pub connections: Vec<ConnectionState>,
+    /// Module groups (UI-level metadata).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<ModuleGroupState>,
     /// Global settings.
     #[serde(default)]
     pub settings: PatchSettings,
@@ -70,6 +73,43 @@ pub struct ModuleState {
     /// Parameter values.
     #[serde(default)]
     pub parameters: HashMap<String, ParamValue>,
+}
+
+/// Unique ID for a group within a patch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GroupId(pub u32);
+
+/// Hex color string for UI (e.g., "#RRGGBB" or "#RRGGBBAA").
+pub type HexColor = String;
+
+/// A port exposed on a group boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExposedPortState {
+    pub label: String,
+    /// Module ID string (e.g., "osc-1").
+    pub module_id: String,
+    /// Port name string (e.g., "out", "cutoff").
+    pub port: String,
+}
+
+/// Group of modules in the patch editor (UI-level metadata).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleGroupState {
+    pub id: GroupId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<HexColor>,
+    /// Module IDs that belong to this group.
+    pub members: Vec<String>,
+    /// Whether the group is collapsed in the UI.
+    pub collapsed: bool,
+    /// Position of the group box when collapsed.
+    pub position: (f32, f32),
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exposed_inputs: Vec<ExposedPortState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exposed_outputs: Vec<ExposedPortState>,
 }
 
 /// Parameter value for serialization.
@@ -159,6 +199,7 @@ impl Patch {
             tags: Vec::new(),
             modules: Vec::new(),
             connections: Vec::new(),
+            groups: Vec::new(),
             settings: PatchSettings::default(),
         }
     }

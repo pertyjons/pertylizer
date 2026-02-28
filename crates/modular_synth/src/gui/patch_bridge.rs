@@ -65,6 +65,9 @@ pub fn load_patch(
         load_module(module_state, patch_editor, session, handle, instrument_id);
     }
 
+    // Load group metadata (UI-only)
+    patch_editor.load_groups_from_patch(&patch.groups);
+
     // Add connections to both patch_editor and engine
     for conn in &patch.connections {
         if let (Ok(from_id), Ok(to_id)) = (
@@ -413,6 +416,9 @@ pub fn create_patch_from_rack(
             to: (conn.to_module.to_string(), conn.to_port.into()),
         });
     }
+
+    // Add groups
+    patch.groups = patch_editor.group_states();
 
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = handle.master_volume();
