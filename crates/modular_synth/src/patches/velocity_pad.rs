@@ -58,7 +58,7 @@ Use the mod wheel for additional expression.
     // OSC2 - Sawtooth, detuned (osc-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
-            .position(50.0, 200.0)
+            .position(50.0, 400.0)
             .waveform("sawtooth")
             .param_f("level", 0.45)
             .param_f("detune", 5.0)
@@ -68,7 +68,7 @@ Use the mod wheel for additional expression.
     // Filter - Lowpass, starts fairly closed (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 100.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 300.0)
             .param_f("resonance", 0.25)
@@ -78,7 +78,7 @@ Use the mod wheel for additional expression.
     // Amp Envelope - Slow pad attack (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 400.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.15)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.7)
@@ -89,7 +89,7 @@ Use the mod wheel for additional expression.
     // Filter Envelope - Faster attack for brightness contour (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 400.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.05)
             .param_f("decay", 0.8)
             .param_f("sustain", 0.3)
@@ -100,7 +100,7 @@ Use the mod wheel for additional expression.
     // LFO - Slow sine for gentle movement (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(450.0, 400.0)
+            .position(450.0, 650.0)
             .waveform("sine")
             .param_f("rate", 0.25)
             .param_f("depth", 0.3)
@@ -110,7 +110,7 @@ Use the mod wheel for additional expression.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 100.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -118,7 +118,7 @@ Use the mod wheel for additional expression.
     // Mod Matrix - The key module! (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(650.0, 300.0)
+            .position(1600.0, 50.0)
             .param_choice("grid size", "2x2")
             // Slot 1: Velocity → Filter Cutoff, amount +0.6
             .param_choice("slot 1 source", "velocity")
@@ -142,7 +142,7 @@ Use the mod wheel for additional expression.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(650.0, 100.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

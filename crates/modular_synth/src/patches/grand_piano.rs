@@ -68,7 +68,7 @@ PLAYING TIPS:
     // OSC 1: Main String (Sawtooth - rich harmonics)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
-            .position(50.0, 100.0)
+            .position(50.0, 900.0)
             .waveform("sawtooth")
             .param_f("detune", -3.0) // Slight detune left
             .param_f("level", 0.65)
@@ -78,7 +78,7 @@ PLAYING TIPS:
     // OSC 2: Secondary String (Sawtooth - detuned for chorus)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
-            .position(50.0, 250.0)
+            .position(50.0, 550.0)
             .waveform("sawtooth")
             .param_f("detune", 3.0) // Slight detune right
             .param_f("level", 0.55)
@@ -88,7 +88,7 @@ PLAYING TIPS:
     // SUB OSC: Body resonance (Triangle -1 octave, subtle)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::SubOscillator)
-            .position(50.0, 400.0)
+            .position(50.0, 250.0)
             .param_choice("waveform", "triangle")
             .param_choice("octave", "minus1")
             .param_f("level", 0.25) // Subtle, not boomy
@@ -98,7 +98,7 @@ PLAYING TIPS:
     // NOISE: Hammer strike transient
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Noise)
-            .position(50.0, 550.0)
+            .position(50.0, 50.0)
             .param_choice("type", "white")
             .param_f("level", 0.4) // Will be shaped by very short envelope
             .build(),
@@ -111,7 +111,7 @@ PLAYING TIPS:
     // ENV 1: Amplitude (main volume envelope with velocity)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(250.0, 50.0)
+            .position(1600.0, 350.0)
             .param_f("attack", 0.003) // Near-instant attack
             .param_f("decay", 2.5) // Long natural decay
             .param_f("sustain", 0.0) // No sustain plateau (piano-like)
@@ -126,7 +126,7 @@ PLAYING TIPS:
     // ENV 2: Filter envelope (hammer brightness with velocity)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 250.0)
+            .position(1200.0, 350.0)
             .param_f("attack", 0.001) // Instant
             .param_f("decay", 0.2) // Quick decay for percussive feel
             .param_f("sustain", 0.0)
@@ -141,7 +141,7 @@ PLAYING TIPS:
     // ENV 3: Noise envelope (hammer click - very short)
     patch.add_module(
         ModuleBuilder::new(3, ModuleType::Envelope)
-            .position(250.0, 450.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.001) // Instant
             .param_f("decay", 0.012) // ~12ms click
             .param_f("sustain", 0.0)
@@ -160,7 +160,7 @@ PLAYING TIPS:
     // FILTER: Lowpass with key tracking
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 200.0)
+            .position(1200.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 2000.0) // Base cutoff
             .param_f("resonance", 0.05) // Very low resonance (piano is not resonant)
@@ -176,7 +176,7 @@ PLAYING TIPS:
     // NOISE VCA: Controlled by ENV 3 (hammer click)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Amplifier)
-            .position(150.0, 550.0)
+            .position(450.0, 50.0)
             .param_f("level", 0.15) // Subtle click level
             .build(),
     );
@@ -184,7 +184,7 @@ PLAYING TIPS:
     // MIXER: Combine all oscillator sources
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(350.0, 350.0)
+            .position(800.0, 50.0)
             .param_f("master", 1.0)
             .build(),
     );
@@ -192,7 +192,7 @@ PLAYING TIPS:
     // MAIN VCA: Final volume
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 200.0)
+            .position(1600.0, 50.0)
             .param_f("level", 0.8)
             .build(),
     );
@@ -204,7 +204,7 @@ PLAYING TIPS:
     // KEYBOARD PANNER: Note-based stereo positioning (low=left, high=right)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::KeyboardPanner)
-            .position(750.0, 200.0)
+            .position(1950.0, 50.0)
             .param_f("spread", 0.6) // 60% stereo spread
             .param_f("center", 60.0) // Middle C as center
             .param_f("curve", 0.0) // Linear panning
@@ -215,7 +215,7 @@ PLAYING TIPS:
     // OUTPUT (Reverb can be added via Master FX sidebar)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(900.0, 200.0)
+            .position(2250.0, 50.0)
             .param_f("master level", 0.85)
             .build(),
     );

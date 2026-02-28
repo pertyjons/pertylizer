@@ -50,7 +50,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Waveshaper - Sine Fold (wsh-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Waveshaper)
-            .position(250.0, 50.0)
+            .position(1600.0, 50.0)
             .waveshaper_curve("sine_fold")
             .param_f("drive", 0.6)
             .param_f("mix", 0.8)
@@ -72,7 +72,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Amp Envelope - Snappy attack (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.3)
             .param_f("sustain", 0.6)
@@ -83,7 +83,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Filter Envelope - Opens cutoff on attack (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(2250.0, 50.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.25)
             .param_f("sustain", 0.15)
@@ -94,7 +94,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -102,7 +102,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(450.0, 300.0)
+            .position(1600.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
             .param_choice("slot 1 dest", "flt1_cutoff")
@@ -113,7 +113,7 @@ Lower the filter cutoff for a darker, more muted tone.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

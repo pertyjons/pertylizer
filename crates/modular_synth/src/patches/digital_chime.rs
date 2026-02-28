@@ -52,7 +52,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Filter - Highpass to keep it sparkly (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 6000.0)
             .param_f("resonance", 0.2)
@@ -62,7 +62,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Amp Envelope - Percussive chime (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(800.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 1.2)
             .param_f("sustain", 0.0)
@@ -73,7 +73,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Position Envelope - Fast sweep through wavetable (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(50.0, 250.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.4)
             .param_f("sustain", 0.0)
@@ -84,7 +84,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("level", 0.6)
             .build(),
     );
@@ -92,7 +92,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Chorus - Stereo shimmer (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1550.0, 350.0)
             .param_f("rate", 1.5)
             .param_f("depth", 0.4)
             .param_f("mix", 0.3)
@@ -102,7 +102,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Reverb - Bright space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 200.0)
+            .position(1550.0, 50.0)
             .param_f("room_size", 0.75)
             .param_f("damping", 0.15)
             .param_f("mix", 0.45)
@@ -112,7 +112,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("master level", 0.75)
             .build(),
     );

@@ -57,7 +57,7 @@ sound design, and meditation soundscapes.
     // Filter - Lowpass with resonance (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(350.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
             .param_f("resonance", 0.5)
@@ -67,7 +67,7 @@ sound design, and meditation soundscapes.
     // Slow LFO for filter movement (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(50.0, 300.0)
+            .position(350.0, 350.0)
             .waveform("sine")
             .param_f("rate", 0.08)
             .param_f("depth", 0.4)
@@ -77,7 +77,7 @@ sound design, and meditation soundscapes.
     // Amp Envelope - Slow attack for drones (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(750.0, 350.0)
             .param_f("attack", 1.5)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
@@ -91,7 +91,7 @@ sound design, and meditation soundscapes.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(750.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -99,7 +99,7 @@ sound design, and meditation soundscapes.
     // Reverb - Large space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 50.0)
+            .position(1500.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.3)
             .param_f("mix", 0.5)
@@ -109,7 +109,7 @@ sound design, and meditation soundscapes.
     // Oscilloscope (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(850.0, 50.0)
+            .position(1500.0, 350.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -118,7 +118,7 @@ sound design, and meditation soundscapes.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1100.0, 50.0)
             .param_f("master level", 0.75)
             .build(),
     );

@@ -57,7 +57,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Filter (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1000.0)
             .param_f("resonance", 0.45)
@@ -67,7 +67,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.2)
             .param_f("sustain", 0.0)
@@ -78,7 +78,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Filter Envelope (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.1)
             .param_f("sustain", 0.1)
@@ -89,7 +89,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -97,7 +97,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Delay (dly-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Delay)
-            .position(650.0, 50.0)
+            .position(1600.0, 350.0)
             .delay_mode("ping_pong")
             .param_f("time", 0.25)
             .param_f("feedback", 0.45)
@@ -108,7 +108,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(850.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -117,7 +117,7 @@ instant complexity. Great for EDM, synthwave, and electronic pop.
     // Stereo Output - Final destination (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

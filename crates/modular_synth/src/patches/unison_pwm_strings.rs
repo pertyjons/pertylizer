@@ -67,7 +67,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Filter - Gentle lowpass for warmth (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3500.0)
             .param_f("resonance", 0.1)
@@ -77,7 +77,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Amp Envelope - Slow string attack (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.5)
             .param_f("decay", 0.4)
             .param_f("sustain", 0.8)
@@ -88,7 +88,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // PWM LFO - Slow pulse width sweep (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(50.0, 600.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.4)
             .param_f("depth", 0.6)
@@ -98,7 +98,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Vibrato LFO - Subtle pitch movement (lfo-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Lfo)
-            .position(450.0, 300.0)
+            .position(50.0, 400.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 5.0)
             .param_f("depth", 0.015)
@@ -108,7 +108,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.65)
             .build(),
     );
@@ -116,7 +116,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Mod Matrix - Velocity -> Amp Level (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(650.0, 300.0)
+            .position(1600.0, 600.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "velocity")
             .param_choice("slot 1 dest", "amp_level")
@@ -127,7 +127,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Chorus - Extra ensemble width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("rate", 0.3)
             .param_f("depth", 0.4)
             .param_f("mix", 0.4)
@@ -137,7 +137,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Reverb - Concert hall (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 50.0)
+            .position(1600.0, 300.0)
             .param_f("room_size", 0.8)
             .param_f("damping", 0.35)
             .param_f("mix", 0.35)
@@ -147,7 +147,7 @@ Reduce unison to 3 for a thinner, more intimate chamber string sound.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

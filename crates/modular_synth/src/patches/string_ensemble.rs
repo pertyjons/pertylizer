@@ -63,7 +63,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // OSC2 - Regular Sawtooth for body/center definition (osc-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
-            .position(50.0, 200.0)
+            .position(50.0, 300.0)
             .waveform("sawtooth")
             .param_f("level", 0.4)
             .param_f("detune", -5.0) // Slight detune against the supersaw
@@ -73,7 +73,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Mixer (mix-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(250.0, 100.0)
+            .position(450.0, 50.0)
             .param_f("master", 0.8)
             .build(),
     );
@@ -81,7 +81,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Filter - Lowpass to tame brightness (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 100.0)
+            .position(850.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 2500.0) // Open enough for brilliance
             .param_f("resonance", 0.1) // Low resonance for natural sound
@@ -91,7 +91,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Amp Envelope - Slow bowing attack (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 400.0)
+            .position(1250.0, 350.0)
             .param_f("attack", 0.6) // Slow attack (bowing)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
@@ -102,7 +102,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Filter Envelope - Subtle timbral movement (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 400.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.4)
             .param_f("decay", 1.0)
             .param_f("sustain", 0.5)
@@ -113,7 +113,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Vibrato LFO (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(450.0, 400.0)
+            .position(50.0, 650.0)
             .waveform("sine")
             .param_f("rate", 5.5) // Classic vibrato speed
             .param_f("depth", 0.03) // Subtle depth
@@ -123,7 +123,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 100.0)
+            .position(1250.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -131,7 +131,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Chorus - The "Ensemble" effect (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(850.0, 100.0)
+            .position(2000.0, 50.0)
             .param_f("rate", 0.4)
             .param_f("depth", 0.5)
             .param_f("mix", 0.5)
@@ -141,7 +141,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Reverb - Concert Hall (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(1050.0, 100.0)
+            .position(2000.0, 300.0)
             .param_f("room_size", 0.85) // Large hall
             .param_f("damping", 0.4)
             .param_f("mix", 0.4)
@@ -151,7 +151,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Oscilloscope (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(1250.0, 100.0)
+            .position(2000.0, 600.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -160,7 +160,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1450.0, 100.0)
+            .position(1600.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

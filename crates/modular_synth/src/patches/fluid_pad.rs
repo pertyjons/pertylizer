@@ -53,7 +53,7 @@ Increase drive for warmer, more saturated character.
     // Filter - Fluid model with morph (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_model("fluid")
             .param_f("morph", 0.15)
             .param_f("cutoff", 1200.0)
@@ -65,7 +65,7 @@ Increase drive for warmer, more saturated character.
     // Amp Envelope - Slow pad (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.6)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
@@ -76,7 +76,7 @@ Increase drive for warmer, more saturated character.
     // Filter Envelope - Brightness on attack (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(2250.0, 50.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.8)
             .param_f("sustain", 0.2)
@@ -87,7 +87,7 @@ Increase drive for warmer, more saturated character.
     // LFO - Slow morph sweep (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(450.0, 300.0)
+            .position(2250.0, 350.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.12)
             .param_f("depth", 0.5)
@@ -97,7 +97,7 @@ Increase drive for warmer, more saturated character.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.65)
             .build(),
     );
@@ -105,7 +105,7 @@ Increase drive for warmer, more saturated character.
     // Mod Matrix - LFO->Morph, Env2->Cutoff (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(650.0, 300.0)
+            .position(1600.0, 350.0)
             .param_choice("grid size", "2x2")
             .param_choice("slot 1 source", "lfo1")
             .param_choice("slot 1 dest", "flt1_reso")
@@ -119,7 +119,7 @@ Increase drive for warmer, more saturated character.
     // Reverb (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("room_size", 0.85)
             .param_f("damping", 0.4)
             .param_f("mix", 0.45)
@@ -129,7 +129,7 @@ Increase drive for warmer, more saturated character.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

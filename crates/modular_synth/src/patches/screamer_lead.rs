@@ -49,7 +49,7 @@ Lower cutoff for darker, growling character.
     // Filter - Screamer model with high resonance (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_model("screamer")
             .param_f("cutoff", 800.0)
             .param_f("resonance", 0.72)
@@ -60,7 +60,7 @@ Lower cutoff for darker, growling character.
     // Amp Envelope - Snappy (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.003)
             .param_f("decay", 0.2)
             .param_f("sustain", 0.7)
@@ -71,7 +71,7 @@ Lower cutoff for darker, growling character.
     // Filter Envelope - Aggressive sweep (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(2250.0, 50.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.18)
             .param_f("sustain", 0.1)
@@ -82,7 +82,7 @@ Lower cutoff for darker, growling character.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.6)
             .build(),
     );
@@ -90,7 +90,7 @@ Lower cutoff for darker, growling character.
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(450.0, 300.0)
+            .position(1600.0, 50.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
             .param_choice("slot 1 dest", "flt1_cutoff")
@@ -101,7 +101,7 @@ Lower cutoff for darker, growling character.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(650.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

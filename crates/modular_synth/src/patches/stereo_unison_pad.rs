@@ -59,7 +59,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     // Amp Envelope - Slow, dreamy pad (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.8)
             .param_f("decay", 0.6)
             .param_f("sustain", 0.85)
@@ -70,7 +70,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     // LFO - Slow pitch drift (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(50.0, 400.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.15)
             .param_f("depth", 0.02)
@@ -80,7 +80,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     // Amplifier - Stereo input (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .param_f("level", 0.65)
             .build(),
     );
@@ -88,7 +88,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     // Reverb - Large space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(450.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.3)
             .param_f("mix", 0.5)
@@ -98,7 +98,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(650.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

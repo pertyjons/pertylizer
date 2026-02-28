@@ -54,7 +54,7 @@ Layer multiple notes for rich ambient textures.
     // Filter - Fluid model for gentle warmth (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .filter_model("fluid")
             .param_f("cutoff", 3000.0)
             .param_f("resonance", 0.2)
@@ -66,7 +66,7 @@ Layer multiple notes for rich ambient textures.
     // Amp Envelope - Very slow ambient (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(800.0, 350.0)
             .param_f("attack", 2.0)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.85)
@@ -77,7 +77,7 @@ Layer multiple notes for rich ambient textures.
     // LFO 1 - Very slow position sweep (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(50.0, 250.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.03)
             .param_f("depth", 0.5)
@@ -87,7 +87,7 @@ Layer multiple notes for rich ambient textures.
     // LFO 2 - Subtle filter morph movement (lfo-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Lfo)
-            .position(450.0, 300.0)
+            .position(400.0, 350.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.07)
             .param_f("depth", 0.25)
@@ -97,7 +97,7 @@ Layer multiple notes for rich ambient textures.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("level", 0.6)
             .build(),
     );
@@ -105,7 +105,7 @@ Layer multiple notes for rich ambient textures.
     // Reverb - Deep immersive space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 50.0)
+            .position(1550.0, 50.0)
             .param_f("room_size", 0.95)
             .param_f("damping", 0.25)
             .param_f("mix", 0.6)
@@ -115,7 +115,7 @@ Layer multiple notes for rich ambient textures.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

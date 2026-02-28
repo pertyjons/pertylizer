@@ -62,7 +62,7 @@ bite. Works great for both bass lines and lead melodies.
     // OSC2 - Sawtooth, detuned +12 cents (osc-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
-            .position(50.0, 200.0)
+            .position(50.0, 700.0)
             .waveform("sawtooth")
             .param_f("level", 0.75)
             .param_f("detune", 12.0)
@@ -72,7 +72,7 @@ bite. Works great for both bass lines and lead melodies.
     // Sub Oscillator - Square, -1 octave (sub-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::SubOscillator)
-            .position(50.0, 350.0)
+            .position(50.0, 400.0)
             .waveform("square")
             .param_f("octave", -1.0)
             .param_f("level", 0.5)
@@ -82,7 +82,7 @@ bite. Works great for both bass lines and lead melodies.
     // Mixer (mix-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(250.0, 100.0)
+            .position(450.0, 50.0)
             .param_f("master", 0.9)
             .param_f("input_1", 0.8)
             .param_f("input_2", 0.7)
@@ -93,7 +93,7 @@ bite. Works great for both bass lines and lead melodies.
     // Filter - Ladder LP (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 100.0)
+            .position(850.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 500.0)
             .param_f("resonance", 0.55)
@@ -106,7 +106,7 @@ bite. Works great for both bass lines and lead melodies.
     // Filter Envelope - slow sweep (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(250.0, 350.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.7)
             .param_f("sustain", 0.15)
@@ -118,7 +118,7 @@ bite. Works great for both bass lines and lead melodies.
     // Amp Envelope (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(450.0, 350.0)
+            .position(850.0, 650.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.3)
             .param_f("sustain", 0.85)
@@ -130,7 +130,7 @@ bite. Works great for both bass lines and lead melodies.
     // LFO - Triangle wobble (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(650.0, 350.0)
+            .position(50.0, 1050.0)
             .waveform("triangle")
             .param_f("rate", 1.8)
             .param_f("depth", 0.3)
@@ -140,7 +140,7 @@ bite. Works great for both bass lines and lead melodies.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 100.0)
+            .position(1250.0, 50.0)
             .param_f("level", 0.95)
             .build(),
     );
@@ -148,7 +148,7 @@ bite. Works great for both bass lines and lead melodies.
     // Chorus (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(850.0, 100.0)
+            .position(2000.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.35)
             .param_f("mix", 0.25)
@@ -158,7 +158,7 @@ bite. Works great for both bass lines and lead melodies.
     // Reverb (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(1050.0, 100.0)
+            .position(2000.0, 300.0)
             .param_f("decay", 2.0)
             .param_f("mix", 0.15)
             .param_f("damping", 0.6)
@@ -168,7 +168,7 @@ bite. Works great for both bass lines and lead melodies.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1250.0, 100.0)
+            .position(1600.0, 50.0)
             .param_f("master level", 0.75)
             .build(),
     );

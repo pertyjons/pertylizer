@@ -54,7 +54,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Filter - Lowpass with envelope modulation (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
             .param_f("resonance", 0.15)
@@ -64,7 +64,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Amp Envelope - Snappy attack, moderate sustain (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.4)
             .param_f("sustain", 0.7)
@@ -75,7 +75,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Filter Envelope - Bright attack that decays (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(2250.0, 50.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.2)
@@ -86,7 +86,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -94,7 +94,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(450.0, 300.0)
+            .position(1600.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
             .param_choice("slot 1 dest", "flt1_cutoff")
@@ -105,7 +105,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Chorus - Extra width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("rate", 0.6)
             .param_f("depth", 0.3)
             .param_f("mix", 0.35)
@@ -115,7 +115,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

@@ -54,7 +54,7 @@ Small changes can create vastly different musical results!
     // Filter - Tame harsh highs (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3000.0)
             .param_f("resonance", 0.2)
@@ -64,7 +64,7 @@ Small changes can create vastly different musical results!
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.1)
             .param_f("sustain", 0.7)
@@ -75,7 +75,7 @@ Small changes can create vastly different musical results!
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.5)
             .build(),
     );
@@ -83,7 +83,7 @@ Small changes can create vastly different musical results!
     // Delay - Add rhythm (dly-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Delay)
-            .position(650.0, 50.0)
+            .position(1600.0, 350.0)
             .delay_mode("ping_pong")
             .param_f("time", 0.15)
             .param_f("feedback", 0.3)
@@ -94,7 +94,7 @@ Small changes can create vastly different musical results!
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(850.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -103,7 +103,7 @@ Small changes can create vastly different musical results!
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

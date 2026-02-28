@@ -52,7 +52,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Ring Mod - Sine carrier with keyboard tracking (rng-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::RingMod)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .param_choice("carrier_wave", "sine")
             .param_f("freq_ratio", 0.65) // Non-integer ratio for inharmonics
             .param_f("key_track", 0.9)
@@ -63,7 +63,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Filter - Gentle lowpass to tame harsh highs (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 50.0)
+            .position(750.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 4000.0)
             .param_f("resonance", 0.15)
@@ -73,7 +73,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Amp Envelope - Percussive with long release (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(1150.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 1.8)
             .param_f("sustain", 0.05)
@@ -84,7 +84,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Filter Envelope - Brightness on attack (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(750.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 1.0)
             .param_f("sustain", 0.1)
@@ -95,7 +95,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("level", 0.55)
             .build(),
     );
@@ -103,7 +103,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Reverb - Big space for bell (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 50.0)
+            .position(1900.0, 50.0)
             .param_f("room_size", 0.9)
             .param_f("damping", 0.2)
             .param_f("mix", 0.5)
@@ -113,7 +113,7 @@ Lower notes sound gong-like, higher notes chime-like.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1500.0, 50.0)
             .param_f("master level", 0.75)
             .build(),
     );

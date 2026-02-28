@@ -63,7 +63,7 @@ during held notes.
     // OSC2 - Square, slightly detuned for width (osc-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
-            .position(50.0, 200.0)
+            .position(50.0, 400.0)
             .waveform("square")
             .param_f("level", 0.35)
             .param_f("detune", -7.0) // -7 cents for width
@@ -73,7 +73,7 @@ during held notes.
     // Filter - Resonant lowpass (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 100.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 800.0)
             .param_f("resonance", 0.45)
@@ -83,7 +83,7 @@ during held notes.
     // Amp Envelope - Snappy lead (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 400.0)
+            .position(450.0, 550.0)
             .param_f("attack", 0.003)
             .param_f("decay", 0.15)
             .param_f("sustain", 0.75)
@@ -94,7 +94,7 @@ during held notes.
     // Filter Envelope - Attack bite (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 400.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.25)
             .param_f("sustain", 0.2)
@@ -105,7 +105,7 @@ during held notes.
     // Vibrato LFO (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(450.0, 400.0)
+            .position(450.0, 350.0)
             .waveform("sine")
             .param_f("rate", 5.5)
             .param_f("depth", 0.0) // Depth starts at 0, mod wheel controls it
@@ -115,7 +115,7 @@ during held notes.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 100.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.75)
             .build(),
     );
@@ -123,7 +123,7 @@ during held notes.
     // Mod Matrix - 6 active performance routings (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(650.0, 300.0)
+            .position(1600.0, 350.0)
             .param_choice("grid size", "3x3")
             // Slot 1: Mod Wheel → LFO 1 Depth (vibrato amount)
             .param_choice("slot 1 source", "mod_wheel")
@@ -155,7 +155,7 @@ during held notes.
     // Delay effect (dly-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Delay)
-            .position(850.0, 100.0)
+            .position(1600.0, 50.0)
             .delay_mode("ping_pong")
             .param_f("time", 0.3)
             .param_f("feedback", 0.35)
@@ -166,7 +166,7 @@ during held notes.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(650.0, 100.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

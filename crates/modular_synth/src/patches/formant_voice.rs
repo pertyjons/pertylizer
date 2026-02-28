@@ -52,7 +52,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Filter (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 3500.0)
             .param_f("resonance", 0.2)
@@ -62,7 +62,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.02)
             .param_f("decay", 0.3)
             .param_f("sustain", 0.7)
@@ -73,7 +73,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // LFO - Modulate formant (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(50.0, 300.0)
             .waveform("sine")
             .param_f("rate", 0.3)
             .param_f("depth", 0.15)
@@ -83,7 +83,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -91,7 +91,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Chorus - Add width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("rate", 0.6)
             .param_f("depth", 0.3)
             .param_f("mix", 0.3)
@@ -101,7 +101,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Reverb (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 50.0)
+            .position(1600.0, 300.0)
             .param_f("room_size", 0.6)
             .param_f("damping", 0.4)
             .param_f("mix", 0.3)
@@ -111,7 +111,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(1050.0, 50.0)
+            .position(1600.0, 600.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -120,7 +120,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1250.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

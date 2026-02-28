@@ -40,7 +40,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // OSC1 - Triangle for body (osc-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
-            .position(50.0, 50.0)
+            .position(50.0, 250.0)
             .waveform("triangle")
             .param_f("level", 0.6)
             .build(),
@@ -49,7 +49,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Noise Generator for snare rattle (nse-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Noise)
-            .position(50.0, 200.0)
+            .position(50.0, 50.0)
             .param_choice("type", "white") // Crisp white noise for snare
             .param_f("level", 0.7)
             .build(),
@@ -58,7 +58,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Noise Filter - Bandpass (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 200.0)
+            .position(450.0, 50.0)
             .filter_mode("bandpass")
             .param_f("cutoff", 5000.0)
             .param_f("resonance", 0.3)
@@ -68,7 +68,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Mixer (mix-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(450.0, 100.0)
+            .position(850.0, 50.0)
             .param_f("master", 0.8)
             .build(),
     );
@@ -76,7 +76,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Pitch Envelope with punchy curves (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 400.0)
+            .position(50.0, 600.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.03)
             .param_f("sustain", 0.0)
@@ -90,7 +90,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Amp Envelope with punchy curves (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 400.0)
+            .position(1250.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.12)
             .param_f("sustain", 0.0)
@@ -104,7 +104,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 100.0)
+            .position(1250.0, 50.0)
             .param_f("level", 0.75)
             .build(),
     );
@@ -112,7 +112,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(850.0, 100.0)
+            .position(2000.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -121,7 +121,7 @@ Higher cutoff = brighter, crisper. Lower = darker, thicker.
     // Stereo Output - Final destination (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 100.0)
+            .position(1600.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

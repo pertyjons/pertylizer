@@ -44,7 +44,7 @@ for a darker, more percussive tone.
     // Oscillator - Unison saw (osc-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
-            .position(50.0, 50.0)
+            .position(50.0, 250.0)
             .waveform("sawtooth")
             .param_f("level", 0.8)
             .param_f("unison", 4.0)
@@ -57,7 +57,7 @@ for a darker, more percussive tone.
     // Wavetable Oscillator - Basic table (wtb-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::WavetableOsc)
-            .position(50.0, 200.0)
+            .position(50.0, 50.0)
             .param_choice("table", "basic")
             .param_f("position", 0.25)
             .param_f("level", 0.7)
@@ -79,7 +79,7 @@ for a darker, more percussive tone.
     // Sub Oscillator - Square, -1 octave (sub-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::SubOscillator)
-            .position(50.0, 500.0)
+            .position(50.0, 1050.0)
             .waveform("square")
             .param_f("octave", -1.0)
             .param_f("level", 0.4)
@@ -89,7 +89,7 @@ for a darker, more percussive tone.
     // Noise - White, subtle (nse-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Noise)
-            .position(50.0, 650.0)
+            .position(50.0, 600.0)
             .param_choice("type", "white")
             .param_f("level", 0.2)
             .build(),
@@ -98,7 +98,7 @@ for a darker, more percussive tone.
     // Ring Mod - Wavetable shimmer (rng-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::RingMod)
-            .position(250.0, 200.0)
+            .position(450.0, 50.0)
             .param_choice("carrier_wave", "sine")
             .param_f("carrier_freq", 220.0)
             .param_f("freq_ratio", 1.0)
@@ -110,7 +110,7 @@ for a darker, more percussive tone.
     // Mixer - Blend sources (mix-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(450.0, 200.0)
+            .position(800.0, 50.0)
             .param_f("master", 0.9)
             .param_f("input_1", 0.8)
             .param_f("input_2", 0.5)
@@ -123,7 +123,7 @@ for a darker, more percussive tone.
     // Filter - Lowpass, mild drive (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(650.0, 200.0)
+            .position(1200.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1200.0)
             .param_f("resonance", 0.35)
@@ -134,7 +134,7 @@ for a darker, more percussive tone.
     // Body Resonance - Adds woody midrange (bdy-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::BodyResonance)
-            .position(850.0, 200.0)
+            .position(1600.0, 50.0)
             .param_f("freq", 280.0)
             .param_f("resonance", 0.7)
             .param_f("size", 0.6)
@@ -146,7 +146,7 @@ for a darker, more percussive tone.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(1050.0, 200.0)
+            .position(2000.0, 50.0)
             .param_f("level", 0.9)
             .build(),
     );
@@ -154,7 +154,7 @@ for a darker, more percussive tone.
     // Keyboard Panner - Note-based stereo spread (kbp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::KeyboardPanner)
-            .position(1250.0, 200.0)
+            .position(2350.0, 50.0)
             .param_f("spread", 0.7)
             .param_f("center", 60.0)
             .param_f("curve", 0.4)
@@ -165,7 +165,7 @@ for a darker, more percussive tone.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1450.0, 200.0)
+            .position(2650.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );
@@ -173,7 +173,7 @@ for a darker, more percussive tone.
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(1050.0, 500.0)
+            .position(2000.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.25)
             .param_f("sustain", 0.6)
@@ -184,7 +184,7 @@ for a darker, more percussive tone.
     // Filter/Resonance Envelope (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(650.0, 500.0)
+            .position(50.0, 1950.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.18)
             .param_f("sustain", 0.2)
@@ -195,7 +195,7 @@ for a darker, more percussive tone.
     // LFO - Wavetable drift + cutoff motion (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(450.0, 500.0)
+            .position(50.0, 1750.0)
             .waveform("triangle")
             .param_f("rate", 4.0)
             .param_f("depth", 0.35)
@@ -205,7 +205,7 @@ for a darker, more percussive tone.
     // Mod Mixer - Blend env + LFO for cutoff (mix-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Mixer)
-            .position(650.0, 650.0)
+            .position(50.0, 1350.0)
             .param_f("input_1", 0.8)
             .param_f("input_2", 0.35)
             .build(),

@@ -55,7 +55,7 @@ kick characters. Works well in the lowest octave.
     // Pitch Envelope - Fast sweep with punchy curve (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 250.0)
+            .position(50.0, 400.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.05)
             .param_f("sustain", 0.0)
@@ -69,7 +69,7 @@ kick characters. Works well in the lowest octave.
     // Amp Envelope with punchy curves (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 250.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.15)
             .param_f("sustain", 0.0)
@@ -83,7 +83,7 @@ kick characters. Works well in the lowest octave.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .param_f("level", 0.9)
             .build(),
     );
@@ -91,7 +91,7 @@ kick characters. Works well in the lowest octave.
     // Soft clip for warmth (dst-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Distortion)
-            .position(450.0, 50.0)
+            .position(1200.0, 350.0)
             .distortion_mode("soft_clip")
             .param_f("drive", 0.2)
             .param_f("mix", 0.3)
@@ -101,7 +101,7 @@ kick characters. Works well in the lowest octave.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(650.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -110,7 +110,7 @@ kick characters. Works well in the lowest octave.
     // Stereo Output - Final destination (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

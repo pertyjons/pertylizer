@@ -54,7 +54,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Filter - Fluid model for warm EP character (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .filter_model("fluid")
             .param_f("cutoff", 3500.0)
             .param_f("resonance", 0.15)
@@ -66,7 +66,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Amp Envelope - Piano-like (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(800.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 1.0)
             .param_f("sustain", 0.4)
@@ -77,7 +77,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Position Envelope - PWM sweep on attack (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(50.0, 250.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.6)
             .param_f("sustain", 0.1)
@@ -88,7 +88,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Mod Matrix - Velocity -> Amp level (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(450.0, 300.0)
+            .position(1550.0, 600.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "velocity")
             .param_choice("slot 1 dest", "amp_level")
@@ -99,7 +99,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("level", 0.6)
             .build(),
     );
@@ -107,7 +107,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Chorus - Classic EP chorus (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1550.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.35)
             .param_f("mix", 0.3)
@@ -117,7 +117,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Reverb - Small room (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 200.0)
+            .position(1550.0, 300.0)
             .param_f("room_size", 0.45)
             .param_f("damping", 0.5)
             .param_f("mix", 0.2)
@@ -127,7 +127,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

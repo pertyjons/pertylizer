@@ -56,7 +56,7 @@ Play clusters of notes for dense, shimmering drones.
     // Ring Mod - Triangle carrier, no keyboard tracking (rng-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::RingMod)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .param_choice("carrier_wave", "triangle")
             .param_f("carrier_freq", 180.0)
             .param_f("freq_ratio", 0.4)
@@ -68,7 +68,7 @@ Play clusters of notes for dense, shimmering drones.
     // Filter - Lowpass to tame highs (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
             .param_f("resonance", 0.25)
@@ -78,7 +78,7 @@ Play clusters of notes for dense, shimmering drones.
     // Amp Envelope - Very slow drone (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(1200.0, 350.0)
             .param_f("attack", 3.0)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
@@ -89,7 +89,7 @@ Play clusters of notes for dense, shimmering drones.
     // LFO - Slow carrier frequency modulation (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(450.0, 250.0)
             .param_choice("waveform", "sine")
             .param_f("rate", 0.06)
             .param_f("depth", 0.4)
@@ -99,7 +99,7 @@ Play clusters of notes for dense, shimmering drones.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("level", 0.55)
             .build(),
     );
@@ -107,7 +107,7 @@ Play clusters of notes for dense, shimmering drones.
     // Reverb - Deep space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 50.0)
+            .position(1950.0, 50.0)
             .param_f("room_size", 0.92)
             .param_f("damping", 0.3)
             .param_f("mix", 0.55)
@@ -117,7 +117,7 @@ Play clusters of notes for dense, shimmering drones.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(1550.0, 50.0)
             .param_f("master level", 0.65)
             .build(),
     );

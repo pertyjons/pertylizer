@@ -63,7 +63,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Oscillator 2 - Sawtooth detuned (osc-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
-            .position(50.0, 150.0)
+            .position(50.0, 400.0)
             .waveform("sawtooth")
             .param_f("level", 0.5)
             .param_f("detune", -7.0)
@@ -73,14 +73,14 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Mixer (mix-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Mixer)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .build(),
     );
 
     // Filter - Lowpass for warmth (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 1800.0)
             .param_f("resonance", 0.55)
@@ -90,7 +90,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Amp Envelope - Slow drone envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(1250.0, 350.0)
             .param_f("attack", 2.0)
             .param_f("decay", 2.0)
             .param_f("sustain", 0.85)
@@ -101,7 +101,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(650.0, 50.0)
+            .position(1250.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -109,7 +109,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );
@@ -117,7 +117,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Frequency Shifter effect — auto-routed, no manual connections
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::FrequencyShifter)
-            .position(850.0, 200.0)
+            .position(2000.0, 350.0)
             .param_f("shift", 3.0) // 3 Hz shift for subtle beating
             .param_f("mix", 0.6) // Blend with dry
             .param_f("mode", 1.0) // Stereo mode (up L, down R)
@@ -127,7 +127,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     // Reverb for space
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(850.0, 350.0)
+            .position(2000.0, 50.0)
             .param_f("mix", 0.4)
             .param_f("decay", 4.0)
             .build(),

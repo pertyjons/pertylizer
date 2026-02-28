@@ -55,7 +55,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Filter - Screamer for aggressive character (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .filter_model("screamer")
             .param_f("cutoff", 3000.0)
             .param_f("resonance", 0.45)
@@ -66,7 +66,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Amp Envelope - Lead with bite (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(800.0, 350.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.2)
             .param_f("sustain", 0.7)
@@ -77,7 +77,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Position/Filter Envelope - Harmonic sweep (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(50.0, 250.0)
             .param_f("attack", 0.01)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.15)
@@ -88,7 +88,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("level", 0.65)
             .build(),
     );
@@ -96,7 +96,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Delay - Rhythmic echo (dly-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Delay)
-            .position(650.0, 50.0)
+            .position(1550.0, 50.0)
             .delay_mode("stereo")
             .param_f("time", 0.35)
             .param_f("feedback", 0.35)
@@ -107,7 +107,7 @@ a bright, evolving attack. Increase filter resonance for screaming leads.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("master level", 0.75)
             .build(),
     );

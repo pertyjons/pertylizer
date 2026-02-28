@@ -55,7 +55,7 @@ to control speed, or set it negative for a falling effect.
     // Filter - Smooth (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 4000.0)
             .param_f("resonance", 0.1)
@@ -65,7 +65,7 @@ to control speed, or set it negative for a falling effect.
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 1.0)
             .param_f("decay", 0.5)
             .param_f("sustain", 0.8)
@@ -76,7 +76,7 @@ to control speed, or set it negative for a falling effect.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.6)
             .build(),
     );
@@ -84,7 +84,7 @@ to control speed, or set it negative for a falling effect.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -93,7 +93,7 @@ to control speed, or set it negative for a falling effect.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

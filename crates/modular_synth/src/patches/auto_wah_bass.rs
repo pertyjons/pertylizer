@@ -55,7 +55,7 @@ Play staccato for funky quack, legato for smooth sweep.
     // Envelope Follower - Track oscillator amplitude (efl-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::EnvelopeFollower)
-            .position(50.0, 300.0)
+            .position(1600.0, 50.0)
             .param_f("attack", 2.0)
             .param_f("release", 80.0)
             .param_f("sensitivity", 0.7)
@@ -65,7 +65,7 @@ Play staccato for funky quack, legato for smooth sweep.
     // Filter - Acid model for squelchy resonance (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_model("acid")
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
@@ -77,7 +77,7 @@ Play staccato for funky quack, legato for smooth sweep.
     // Amp Envelope - Snappy bass (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.005)
             .param_f("decay", 0.3)
             .param_f("sustain", 0.6)
@@ -88,7 +88,7 @@ Play staccato for funky quack, legato for smooth sweep.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -96,7 +96,7 @@ Play staccato for funky quack, legato for smooth sweep.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(650.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

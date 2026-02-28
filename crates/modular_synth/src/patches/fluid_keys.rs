@@ -49,7 +49,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Filter - Fluid model with mid morph (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .filter_model("fluid")
             .param_f("morph", 0.4)
             .param_f("cutoff", 2500.0)
@@ -62,7 +62,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Amp Envelope - Piano-like (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(850.0, 350.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.6)
             .param_f("sustain", 0.35)
@@ -73,7 +73,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Filter Envelope - Brightness decay (env-2)
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
-            .position(250.0, 300.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.35)
             .param_f("sustain", 0.1)
@@ -84,7 +84,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(850.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -92,7 +92,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Mod Matrix - Env2 -> Filter Cutoff (mmx-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::ModMatrix)
-            .position(450.0, 300.0)
+            .position(1600.0, 300.0)
             .param_choice("grid size", "1x1")
             .param_choice("slot 1 source", "env2")
             .param_choice("slot 1 dest", "flt1_cutoff")
@@ -103,7 +103,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Chorus - Subtle width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(650.0, 50.0)
+            .position(1600.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.2)
             .param_f("mix", 0.25)
@@ -113,7 +113,7 @@ Longer envelope decay for Rhodes-like tine sustain.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );

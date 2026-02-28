@@ -55,7 +55,7 @@ for open hi-hats. The filter cutoff affects brightness.
     // Filter - Highpass (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(350.0, 50.0)
             .filter_mode("highpass")
             .param_f("cutoff", 7500.0)
             .param_f("resonance", 0.4)
@@ -65,7 +65,7 @@ for open hi-hats. The filter cutoff affects brightness.
     // Amp Envelope - Very short with punchy curves (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(750.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.05)
             .param_f("sustain", 0.0)
@@ -79,7 +79,7 @@ for open hi-hats. The filter cutoff affects brightness.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(750.0, 50.0)
             .param_f("level", 0.5)
             .build(),
     );
@@ -87,7 +87,7 @@ for open hi-hats. The filter cutoff affects brightness.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(650.0, 50.0)
+            .position(1500.0, 50.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -96,7 +96,7 @@ for open hi-hats. The filter cutoff affects brightness.
     // Stereo Output - Final destination (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1100.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

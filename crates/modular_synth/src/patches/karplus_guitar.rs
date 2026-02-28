@@ -55,7 +55,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Amp Envelope (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(450.0, 350.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.1)
             .param_f("sustain", 0.8)
@@ -66,7 +66,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(250.0, 50.0)
+            .position(450.0, 50.0)
             .param_f("level", 0.7)
             .build(),
     );
@@ -74,7 +74,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Chorus - Add width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(450.0, 50.0)
+            .position(1200.0, 50.0)
             .param_f("rate", 0.8)
             .param_f("depth", 0.2)
             .param_f("mix", 0.25)
@@ -84,7 +84,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Reverb - Room sound (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 50.0)
+            .position(1200.0, 300.0)
             .param_f("room_size", 0.5)
             .param_f("damping", 0.4)
             .param_f("mix", 0.3)
@@ -94,7 +94,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Oscilloscope - Waveform visualization (scp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscilloscope)
-            .position(850.0, 50.0)
+            .position(1200.0, 600.0)
             .param_f("time", 1.0)
             .param_f("gain", 1.0)
             .build(),
@@ -103,7 +103,7 @@ guitar, higher notes like acoustic guitar or harp.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(1050.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("master level", 0.8)
             .build(),
     );

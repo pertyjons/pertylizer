@@ -52,7 +52,7 @@ Increase filter resonance for more vocal character.
     // Filter - Fluid model for warmth (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
-            .position(250.0, 50.0)
+            .position(400.0, 50.0)
             .filter_model("fluid")
             .param_f("cutoff", 2500.0)
             .param_f("resonance", 0.3)
@@ -64,7 +64,7 @@ Increase filter resonance for more vocal character.
     // Amp Envelope - Slow pad (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
-            .position(50.0, 300.0)
+            .position(800.0, 350.0)
             .param_f("attack", 0.8)
             .param_f("decay", 0.4)
             .param_f("sustain", 0.75)
@@ -75,7 +75,7 @@ Increase filter resonance for more vocal character.
     // LFO - Slow position sweep (lfo-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
-            .position(250.0, 300.0)
+            .position(50.0, 250.0)
             .param_choice("waveform", "triangle")
             .param_f("rate", 0.08)
             .param_f("depth", 0.6)
@@ -85,7 +85,7 @@ Increase filter resonance for more vocal character.
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
-            .position(450.0, 50.0)
+            .position(800.0, 50.0)
             .param_f("level", 0.65)
             .build(),
     );
@@ -93,7 +93,7 @@ Increase filter resonance for more vocal character.
     // Reverb - Large lush space (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(650.0, 50.0)
+            .position(1550.0, 50.0)
             .param_f("room_size", 0.85)
             .param_f("damping", 0.3)
             .param_f("mix", 0.5)
@@ -103,7 +103,7 @@ Increase filter resonance for more vocal character.
     // Stereo Output (out-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .position(850.0, 50.0)
+            .position(1150.0, 50.0)
             .param_f("master level", 0.7)
             .build(),
     );
