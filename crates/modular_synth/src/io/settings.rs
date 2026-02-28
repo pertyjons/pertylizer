@@ -40,6 +40,10 @@ pub struct DirectorySettings {
     pub last_open_dir: Option<PathBuf>,
     /// Last directory used for saving patches.
     pub last_save_dir: Option<PathBuf>,
+    /// Custom projects directory (None = platform default).
+    pub projects_dir: Option<PathBuf>,
+    /// Last directory used for opening/saving projects.
+    pub last_project_dir: Option<PathBuf>,
 }
 
 /// Author / composer information embedded in saved songs.

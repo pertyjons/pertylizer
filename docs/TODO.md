@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.194.0)
+# TODO - Modular Synth (v0.195.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -11,22 +11,30 @@
 - [x] Auto-save last used directory to settings when loading or saving a patch
 - [ ] Add Browse button in Settings dialog to change patches directory (needs `rfd` dependency or reuse `egui-file-dialog` with directory picker)
 
-### 1.2 Undo/Redo
+### 1.2 Song save/load (full project persistence)
+- [x] **Step 1: Define song file format** — JSON `ProjectFile` with `file_type: "project"`, instruments, song, global state
+- [x] **Step 2: Song serialization** — `create_project_from_app()` serializes all instruments + song + global state
+- [x] **Step 3: Song deserialization & load** — `load_project_data()` clears state and recreates from project file
+- [x] **Step 4: Save/Load UI** — File menu with Open Project, Save Project, Save Project As; auto-detect patch vs project
+- [ ] **Step 5: Recent projects** — Remember last opened projects in settings, show in menu for quick access
+- [ ] **Step 6: Dirty state tracking** — Warn on unsaved changes before loading or quitting
+
+### 1.3 Undo/Redo
 - [ ] Implement undo/redo for module operations (add, delete, move, parameter changes)
 - [ ] Implement undo/redo for connection operations (add, remove)
 - [ ] Keyboard shortcuts: Ctrl+Z / Ctrl+Shift+Z
 
-### 1.3 Copy/paste modules
+### 1.4 Copy/paste modules
 - [ ] Copy a module with its current parameters
 - [ ] Paste as a new instance with the same settings
 - [ ] Consider: copy a selection of modules + their internal connections
 
-### 1.4 Audio export
+### 1.5 Audio export
 - [ ] Render arrangement to WAV file (offline, faster-than-realtime)
 - [ ] Export dialog: file path, sample rate, bit depth, duration/range
 - [ ] Progress bar during render
 
-### 1.5 Template library (groups + patches) — see `docs/Template-Library-Plan.md`
+### 1.6 Template library (groups + patches) — see `docs/Template-Library-Plan.md`
 - [x] Show all group templates from the template directory in one list (no curated/user split)
 - [x] Add `Save as Template` in Group Modules menu (write group template JSON with metadata)
 - [ ] Add patch template directory and `Save Patch as Template` action

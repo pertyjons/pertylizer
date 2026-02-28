@@ -1,5 +1,30 @@
 # Version History
 
+## [0.195.0] - 2026-02-28
+### Project save/load (full project persistence)
+
+**Project file format:**
+- **`ProjectFile`** — top-level JSON container with `file_type: "project"` discriminator
+- **`InstrumentState`** — serializable instrument with patch, volume, pan, mute, solo, key range, transpose, oversampling
+- **`GlobalProjectState`** — master volume, octave offset, glide time, AWE state
+- **File type detection** — `detect_file_type()` peeks at JSON to auto-detect patch vs project files
+
+**Save logic:**
+- **`create_project_from_app()`** — builds `ProjectFile` from all instruments + song + global state
+- **`create_patch_from_editor()`** — extracts patch from `PatchEditor` without global settings (per-instrument)
+
+**Load logic:**
+- **`load_project_data()`** — stops playback, removes all instruments, recreates from project file
+- Preserves original instrument IDs so sequencer track references remain valid
+- **`add_instrument_with_id()`** + **`reset_counters_for_instrument()`** on `SynthSession` for clean reload
+
+**UI integration:**
+- **File menu** — Open Project, Save Project, Save Project As (above existing patch items)
+- **Smart open** — Open Project dialog auto-detects patch vs project files
+- **Projects directory** in Settings dialog (alongside Patches dir)
+- **`last_project_dir`** remembered in settings for file dialog convenience
+- **`FileDialogMode::OpenProject`** / **`SaveProject`** variants
+
 ## [0.194.0] - 2026-02-28
 ### Built-in group templates, groups in example patches
 

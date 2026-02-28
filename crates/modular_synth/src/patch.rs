@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+use synth_core::{BipolarValue, Gain, Semitones};
+use synth_engine::instrument::InstrumentId;
 use thiserror::Error;
 
 use synth_core::ModuleType;
@@ -372,6 +375,53 @@ impl Patch {
             exposed_outputs: Vec::new(),
         });
     }
+}
+
+// ============================================================================
+// INSTRUMENT STATE (for project files)
+// ============================================================================
+
+/// Serializable state of a single instrument, used in project files.
+///
+/// Uses domain newtypes where they have `#[serde(transparent)]` (Gain,
+/// BipolarValue, Semitones, InstrumentId). Fields that would change
+/// serialization format (channel, key_range) or lack serde (oversampling)
+/// remain as primitives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstrumentState {
+    /// Engine instrument ID.
+    pub id: InstrumentId,
+    /// Display name.
+    pub name: String,
+    /// MIDI channel (1-indexed, 1–16).
+    pub channel: u8,
+    /// Volume (0.0 = silent, 1.0 = unity).
+    pub volume: Gain,
+    /// Stereo pan (-1.0 = left, 0.0 = center, +1.0 = right).
+    pub pan: BipolarValue,
+    /// Whether the instrument is muted.
+    pub muted: bool,
+    /// Whether the instrument is soloed.
+    pub solo: bool,
+    /// Key range as (low, high) MIDI note numbers.
+    #[serde(default = "default_key_range")]
+    pub key_range: (u8, u8),
+    /// Transpose offset in semitones.
+    #[serde(default)]
+    pub transpose: Semitones,
+    /// Oversampling factor (1, 2, or 4).
+    #[serde(default = "default_oversampling")]
+    pub oversampling: u8,
+    /// Full module graph for this instrument.
+    pub patch: Patch,
+}
+
+fn default_key_range() -> (u8, u8) {
+    (0, 127)
+}
+
+fn default_oversampling() -> u8 {
+    1
 }
 
 /// Errors that can occur when loading/saving patches.

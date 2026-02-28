@@ -101,6 +101,46 @@ impl SynthSession {
         Ok(id)
     }
 
+    /// Create an instrument with a predetermined ID.
+    ///
+    /// Used when loading projects to preserve saved instrument IDs.
+    /// Updates the instrument counter so future `add_instrument` calls
+    /// won't collide.
+    pub fn add_instrument_with_id(&self, id: InstrumentId, name: &str) -> Result<(), SessionError> {
+        // Ensure counter is above this ID
+        {
+            let mut counter = self
+                .instrument_counter
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let val = id.as_u64() + 1;
+            if val > *counter {
+                *counter = val;
+            }
+        }
+
+        let instrument = Box::new(Instrument::new(id, name));
+
+        if !self
+            .command_sender
+            .send(EngineCommand::AddInstrument { instrument })
+        {
+            return Err(SessionError::SendFailed);
+        }
+
+        Ok(())
+    }
+
+    /// Reset module instance counters for an instrument.
+    ///
+    /// Call this before reloading a patch into an instrument so that
+    /// the counter state is clean and `add_module_with_id` updates
+    /// them correctly from the loaded module IDs.
+    pub fn reset_counters_for_instrument(&self, instrument_id: InstrumentId) {
+        let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
+    }
+
     /// Remove an instrument from the engine.
     pub fn remove_instrument(&self, instrument_id: InstrumentId) -> Result<(), SessionError> {
         // Remove all modules belonging to this instrument from the registry

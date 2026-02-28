@@ -34,7 +34,8 @@ use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
-use crate::patch::{GroupCategory, Patch, categorized_patches};
+use crate::patch::{GroupCategory, InstrumentState, Patch, categorized_patches};
+use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
 use synth_core::Velocity;
 #[cfg(feature = "mcp")]
 use synth_core::{BipolarValue, Gain};
@@ -219,6 +220,9 @@ struct SynthApp {
     current_patch_name: String,
     current_patch_path: Option<PathBuf>,
 
+    // Project state
+    current_project_path: Option<PathBuf>,
+
     // Global synth settings
     glide_time: f32,
 
@@ -328,6 +332,7 @@ impl SynthApp {
             dialog_state,
             current_patch_name: patch_name,
             current_patch_path: None,
+            current_project_path: None,
             glide_time,
             instruments,
             active_instrument_id,
@@ -459,6 +464,60 @@ impl eframe::App for SynthApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    // --- Project ---
+                    if ui
+                        .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
+                        .clicked()
+                    {
+                        let initial_dir = self.resolve_project_dir();
+                        self.dialog_state
+                            .open_open_project_dialog(initial_dir.as_deref());
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Save Project", ri::SAVE_LINE))
+                        .clicked()
+                    {
+                        if let Some(path) = self.current_project_path.clone() {
+                            let proj = self.create_project_from_app();
+                            match proj.save(&path) {
+                                Ok(()) => {
+                                    self.dialog_state
+                                        .set_status(format!("Project saved: {}", path.display()));
+                                }
+                                Err(e) => {
+                                    self.dialog_state
+                                        .set_status(format!("Error saving project: {e}"));
+                                }
+                            }
+                        } else {
+                            // No path yet — open Save As dialog
+                            let default_name = "project.json".to_string();
+                            let initial_dir = self.resolve_project_dir();
+                            self.dialog_state
+                                .open_save_project_dialog(&default_name, initial_dir.as_deref());
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .button(format!("{} Save Project As...", ri::SAVE_LINE))
+                        .clicked()
+                    {
+                        let default_name = self
+                            .current_project_path
+                            .as_ref()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("project.json")
+                            .to_string();
+                        let initial_dir = self.resolve_project_dir();
+                        self.dialog_state
+                            .open_save_project_dialog(&default_name, initial_dir.as_deref());
+                        ui.close();
+                    }
+                    ui.separator();
+
+                    // --- Patch ---
                     if ui
                         .button(format!("{} New Patch", ri::FILE_ADD_LINE))
                         .clicked()
@@ -1786,6 +1845,50 @@ impl SynthApp {
                         }
                     }
                 }
+                FileDialogResult::Picked(path, Some(FileDialogMode::OpenProject)) => {
+                    if let Some(parent) = path.parent() {
+                        self.settings.directories.last_project_dir = Some(parent.to_path_buf());
+                        self.settings.save();
+                    }
+                    // Smart open: auto-detect and load in a single read
+                    match project::load_file(&path) {
+                        Ok(LoadedFile::Project(proj)) => {
+                            self.load_project_data(proj);
+                            self.current_project_path = Some(path.clone());
+                            self.dialog_state
+                                .set_status(format!("Project loaded: {}", path.display()));
+                        }
+                        Ok(LoadedFile::Patch(patch)) => {
+                            self.load_patch_data(&patch);
+                            self.current_patch_name = patch.name.clone();
+                            self.current_patch_path = Some(path.clone());
+                            self.dialog_state
+                                .set_status(format!("Loaded patch: {}", path.display()));
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Error reading file: {e}"));
+                        }
+                    }
+                }
+                FileDialogResult::Saved(path, Some(FileDialogMode::SaveProject)) => {
+                    if let Some(parent) = path.parent() {
+                        self.settings.directories.last_project_dir = Some(parent.to_path_buf());
+                        self.settings.save();
+                    }
+                    let proj = self.create_project_from_app();
+                    match proj.save(&path) {
+                        Ok(()) => {
+                            self.current_project_path = Some(path.clone());
+                            self.dialog_state
+                                .set_status(format!("Project saved: {}", path.display()));
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Error saving project: {e}"));
+                        }
+                    }
+                }
                 FileDialogResult::Picked(path, Some(FileDialogMode::OpenGroupTemplate)) => {
                     let manager = GroupTemplateManager::default();
                     match manager.load_template(&path) {
@@ -2197,5 +2300,250 @@ impl SynthApp {
             self.awe_enabled,
             &self.awe_ui,
         )
+    }
+
+    // ------------------------------------------------------------------
+    // Project save/load
+    // ------------------------------------------------------------------
+
+    /// Build a `ProjectFile` from the current application state.
+    fn create_project_from_app(&self) -> ProjectFile {
+        let instrument_states: Vec<InstrumentState> = self
+            .instruments
+            .iter()
+            .map(|inst| {
+                let patch = patch_bridge::create_patch_from_editor(&inst.name, &inst.patch_editor);
+                InstrumentState {
+                    id: inst.id,
+                    name: inst.name.clone(),
+                    channel: inst.channel.as_one_indexed(),
+                    volume: inst.volume,
+                    pan: inst.pan,
+                    muted: inst.muted,
+                    solo: inst.solo,
+                    key_range: (inst.key_range.low.as_u8(), inst.key_range.high.as_u8()),
+                    transpose: inst.transpose,
+                    oversampling: inst.oversampling.factor() as u8,
+                    patch,
+                }
+            })
+            .collect();
+
+        let song = self.song.read().unwrap_or_else(|e| e.into_inner()).clone();
+
+        let global = GlobalProjectState {
+            master_volume: synth_core::Gain::new(self.handle.master_volume()),
+            octave_offset: self.keyboard.octave_offset(),
+            glide_time: synth_core::Seconds::new(self.glide_time),
+            awe: if self.awe_enabled {
+                Some(self.awe_ui.to_awe_state(true))
+            } else {
+                None
+            },
+        };
+
+        ProjectFile::new(
+            instrument_states,
+            self.active_instrument_id.as_u64(),
+            song,
+            global,
+        )
+    }
+
+    /// Load a project file, replacing all current state.
+    fn load_project_data(&mut self, project: ProjectFile) {
+        // 1. Stop sequencer playback
+        self.handle.send(EngineCommand::Stop);
+
+        // 2. Remove visualizers and clear all instruments
+        let all_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
+        for inst_id in &all_ids {
+            self.remove_visualizers_for_instrument(*inst_id);
+            let _ = self.session.clear_graph(*inst_id);
+            if *inst_id != InstrumentId::FIRST {
+                let _ = self.session.remove_instrument(*inst_id);
+            }
+        }
+
+        // 3. Clear GUI state
+        self.instruments.clear();
+        self.handle.visualization_buffers.clear();
+
+        // 4. Recreate instruments from project file
+        let mut max_id: u64 = 0;
+        for inst_state in &project.instruments {
+            let inst_id = inst_state.id;
+            if inst_id.as_u64() > max_id {
+                max_id = inst_id.as_u64();
+            }
+
+            if inst_id != InstrumentId::FIRST
+                && let Err(e) = self
+                    .session
+                    .add_instrument_with_id(inst_id, &inst_state.name)
+            {
+                eprintln!(
+                    "Warning: failed to create instrument {}: {e}",
+                    inst_state.name
+                );
+                continue;
+            }
+
+            // Reset counters before loading patch
+            self.session.reset_counters_for_instrument(inst_id);
+
+            // Create UI state
+            let channel =
+                MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
+            let mut ui_inst =
+                InstrumentUiState::new(inst_id, &inst_state.name).with_channel(channel);
+
+            // Load the patch into this instrument
+            patch_bridge::load_patch(
+                &inst_state.patch,
+                &mut ui_inst.patch_editor,
+                &self.session,
+                &mut self.handle,
+                &mut self.keyboard,
+                &mut self.glide_time,
+                inst_id,
+            );
+
+            // Apply instrument-level settings
+            ui_inst.volume = inst_state.volume;
+            ui_inst.pan = inst_state.pan;
+            ui_inst.muted = inst_state.muted;
+            ui_inst.solo = inst_state.solo;
+            ui_inst.key_range = synth_engine::instrument::KeyRange::new(
+                synth_core::MidiNote::new(inst_state.key_range.0),
+                synth_core::MidiNote::new(inst_state.key_range.1),
+            );
+            ui_inst.transpose = inst_state.transpose;
+            ui_inst.oversampling = match inst_state.oversampling {
+                2 => synth_dsp::OversamplingFactor::X2,
+                4 => synth_dsp::OversamplingFactor::X4,
+                _ => synth_dsp::OversamplingFactor::X1,
+            };
+
+            // Send engine commands for instrument parameters
+            let _ = self.session.rename_instrument(inst_id, &inst_state.name);
+            let _ = self
+                .session
+                .set_instrument_volume(inst_id, inst_state.volume.as_f32());
+            let _ = self
+                .session
+                .set_instrument_pan(inst_id, inst_state.pan.as_f32());
+            let _ = self.session.set_instrument_mute(inst_id, inst_state.muted);
+            let _ = self.session.set_instrument_solo(inst_id, inst_state.solo);
+            let _ = self.session.set_instrument_midi_channel(inst_id, channel);
+
+            // Send oversampling, key range, transpose via engine commands
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::OversamplingFactor(ui_inst.oversampling),
+            });
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::KeyRange(ui_inst.key_range),
+            });
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::Transpose(ui_inst.transpose),
+            });
+
+            self.instruments.push(ui_inst);
+        }
+
+        // 5. Replace song (move instead of clone since we own the project)
+        {
+            let mut song = self.song.write().unwrap_or_else(|e| e.into_inner());
+            *song = project.song;
+        }
+
+        // 6. Restore global state
+        self.handle
+            .send(EngineCommand::SetMasterVolume(project.global.master_volume));
+        self.keyboard
+            .set_octave_offset(project.global.octave_offset);
+        self.glide_time = project.global.glide_time.as_f32();
+        self.handle
+            .send(EngineCommand::SetGlideTime(synth_core::Seconds::new(
+                project.global.glide_time.as_f32(),
+            )));
+
+        if let Some(awe) = &project.global.awe {
+            self.awe_enabled = awe.enabled;
+            self.awe_ui.restore_from(awe);
+            self.handle.send(EngineCommand::SetAweEnabled {
+                enabled: awe.enabled,
+            });
+            self.handle.send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::RoomShape(awe.room),
+            });
+            self.handle.send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::Material(awe.material),
+            });
+            self.handle.send(EngineCommand::SetAweState {
+                snapshot: awe.to_snapshot(),
+            });
+            self.handle.send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
+            });
+            self.handle.send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
+            });
+        } else {
+            self.awe_enabled = false;
+            self.awe_ui = crate::gui::awe_view::AweUiState::default();
+        }
+
+        // 7. Update instrument counter
+        self.next_instrument_id = max_id + 1;
+
+        // 8. Set active instrument
+        let target_id = InstrumentId::new(project.active_instrument_id);
+        if self.instruments.iter().any(|i| i.id == target_id) {
+            self.active_instrument_id = target_id;
+        } else if let Some(first) = self.instruments.first() {
+            self.active_instrument_id = first.id;
+        }
+        self.handle
+            .set_focused_instrument(Some(self.active_instrument_id));
+    }
+
+    /// Remove all visualizer modules for a given instrument.
+    fn remove_visualizers_for_instrument(&mut self, inst_id: InstrumentId) {
+        if let Some(inst) = self.instruments.iter().find(|i| i.id == inst_id) {
+            let vis_ids: Vec<_> = inst
+                .patch_editor
+                .module_ids()
+                .into_iter()
+                .filter(|mid| {
+                    inst.patch_editor
+                        .module_descriptor(*mid)
+                        .map(|d| d.category)
+                        == Some(synth_core::ModuleCategory::Visualizer)
+                })
+                .collect();
+            for module_id in vis_ids {
+                self.handle.send_blocking(EngineCommand::RemoveVisualizer {
+                    instrument_id: Some(inst_id),
+                    id: module_id,
+                });
+                self.handle.remove_visualization_buffer(module_id);
+            }
+        }
+    }
+
+    /// Resolve the initial directory for the Project file dialog.
+    ///
+    /// Priority: last project dir > custom projects dir > default projects dir.
+    fn resolve_project_dir(&self) -> Option<PathBuf> {
+        self.settings
+            .directories
+            .last_project_dir
+            .clone()
+            .or_else(|| self.settings.directories.projects_dir.clone())
+            .or_else(|| project::default_projects_dir().ok())
     }
 }

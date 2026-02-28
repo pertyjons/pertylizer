@@ -25,6 +25,7 @@ pub mod mcp_shared;
 pub mod module_factory;
 pub mod patch;
 pub mod patches;
+pub mod project;
 pub mod session;
 
 // Re-export workspace crates

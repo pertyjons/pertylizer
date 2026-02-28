@@ -14,6 +14,7 @@ use super::theme::{ThemePreset, theme};
 use crate::io::settings::{AppSettings, settings_path};
 use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
 use crate::patch::{GroupCategory, GroupId, Patch, example_patches};
+use crate::project;
 
 /// Type of file dialog operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,10 @@ pub enum FileDialogMode {
     SavePatch,
     /// Opening a group template file.
     OpenGroupTemplate,
+    /// Opening a project file.
+    OpenProject,
+    /// Saving a project file.
+    SaveProject,
 }
 
 /// State for all application dialogs.
@@ -140,6 +145,38 @@ impl DialogState {
         self.file_dialog.save_file();
     }
 
+    /// Open the file dialog for opening a project.
+    pub fn open_open_project_dialog(&mut self, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::OpenProject);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "Project files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.pick_file();
+    }
+
+    /// Open the file dialog for saving a project.
+    pub fn open_save_project_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::SaveProject);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "Project files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .default_file_name(default_name);
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.save_file();
+    }
+
     /// Open the file dialog for opening a group template.
     pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
         self.file_dialog_mode = Some(FileDialogMode::OpenGroupTemplate);
@@ -164,7 +201,9 @@ impl DialogState {
             let mode = self.file_dialog_mode.take();
             // Distinguish between picked and saved based on mode
             return match mode {
-                Some(FileDialogMode::SavePatch) => Some(FileDialogResult::Saved(path, mode)),
+                Some(FileDialogMode::SavePatch | FileDialogMode::SaveProject) => {
+                    Some(FileDialogResult::Saved(path, mode))
+                }
                 _ => Some(FileDialogResult::Picked(path, mode)),
             };
         }
@@ -376,6 +415,29 @@ pub fn show_settings_dialog(
                         ui.label(RichText::new(label).small().color(theme().colors.text_dim));
                         if is_custom && ui.small_button("Reset").clicked() {
                             settings.directories.patches_dir = None;
+                            changed = true;
+                        }
+                    });
+                    ui.end_row();
+
+                    // Projects directory
+                    ui.label("Projects dir:");
+                    ui.horizontal(|ui| {
+                        let default_dir = project::default_projects_dir().ok().unwrap_or_default();
+                        let is_custom = settings.directories.projects_dir.is_some();
+                        let display_path = settings
+                            .directories
+                            .projects_dir
+                            .as_ref()
+                            .unwrap_or(&default_dir);
+                        let label = if is_custom {
+                            display_path.display().to_string()
+                        } else {
+                            format!("{} (default)", display_path.display())
+                        };
+                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                        if is_custom && ui.small_button("Reset").clicked() {
+                            settings.directories.projects_dir = None;
                             changed = true;
                         }
                     });

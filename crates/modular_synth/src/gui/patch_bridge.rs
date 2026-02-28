@@ -390,18 +390,31 @@ pub fn create_patch_from_rack(
     awe_enabled: bool,
     awe_ui: &crate::gui::awe_view::AweUiState,
 ) -> Option<Patch> {
-    let mut patch = Patch::new(patch_name);
+    let mut patch = create_patch_from_editor(patch_name, patch_editor);
     patch.author = Some("User".to_string());
+    patch.settings.octave_offset = keyboard.octave_offset();
+    patch.settings.master_volume = handle.master_volume();
+    patch.settings.glide_time = glide_time;
+    if awe_enabled {
+        patch.settings.awe = Some(awe_ui.to_awe_state(true));
+    }
+    Some(patch)
+}
 
-    // Add modules
+/// Create a patch from a `PatchEditor` without global settings.
+///
+/// Used by project save to extract each instrument's module graph independently.
+/// Global settings (master volume, keyboard, glide, AWE) are stored at the
+/// project level, not per-instrument.
+pub fn create_patch_from_editor(name: &str, patch_editor: &PatchEditor) -> Patch {
+    let mut patch = Patch::new(name);
+
     for module_id in patch_editor.module_ids() {
         if let Some((_descriptor, position, params)) = patch_editor.get_module_data(module_id) {
-            // params is now HashMap<String, f32>
             let mut param_map = HashMap::new();
-            for (name, value) in params {
-                param_map.insert(name, ParamValue::Float(value));
+            for (pname, value) in params {
+                param_map.insert(pname, ParamValue::Float(value));
             }
-
             patch.modules.push(ModuleState {
                 id: module_id.to_string(),
                 module_type: module_id.module_type,
@@ -411,7 +424,6 @@ pub fn create_patch_from_rack(
         }
     }
 
-    // Add connections
     for conn in patch_editor.connections() {
         patch.connections.push(ConnectionState {
             from: (conn.from_module.to_string(), conn.from_port.into()),
@@ -419,19 +431,8 @@ pub fn create_patch_from_rack(
         });
     }
 
-    // Add groups
     patch.groups = patch_editor.group_states();
-
-    patch.settings.octave_offset = keyboard.octave_offset();
-    patch.settings.master_volume = handle.master_volume();
-    patch.settings.glide_time = glide_time;
-
-    // Save full AWE state
-    if awe_enabled {
-        patch.settings.awe = Some(awe_ui.to_awe_state(true));
-    }
-
-    Some(patch)
+    patch
 }
 
 /// Get the EffectType for a module from its ModuleId.
