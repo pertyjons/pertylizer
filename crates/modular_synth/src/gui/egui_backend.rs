@@ -297,6 +297,13 @@ impl SynthApp {
             active_instrument_id,
         );
 
+        // Set instrument name to match the loaded patch (both UI and engine)
+        default_instrument.name = patch_name.clone();
+        handle.send_blocking(EngineCommand::RenameInstrument {
+            instrument_id: active_instrument_id,
+            name: patch_name.clone(),
+        });
+
         let instruments = vec![default_instrument];
 
         // Set the focused instrument for keyboard routing (only this instrument receives keyboard input)
@@ -1884,19 +1891,21 @@ impl SynthApp {
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
         let active_id = self.active_instrument_id;
-        let Some(patch_editor) = self
-            .instruments
-            .iter_mut()
-            .find(|i| i.id == active_id)
-            .map(|i| &mut i.patch_editor)
-        else {
+        let Some(instrument) = self.instruments.iter_mut().find(|i| i.id == active_id) else {
             eprintln!("Warning: Cannot load patch - no active instrument found");
             return;
         };
 
+        // Update instrument name to match the loaded patch (both UI and engine)
+        instrument.name = patch.name.clone();
+        self.handle.send(EngineCommand::RenameInstrument {
+            instrument_id: active_id,
+            name: patch.name.clone(),
+        });
+
         patch_bridge::load_patch(
             patch,
-            patch_editor,
+            &mut instrument.patch_editor,
             &self.session,
             &mut self.handle,
             &mut self.keyboard,
