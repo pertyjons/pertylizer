@@ -18,6 +18,12 @@
 - [x] Author info in Settings dialog: name, email, website, license
 - Later expansion: MIDI device preferences, default BPM, audio buffer size, etc.
 
+### 1.6 Settings expansion
+- [ ] Remember last used directory when loading/saving patches
+- [ ] Show all directory paths in Settings dialog (patches, settings file, etc.) with ability to change them
+- [ ] Add explicit Save button in Settings dialog
+- [ ] Show the settings file path in Settings dialog
+
 ### 1.4 Remove debug module — superseded by MCP
 - [x] Remove `crates/modular_synth/src/debug/` (4 tools, ~2100 lines)
 - [x] Remove `debug-tools` feature from `Cargo.toml`
