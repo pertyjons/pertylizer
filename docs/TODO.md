@@ -134,8 +134,10 @@
 - [ ] Consider: Colored rings matching cable colors, port labels on hover
 
 ### 3.5 Improve module header icons
-- [ ] Replace Unicode symbols with proper icons (egui-remixicon, depends on 3.2)
-- [ ] Better visual hierarchy — power button more prominent, status icons more subtle
+- [x] Replace generic icons with meaningful ones: source (`UPLOAD_2_FILL`), sink (`DOWNLOAD_2_FILL`), connectivity (`LINK`/`ERROR_WARNING`/`LINK_UNLINK`), power (`VOLUME_UP`/`VOLUME_MUTE`)
+- [x] Delete button always visible (was hidden on connected modules)
+- [x] Cable bypass on delete — signal chain reconnects around deleted module (A→B→C becomes A→C)
+- [x] Shared `bypass_and_remove()` method replaces inline monitor's duplicated logic
 
 ---
 
