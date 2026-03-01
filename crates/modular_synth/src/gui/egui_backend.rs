@@ -450,6 +450,55 @@ impl eframe::App for SynthApp {
         #[cfg(not(feature = "mcp"))]
         let mcp_auto_layout = false;
 
+        // Poll MCP pending project action
+        #[cfg(feature = "mcp")]
+        {
+            use crate::mcp_shared::ProjectAction;
+
+            let action = self.mcp_shared.as_ref().and_then(|shared| {
+                shared
+                    .pending_project_action
+                    .lock()
+                    .ok()
+                    .and_then(|mut a| a.take())
+            });
+            if let Some(action) = action {
+                let result = match action {
+                    ProjectAction::New => {
+                        self.reset_to_new_project();
+                        Ok("New project created".to_string())
+                    }
+                    ProjectAction::Save(path) => {
+                        let proj = self.create_project_from_app();
+                        proj.save(&path)
+                            .map(|()| format!("Saved to {}", path.display()))
+                            .map_err(|e| e.to_string())
+                    }
+                    ProjectAction::Load(path) => match project::load_file(&path) {
+                        Ok(LoadedFile::Project(proj)) => {
+                            self.load_project_data(proj);
+                            self.current_project_path = Some(path.clone());
+                            Ok(format!("Loaded {}", path.display()))
+                        }
+                        Ok(LoadedFile::Patch(patch)) => {
+                            self.current_patch_name = patch.name.clone();
+                            self.current_patch_path = Some(path.clone());
+                            self.load_patch_data(&patch);
+                            Ok(format!("Loaded patch from {}", path.display()))
+                        }
+                        Err(e) => Err(e.to_string()),
+                    },
+                };
+                if let Some(shared) = &self.mcp_shared {
+                    let (lock, cvar) = &shared.project_action_result;
+                    if let Ok(mut guard) = lock.lock() {
+                        *guard = Some(result);
+                        cvar.notify_one();
+                    }
+                }
+            }
+        }
+
         // Reconcile with session: detect modules added/removed by MCP
         #[cfg(feature = "mcp")]
         self.reconcile_with_session();
@@ -465,6 +514,15 @@ impl eframe::App for SynthApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     // --- Project ---
+                    if ui
+                        .button(format!("{} New Project", ri::FILE_ADD_LINE))
+                        .clicked()
+                    {
+                        self.reset_to_new_project();
+                        self.dialog_state
+                            .set_status("New project created".to_string());
+                        ui.close();
+                    }
                     if ui
                         .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
                         .clicked()
@@ -2291,6 +2349,7 @@ impl SynthApp {
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
         let editor = self.active_patch_editor_ref()?;
+        let engine_state = Some((self.session.state().as_ref(), self.active_instrument_id));
         patch_bridge::create_patch_from_rack(
             &self.dialog_state.patch_save_name,
             editor,
@@ -2299,6 +2358,7 @@ impl SynthApp {
             self.glide_time,
             self.awe_enabled,
             &self.awe_ui,
+            engine_state,
         )
     }
 
@@ -2308,11 +2368,16 @@ impl SynthApp {
 
     /// Build a `ProjectFile` from the current application state.
     fn create_project_from_app(&self) -> ProjectFile {
+        let engine_state = self.session.state();
         let instrument_states: Vec<InstrumentState> = self
             .instruments
             .iter()
             .map(|inst| {
-                let patch = patch_bridge::create_patch_from_editor(&inst.name, &inst.patch_editor);
+                let patch = patch_bridge::create_patch_from_editor(
+                    &inst.name,
+                    &inst.patch_editor,
+                    Some((engine_state.as_ref(), inst.id)),
+                );
                 InstrumentState {
                     id: inst.id,
                     name: inst.name.clone(),
@@ -2509,6 +2574,20 @@ impl SynthApp {
         }
         self.handle
             .set_focused_instrument(Some(self.active_instrument_id));
+    }
+
+    /// Reset to a new empty project, clearing all instruments and song data.
+    fn reset_to_new_project(&mut self) {
+        let project = ProjectFile::new(
+            vec![project::default_instrument_state()],
+            0,
+            synth_sequencer::Song::new("Untitled"),
+            GlobalProjectState::default(),
+        );
+        self.load_project_data(project);
+        self.current_project_path = None;
+        self.current_patch_name = "Init".to_string();
+        self.current_patch_path = None;
     }
 
     /// Remove all visualizer modules for a given instrument.

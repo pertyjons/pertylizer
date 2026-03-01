@@ -531,6 +531,17 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: u64,
         params: &[BridgeParamSet],
     ) -> Result<BatchResult, McpBridgeError>;
+
+    // === Project management ===
+
+    /// Reset to a new empty project.
+    fn new_project(&self) -> Result<String, McpBridgeError>;
+
+    /// Save the current project to a file.
+    fn save_project(&self, path: &str) -> Result<String, McpBridgeError>;
+
+    /// Load a project from a file.
+    fn load_project(&self, path: &str) -> Result<String, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

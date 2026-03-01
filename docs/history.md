@@ -1,5 +1,24 @@
 # Version History
 
+## [0.196.0] - 2026-03-01
+### New Project, MCP project tools, save/load bug fixes
+
+**MCP project management:**
+- **MCP `new_project` tool** — reset to empty project via MCP
+- **MCP `save_project` tool** — save current project to a file path via MCP
+- **MCP `load_project` tool** — load a project or patch file via MCP, replacing all state
+- **`ProjectAction` enum** in `mcp_shared.rs` — New/Save/Load actions queued by MCP, executed by GUI
+- **Condvar-based result signaling** — MCP bridge waits for GUI to process action with 5s timeout
+
+**GUI:**
+- **New Project** menu item in File menu — resets all instruments, song, and arrangement to empty state
+- **`reset_to_new_project()`** — reuses `load_project_data()` with a default empty `ProjectFile`
+- **`default_instrument_state()`** helper in `project.rs` — creates instrument 0 with empty patch
+
+**Bug fixes:**
+- **Fix parameters saved as defaults** — `create_patch_from_editor()` now reads actual engine parameter values from `SharedGraphState` instead of stale GUI-cached defaults, fixing projects that sounded wrong after save/load
+- **Fix module ID collision across instruments** — `SharedGraphState.modules` HashMap key changed from `ModuleId` to `(InstrumentId, ModuleId)`, preventing instruments with overlapping module IDs (e.g. each having `osc-1`) from overwriting each other
+
 ## [0.195.0] - 2026-02-28
 ### Project save/load (full project persistence)
 

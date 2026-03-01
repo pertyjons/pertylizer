@@ -734,7 +734,7 @@ impl SynthEngine {
                 self.state.shared_graph.set_connections(Vec::new());
                 self.state.shared_graph.set_processing_order(Vec::new());
                 for m in self.state.shared_graph.get_all_modules() {
-                    self.state.shared_graph.remove_module(m.id);
+                    self.state.shared_graph.remove_module(m.instrument_id, m.id);
                 }
                 self.update_shared_instruments();
             }

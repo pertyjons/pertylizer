@@ -2007,6 +2007,81 @@ impl SynthBridge for AppSynthBridge {
             items,
         })
     }
+
+    // === Project management ===
+
+    fn new_project(&self) -> Result<String, McpBridgeError> {
+        self.submit_project_action(crate::mcp_shared::ProjectAction::New)
+    }
+
+    fn save_project(&self, path: &str) -> Result<String, McpBridgeError> {
+        let path = std::path::PathBuf::from(path);
+        self.submit_project_action(crate::mcp_shared::ProjectAction::Save(path))
+    }
+
+    fn load_project(&self, path: &str) -> Result<String, McpBridgeError> {
+        let path = std::path::PathBuf::from(path);
+        if !path.exists() {
+            return Err(McpBridgeError::Other(format!(
+                "File not found: {}",
+                path.display()
+            )));
+        }
+        self.submit_project_action(crate::mcp_shared::ProjectAction::Load(path))
+    }
+}
+
+impl AppSynthBridge {
+    /// Submit a project action to the GUI thread and wait for the result.
+    fn submit_project_action(
+        &self,
+        action: crate::mcp_shared::ProjectAction,
+    ) -> Result<String, McpBridgeError> {
+        // Clear any stale result
+        {
+            let (lock, _) = &self.shared.project_action_result;
+            if let Ok(mut guard) = lock.lock() {
+                *guard = None;
+            }
+        }
+
+        // Queue the action
+        if let Ok(mut pending) = self.shared.pending_project_action.lock() {
+            *pending = Some(action);
+        } else {
+            return Err(McpBridgeError::Other(
+                "Failed to queue project action".to_string(),
+            ));
+        }
+
+        // Wait for the GUI to process and signal the result (timeout 5s)
+        let (lock, cvar) = &self.shared.project_action_result;
+        let guard = lock
+            .lock()
+            .map_err(|e| McpBridgeError::Other(format!("Lock error: {e}")))?;
+        let timeout = std::time::Duration::from_secs(5);
+        let (mut guard, wait_result) = cvar
+            .wait_timeout_while(
+                guard,
+                timeout,
+                |result: &mut Option<Result<String, String>>| result.is_none(),
+            )
+            .map_err(|e| McpBridgeError::Other(format!("Wait error: {e}")))?;
+
+        if wait_result.timed_out() {
+            return Err(McpBridgeError::Other(
+                "Timeout waiting for GUI to process project action".to_string(),
+            ));
+        }
+
+        match guard.take() {
+            Some(Ok(msg)) => Ok(msg),
+            Some(Err(e)) => Err(McpBridgeError::Other(e)),
+            None => Err(McpBridgeError::Other(
+                "No result from project action".to_string(),
+            )),
+        }
+    }
 }
 
 /// Insert a note from `BridgeNoteData` into a pattern. Returns the assigned note ID as u64.

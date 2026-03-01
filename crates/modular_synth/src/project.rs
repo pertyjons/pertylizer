@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{InstrumentState, Patch, PatchError};
-use synth_core::{Gain, Seconds};
+use synth_core::{BipolarValue, Gain, Seconds, Semitones};
+use synth_engine::instrument::InstrumentId;
 use synth_sequencer::Song;
 
 /// Top-level project file container.
@@ -134,6 +135,26 @@ pub(crate) fn default_projects_dir() -> Result<PathBuf, String> {
         .or_else(dirs::home_dir)
         .ok_or_else(|| "Could not determine home directory".to_string())?;
     Ok(base.join("modular-synth").join("projects"))
+}
+
+/// Create a default instrument state for instrument 0 with an empty patch.
+///
+/// Used when creating a new project to have a single instrument ready to use.
+#[must_use]
+pub fn default_instrument_state() -> InstrumentState {
+    InstrumentState {
+        id: InstrumentId::FIRST,
+        name: "Init".to_string(),
+        channel: 1,
+        volume: Gain::UNITY,
+        pan: BipolarValue::CENTER,
+        muted: false,
+        solo: false,
+        key_range: (0, 127),
+        transpose: Semitones::ZERO,
+        oversampling: 1,
+        patch: Patch::new("Init"),
+    }
 }
 
 #[cfg(test)]

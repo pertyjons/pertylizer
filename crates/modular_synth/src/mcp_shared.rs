@@ -3,11 +3,22 @@
 //! `McpSharedState` is created in `main.rs` and shared via `Arc` to both
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 use crate::patch::Patch;
 use synth_sequencer::Song;
+
+/// Action requested by MCP that must be executed on the GUI thread.
+pub enum ProjectAction {
+    /// Reset to a new empty project.
+    New,
+    /// Save the current project to a file.
+    Save(PathBuf),
+    /// Load a project from a file.
+    Load(PathBuf),
+}
 
 /// Shared state for communication between MCP bridge and GUI.
 pub struct McpSharedState {
@@ -23,6 +34,10 @@ pub struct McpSharedState {
     pub mcp_active_sessions: Arc<AtomicUsize>,
     /// Auto-layout requested by MCP (consumed by GUI each frame).
     pub pending_auto_layout: AtomicBool,
+    /// Project action queued by MCP (consumed by GUI each frame).
+    pub pending_project_action: Mutex<Option<ProjectAction>>,
+    /// Result of the last project action, signaled via condvar.
+    pub project_action_result: (Mutex<Option<Result<String, String>>>, Condvar),
 }
 
 impl McpSharedState {
@@ -35,6 +50,8 @@ impl McpSharedState {
             mcp_listening: AtomicBool::new(false),
             mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
             pending_auto_layout: AtomicBool::new(false),
+            pending_project_action: Mutex::new(None),
+            project_action_result: (Mutex::new(None), Condvar::new()),
         }
     }
 
@@ -48,6 +65,8 @@ impl McpSharedState {
             mcp_listening: AtomicBool::new(false),
             mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
             pending_auto_layout: AtomicBool::new(false),
+            pending_project_action: Mutex::new(None),
+            project_action_result: (Mutex::new(None), Condvar::new()),
         }
     }
 

@@ -690,6 +690,12 @@ pub struct ApplyExamplePatchParam {
     pub patch_name: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ProjectPathParam {
+    #[schemars(description = "Absolute file path for the project (.json)")]
+    pub path: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -1877,6 +1883,36 @@ impl SynthMcpServer {
         {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Project management ===
+
+    #[tool(description = "Reset to a new empty project, clearing all instruments and song data.")]
+    async fn new_project(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.new_project() {
+            Ok(msg) => format!("OK: {msg}"),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Save the current project (all instruments, patches, song, arrangement) to a JSON file."
+    )]
+    async fn save_project(&self, params: Parameters<ProjectPathParam>) -> String {
+        match self.bridge.save_project(&params.0.path) {
+            Ok(msg) => format!("OK: {msg}"),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Load a project or patch file, replacing all current state. Supports both project files and single patch files."
+    )]
+    async fn load_project(&self, params: Parameters<ProjectPathParam>) -> String {
+        match self.bridge.load_project(&params.0.path) {
+            Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
         }
     }

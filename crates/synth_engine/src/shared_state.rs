@@ -308,8 +308,10 @@ pub struct InstrumentSnapshot {
 /// Updated by audio thread, read by GUI threads.
 #[derive(Debug)]
 pub struct SharedGraphState {
-    /// All modules in the graph.
-    modules: RwLock<HashMap<ModuleId, ModuleStateSnapshot>>,
+    /// All modules in the graph, keyed by `(InstrumentId, ModuleId)` since
+    /// `ModuleId` alone is not unique across instruments (e.g. each instrument
+    /// can have its own `osc-1`).
+    modules: RwLock<HashMap<(InstrumentId, ModuleId), ModuleStateSnapshot>>,
     /// All connections.
     connections: RwLock<Vec<ConnectionSnapshot>>,
     /// Processing order.
@@ -343,8 +345,12 @@ impl SharedGraphState {
     }
 
     /// Get snapshot of a specific module.
-    pub fn get_module(&self, id: ModuleId) -> Option<ModuleStateSnapshot> {
-        self.modules.read().get(&id).cloned()
+    pub fn get_module(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+    ) -> Option<ModuleStateSnapshot> {
+        self.modules.read().get(&(instrument_id, id)).cloned()
     }
 
     /// Get all modules with their states.
@@ -358,20 +364,26 @@ impl SharedGraphState {
     }
 
     /// Check if a module exists.
-    pub fn has_module(&self, id: ModuleId) -> bool {
-        self.modules.read().contains_key(&id)
+    pub fn has_module(&self, instrument_id: InstrumentId, id: ModuleId) -> bool {
+        self.modules.read().contains_key(&(instrument_id, id))
     }
 
     /// Check if a module is connected to output.
-    pub fn is_live(&self, id: ModuleId) -> bool {
+    pub fn is_live(&self, instrument_id: InstrumentId, id: ModuleId) -> bool {
+        // live_modules is a flat set; check both the set and existence in modules map
         self.live_modules.read().contains(&id)
+            && self.modules.read().contains_key(&(instrument_id, id))
     }
 
     /// Get connectivity status for a module.
-    pub fn connectivity(&self, id: ModuleId) -> ModuleConnectivityStatus {
+    pub fn connectivity(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+    ) -> ModuleConnectivityStatus {
         self.modules
             .read()
-            .get(&id)
+            .get(&(instrument_id, id))
             .map(|m| m.connectivity)
             .unwrap_or(ModuleConnectivityStatus::Disconnected)
     }
@@ -429,7 +441,9 @@ impl SharedGraphState {
 
     /// Remove all modules belonging to a specific instrument.
     pub fn remove_modules_for_instrument(&self, id: InstrumentId) {
-        self.modules.write().retain(|_, m| m.instrument_id != id);
+        self.modules
+            .write()
+            .retain(|&(inst_id, _), _| inst_id != id);
         self.bump_version();
     }
 
@@ -450,13 +464,14 @@ impl SharedGraphState {
 
     /// Add or update a module.
     pub fn set_module(&self, snapshot: ModuleStateSnapshot) {
-        self.modules.write().insert(snapshot.id, snapshot);
+        let key = (snapshot.instrument_id, snapshot.id);
+        self.modules.write().insert(key, snapshot);
         self.bump_version();
     }
 
     /// Remove a module.
-    pub fn remove_module(&self, id: ModuleId) {
-        self.modules.write().remove(&id);
+    pub fn remove_module(&self, instrument_id: InstrumentId, id: ModuleId) {
+        self.modules.write().remove(&(instrument_id, id));
         self.bump_version();
     }
 
@@ -502,24 +517,35 @@ impl SharedGraphState {
     }
 
     /// Update a module's connectivity status.
-    pub fn update_connectivity(&self, id: ModuleId, status: ModuleConnectivityStatus) {
-        if let Some(module) = self.modules.write().get_mut(&id) {
+    pub fn update_connectivity(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+        status: ModuleConnectivityStatus,
+    ) {
+        if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
             module.connectivity = status;
             self.bump_version();
         }
     }
 
     /// Update a module's CPU usage.
-    pub fn update_cpu_usage(&self, id: ModuleId, usage: f32) {
-        if let Some(module) = self.modules.write().get_mut(&id) {
+    pub fn update_cpu_usage(&self, instrument_id: InstrumentId, id: ModuleId, usage: f32) {
+        if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
             module.cpu_usage = usage;
             // Don't bump version for CPU updates (too frequent)
         }
     }
 
     /// Update a module's output level.
-    pub fn update_output_level(&self, id: ModuleId, port: PortName, level: f32) {
-        if let Some(module) = self.modules.write().get_mut(&id) {
+    pub fn update_output_level(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+        port: PortName,
+        level: f32,
+    ) {
+        if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
             module.output_levels.insert(port, level);
             // Don't bump version for level updates (too frequent)
         }
@@ -629,9 +655,10 @@ mod tests {
         use super::super::instrument::InstrumentId;
 
         let graph = SharedGraphState::new();
+        let osc_id = ModuleId::new(ModuleType::Oscillator, 1);
 
         let module = ModuleStateSnapshot::new(
-            ModuleId::new(ModuleType::Oscillator, 1),
+            osc_id,
             InstrumentId::FIRST,
             ModuleType::Oscillator,
             "Osc 1".to_string(),
@@ -639,10 +666,51 @@ mod tests {
 
         graph.set_module(module);
         assert_eq!(graph.module_count(), 1);
-        assert!(graph.has_module(ModuleId::new(ModuleType::Oscillator, 1)));
+        assert!(graph.has_module(InstrumentId::FIRST, osc_id));
 
-        graph.remove_module(ModuleId::new(ModuleType::Oscillator, 1));
+        graph.remove_module(InstrumentId::FIRST, osc_id);
         assert_eq!(graph.module_count(), 0);
+    }
+
+    #[test]
+    fn test_shared_graph_modules_unique_per_instrument() {
+        use super::super::instrument::InstrumentId;
+
+        let graph = SharedGraphState::new();
+        let osc_id = ModuleId::new(ModuleType::Oscillator, 1);
+        let inst_a = InstrumentId::FIRST;
+        let inst_b = InstrumentId::new(2);
+
+        // Two instruments, each with osc-1
+        graph.set_module(ModuleStateSnapshot::new(
+            osc_id,
+            inst_a,
+            ModuleType::Oscillator,
+            "Osc A".to_string(),
+        ));
+        graph.set_module(ModuleStateSnapshot::new(
+            osc_id,
+            inst_b,
+            ModuleType::Oscillator,
+            "Osc B".to_string(),
+        ));
+
+        // Both should exist independently
+        assert_eq!(graph.module_count(), 2);
+        assert!(graph.has_module(inst_a, osc_id));
+        assert!(graph.has_module(inst_b, osc_id));
+
+        let a = graph.get_module(inst_a, osc_id).expect("inst_a module");
+        assert_eq!(a.name, "Osc A");
+
+        let b = graph.get_module(inst_b, osc_id).expect("inst_b module");
+        assert_eq!(b.name, "Osc B");
+
+        // Remove one, other should remain
+        graph.remove_module(inst_a, osc_id);
+        assert_eq!(graph.module_count(), 1);
+        assert!(!graph.has_module(inst_a, osc_id));
+        assert!(graph.has_module(inst_b, osc_id));
     }
 
     #[test]

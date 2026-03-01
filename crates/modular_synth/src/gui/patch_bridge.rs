@@ -381,6 +381,7 @@ pub fn apply_module_parameters(
 }
 
 /// Create a patch from current rack state.
+#[allow(clippy::too_many_arguments)]
 pub fn create_patch_from_rack(
     patch_name: &str,
     patch_editor: &PatchEditor,
@@ -389,8 +390,9 @@ pub fn create_patch_from_rack(
     glide_time: f32,
     awe_enabled: bool,
     awe_ui: &crate::gui::awe_view::AweUiState,
+    engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
 ) -> Option<Patch> {
-    let mut patch = create_patch_from_editor(patch_name, patch_editor);
+    let mut patch = create_patch_from_editor(patch_name, patch_editor, engine_state);
     patch.author = Some("User".to_string());
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = handle.master_volume();
@@ -406,14 +408,46 @@ pub fn create_patch_from_rack(
 /// Used by project save to extract each instrument's module graph independently.
 /// Global settings (master volume, keyboard, glide, AWE) are stored at the
 /// project level, not per-instrument.
-pub fn create_patch_from_editor(name: &str, patch_editor: &PatchEditor) -> Patch {
+///
+/// If `engine_state` is provided, actual parameter values are read from the
+/// running engine instead of the GUI's cached values (which may be stale for
+/// modules created via MCP).
+pub fn create_patch_from_editor(
+    name: &str,
+    patch_editor: &PatchEditor,
+    engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
+) -> Patch {
     let mut patch = Patch::new(name);
 
+    // Build a lookup of engine parameter values when available.
+    let engine_params: HashMap<String, HashMap<String, f32>> = engine_state
+        .map(|(state, inst_id)| {
+            state
+                .shared_graph
+                .get_modules_for_instrument(inst_id)
+                .into_iter()
+                .map(|m| {
+                    let params: HashMap<String, f32> = m
+                        .parameters
+                        .iter()
+                        .map(|p| (p.name().to_string(), p.as_f32()))
+                        .collect();
+                    (m.id.to_string(), params)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     for module_id in patch_editor.module_ids() {
-        if let Some((_descriptor, position, params)) = patch_editor.get_module_data(module_id) {
+        if let Some((_descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
+            // Prefer engine values over GUI-cached values.
+            let source_params = engine_params
+                .get(&module_id.to_string())
+                .unwrap_or(&gui_params);
+
             let mut param_map = HashMap::new();
-            for (pname, value) in params {
-                param_map.insert(pname, ParamValue::Float(value));
+            for (pname, value) in source_params {
+                param_map.insert(pname.clone(), ParamValue::Float(*value));
             }
             patch.modules.push(ModuleState {
                 id: module_id.to_string(),
