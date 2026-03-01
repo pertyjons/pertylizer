@@ -1,5 +1,22 @@
 # Version History
 
+## [0.197.0] - 2026-03-01
+### 10 new example patches covering 23 previously unused module types
+
+**New patches:**
+- **Ethereal Shimmer Pad** — AdditiveOsc + EnsembleChorus + ShimmerReverb + Mid/Side + EQ
+- **Granular Cathedral** — GranularOsc + Convolver (Hall) + SpectralBlur + GranularFx + Limiter
+- **Analog Dream Machine** — MSEG + Phaser + Flanger + BBD Delay + Compressor
+- **Resonant Percussion** — MechanicalNoise + ModalResonator + ReverseGateReverb + EQ
+- **Spectral Freeze Pad** — AdditiveOsc + PhaseVocoder + SpectralBlur + ShimmerReverb + Limiter
+- **Granular Storm** — GranularOsc + GranularFx + Phaser + Mid/Side + Compressor
+- **MSEG Crystal Lead** — MSEG + AdditiveOsc + Flanger + BBD Delay + Compressor
+- **Euclidean Texture** — Euclidean + TuringMachine + RandomGates + PhaseVocoder + ReverseGateReverb
+- **Pitch Following Drone** — PitchTracker + GranularOsc + ModalResonator + EnsembleChorus
+- **Vintage Electric Piano** — MechanicalNoise + Convolver (Plate) + EQ + BBD Delay + EnsembleChorus + Compressor
+
+All 23 non-visualizer unused modules now have at least one example patch.
+
 ## [0.196.0] - 2026-03-01
 ### New Project, MCP project tools, save/load bug fixes
 
