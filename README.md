@@ -52,8 +52,8 @@ cargo run
 # Run with GUI + MCP server
 cargo run --features mcp
 
-# Run headless MCP server (stdio)
-cargo run --features mcp -- --mcp
+# Run headless (no GUI, MCP server on stdio)
+cargo run --features mcp -- --headless
 
 # Tests, lints, formatting
 cargo test && cargo clippy --all-targets && cargo fmt --check

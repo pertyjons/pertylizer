@@ -16,8 +16,8 @@
 //! # Run with GUI + MCP server on port 9850
 //! cargo run --features mcp
 //!
-//! # Run headless MCP server (stdio)
-//! cargo run --features mcp -- --mcp
+//! # Run headless (no GUI, MCP server on stdio)
+//! cargo run --features mcp -- --headless
 //!
 //! # Or compile with only console support
 //! cargo run --no-default-features --features gui-console
@@ -266,7 +266,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, Box<dyn std::error::Error>> 
                 gui_type = Some(GuiType::Console);
             }
             #[cfg(feature = "mcp")]
-            "--mcp" => {
+            "--headless" => {
                 return Ok(CliAction::HeadlessMcp);
             }
             _ => {
@@ -309,7 +309,7 @@ fn print_help() {
     println!("    -g, --gui <TYPE>       Select GUI backend (egui, console)");
     println!("    -c, --console          Shortcut for --gui console");
     #[cfg(feature = "mcp")]
-    println!("    --mcp                  Run headless MCP server on stdio");
+    println!("    --headless              Run without GUI (MCP server on stdio)");
     println!("    --list-backends        List available GUI backends");
     println!("    -h, --help             Print this help message");
     println!();
@@ -323,5 +323,5 @@ fn print_help() {
     println!("    pertylizer                      # Run with graphical interface");
     println!("    pertylizer --gui console        # Run with text interface");
     #[cfg(feature = "mcp")]
-    println!("    pertylizer --mcp                # Run headless MCP server");
+    println!("    pertylizer --headless            # Run without GUI");
 }
