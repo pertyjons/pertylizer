@@ -1,5 +1,16 @@
 # Version History
 
+## [0.199.0] - 2026-03-02
+### Fractal Oscillator (Weierstrass function)
+- New **FractalOsc** module — stereo additive oscillator based on the Weierstrass function
+- 64 partials with iterative power computation (no `powf` in hot loop)
+- Parameters: Roughness (a), Fractal Spacing (b), Dispersion, Stereo Spread, Level
+- Anti-aliasing: partials above Nyquist automatically skipped
+- Equal-power stereo panning (even partials left, odd partials right)
+- Amplitude normalization for consistent output level
+- 100% real-time safe: zero heap allocations in process loop
+- Full integration: GUI palette, module factory, parameter system
+
 ## [0.198.0] - 2026-03-02
 ### MCP Resources: Module catalog and example patches
 - Added MCP Resources capability alongside existing Tools

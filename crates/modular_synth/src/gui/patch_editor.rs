@@ -2816,6 +2816,7 @@ impl PatchEditor {
                     Self::bg_menu_item(ui, PaletteSelection::WavetableOsc, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::AdditiveOsc, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::GranularOsc, &mut selected);
+                    Self::bg_menu_item(ui, PaletteSelection::FractalOsc, &mut selected);
                 },
             );
 
@@ -3102,6 +3103,7 @@ impl PatchEditor {
                                     PaletteSelection::MathOscillator,
                                     PaletteSelection::AdditiveOsc,
                                     PaletteSelection::GranularOsc,
+                                    PaletteSelection::FractalOsc,
                                     PaletteSelection::Noise,
                                     PaletteSelection::RingMod,
                                 ],
@@ -4519,6 +4521,7 @@ pub enum PaletteSelection {
     GranularOsc,
     KineticModulator,
     SignalMonitor,
+    FractalOsc,
 }
 
 /// Get the display label (with Remix Icon) and category color for a palette selection.
@@ -4560,6 +4563,11 @@ fn palette_label(selection: PaletteSelection) -> (String, Color32) {
         PaletteSelection::GranularOsc => (
             ri::RHYTHM_FILL,
             "Granular",
+            category_color(ModuleCategory::Oscillator),
+        ),
+        PaletteSelection::FractalOsc => (
+            ri::SEEDLING_FILL,
+            "Fractal Osc",
             category_color(ModuleCategory::Oscillator),
         ),
         // Simple categories

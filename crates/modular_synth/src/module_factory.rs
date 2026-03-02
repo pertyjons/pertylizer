@@ -154,6 +154,11 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::FractalOsc => {
+            let m = synth_modules::FractalOscillator::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }
@@ -333,6 +338,7 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::VectorMixer,
     ModuleType::LaSynth,
     ModuleType::PitchTracker,
+    ModuleType::FractalOsc,
     // Effects
     ModuleType::Delay,
     ModuleType::Reverb,

@@ -17,6 +17,7 @@ mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
+mod fractal_osc;
 mod frequency_shifter;
 mod generative;
 mod granular;
@@ -53,6 +54,7 @@ pub use effects::{
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
+pub use fractal_osc::FractalOscParam;
 pub use frequency_shifter::FrequencyShifterParam;
 pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
 pub use granular::{GrainSource, GrainWindow, GranularParam};
@@ -157,6 +159,8 @@ pub enum ModuleType {
     SpectralBlur,
     ModalResonator,
     ReverseGateReverb,
+    // Fractal synthesis
+    FractalOsc,
 }
 
 impl ModuleType {
@@ -208,6 +212,8 @@ impl ModuleType {
                 | Self::LaSynth
                 // Utility
                 | Self::PitchTracker
+                // Fractal synthesis
+                | Self::FractalOsc
         )
     }
 
@@ -326,6 +332,7 @@ impl ModuleType {
             Self::SpectralBlur => "Spectral Blur",
             Self::ModalResonator => "Modal Resonator",
             Self::ReverseGateReverb => "Reverse/Gate Reverb",
+            Self::FractalOsc => "Fractal Osc",
         }
     }
 
@@ -388,6 +395,7 @@ impl ModuleType {
             Self::SpectralBlur => "sbl",
             Self::ModalResonator => "mdr",
             Self::ReverseGateReverb => "rgr",
+            Self::FractalOsc => "frc",
         }
     }
 
@@ -450,6 +458,7 @@ impl ModuleType {
             "sbl" => Some(Self::SpectralBlur),
             "mdr" => Some(Self::ModalResonator),
             "rgr" => Some(Self::ReverseGateReverb),
+            "frc" => Some(Self::FractalOsc),
             _ => None,
         }
     }
@@ -532,6 +541,8 @@ pub enum Param {
     SpectralBlur(SpectralBlurParam),
     ModalResonator(ModalResonatorParam),
     ReverseGateReverb(ReverseGateReverbParam),
+    // Fractal synthesis
+    FractalOsc(FractalOscParam),
 }
 
 impl Param {
@@ -602,6 +613,7 @@ impl Param {
             (Self::SpectralBlur(a), Self::SpectralBlur(b)) => a.same_kind(b),
             (Self::ModalResonator(a), Self::ModalResonator(b)) => a.same_kind(b),
             (Self::ReverseGateReverb(a), Self::ReverseGateReverb(b)) => a.same_kind(b),
+            (Self::FractalOsc(a), Self::FractalOsc(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -664,6 +676,7 @@ impl Param {
             Self::SpectralBlur(_) => ModuleType::SpectralBlur,
             Self::ModalResonator(_) => ModuleType::ModalResonator,
             Self::ReverseGateReverb(_) => ModuleType::ReverseGateReverb,
+            Self::FractalOsc(_) => ModuleType::FractalOsc,
         }
     }
 
@@ -725,6 +738,7 @@ impl Param {
             Self::SpectralBlur(p) => p.name(),
             Self::ModalResonator(p) => p.name(),
             Self::ReverseGateReverb(p) => p.name(),
+            Self::FractalOsc(p) => p.name(),
         }
     }
 
@@ -786,6 +800,7 @@ impl Param {
             Self::SpectralBlur(p) => p.as_f32(),
             Self::ModalResonator(p) => p.as_f32(),
             Self::ReverseGateReverb(p) => p.as_f32(),
+            Self::FractalOsc(p) => p.as_f32(),
         }
     }
 
@@ -847,6 +862,7 @@ impl Param {
             Self::SpectralBlur(p) => Self::SpectralBlur(p.with_f32(value)),
             Self::ModalResonator(p) => Self::ModalResonator(p.with_f32(value)),
             Self::ReverseGateReverb(p) => Self::ReverseGateReverb(p.with_f32(value)),
+            Self::FractalOsc(p) => Self::FractalOsc(p.with_f32(value)),
         }
     }
 }
