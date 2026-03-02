@@ -51,7 +51,7 @@ Projektet innehåller redan en `.mcp.json` i roten som konfigurerar anslutningen
 
 Claude Code ansluter direkt till den körande synthen via Streamable HTTP — ingen bridge-process behövs. Starta synthen före Claude Code.
 
-## Verktyg
+## Verktyg (79 st)
 
 ### Läsverktyg
 
@@ -95,7 +95,8 @@ Claude Code ansluter direkt till den körande synthen via Streamable HTTP — in
 
 | Verktyg | Beskrivning | Parametrar |
 |---------|-------------|------------|
-| `set_parameter` | Ändra parametervärde | `instrument_id`, `module_id`, `param_name`, `value` |
+| `set_parameter` | Ändra enskilt parametervärde | `instrument_id`, `module_id`, `param_name`, `value` |
+| `set_parameters` | Ändra flera parametrar i batch | `instrument_id`, `params[]` (module_id, param_name, value) |
 | `note_on` | Spela en MIDI-not | `note`, `velocity`, `channel` (opt) |
 | `note_off` | Stoppa en MIDI-not | `note`, `channel` (opt) |
 
@@ -105,7 +106,32 @@ Claude Code ansluter direkt till den körande synthen via Streamable HTTP — in
 |---------|-------------|------------|
 | `list_example_patches` | Alla exempelpatchar grupperade per kategori | inga |
 | `load_example_patch` | Ladda en exempelpatch | `name` |
-| `get_ui_snapshot` | UI-layout (modulpositioner, storlekar) | `instrument_id` |
+| `get_ui_snapshot` | UI-layout (modulpositioner, storlekar, överlapp) | `instrument_id` |
+| `auto_layout` | Begär auto-layout av moduler | `instrument_id` |
+
+### Batch-instrumentbygge
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `build_instrument` | Bygg komplett instrument i ett anrop | `name`, `midi_channel`?, `volume`?, `pan`?, `modules[]`, `connections[]` |
+| `build_instruments` | Bygg flera instrument i ett anrop | `instruments[]` (samma format som `build_instrument`) |
+| `apply_example_patch` | Ladda namngiven exempelpatch direkt | `patch_name`, `instrument_id`? |
+
+**`modules[]`:** Varje modul: `{ "module_type": "osc", "params": { "Waveform": 2.0, "Detune": 0.1 } }`
+
+**`connections[]`:** Använder 0-baserade index i `modules[]`: `{ "from": 0, "from_port": "out", "to": 1, "to_port": "in" }`
+
+**Effekter** (`dly`, `rev`, `dst`, `chr`, etc.) behöver inga connections — de auto-routas i effektkedjan.
+
+**Envelope-parametrar** anges i **sekunder**: `Attack=0.005` = 5ms, `Decay=0.3` = 300ms.
+
+### Projekthantering
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `new_project` | Återställ till nytt tomt projekt | inga |
+| `save_project` | Spara projekt till fil | `path` |
+| `load_project` | Ladda projekt från fil | `path` |
 
 ### Sequencer: Song & Patterns
 
@@ -113,10 +139,15 @@ Claude Code ansluter direkt till den körande synthen via Streamable HTTP — in
 |---------|-------------|------------|
 | `get_song_info` | Låtinfo (namn, tempo, längd) | inga |
 | `set_song_name` | Sätt låtnamn | `name` |
+| `set_song_author` | Sätt låtförfattare | `author` |
 | `set_song_tempo` | Sätt tempo i BPM | `bpm` |
+| `set_song_time_signature` | Sätt taktart | `numerator`, `denominator` |
 | `list_patterns` | Alla patterns i låten | inga |
 | `create_pattern` | Skapa pattern | `name`, `length_beats` |
 | `delete_pattern` | Ta bort pattern | `pattern_id` |
+| `rename_pattern` | Byt namn på pattern | `pattern_id`, `name` |
+| `set_pattern_length` | Ändra pattern-längd i beats | `pattern_id`, `length_beats` |
+| `duplicate_pattern` | Duplicera pattern (noter + automation) | `pattern_id` |
 
 ### Sequencer: Noter
 
@@ -133,9 +164,25 @@ Claude Code ansluter direkt till den körande synthen via Streamable HTTP — in
 |---------|-------------|------------|
 | `list_tracks` | Alla tracks | inga |
 | `create_track` | Skapa track | `name`, `instrument_id`? |
+| `rename_track` | Byt namn på track | `track_id`, `name` |
+| `delete_track` | Ta bort track | `track_id` |
+| `set_track_volume` | Ställ track-volym | `track_id`, `volume` |
+| `set_track_pan` | Ställ track-pan | `track_id`, `pan` |
+| `set_track_mute` | Muta/avmuta track | `track_id`, `muted` |
+| `set_track_solo` | Solo/avsolo track | `track_id`, `solo` |
 | `list_arrangement` | Alla pattern-placeringar | inga |
 | `place_pattern` | Placera pattern på track | `pattern_id`, `track_id`, `start_beat` |
 | `remove_placement` | Ta bort placering | `pattern_id`, `track_id`, `start_beat` |
+
+### Sequencer: Automation
+
+| Verktyg | Beskrivning | Parametrar |
+|---------|-------------|------------|
+| `list_automation_lanes` | Alla automationslanes i ett pattern | `pattern_id` |
+| `get_automation_points` | Hämta punkter för specifik lane | `pattern_id`, lane-identifikation |
+| `add_automation_points` | Lägg till automationspunkter | `pattern_id`, lane-id, `points[]` |
+| `remove_automation_points` | Ta bort punkter vid specifika beats | `pattern_id`, lane-id, `beats[]` |
+| `clear_automation_lane` | Rensa alla punkter i en lane | `pattern_id`, lane-id |
 
 ### Sequencer: Transport
 
@@ -144,22 +191,6 @@ Claude Code ansluter direkt till den körande synthen via Streamable HTTP — in
 | `seq_play` | Starta uppspelning | inga |
 | `seq_stop` | Stoppa uppspelning | inga |
 | `seq_seek` | Hoppa till position | `beat` |
-
-### Batch-instrumentbygge (v0.164.0)
-
-| Verktyg | Beskrivning | Parametrar |
-|---------|-------------|------------|
-| `build_instrument` | Bygg komplett instrument i ett anrop | `name`, `midi_channel`?, `volume`?, `pan`?, `modules[]`, `connections[]` |
-| `build_instruments` | Bygg flera instrument i ett anrop | `instruments[]` (samma format som `build_instrument`) |
-| `apply_example_patch` | Ladda namngiven exempelpatch direkt | `patch_name`, `instrument_id`? |
-
-**`modules[]`:** Varje modul: `{ "module_type": "osc", "params": { "Waveform": 2.0, "Detune": 0.1 } }`
-
-**`connections[]`:** Använder 0-baserade index i `modules[]`: `{ "from": 0, "from_port": "out", "to": 1, "to_port": "in" }`
-
-**Effekter** (`dly`, `rev`, `dst`, `chr`, etc.) behöver inga connections — de auto-routas i effektkedjan.
-
-**Envelope-parametrar** anges i **sekunder**: `Attack=0.005` = 5ms, `Decay=0.3` = 300ms.
 
 ### Batch-operationer (Sequencer)
 
@@ -197,9 +228,6 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
 → list_modules(instrument_id=1)
   [{ id: "osc-3", module_type: "Oscillator", parameters: [...] }]
 
-→ list_modules(instrument_id=0)
-  [{ id: "osc-1", ... }, { id: "flt-1", ... }, ...]   # Bara instrument 0:s moduler
-
 → set_parameter(instrument_id=0, module_id="flt-1", param_name="Cutoff", value=800.0)
   "OK"
 
@@ -208,12 +236,6 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
 
 → get_engine_status()
   { cpu_usage: 0.005, voice_count: 1, instrument_count: 2, sample_rate: 48000, ... }
-
-→ rename_instrument(instrument_id=1, name="Deep Bass")
-  "OK"
-
-→ delete_instrument(instrument_id=1)
-  "OK"
 
 → build_instrument(name="FM Bass", modules=[
     {"module_type":"osc","params":{"Waveform":2}},
@@ -232,8 +254,8 @@ Parametrar returneras med enheter: `"440.0 Hz"`, `"2.0 kHz"`, `"3.0 ms"`, `"1.50
   ])
   { instrument_id: 2, module_ids: ["osc-4","osc-5","flt-2","env-3","amp-2","out-2"], connection_count: 5, errors: [] }
 
-→ apply_example_patch(patch_name="Moog Resonant Sweep")
-  { instrument_id: 3, patch_name: "Moog Resonant Sweep", module_count: 7, connection_count: 5, errors: [] }
+→ save_project(path="my_project.json")
+  "OK"
 ```
 
 ## Arkitektur
@@ -243,7 +265,7 @@ synth_mcp (crate)              modular_synth
 ┌─────────────────────┐       ┌──────────────────────┐
 │ SynthBridge trait    │◄──────│ AppSynthBridge impl  │
 │ MCP-server (rmcp)   │       │ Läser SharedGraphState│
-│ 61 tool-definitioner│       │ Skickar EngineCommand │
+│ 79 tool-definitioner│       │ Skickar EngineCommand │
 └──────┬──────────────┘       └──────┬───────────────┘
        │ HTTP :9850/mcp              │ ring buffer
        │ (Streamable HTTP)           ▼
@@ -257,26 +279,65 @@ synth_mcp (crate)              modular_synth
 **SynthMcpServer** — rmcp `ServerHandler` som delegerar till bridge.
 **Transport** — Streamable HTTP (axum) på port 9850. Claude Code ansluter direkt utan bridge-process.
 
-## Kända begränsningar
+## Resources
 
-- Inga kända begränsningar för multi-instrument
+MCP Resources exponerar läsbar data som klienten kan browse:a utan tool-anrop.
 
-## MCP Resources & Prompts (planerad)
+### Modulkatalog
+
+URI-mönster: `synth://module-types/{type_key}`
+
+Varje modultyp exponeras som en resurs med fullständig information om portar och parametrar.
+
+| Fält | Beskrivning |
+|------|-------------|
+| `type_key` | Typ-nyckel att använda med `add_module` (t.ex. "osc", "flt") |
+| `name` | Visningsnamn (t.ex. "Oscillator", "Filter") |
+| `category` | "voice", "effect" eller "visualizer" |
+| `input_ports` | Lista av ingångsportar |
+| `output_ports` | Lista av utgångsportar |
+| `parameters` | Lista av parametrar |
+
+### Exempelpatchar
+
+URI-mönster: `synth://patches/{slug}`
+
+Varje exempelpatch exponeras med full patchdata (moduler, kopplingar, parametrar). Slug skapas från patchnamnet i lowercase med bindestreck (t.ex. "Acid Bass" → "acid-bass").
+
+| Fält | Beskrivning |
+|------|-------------|
+| `name` | Patchnamn |
+| `category` | Kategori (t.ex. "Bass", "Lead") |
+| `description` | Kort beskrivning |
+| `tags` | Söktaggar |
+| `modules` | Lista av moduler med ID, typ och parametrar |
+| `connections` | Lista av kopplingar (from_module/port → to_module/port) |
+
+### Resource Templates
+
+| Template | Beskrivning |
+|----------|-------------|
+| `synth://module-types/{type_key}` | Info om en modultyp |
+| `synth://patches/{name}` | Full patchdata för en exempelpatch |
+
+## Ej implementerat
+
+### MCP Prompts (planerad)
 
 | Feature | Beskrivning |
 |---------|-------------|
-| **Patch-resurser** | Exponera sparade patchar som MCP Resources — agenten kan browse:a och ladda |
-| **Modulkatalog** | Resource med alla modultyper, deras portar och parametrar |
-| **"Design a sound"-prompt** | Guidad workflow: beskriv ett ljud → agenten bygger patchen |
-| **"Debug my patch"-prompt** | Agenten inspekterar grafen och föreslår fixar |
+| **"Design a sound"** | Guidad workflow: beskriv ett ljud → agenten bygger patchen |
+| **"Debug my patch"** | Agenten inspekterar grafen och föreslår fixar |
+
+> **Status:** Prompts kräver `enable_prompts()` i `ServerCapabilities`. Låg prioritet — tools täcker alla användningsfall, prompts är bekvämlighets-lager.
 
 ## Kreativa idéer och användningsfall
 
 ### AI som ljuddesigner
-En agent kan bygga hela synth-patchar från naturligt språk: *"Skapa en mörk ambient pad med långsam filtermodulering"*. Med Fas 2-verktygen kan agenten skapa moduler, koppla dem, ställa in parametrar, spela testtoner och iterera tills ljudet stämmer.
+En agent kan bygga hela synth-patchar från naturligt språk: *"Skapa en mörk ambient pad med långsam filtermodulering"*. Med batch-verktygen kan agenten skapa moduler, koppla dem, ställa in parametrar, spela testtoner och iterera tills ljudet stämmer.
 
 ### AI-driven live-performance
-Agenten spelar musik i realtid via `note_on`/`note_off` med timing — som Bach-menuetten som redan testats. Kan utökas med:
+Agenten spelar musik i realtid via `note_on`/`note_off` med timing. Kan utökas med:
 - **Algoritmisk komposition** — generera melodier baserat på skalor, ackordföljder, kontrapunkt
 - **Interaktiv improvisation** — agenten reagerar på vad användaren spelar via MIDI-input
 - **Generativ ambient** — oändliga evolverande ljudlandskap med parametersweeps
@@ -285,23 +346,3 @@ Agenten spelar musik i realtid via `note_on`/`note_off` med timing — som Bach-
 - **"Varför låter det konstigt?"** — agenten inspekterar signalkedjan, hittar disconnected moduler, felaktiga routings, extrema parametervärden
 - **Synth-tutor** — agenten förklarar hur patchen fungerar, vad varje modul gör, varför parametrar är inställda som de är
 - **A/B-jämförelse** — agenten sparar parametrar, ändrar en sak, låter användaren lyssna, återställer
-
-### Automatiserad testing
-- **Regressionstest** — ladda patch, spela noter, verifiera att engine-status ser rätt ut
-- **Stresstest** — spela 128 noter samtidigt, övervaka CPU-användning
-- **Parameter-sweep** — systematiskt testa extremvärden för alla parametrar
-
-### Parameter-automation via MCP
-- **Morfning mellan presets** — agenten interpolerar parametrar mjukt över tid
-- **LFO-liknande automation** — agenten sveper parametrar sinusformigt (långsammare än realtid, men coolt för demonstrationer)
-- **Reaktiv ljuddesign** — koppla externa datakällor (väder, aktiekurser, sensor-data) till synth-parametrar
-
-### Multi-agent-arkitektur
-- **Kompositör + Ljuddesigner** — en agent skriver musiken, en annan designar ljuden
-- **Critic-agent** — en agent lyssnar (via meters/status) och ger feedback: "för mycket brus", "filtret dämpar för mycket"
-- **Ensemble** — flera agenter styr varsin MIDI-kanal för samspel
-
-### Integration med andra verktyg
-- **DAW-bridge** — MCP-agenten kan styra synthen inifrån en DAW-kontext
-- **Notation → ljud** — agenten läser MusicXML/MIDI-filer och spelar dem live
-- **Text-to-music** — kombinera med en LLM som genererar noter från textbeskrivningar, MCP-agenten spelar dem

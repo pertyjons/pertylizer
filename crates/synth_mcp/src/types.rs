@@ -386,3 +386,54 @@ pub struct AutomationPointInfo {
     /// Interpolation curve type (Linear, Step, Exponential, SCurve).
     pub curve: String,
 }
+
+/// Full data for an example patch (used by MCP resources).
+#[derive(Debug, Clone, Serialize)]
+pub struct PatchResourceData {
+    /// Patch name.
+    pub name: String,
+    /// Category (e.g. "Bass", "Lead").
+    pub category: String,
+    /// Short description.
+    pub description: String,
+    /// Tags for searching.
+    pub tags: Vec<String>,
+    /// Modules in the patch.
+    pub modules: Vec<PatchModuleInfo>,
+    /// Connections between modules.
+    pub connections: Vec<UiConnectionInfo>,
+}
+
+/// Module info within a patch resource.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatchModuleInfo {
+    /// Module ID (e.g. "osc-1").
+    pub id: String,
+    /// Module type key.
+    pub module_type: String,
+    /// Parameters as (name, value) pairs.
+    pub parameters: Vec<PatchParamInfo>,
+}
+
+/// A parameter name+value pair in a patch resource.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatchParamInfo {
+    /// Parameter name.
+    pub name: String,
+    /// Parameter value (numeric, string choice, or bool).
+    pub value: PatchParamValue,
+}
+
+/// Parameter value variants for patch resources.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum PatchParamValue {
+    /// Numeric value.
+    Float(f32),
+    /// Integer value.
+    Int(i32),
+    /// Boolean value.
+    Bool(bool),
+    /// Choice/enum value (e.g. "sawtooth").
+    Choice(String),
+}

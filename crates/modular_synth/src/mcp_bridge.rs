@@ -20,8 +20,9 @@ use synth_mcp::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchItemResult, BatchResult,
     BuildInstrumentResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
     GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo,
-    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
-    UiOverlap, UiSnapshot,
+    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
+    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
+    UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -480,6 +481,63 @@ impl SynthBridge for AppSynthBridge {
             }
         }
         Ok(result)
+    }
+
+    fn get_example_patch(&self, name: &str) -> Result<PatchResourceData, McpBridgeError> {
+        use crate::patch::ParamValue;
+
+        let categories = crate::patches::categorized_patches();
+        let name_lower = name.to_ascii_lowercase();
+
+        for (category, patches) in &categories {
+            for patch in patches {
+                if patch.name.to_ascii_lowercase() == name_lower {
+                    let modules = patch
+                        .modules
+                        .iter()
+                        .map(|m| PatchModuleInfo {
+                            id: m.id.clone(),
+                            module_type: m.module_type.name().to_string(),
+                            parameters: m
+                                .parameters
+                                .iter()
+                                .map(|(k, v)| PatchParamInfo {
+                                    name: k.clone(),
+                                    value: match v {
+                                        ParamValue::Float(f) => PatchParamValue::Float(*f),
+                                        ParamValue::Int(i) => PatchParamValue::Int(*i),
+                                        ParamValue::Bool(b) => PatchParamValue::Bool(*b),
+                                        ParamValue::Choice(s) => PatchParamValue::Choice(s.clone()),
+                                    },
+                                })
+                                .collect(),
+                        })
+                        .collect();
+
+                    let connections = patch
+                        .connections
+                        .iter()
+                        .map(|c| UiConnectionInfo {
+                            from_module: c.from.0.clone(),
+                            from_port: c.from.1.clone(),
+                            to_module: c.to.0.clone(),
+                            to_port: c.to.1.clone(),
+                        })
+                        .collect();
+
+                    return Ok(PatchResourceData {
+                        name: patch.name.clone(),
+                        category: (*category).to_string(),
+                        description: patch.description.clone().unwrap_or_default(),
+                        tags: patch.tags.clone(),
+                        modules,
+                        connections,
+                    });
+                }
+            }
+        }
+
+        Err(McpBridgeError::PatchNotFound(name.to_string()))
     }
 
     fn load_example_patch(&self, name: &str) -> Result<String, McpBridgeError> {

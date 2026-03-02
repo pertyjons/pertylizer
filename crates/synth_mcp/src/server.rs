@@ -6,8 +6,13 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::model::{
+    Annotated, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
+    ResourceContents, ServerCapabilities, ServerInfo,
+};
+use rmcp::service::RequestContext;
+use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::bridge::SynthBridge;
 
@@ -743,13 +748,160 @@ impl Drop for SynthMcpServer {
 impl ServerHandler for SynthMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             instructions: Some(
                 "Modular synthesizer MCP server. Inspect and control the running synth: \
                  list modules, read parameters, change settings, play notes."
                     .into(),
             ),
             ..Default::default()
+        }
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let mut resources: Vec<Annotated<RawResource>> = Vec::new();
+
+        // Module type resources
+        if let Ok(types) = self.bridge.list_module_types() {
+            for info in &types {
+                let mut r = RawResource::new(
+                    format!("synth://module-types/{}", info.type_key),
+                    info.name.clone(),
+                );
+                r.description = Some(format!(
+                    "Module type: {} | Ports: {} in, {} out | Params: {}",
+                    info.category,
+                    info.input_ports.len(),
+                    info.output_ports.len(),
+                    info.parameters.len()
+                ));
+                r.mime_type = Some("application/json".into());
+                resources.push(Annotated::new(r, None));
+            }
+        }
+
+        // Example patch resources
+        if let Ok(patches) = self.bridge.list_example_patches() {
+            for patch in &patches {
+                let slug = patch.name.to_ascii_lowercase().replace(' ', "-");
+                let mut r = RawResource::new(format!("synth://patches/{slug}"), patch.name.clone());
+                r.description = Some(format!(
+                    "{}: {} | {} modules, {} connections",
+                    patch.category, patch.description, patch.module_count, patch.connection_count
+                ));
+                r.mime_type = Some("application/json".into());
+                resources.push(Annotated::new(r, None));
+            }
+        }
+
+        Ok(ListResourcesResult::with_all_items(resources))
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let templates = vec![
+            Annotated::new(
+                RawResourceTemplate {
+                    uri_template: "synth://module-types/{type_key}".into(),
+                    name: "Module Type".into(),
+                    title: None,
+                    description: Some(
+                        "Detailed info about a synth module type (ports, parameters)".into(),
+                    ),
+                    mime_type: Some("application/json".into()),
+                    icons: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                RawResourceTemplate {
+                    uri_template: "synth://patches/{name}".into(),
+                    name: "Example Patch".into(),
+                    title: None,
+                    description: Some(
+                        "Full patch data (modules, connections, parameters) for an example patch"
+                            .into(),
+                    ),
+                    mime_type: Some("application/json".into()),
+                    icons: None,
+                },
+                None,
+            ),
+        ];
+
+        Ok(ListResourceTemplatesResult::with_all_items(templates))
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let uri = &request.uri;
+
+        if let Some(type_key) = uri.strip_prefix("synth://module-types/") {
+            // Look up module type
+            let types = self
+                .bridge
+                .list_module_types()
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            let info = types
+                .iter()
+                .find(|t| t.type_key == type_key)
+                .ok_or_else(|| {
+                    ErrorData::resource_not_found(
+                        format!("Module type '{type_key}' not found"),
+                        None,
+                    )
+                })?;
+
+            let json = serde_json::to_string_pretty(info).unwrap_or_default();
+            Ok(ReadResourceResult {
+                contents: vec![ResourceContents::text(json, uri.clone())],
+            })
+        } else if let Some(slug) = uri.strip_prefix("synth://patches/") {
+            // Look up patch by slug — match by converting name to slug
+            let patches = self
+                .bridge
+                .list_example_patches()
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            let patch_name = patches
+                .iter()
+                .find(|p| p.name.to_ascii_lowercase().replace(' ', "-") == slug)
+                .map(|p| p.name.clone())
+                .ok_or_else(|| {
+                    ErrorData::resource_not_found(format!("Patch '{slug}' not found"), None)
+                })?;
+
+            let data = self
+                .bridge
+                .get_example_patch(&patch_name)
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+            let json = serde_json::to_string_pretty(&data).unwrap_or_default();
+            Ok(ReadResourceResult {
+                contents: vec![ResourceContents::text(json, uri.clone())],
+            })
+        } else {
+            Err(ErrorData::resource_not_found(
+                format!("Unknown resource URI: {uri}"),
+                None,
+            ))
         }
     }
 }

@@ -8,8 +8,8 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchResult,
     BuildInstrumentResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatternInfo,
-    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatchResourceData,
+    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -232,6 +232,9 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// List all available example patches grouped by category.
     fn list_example_patches(&self) -> Result<Vec<ExamplePatchInfo>, McpBridgeError>;
+
+    /// Get full data for an example patch (modules, connections, parameters).
+    fn get_example_patch(&self, name: &str) -> Result<PatchResourceData, McpBridgeError>;
 
     /// Queue an example patch for loading (GUI picks it up next frame).
     fn load_example_patch(&self, name: &str) -> Result<String, McpBridgeError>;

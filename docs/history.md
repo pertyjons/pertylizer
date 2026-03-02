@@ -1,5 +1,15 @@
 # Version History
 
+## [0.198.0] - 2026-03-02
+### MCP Resources: Module catalog and example patches
+- Added MCP Resources capability alongside existing Tools
+- **Module catalog** — each module type exposed as `synth://module-types/{type_key}` with ports and parameters
+- **Example patches** — each example patch exposed as `synth://patches/{slug}` with full patch data (modules, connections, parameters)
+- Resource templates for both URI patterns
+- New `get_example_patch` bridge method for retrieving full patch structure data
+- New types: `PatchResourceData`, `PatchModuleInfo`, `PatchParamInfo`, `PatchParamValue`
+- Updated docs/MCP.md with Resources documentation
+
 ## [0.197.0] - 2026-03-01
 ### 10 new example patches covering 23 previously unused module types
 
