@@ -2,19 +2,19 @@
 //!
 //! This module provides automatic positioning of synth modules using a 5-phase algorithm:
 //! 1. **Classify** modules into SignalChain, Modulation, Global, or Disconnected groups
-//! 2. **Topological depth** assignment via Kahn's algorithm → columns (left-to-right)
-//! 3. **Vertical ordering** within columns using median heuristic (minimizes cable crossings)
-//! 4. **Modulation placement** below their primary signal-chain targets
+//! 2. **Topological depth** assignment via cycle-broken Kahn → columns (left-to-right)
+//! 3. **Vertical ordering** within columns using multi-sweep median heuristic (reduces crossings)
+//! 4. **Modulation placement** one column left of their primary targets (when possible)
 //! 5. **Pixel positions** computed with fixed estimated sizes
 //!
 //! Layout zones (left→right): Signal columns | Global column | Disconnected column
 //! Layout zones (top→bottom): Signal rows | Modulation gap | Modulation rows
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use eframe::egui::{Pos2, Rect, Vec2};
 
-use synth_core::ModuleCategory;
+use synth_core::{ModuleCategory, ModuleType};
 use synth_engine::ModuleId;
 
 // ── Public API (unchanged) ─────────────────────────────────────────────────
@@ -50,6 +50,9 @@ const GRID: f32 = 50.0;
 /// Extra gap between modules (1 grid cell).
 const GAP: f32 = GRID;
 
+/// Number of ordering sweeps for crossing reduction.
+const MAX_SWEEPS: usize = 8;
+
 // ── Internal types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,45 +63,66 @@ enum ModuleGroup {
     Disconnected,
 }
 
+fn module_sort_key(id: &ModuleId) -> (u32, u16) {
+    (id.module_type as u32, id.instance)
+}
+
+fn index_of_min_by_key(items: &[ModuleId]) -> usize {
+    let mut best_idx = 0;
+    let mut best_key = module_sort_key(&items[0]);
+    for (idx, id) in items.iter().enumerate().skip(1) {
+        let key = module_sort_key(id);
+        if key < best_key {
+            best_key = key;
+            best_idx = idx;
+        }
+    }
+    best_idx
+}
+
 // ── Classification ─────────────────────────────────────────────────────────
 
-fn classify_module(category: ModuleCategory, has_signal_connections: bool) -> ModuleGroup {
+fn classify_module(
+    module_id: ModuleId,
+    category: ModuleCategory,
+    has_incoming: bool,
+    has_outgoing: bool,
+) -> ModuleGroup {
+    if !(has_incoming || has_outgoing) {
+        return ModuleGroup::Disconnected;
+    }
+
     match category {
-        // Global modules are always placed in the global zone
-        ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility => {
-            ModuleGroup::Global
-        }
         // Modulation modules with connections go to modulation zone
-        ModuleCategory::Envelope | ModuleCategory::LFO if has_signal_connections => {
-            ModuleGroup::Modulation
+        ModuleCategory::Envelope | ModuleCategory::LFO => ModuleGroup::Modulation,
+        // Utility/Visualizer: explicit allow-list for global vs signal-chain
+        ModuleCategory::Utility | ModuleCategory::Visualizer => {
+            if is_global_aux_type(module_id.module_type) {
+                ModuleGroup::Global
+            } else {
+                ModuleGroup::SignalChain
+            }
         }
-        // Signal chain categories with connections
-        ModuleCategory::Oscillator
-        | ModuleCategory::Filter
-        | ModuleCategory::Mixer
-        | ModuleCategory::Amplifier
-        | ModuleCategory::Output
-        | ModuleCategory::PhysicalModeling
-        | ModuleCategory::Sampler
-        | ModuleCategory::Sequencer
-            if has_signal_connections =>
-        {
-            ModuleGroup::SignalChain
-        }
-        // Everything else without connections
-        _ => ModuleGroup::Disconnected,
+        // Everything else with connections participates in the signal chain
+        _ => ModuleGroup::SignalChain,
     }
 }
 
-fn has_connections(module_id: ModuleId, connections: &[LayoutConnection]) -> bool {
-    connections
-        .iter()
-        .any(|c| c.from_module == module_id || c.to_module == module_id)
+/// Utility/Visualizer modules that should live in the global column.
+/// Everything else in Utility/Visualizer is treated as signal-chain.
+fn is_global_aux_type(module_type: ModuleType) -> bool {
+    matches!(
+        module_type,
+        ModuleType::Oscilloscope
+            | ModuleType::LevelMeter
+            | ModuleType::SpectrumAnalyzer
+            | ModuleType::ModMatrix
+    )
 }
 
 // ── Topological sort (Kahn's algorithm) ────────────────────────────────────
 
-/// Returns modules in topological order. Modules involved in cycles are placed at the front.
+/// Returns modules in topological order, breaking cycles deterministically.
 fn topological_sort_kahn(
     module_ids: &[ModuleId],
     outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
@@ -116,37 +140,50 @@ fn topological_sort_kahn(
         in_degree.insert(id, deg);
     }
 
-    let mut queue: VecDeque<ModuleId> = in_degree
+    let mut available: Vec<ModuleId> = in_degree
         .iter()
         .filter(|&(_, &d)| d == 0)
         .map(|(&id, _)| id)
         .collect();
 
+    let mut remaining: HashSet<ModuleId> = id_set.clone();
     let mut sorted = Vec::with_capacity(module_ids.len());
 
-    while let Some(node) = queue.pop_front() {
+    while sorted.len() < module_ids.len() {
+        if available.is_empty() {
+            // Break a cycle: pick a deterministic remaining node and cut its incoming edges.
+            let mut candidates: Vec<ModuleId> = remaining.iter().copied().collect();
+            candidates.sort_by_key(module_sort_key);
+            if let Some(&id) = candidates.first() {
+                if let Some(deg) = in_degree.get_mut(&id) {
+                    *deg = 0;
+                }
+                available.push(id);
+            }
+        }
+
+        let next_idx = index_of_min_by_key(&available);
+        let node = available.swap_remove(next_idx);
+        if !remaining.remove(&node) {
+            continue;
+        }
         sorted.push(node);
+
         if let Some(neighbors) = outgoing.get(&node) {
             for &neighbor in neighbors {
-                if let Some(deg) = in_degree.get_mut(&neighbor) {
-                    *deg = deg.saturating_sub(1);
+                if let Some(deg) = in_degree.get_mut(&neighbor)
+                    && *deg > 0
+                {
+                    *deg -= 1;
                     if *deg == 0 {
-                        queue.push_back(neighbor);
+                        available.push(neighbor);
                     }
                 }
             }
         }
     }
 
-    // Cycle handling: any remaining nodes go at the front (depth 0)
-    let sorted_set: HashSet<ModuleId> = sorted.iter().copied().collect();
-    let mut cycle_nodes: Vec<ModuleId> = module_ids
-        .iter()
-        .filter(|id| !sorted_set.contains(id))
-        .copied()
-        .collect();
-    cycle_nodes.append(&mut sorted);
-    cycle_nodes
+    sorted
 }
 
 // ── Depth assignment (longest path) ────────────────────────────────────────
@@ -159,6 +196,11 @@ fn assign_signal_depths(
 ) -> HashMap<ModuleId, usize> {
     let id_set: HashSet<ModuleId> = signal_ids.iter().copied().collect();
     let topo_order = topological_sort_kahn(signal_ids, outgoing, incoming);
+    let order_index: HashMap<ModuleId, usize> = topo_order
+        .iter()
+        .enumerate()
+        .map(|(idx, &id)| (id, idx))
+        .collect();
 
     // Longest-path forward pass
     let mut depth: HashMap<ModuleId, usize> = HashMap::new();
@@ -171,6 +213,13 @@ fn assign_signal_depths(
         if let Some(neighbors) = outgoing.get(&node) {
             for &neighbor in neighbors {
                 if id_set.contains(&neighbor) {
+                    let order_ok = order_index
+                        .get(&neighbor)
+                        .and_then(|&n_idx| order_index.get(&node).map(|&c_idx| n_idx > c_idx))
+                        .unwrap_or(false);
+                    if !order_ok {
+                        continue;
+                    }
                     let entry = depth.entry(neighbor).or_insert(0);
                     *entry = (*entry).max(current_depth + 1);
                 }
@@ -216,15 +265,22 @@ fn compact_depths(depth: &mut HashMap<ModuleId, usize>) {
 // ── Vertical ordering (median heuristic) ───────────────────────────────────
 
 /// Build column→Vec<ModuleId> map from depth assignments.
-fn build_columns(depth: &HashMap<ModuleId, usize>) -> HashMap<usize, Vec<ModuleId>> {
+fn build_columns(
+    depth: &HashMap<ModuleId, usize>,
+    signal_ids: &[ModuleId],
+) -> HashMap<usize, Vec<ModuleId>> {
     let mut columns: HashMap<usize, Vec<ModuleId>> = HashMap::new();
-    for (&id, &col) in depth {
-        columns.entry(col).or_default().push(id);
+    let mut ordered_ids: Vec<ModuleId> = signal_ids.to_vec();
+    ordered_ids.sort_by_key(module_sort_key);
+    for id in ordered_ids {
+        if let Some(&col) = depth.get(&id) {
+            columns.entry(col).or_default().push(id);
+        }
     }
     columns
 }
 
-/// Assign vertical positions within columns using median heuristic to minimize crossings.
+/// Assign vertical positions within columns using multi-sweep median heuristic to reduce crossings.
 /// Returns a map from ModuleId → row index within its column.
 fn order_within_columns(
     columns: &mut HashMap<usize, Vec<ModuleId>>,
@@ -245,14 +301,33 @@ fn order_within_columns(
         }
     }
 
-    // Left→right pass
-    for col in 1..num_columns {
-        sort_column_by_median(columns, &mut row_of, col, depth, incoming, true);
+    let mut best_columns = columns.clone();
+    let mut best_crossings = total_crossings(columns, outgoing, num_columns);
+
+    for _ in 0..MAX_SWEEPS {
+        let mut changed = false;
+
+        // Left→right pass
+        for col in 1..num_columns {
+            changed |= sort_column_by_median(columns, &mut row_of, col, depth, incoming, true);
+        }
+        // Right→left pass
+        for col in (0..num_columns.saturating_sub(1)).rev() {
+            changed |= sort_column_by_median(columns, &mut row_of, col, depth, outgoing, false);
+        }
+
+        let crossings = total_crossings(columns, outgoing, num_columns);
+        if crossings < best_crossings {
+            best_crossings = crossings;
+            best_columns = columns.clone();
+        }
+
+        if !changed {
+            break;
+        }
     }
-    // Right→left pass
-    for col in (0..num_columns.saturating_sub(1)).rev() {
-        sort_column_by_median(columns, &mut row_of, col, depth, outgoing, false);
-    }
+
+    *columns = best_columns;
 }
 
 fn sort_column_by_median(
@@ -262,14 +337,14 @@ fn sort_column_by_median(
     depth: &HashMap<ModuleId, usize>,
     adj: &HashMap<ModuleId, Vec<ModuleId>>,
     use_incoming: bool,
-) {
+) -> bool {
     let Some(col_modules) = columns.get(&col) else {
-        return;
+        return false;
     };
     let col_modules_clone: Vec<ModuleId> = col_modules.clone();
 
     // Compute median for each module
-    let mut medians: Vec<(ModuleId, Option<f32>)> = col_modules_clone
+    let mut medians: Vec<(ModuleId, Option<f32>, usize)> = col_modules_clone
         .iter()
         .map(|&id| {
             let neighbors = adj.get(&id).map(|n| {
@@ -277,10 +352,12 @@ fn sort_column_by_median(
                     .iter()
                     .filter(|&&neighbor| {
                         let neighbor_col = depth.get(&neighbor).copied().unwrap_or(usize::MAX);
-                        if use_incoming {
-                            neighbor_col.checked_add(1) == Some(col)
+                        if neighbor_col == usize::MAX {
+                            false
+                        } else if use_incoming {
+                            neighbor_col < col
                         } else {
-                            col.checked_add(1) == Some(neighbor_col)
+                            neighbor_col > col
                         }
                     })
                     .filter_map(|&neighbor| row_of.get(&neighbor).copied())
@@ -294,22 +371,34 @@ fn sort_column_by_median(
                     None
                 } else {
                     let mid = rows.len() / 2;
-                    Some(rows[mid] as f32)
+                    if rows.len() % 2 == 1 {
+                        Some(rows[mid] as f32)
+                    } else {
+                        let a = rows[mid - 1] as f32;
+                        let b = rows[mid] as f32;
+                        Some((a + b) / 2.0)
+                    }
                 }
             });
-            (id, median)
+            let prev_row = row_of.get(&id).copied().unwrap_or(usize::MAX);
+            (id, median, prev_row)
         })
         .collect();
 
-    // Sort: modules with medians first (by median), then modules without
+    // Sort: modules with medians first (by median), then modules without.
+    // Tie-break with previous row to keep ordering stable.
     medians.sort_by(|a, b| match (a.1, b.1) {
-        (Some(ma), Some(mb)) => ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(ma), Some(mb)) => ma
+            .partial_cmp(&mb)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.2.cmp(&b.2)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
+        (None, None) => a.2.cmp(&b.2),
     });
 
-    let sorted_ids: Vec<ModuleId> = medians.iter().map(|(id, _)| *id).collect();
+    let sorted_ids: Vec<ModuleId> = medians.iter().map(|(id, _, _)| *id).collect();
+    let changed = sorted_ids != col_modules_clone;
 
     // Update row_of
     for (row, &id) in sorted_ids.iter().enumerate() {
@@ -319,11 +408,92 @@ fn sort_column_by_median(
     if let Some(col_vec) = columns.get_mut(&col) {
         *col_vec = sorted_ids;
     }
+
+    changed
+}
+
+fn total_crossings(
+    columns: &HashMap<usize, Vec<ModuleId>>,
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    num_columns: usize,
+) -> usize {
+    let mut row_of: HashMap<ModuleId, usize> = HashMap::new();
+    for modules in columns.values() {
+        for (row, &id) in modules.iter().enumerate() {
+            row_of.insert(id, row);
+        }
+    }
+
+    let mut total = 0;
+    for col in 0..num_columns.saturating_sub(1) {
+        total += crossings_between_columns(col, col + 1, columns, outgoing, &row_of);
+    }
+    total
+}
+
+fn crossings_between_columns(
+    left_col: usize,
+    right_col: usize,
+    columns: &HashMap<usize, Vec<ModuleId>>,
+    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
+    row_of: &HashMap<ModuleId, usize>,
+) -> usize {
+    let Some(left_ids) = columns.get(&left_col) else {
+        return 0;
+    };
+    let Some(right_ids) = columns.get(&right_col) else {
+        return 0;
+    };
+
+    let left_set: HashSet<ModuleId> = left_ids.iter().copied().collect();
+    let right_set: HashSet<ModuleId> = right_ids.iter().copied().collect();
+
+    let mut seen: HashSet<(ModuleId, ModuleId)> = HashSet::new();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    for &u in left_ids {
+        if let Some(neighbors) = outgoing.get(&u) {
+            for &v in neighbors {
+                if right_set.contains(&v)
+                    && seen.insert((u, v))
+                    && let (Some(&ru), Some(&rv)) = (row_of.get(&u), row_of.get(&v))
+                {
+                    pairs.push((ru, rv));
+                }
+            }
+        }
+    }
+
+    for &u in right_ids {
+        if let Some(neighbors) = outgoing.get(&u) {
+            for &v in neighbors {
+                if left_set.contains(&v)
+                    && seen.insert((v, u))
+                    && let (Some(&ru), Some(&rv)) = (row_of.get(&v), row_of.get(&u))
+                {
+                    pairs.push((ru, rv));
+                }
+            }
+        }
+    }
+
+    let mut crossings = 0;
+    for i in 0..pairs.len() {
+        for j in (i + 1)..pairs.len() {
+            let (a1, b1) = pairs[i];
+            let (a2, b2) = pairs[j];
+            if (a1 < a2 && b1 > b2) || (a1 > a2 && b1 < b2) {
+                crossings += 1;
+            }
+        }
+    }
+    crossings
 }
 
 // ── Modulation placement ───────────────────────────────────────────────────
 
 /// Returns (column, modulation_row) for each modulation module.
+/// Modules are placed one column left of their primary target when possible.
 fn place_modulation(
     mod_modules: &[ModuleId],
     outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
@@ -345,6 +515,7 @@ fn place_modulation(
                     .min()
             })
             .unwrap_or(0);
+        let mod_col = target_col.saturating_sub(1);
 
         // Find the target's row position for sorting
         let target_row = outgoing
@@ -363,7 +534,7 @@ fn place_modulation(
             .unwrap_or(0);
 
         mod_by_column
-            .entry(target_col)
+            .entry(mod_col)
             .or_default()
             .push((mod_id, target_row));
     }
@@ -385,8 +556,8 @@ fn place_modulation(
 ///
 /// Layout rules:
 /// 1. Signal-chain modules: left-to-right by topological depth
-/// 2. Modulation modules: below their primary targets
-/// 3. Global modules (effects, visualizers, utility): column after signal chain
+/// 2. Modulation modules: below and one column left of their primary targets (when possible)
+/// 3. Global modules (aux sinks like visualizers/utility): column after signal chain
 /// 4. Disconnected modules: rightmost column
 pub fn calculate_layout(
     modules: &[ModuleInfo],
@@ -407,11 +578,23 @@ pub fn calculate_layout(
     let mut disconnected_ids: Vec<ModuleId> = Vec::new();
 
     let mut categories: HashMap<ModuleId, ModuleCategory> = HashMap::new();
+    let mut has_incoming: HashMap<ModuleId, bool> = HashMap::new();
+    let mut has_outgoing: HashMap<ModuleId, bool> = HashMap::new();
+
+    for module in modules {
+        has_incoming.insert(module.id, false);
+        has_outgoing.insert(module.id, false);
+    }
+    for conn in connections {
+        has_outgoing.insert(conn.from_module, true);
+        has_incoming.insert(conn.to_module, true);
+    }
 
     for module in modules {
         categories.insert(module.id, module.category);
-        let connected = has_connections(module.id, connections);
-        match classify_module(module.category, connected) {
+        let incoming = *has_incoming.get(&module.id).unwrap_or(&false);
+        let outgoing = *has_outgoing.get(&module.id).unwrap_or(&false);
+        match classify_module(module.id, module.category, incoming, outgoing) {
             ModuleGroup::SignalChain => signal_ids.push(module.id),
             ModuleGroup::Modulation => mod_ids.push(module.id),
             ModuleGroup::Global => global_ids.push(module.id),
@@ -466,7 +649,7 @@ pub fn calculate_layout(
     let signal_depth =
         assign_signal_depths(&signal_ids, &outgoing_signal, &incoming_signal, &categories);
 
-    let mut columns = build_columns(&signal_depth);
+    let mut columns = build_columns(&signal_depth, &signal_ids);
 
     // ── Phase 3: Vertical ordering ─────────────────────────────────────
 
@@ -524,7 +707,7 @@ pub fn calculate_layout(
         }
     }
 
-    // Place modulation modules directly below their target column's signal modules.
+    // Place modulation modules directly below their assigned column's signal modules.
     // This avoids pushing modulators far down when one column is much taller than others.
     for (&mod_id, &(col, _mod_row)) in &mod_positions {
         let x = col_x.get(col).copied().unwrap_or(start_x);
@@ -608,8 +791,8 @@ mod tests {
     /// Default test size for modules.
     const TEST_SIZE: Vec2 = Vec2::new(200.0, 180.0);
 
-    fn make_id(n: u16) -> ModuleId {
-        ModuleId::new(synth_core::ModuleType::Oscillator, n)
+    fn make_id(module_type: ModuleType, n: u16) -> ModuleId {
+        ModuleId::new(module_type, n)
     }
 
     fn make_module(id: ModuleId, category: ModuleCategory) -> ModuleInfo {
@@ -632,11 +815,17 @@ mod tests {
 
     #[test]
     fn test_single_disconnected_module() {
-        let modules = vec![make_module(make_id(1), ModuleCategory::Oscillator)];
+        let modules = vec![make_module(
+            make_id(ModuleType::Oscillator, 1),
+            ModuleCategory::Oscillator,
+        )];
         let rect = test_rect();
         let result = calculate_layout(&modules, &[], rect);
 
-        let pos = result.positions.get(&make_id(1)).unwrap();
+        let pos = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
         assert!(pos.x >= rect.min.x);
         assert!(pos.y >= rect.min.y);
     }
@@ -645,18 +834,21 @@ mod tests {
     fn test_linear_chain_within_bounds() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
-            make_module(make_id(3), ModuleCategory::Amplifier),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 2), ModuleCategory::Filter),
+            make_module(make_id(ModuleType::Amplifier, 3), ModuleCategory::Amplifier),
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 2),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Filter, 2),
+                to_module: make_id(ModuleType::Amplifier, 3),
             },
         ];
 
@@ -669,9 +861,18 @@ mod tests {
         }
 
         // Should be left to right
-        let osc_pos = result.positions.get(&make_id(1)).unwrap();
-        let flt_pos = result.positions.get(&make_id(2)).unwrap();
-        let amp_pos = result.positions.get(&make_id(3)).unwrap();
+        let osc_pos = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let flt_pos = result
+            .positions
+            .get(&make_id(ModuleType::Filter, 2))
+            .unwrap();
+        let amp_pos = result
+            .positions
+            .get(&make_id(ModuleType::Amplifier, 3))
+            .unwrap();
         assert!(osc_pos.x < flt_pos.x);
         assert!(flt_pos.x < amp_pos.x);
     }
@@ -680,28 +881,47 @@ mod tests {
     fn test_modulation_below_and_within_bounds() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
-            make_module(make_id(3), ModuleCategory::Envelope),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 2), ModuleCategory::Filter),
+            make_module(make_id(ModuleType::Envelope, 3), ModuleCategory::Envelope),
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 2),
             },
             LayoutConnection {
-                from_module: make_id(3),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Envelope, 3),
+                to_module: make_id(ModuleType::Filter, 2),
             },
         ];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let flt_pos = result.positions.get(&make_id(2)).unwrap();
-        let env_pos = result.positions.get(&make_id(3)).unwrap();
+        let osc_pos = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let flt_pos = result
+            .positions
+            .get(&make_id(ModuleType::Filter, 2))
+            .unwrap();
+        let env_pos = result
+            .positions
+            .get(&make_id(ModuleType::Envelope, 3))
+            .unwrap();
 
         // Envelope below filter
         assert!(env_pos.y > flt_pos.y);
+        // Envelope in column left of filter when possible
+        assert!(env_pos.x <= flt_pos.x, "Envelope should be left of filter");
+        assert!(
+            (env_pos.x - osc_pos.x).abs() < 1.0,
+            "Envelope should align with the previous column"
+        );
 
         // All within bounds
         for pos in result.positions.values() {
@@ -715,22 +935,40 @@ mod tests {
         let rect = test_rect();
         let modules = vec![
             // Connected chain
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 2), ModuleCategory::Filter),
             // Disconnected
-            make_module(make_id(10), ModuleCategory::Oscillator),
-            make_module(make_id(11), ModuleCategory::Sequencer),
+            make_module(
+                make_id(ModuleType::Oscillator, 10),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(
+                make_id(ModuleType::Euclidean, 11),
+                ModuleCategory::Sequencer,
+            ),
         ];
         let connections = vec![LayoutConnection {
-            from_module: make_id(1),
-            to_module: make_id(2),
+            from_module: make_id(ModuleType::Oscillator, 1),
+            to_module: make_id(ModuleType::Filter, 2),
         }];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let connected_pos_1 = result.positions.get(&make_id(1)).unwrap();
-        let disconnected_pos_1 = result.positions.get(&make_id(10)).unwrap();
-        let disconnected_pos_2 = result.positions.get(&make_id(11)).unwrap();
+        let connected_pos_1 = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let disconnected_pos_1 = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 10))
+            .unwrap();
+        let disconnected_pos_2 = result
+            .positions
+            .get(&make_id(ModuleType::Euclidean, 11))
+            .unwrap();
 
         // Disconnected should be to the right of connected
         assert!(
@@ -751,26 +989,41 @@ mod tests {
     fn test_multi_source_to_mixer() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Oscillator),
-            make_module(make_id(3), ModuleCategory::Mixer),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(
+                make_id(ModuleType::Oscillator, 2),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Mixer, 3), ModuleCategory::Mixer),
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Mixer, 3),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 2),
+                to_module: make_id(ModuleType::Mixer, 3),
             },
         ];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let osc1 = result.positions.get(&make_id(1)).unwrap();
-        let osc2 = result.positions.get(&make_id(2)).unwrap();
-        let mixer = result.positions.get(&make_id(3)).unwrap();
+        let osc1 = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let osc2 = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 2))
+            .unwrap();
+        let mixer = result
+            .positions
+            .get(&make_id(ModuleType::Mixer, 3))
+            .unwrap();
 
         // Both oscillators in column 0
         assert!(
@@ -795,46 +1048,64 @@ mod tests {
     fn test_complex_patch() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
-            make_module(make_id(3), ModuleCategory::Amplifier),
-            make_module(make_id(4), ModuleCategory::Output),
-            make_module(make_id(10), ModuleCategory::Envelope),
-            make_module(make_id(11), ModuleCategory::LFO),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 2), ModuleCategory::Filter),
+            make_module(make_id(ModuleType::Amplifier, 3), ModuleCategory::Amplifier),
+            make_module(make_id(ModuleType::StereoOutput, 4), ModuleCategory::Output),
+            make_module(make_id(ModuleType::Envelope, 10), ModuleCategory::Envelope),
+            make_module(make_id(ModuleType::Lfo, 11), ModuleCategory::LFO),
         ];
         let connections = vec![
             // Signal chain: OSC → Filter → Amp → Output
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 2),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Filter, 2),
+                to_module: make_id(ModuleType::Amplifier, 3),
             },
             LayoutConnection {
-                from_module: make_id(3),
-                to_module: make_id(4),
+                from_module: make_id(ModuleType::Amplifier, 3),
+                to_module: make_id(ModuleType::StereoOutput, 4),
             },
             // ENV → Filter, LFO → Amp
             LayoutConnection {
-                from_module: make_id(10),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Envelope, 10),
+                to_module: make_id(ModuleType::Filter, 2),
             },
             LayoutConnection {
-                from_module: make_id(11),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Lfo, 11),
+                to_module: make_id(ModuleType::Amplifier, 3),
             },
         ];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let osc = result.positions.get(&make_id(1)).unwrap();
-        let flt = result.positions.get(&make_id(2)).unwrap();
-        let amp = result.positions.get(&make_id(3)).unwrap();
-        let out = result.positions.get(&make_id(4)).unwrap();
-        let env = result.positions.get(&make_id(10)).unwrap();
-        let lfo = result.positions.get(&make_id(11)).unwrap();
+        let osc = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let flt = result
+            .positions
+            .get(&make_id(ModuleType::Filter, 2))
+            .unwrap();
+        let amp = result
+            .positions
+            .get(&make_id(ModuleType::Amplifier, 3))
+            .unwrap();
+        let out = result
+            .positions
+            .get(&make_id(ModuleType::StereoOutput, 4))
+            .unwrap();
+        let env = result
+            .positions
+            .get(&make_id(ModuleType::Envelope, 10))
+            .unwrap();
+        let lfo = result.positions.get(&make_id(ModuleType::Lfo, 11)).unwrap();
 
         // Signal chain left-to-right
         assert!(osc.x < flt.x, "OSC should be left of Filter");
@@ -859,34 +1130,43 @@ mod tests {
     fn test_no_overlap() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Oscillator),
-            make_module(make_id(3), ModuleCategory::Filter),
-            make_module(make_id(4), ModuleCategory::Amplifier),
-            make_module(make_id(5), ModuleCategory::Output),
-            make_module(make_id(10), ModuleCategory::Envelope),
-            make_module(make_id(20), ModuleCategory::Visualizer),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(
+                make_id(ModuleType::Oscillator, 2),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 3), ModuleCategory::Filter),
+            make_module(make_id(ModuleType::Amplifier, 4), ModuleCategory::Amplifier),
+            make_module(make_id(ModuleType::StereoOutput, 5), ModuleCategory::Output),
+            make_module(make_id(ModuleType::Envelope, 10), ModuleCategory::Envelope),
+            make_module(
+                make_id(ModuleType::Oscilloscope, 20),
+                ModuleCategory::Visualizer,
+            ),
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 3),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 2),
+                to_module: make_id(ModuleType::Filter, 3),
             },
             LayoutConnection {
-                from_module: make_id(3),
-                to_module: make_id(4),
+                from_module: make_id(ModuleType::Filter, 3),
+                to_module: make_id(ModuleType::Amplifier, 4),
             },
             LayoutConnection {
-                from_module: make_id(4),
-                to_module: make_id(5),
+                from_module: make_id(ModuleType::Amplifier, 4),
+                to_module: make_id(ModuleType::StereoOutput, 5),
             },
             LayoutConnection {
-                from_module: make_id(10),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Envelope, 10),
+                to_module: make_id(ModuleType::Filter, 3),
             },
         ];
 
@@ -920,26 +1200,38 @@ mod tests {
     fn test_output_rightmost() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
-            make_module(make_id(3), ModuleCategory::Output),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Filter, 2), ModuleCategory::Filter),
+            make_module(make_id(ModuleType::StereoOutput, 3), ModuleCategory::Output),
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(2),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 2),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Filter, 2),
+                to_module: make_id(ModuleType::StereoOutput, 3),
             },
         ];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let osc = result.positions.get(&make_id(1)).unwrap();
-        let flt = result.positions.get(&make_id(2)).unwrap();
-        let out = result.positions.get(&make_id(3)).unwrap();
+        let osc = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let flt = result
+            .positions
+            .get(&make_id(ModuleType::Filter, 2))
+            .unwrap();
+        let out = result
+            .positions
+            .get(&make_id(ModuleType::StereoOutput, 3))
+            .unwrap();
 
         // Output must be at the rightmost signal column
         assert!(
@@ -952,32 +1244,85 @@ mod tests {
     }
 
     #[test]
-    fn test_utility_is_global() {
+    fn test_effect_in_signal_chain() {
         let rect = test_rect();
         let modules = vec![
-            make_module(make_id(1), ModuleCategory::Oscillator),
-            make_module(make_id(2), ModuleCategory::Filter),
-            make_module(make_id(10), ModuleCategory::Utility),
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::Delay, 2), ModuleCategory::Effect),
+            make_module(make_id(ModuleType::StereoOutput, 3), ModuleCategory::Output),
         ];
-        let connections = vec![LayoutConnection {
-            from_module: make_id(1),
-            to_module: make_id(2),
-        }];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Delay, 2),
+            },
+            LayoutConnection {
+                from_module: make_id(ModuleType::Delay, 2),
+                to_module: make_id(ModuleType::StereoOutput, 3),
+            },
+        ];
 
         let result = calculate_layout(&modules, &connections, rect);
 
-        let osc = result.positions.get(&make_id(1)).unwrap();
-        let flt = result.positions.get(&make_id(2)).unwrap();
-        let util = result.positions.get(&make_id(10)).unwrap();
+        let osc = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let eff = result
+            .positions
+            .get(&make_id(ModuleType::Delay, 2))
+            .unwrap();
+        let out = result
+            .positions
+            .get(&make_id(ModuleType::StereoOutput, 3))
+            .unwrap();
 
-        // Utility should be to the right of the signal chain (global zone)
-        let max_signal_x = osc.x.max(flt.x);
-        assert!(
-            util.x > max_signal_x,
-            "Utility should be in global zone (right of signal chain). util.x={}, max_signal_x={}",
-            util.x,
-            max_signal_x
-        );
+        assert!(osc.x < eff.x, "Effect should be right of oscillator");
+        assert!(eff.x < out.x, "Output should be right of effect");
+    }
+
+    #[test]
+    fn test_utility_in_signal_chain() {
+        let rect = test_rect();
+        let modules = vec![
+            make_module(
+                make_id(ModuleType::Oscillator, 1),
+                ModuleCategory::Oscillator,
+            ),
+            make_module(make_id(ModuleType::VectorMixer, 2), ModuleCategory::Utility),
+            make_module(make_id(ModuleType::StereoOutput, 3), ModuleCategory::Output),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::VectorMixer, 2),
+            },
+            LayoutConnection {
+                from_module: make_id(ModuleType::VectorMixer, 2),
+                to_module: make_id(ModuleType::StereoOutput, 3),
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let osc = result
+            .positions
+            .get(&make_id(ModuleType::Oscillator, 1))
+            .unwrap();
+        let util = result
+            .positions
+            .get(&make_id(ModuleType::VectorMixer, 2))
+            .unwrap();
+        let out = result
+            .positions
+            .get(&make_id(ModuleType::StereoOutput, 3))
+            .unwrap();
+
+        assert!(osc.x < util.x, "Utility should be right of oscillator");
+        assert!(util.x < out.x, "Output should be right of utility");
     }
 
     #[test]
@@ -986,56 +1331,56 @@ mod tests {
         // Simulate realistic mixed sizes: small oscillator, tall envelope, wide mixer
         let modules = vec![
             ModuleInfo {
-                id: make_id(1),
+                id: make_id(ModuleType::Oscillator, 1),
                 category: ModuleCategory::Oscillator,
                 size: Vec2::new(200.0, 150.0),
             },
             ModuleInfo {
-                id: make_id(2),
+                id: make_id(ModuleType::Oscillator, 2),
                 category: ModuleCategory::Oscillator,
                 size: Vec2::new(200.0, 260.0),
             },
             ModuleInfo {
-                id: make_id(3),
+                id: make_id(ModuleType::Filter, 3),
                 category: ModuleCategory::Filter,
                 size: Vec2::new(220.0, 280.0),
             },
             ModuleInfo {
-                id: make_id(4),
+                id: make_id(ModuleType::Amplifier, 4),
                 category: ModuleCategory::Amplifier,
                 size: Vec2::new(180.0, 200.0),
             },
             ModuleInfo {
-                id: make_id(5),
+                id: make_id(ModuleType::StereoOutput, 5),
                 category: ModuleCategory::Output,
                 size: Vec2::new(160.0, 120.0),
             },
             ModuleInfo {
-                id: make_id(10),
+                id: make_id(ModuleType::Envelope, 10),
                 category: ModuleCategory::Envelope,
                 size: Vec2::new(250.0, 360.0),
             },
         ];
         let connections = vec![
             LayoutConnection {
-                from_module: make_id(1),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 1),
+                to_module: make_id(ModuleType::Filter, 3),
             },
             LayoutConnection {
-                from_module: make_id(2),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Oscillator, 2),
+                to_module: make_id(ModuleType::Filter, 3),
             },
             LayoutConnection {
-                from_module: make_id(3),
-                to_module: make_id(4),
+                from_module: make_id(ModuleType::Filter, 3),
+                to_module: make_id(ModuleType::Amplifier, 4),
             },
             LayoutConnection {
-                from_module: make_id(4),
-                to_module: make_id(5),
+                from_module: make_id(ModuleType::Amplifier, 4),
+                to_module: make_id(ModuleType::StereoOutput, 5),
             },
             LayoutConnection {
-                from_module: make_id(10),
-                to_module: make_id(3),
+                from_module: make_id(ModuleType::Envelope, 10),
+                to_module: make_id(ModuleType::Filter, 3),
             },
         ];
 

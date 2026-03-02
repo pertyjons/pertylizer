@@ -1,5 +1,20 @@
 # Version History
 
+## [0.203.0] - 2026-03-02
+### CI improvements, console removal, public release prep
+- **Removed console GUI backend** — simplified CLI to just `--headless` and `--help`
+- **Renamed `--mcp` flag to `--headless`** — clearer meaning for running without GUI
+- **CI enhancements** — cargo cache, security audit (`cargo audit`), MSRV check (Rust 1.93), binary size logging
+- **Dependabot** — automatic weekly dependency update PRs for Cargo and GitHub Actions
+- **Build status badge** in README
+- **Auto-release** — CI creates GitHub Release with binaries and changelog when version is bumped
+- **MIT LICENSE file** added
+- **Repository metadata** — `repository` URL and `description` added to workspace Cargo.toml
+- **Sensitive files removed from git** — `.claude/settings.local.json` and AI tool configs untracked
+- **Git history cleaned** — author email replaced with GitHub no-reply address
+- **Improved auto-layout** — deterministic cycle-breaking in topological sort
+- **Removed empty benchmark placeholder**
+
 ## [0.202.0] - 2026-03-02
 ### GitHub Actions CI
 - **CI workflow** — GitHub Actions builds and tests on Ubuntu, Fedora (container), macOS, and Windows

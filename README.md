@@ -1,5 +1,7 @@
 # Pertylizer
 
+[![Build & Test](https://github.com/pertyjons/pertylizer/actions/workflows/build.yml/badge.svg)](https://github.com/pertyjons/pertylizer/actions/workflows/build.yml)
+
 > **Disclaimer:** This application is primarily AI-generated (built with Claude Code). The author takes no responsibility whatsoever for anything — use entirely at your own risk.
 
 A modular audio synthesizer written in Rust with a real-time egui GUI, pattern sequencer, spatial audio engine, and MCP integration for AI-assisted sound design.
