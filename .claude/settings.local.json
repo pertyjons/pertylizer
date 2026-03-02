@@ -256,7 +256,8 @@
       "mcp__synth__disconnect",
       "mcp__synth__remove_module",
       "Bash(read icon:*)",
-      "Bash(do grep:*)"
+      "Bash(do grep:*)",
+      "Bash(cargo metadata:*)"
     ],
     "deny": [],
     "ask": []

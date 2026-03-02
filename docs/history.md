@@ -1,5 +1,11 @@
 # Version History
 
+## [0.202.0] - 2026-03-02
+### GitHub Actions CI
+- **CI workflow** — GitHub Actions builds and tests on Ubuntu, Fedora (container), macOS, and Windows
+- **Release binaries uploaded** as downloadable artifacts for all four platforms
+- **Cross-platform build.rs** — replaced Unix `date` shell command with pure Rust date calculation
+
 ## [0.201.0] - 2026-03-02
 ### Rename to Pertylizer
 - **Project renamed** from `modular_synth` / `modular-synth` to `pertylizer` — crate, binary, data paths, MIDI client names, UI strings, and all documentation updated
@@ -1387,12 +1393,12 @@ Added to Lead category in patch browser.
 ### Added - 8 nya kreativa patchar med Ring Mod, Envelope Follower & Wavetable
 - **Vocal Pad**: Eterisk körliknande pad med Formant-wavetable och LFO-driven vokal-morphing genom vowel-shapes.
 - **Metallic Bell**: Skimrande metallisk klocka — Digital wavetable genom Ring Mod med keyboard tracking skapar inharmoniska övertoner.
-- **Auto-Wah Bass**: Funky auto-wah bass där Envelope Follower trackar speladynamik och driver Acid-filtrets cutoff i realtid.
-- **Digital Chime**: Kristallint chime-ljud med Digital wavetable och envelope-driven position-sweep genom komplexa vågformer.
-- **Warm Evolving**: Långsamt evolverande ambient-textur med Warm wavetable, mycket långsam LFO-scanning och djup reverb.
-- **Harmonic Lead**: Expressiv lead med Harmonics wavetable — envelope sveper från enkel sinuston till 32 harmoniska på varje ton.
-- **Ring Mod Drone**: Djupt evolverande drone — LFO modulerar Ring Mod carrier-frekvens för kontinuerligt skiftande sidband.
-- **PWM E-Piano**: Varmt elpiano med PWM wavetable, envelope-driven pulsbredd-sweep, Fluid-filter och klassisk chorus.
+- **Auto-Wah Bass**: Funky auto-wah bass where Envelope Follower tracks playing dynamics and drives the Acid filter's cutoff in real time.
+- **Digital Chime**: Crystalline chime sound with Digital wavetable and envelope-driven position sweep through complex waveforms.
+- **Warm Evolving**: Slowly evolving ambient texture with Warm wavetable, very slow LFO scanning and deep reverb.
+- **Harmonic Lead**: Expressive lead with Harmonics wavetable — envelope sweeps from simple sine tone to 32 harmonics on each note.
+- **Ring Mod Drone**: Deeply evolving drone — LFO modulates Ring Mod carrier frequency for continuously shifting sidebands.
+- **PWM E-Piano**: Warm electric piano with PWM wavetable, envelope-driven pulse width sweep, Fluid filter and classic chorus.
 
 ## [0.117.0] - 2026-02-14
 ### Improved - Categorized submenus for Example Patches
@@ -1401,294 +1407,294 @@ Added to Lead category in patch browser.
 - **New function `categorized_patches()`**: Returns patches grouped by category, used by the menu. `example_patches()` remains as a flat list.
 
 ## [0.116.0] - 2026-02-13
-### Added - Våg 1: Ring Modulation, Envelope Follower, Wavetable Syntes
-- **Ring Modulation**: Ny voice-modul som multiplicerar insignal med intern carrier-oscillator. Stöder 5 vågformer (sine/tri/saw/square/pulse), keyboard tracking, frekvensratio (0.25x-4.0x), dry/wet mix och freq CV-ingång. Ger metalliska klockljud, sci-fi-texturer och inharmoniska övertoner.
-- **Envelope Follower**: Ny voice-modul som trackar amplituden av en insignal och producerar en kontrollsignal (0.0-1.0). One-pole filter med separata attack/release-koefficienter och sensitivity-kontroll. Användbar för auto-wah, sidechain-liknande effekter och dynamisk modulering.
-- **Wavetable Syntes**: Ny voice-modul med 6 inbyggda wavetable-banker:
+### Added - Wave 1: Ring Modulation, Envelope Follower, Wavetable Synthesis
+- **Ring Modulation**: New voice module that multiplies input signal with internal carrier oscillator. Supports 5 waveforms (sine/tri/saw/square/pulse), keyboard tracking, frequency ratio (0.25x-4.0x), dry/wet mix and freq CV input. Produces metallic bell sounds, sci-fi textures and inharmonic overtones.
+- **Envelope Follower**: New voice module that tracks the amplitude of an input signal and produces a control signal (0.0-1.0). One-pole filter with separate attack/release coefficients and sensitivity control. Useful for auto-wah, sidechain-like effects and dynamic modulation.
+- **Wavetable Synthesis**: New voice module with 6 built-in wavetable banks:
   - **Basic**: Sine → Triangle → Saw → Square morph (64 frames)
-  - **Harmonics**: 1→32 harmoniska additiv syntes (32 frames)
-  - **PWM**: Pulsbredd 50%→5% (32 frames)
-  - **Formant**: Vokalformanter a/e/i/o/u med interpolation (32 frames)
-  - **Digital**: FM, hard sync, bitcrush, ring mod-liknande (32 frames)
-  - **Warm**: Mjuka analoga varianter med harmonisk saturation (32 frames)
-- **Wavetable-scanning**: Position-parameter (0.0-1.0) med CV-modulering för timbral rörelse.
-- **GUI-integration**: Wavetable i Oscillator-menyn, Ring Mod och Env Follower i ny "Modulation"-submeny.
-- **Patch-serialisering**: Alla tre moduler stöder save/load med PatchModuleType.
+  - **Harmonics**: 1→32 harmonic additive synthesis (32 frames)
+  - **PWM**: Pulse width 50%→5% (32 frames)
+  - **Formant**: Vocal formants a/e/i/o/u with interpolation (32 frames)
+  - **Digital**: FM, hard sync, bitcrush, ring mod-like (32 frames)
+  - **Warm**: Soft analog variants with harmonic saturation (32 frames)
+- **Wavetable scanning**: Position parameter (0.0-1.0) with CV modulation for timbral movement.
+- **GUI integration**: Wavetable in Oscillator menu, Ring Mod and Env Follower in new "Modulation" submenu.
+- **Patch serialization**: All three modules support save/load with PatchModuleType.
 
 ## [0.115.0] - 2026-02-13
-### Added - Character Filters (Analog filtermodeller)
-- **FilterModel-parameter**: Ny Model-väljare i Filter-modulen med 4 alternativ: Standard, Fluid, Screamer, Acid.
-- **Fluid** (Oberheim-inspirerad): SVF med normaliserad tanh-saturation och kontinuerlig Morph-kontroll (LP→BP→HP→Notch) via constant-power crossfade.
-- **Screamer** (MS-20-inspirerad): Sallen-Key HP→LP-kaskad med asymmetrisk diod-clipping i feedbackloopen. Aggressiv, skrikande resonans.
-- **Acid** (Steiner-Parker-inspirerad): ZDF 2-pol med resonansberoende variabel saturation (tanh→sine-fold blend). Stöder LP/BP/HP-modes.
-- **Morph-knob**: Ny parameter för Fluid-modellen som smidigt korsfadar mellan filterutgångar.
-- **Realtidssäkert**: Alla filterstructs är Copy med enbart f32-fält, inga heap-allokeringar.
-- **Patch: Fluid Pad**: Evolverande pad med Fluid-filtrets morph svept av LFO, 5-voice triangle unison och reverb.
-- **Patch: Fluid Keys**: Varmt elpiano med Fluid-morph som skapar klockliknande övertoner via envelope-sweep, chorus.
-- **Patch: Screamer Lead**: Aggressiv lead med Screamer-filtrets diod-clipping, hög resonans och snabb envelope-sweep.
-- **Patch: Acid Bass**: Klassisk 303-acid med Acid-filtrets variabla saturation, square-oscillator och snabb cutoff-sweep.
+### Added - Character Filters (Analog filter models)
+- **FilterModel parameter**: New Model selector in the Filter module with 4 options: Standard, Fluid, Screamer, Acid.
+- **Fluid** (Oberheim-inspired): SVF with normalized tanh saturation and continuous Morph control (LP→BP→HP→Notch) via constant-power crossfade.
+- **Screamer** (MS-20-inspired): Sallen-Key HP→LP cascade with asymmetric diode clipping in the feedback loop. Aggressive, screaming resonance.
+- **Acid** (Steiner-Parker-inspired): ZDF 2-pole with resonance-dependent variable saturation (tanh→sine-fold blend). Supports LP/BP/HP modes.
+- **Morph knob**: New parameter for the Fluid model that smoothly crossfades between filter outputs.
+- **Real-time safe**: All filter structs are Copy with only f32 fields, no heap allocations.
+- **Patch: Fluid Pad**: Evolving pad with the Fluid filter's morph swept by LFO, 5-voice triangle unison and reverb.
+- **Patch: Fluid Keys**: Warm electric piano with Fluid morph creating bell-like overtones via envelope sweep, chorus.
+- **Patch: Screamer Lead**: Aggressive lead with the Screamer filter's diode clipping, high resonance and fast envelope sweep.
+- **Patch: Acid Bass**: Classic 303 acid with the Acid filter's variable saturation, square oscillator and fast cutoff sweep.
 
 ## [0.114.0] - 2026-02-13
-### Added - Intra-voice Unison i Oscillator
-- **Unison-röster**: 1-7 detunade oscillatorkopior inuti varje röst, ger fett unison-ljud utan att multiplicera röstkostnaden.
-- **Parametrar**: Unison (antal röster), Uni Detune (0-100 cent spridning), Uni Spread (stereo-panorering), Uni Phase (fasrandomisering vid note-on).
-- **Stereo-utgångar**: Nya `out_l` och `out_r`-portar med constant-power panorering för stereo-unison. Mono `out`-porten är bakåtkompatibel.
-- **Realtidssäkert**: Alla arrayer är fixed-size [T; 7], ingen heap-allokering i process(). Fasrandomisering via lock-free fastrand.
-- **n=1 specialfall**: När unison är av (1 röst) skippas panorering helt, exakt samma beteende som innan.
-- **Patch: Unison Supersaw**: Klassisk trance-supersaw med 7-voice unison, filter-envelope och chorus.
-- **Patch: Stereo Unison Pad**: Bred ambient-pad med triangle-unison via stereo-utgångar (out_l/out_r) direkt till amp.
-- **Patch: Unison Sync Lead**: Aggressiv hard-sync lead med tight 3-voice mono-unison och waveshaper.
-- **Patch: Unison PWM Strings**: Lush strängensemble med puls-PWM, 5-voice stereo-unison, chorus och reverb.
+### Added - Intra-voice Unison in Oscillator
+- **Unison voices**: 1-7 detuned oscillator copies inside each voice, producing fat unison sound without multiplying voice cost.
+- **Parameters**: Unison (number of voices), Uni Detune (0-100 cent spread), Uni Spread (stereo panning), Uni Phase (phase randomization at note-on).
+- **Stereo outputs**: New `out_l` and `out_r` ports with constant-power panning for stereo unison. Mono `out` port is backward-compatible.
+- **Real-time safe**: All arrays are fixed-size [T; 7], no heap allocation in process(). Phase randomization via lock-free fastrand.
+- **n=1 special case**: When unison is off (1 voice), panning is skipped entirely, exact same behavior as before.
+- **Patch: Unison Supersaw**: Classic trance supersaw with 7-voice unison, filter envelope and chorus.
+- **Patch: Stereo Unison Pad**: Wide ambient pad with triangle unison via stereo outputs (out_l/out_r) directly to amp.
+- **Patch: Unison Sync Lead**: Aggressive hard-sync lead with tight 3-voice mono unison and waveshaper.
+- **Patch: Unison PWM Strings**: Lush string ensemble with pulse PWM, 5-voice stereo unison, chorus and reverb.
 
 ## [0.113.0] - 2026-02-13
-### Added - Waveshaper-modul
-- **Waveshaper-effekt**: Ny kreativ waveshaping-modul med 6 kurvor: Soft Clip, Asymmetric, Fold, Chebyshev, Sine Fold, Quantize.
-- **Parametrar**: Curve (kurvval), Drive (exponentiell 1x-20x), Mix (dry/wet), Bias (DC-offset), Symmetry (asymmetrisk kontroll).
-- **GUI-integration**: Tillgänglig i effektpaletten, master-bus dropdown, och patch-editor.
-- **Patch: Waveshaper Lead**: Skarp lead med Sine Fold-kurva, saw-oscillator och filter-envelope-modulation.
-- **Patch: Glitch Pad**: Evolverande pad med Fold-kurva, triangle-oscillator och LFO-filtermodulation.
+### Added - Waveshaper module
+- **Waveshaper effect**: New creative waveshaping module with 6 curves: Soft Clip, Asymmetric, Fold, Chebyshev, Sine Fold, Quantize.
+- **Parameters**: Curve (curve selection), Drive (exponential 1x-20x), Mix (dry/wet), Bias (DC offset), Symmetry (asymmetric control).
+- **GUI integration**: Available in the effect palette, master bus dropdown, and patch editor.
+- **Patch: Waveshaper Lead**: Sharp lead with Sine Fold curve, saw oscillator and filter envelope modulation.
+- **Patch: Glitch Pad**: Evolving pad with Fold curve, triangle oscillator and LFO filter modulation.
 
 ## [0.112.0] - 2026-02-13
-### Changed - Mod Matrix: enabled-checkbox & Amount-label
-- **Enabled-checkbox**: Varje slot har nu en checkbox bredvid Amount-knoben för att aktivera/inaktivera sloten.
-- **Kortare knob-label**: Knoben visar nu "Amount" istället för "Slot X Amount".
-- **SlotEnabled-param**: Ny parameter `SlotEnabled` per slot styr om modulering är aktiv.
+### Changed - Mod Matrix: enabled checkbox & Amount label
+- **Enabled checkbox**: Each slot now has a checkbox next to the Amount knob to enable/disable the slot.
+- **Shorter knob label**: The knob now shows "Amount" instead of "Slot X Amount".
+- **SlotEnabled param**: New `SlotEnabled` parameter per slot controls whether modulation is active.
 
 ## [0.111.0] - 2026-02-13
-### Fixed - Mod Matrix Grid-layout
-- **Lika stora slots**: Alla slots i rutnätet har nu samma fasta bredd, beräknad från tillgängligt utrymme och antal kolumner.
-- **Amount-etikett innanför ramen**: "Slot X Amount"-texten under knoben hamnar nu helt innanför gruppramens kant.
-- **Dynamisk ComboBox-bredd**: Dropdowns anpassar sin bredd till slotens storlek istället för fast 80px.
+### Fixed - Mod Matrix Grid layout
+- **Equal-sized slots**: All slots in the grid now have the same fixed width, calculated from available space and number of columns.
+- **Amount label inside frame**: The "Slot X Amount" text below the knob now fits entirely within the group frame border.
+- **Dynamic ComboBox width**: Dropdowns adapt their width to the slot size instead of a fixed 80px.
 
 ## [0.110.0] - 2026-02-13
-### Changed - Mod Matrix Grid-redesign
-- **Grid-baserad layout**: Mod Matrix renderas nu som ett rutnät istället för en platt lista. Grid-storlek väljs via selectbox: 1×1, 2×2 (standard), 3×3, 4×4 — ger 1, 4, 9 eller 16 slots.
-- **16 slots**: Max antal slots utökat från 8 till 16 (4×4 grid).
-- **Borttagen enabled-toggle**: Slots med Source=None är automatiskt inaktiva, separat on/off-toggle borttagen.
-- **Kompakta celler**: Varje cell i rutnätet visar Source- och Destination-dropdowns samt Amount-knob.
-- **Grid size-param**: Ny `GridSize`-parameter styr hur många slots som processas och visas.
+### Changed - Mod Matrix Grid redesign
+- **Grid-based layout**: Mod Matrix now renders as a grid instead of a flat list. Grid size selected via selectbox: 1x1, 2x2 (default), 3x3, 4x4 — giving 1, 4, 9 or 16 slots.
+- **16 slots**: Max number of slots increased from 8 to 16 (4x4 grid).
+- **Removed enabled toggle**: Slots with Source=None are automatically inactive, separate on/off toggle removed.
+- **Compact cells**: Each cell in the grid shows Source and Destination dropdowns plus Amount knob.
+- **Grid size param**: New `GridSize` parameter controls how many slots are processed and displayed.
 
 ## [0.109.0] - 2026-02-13
-### Changed - Konsekvent modulnamngivning
-- **Alltid siffersuffix**: Alla moduler visar nu alltid instansnummer (t.ex. "LFO 1", "Oscillator 1", "Filter 1") även om det bara finns en modul av den typen. Selectboxar matchar nu alltid modulnamnen i vyn.
+### Changed - Consistent module naming
+- **Always number suffix**: All modules now always show instance number (e.g. "LFO 1", "Oscillator 1", "Filter 1") even if there is only one module of that type. Selectboxes now always match the module names in the view.
 
 ## [0.108.0] - 2026-02-13
-### Improved - Smarta modulnamn & filtrerade Mod Matrix-val
-- **Numrerade modultitlar**: Har man 2+ moduler av samma typ visas "Oscillator 1" / "Oscillator 2". En ensam modul visas utan nummer ("LFO").
-- **Filtrerade Mod Matrix-dropdowns**: Sources och destinations som refererar till moduler som inte finns i patchen döljs. T.ex. "LFO 2" visas inte som källa om bara en LFO finns, "Osc 2 Pitch" döljs utan en andra oscillator.
-- **PatchAnalysis**: Ny intern analysstruktur som räknar modultyper per frame och driver både namngivning och filtrering.
+### Improved - Smart module names & filtered Mod Matrix choices
+- **Numbered module titles**: When there are 2+ modules of the same type, "Oscillator 1" / "Oscillator 2" is shown. A single module is shown without number ("LFO").
+- **Filtered Mod Matrix dropdowns**: Sources and destinations referencing modules that don't exist in the patch are hidden. E.g. "LFO 2" is not shown as source if only one LFO exists, "Osc 2 Pitch" is hidden without a second oscillator.
+- **PatchAnalysis**: New internal analysis struct that counts module types per frame and drives both naming and filtering.
 
 ## [0.107.0] - 2026-02-13
-### Added - Mod Matrix (8-slot modulationsrouting)
-- **Mod Matrix modul**: Nytt 8-slot modulationsroutingsystem som lever i varje röst
-- **10 modulationskällor**: None, LFO 1/2, Env 1/2, Velocity, Note Number, Aftertouch, Mod Wheel, Pitch Bend
-- **11 modulationsdestinationer**: None, Osc 1/2 Pitch, Osc 1 Level, Filter 1/2 Cutoff, Filter 1 Reso, Amp Level/Pan, LFO 1 Rate/Depth
-- **Bipolär amount**: Varje slot har -1.0 till +1.0 skalning med knob-kontroll
-- **Enable/disable per slot**: Toggle för att aktivera/inaktivera enskilda slots
-- **Voice-integration**: Modulering appliceras automatiskt innan grafprocessning, med one-block latency (~1ms)
-- **Mod offsets i destinationsmoduler**: Filter, oscillator, amplifier och LFO stödjer nu moduleringsoffsets
-- **GUI**: Mod Matrix tillgänglig via "Mod Matrix" knapp i modulpaletten (Utility-kategori)
-- **Patch-serialisering**: Mod Matrix-inställningar sparas och laddas med patches
+### Added - Mod Matrix (8-slot modulation routing)
+- **Mod Matrix module**: New 8-slot modulation routing system that lives in each voice
+- **10 modulation sources**: None, LFO 1/2, Env 1/2, Velocity, Note Number, Aftertouch, Mod Wheel, Pitch Bend
+- **11 modulation destinations**: None, Osc 1/2 Pitch, Osc 1 Level, Filter 1/2 Cutoff, Filter 1 Reso, Amp Level/Pan, LFO 1 Rate/Depth
+- **Bipolar amount**: Each slot has -1.0 to +1.0 scaling with knob control
+- **Enable/disable per slot**: Toggle to enable/disable individual slots
+- **Voice integration**: Modulation is applied automatically before graph processing, with one-block latency (~1ms)
+- **Mod offsets in destination modules**: Filter, oscillator, amplifier and LFO now support modulation offsets
+- **GUI**: Mod Matrix available via "Mod Matrix" button in the module palette (Utility category)
+- **Patch serialization**: Mod Matrix settings are saved and loaded with patches
 
 ## [0.106.0] - 2026-02-13
-### Changed - Klaviatur visar fler tangenter vid bredare fönster
-- **Fasta tangentstorlekar**: Vita tangenter 24px, svarta 14px — storleken ändras aldrig
-- **Fler tangenter vid bredd**: Bredare fönster visar fler av de 88 tangenterna, centrerade om alla ryms
-- **Villkorlig scroll**: Scroll och scroll-indikatorer visas bara när alla tangenter inte ryms
+### Changed - Keyboard shows more keys when window is wider
+- **Fixed key sizes**: White keys 24px, black keys 14px — size never changes
+- **More keys at wider width**: Wider window shows more of the 88 keys, centered when all fit
+- **Conditional scroll**: Scroll and scroll indicators are only shown when all keys don't fit
 
 ## [0.105.0] - 2026-02-13
-### Changed - Resizable modulfönster
-- **Resizable modulfönster**: Moduler kan nu dras bredare/smalare med `resizable(true)`. Mittinnehållet fyller tillgänglig bredd, OUT-portar sitter alltid mot högerkanten.
+### Changed - Resizable module windows
+- **Resizable module windows**: Modules can now be dragged wider/narrower with `resizable(true)`. Center content fills available width, OUT ports always sit against the right edge.
 
 ## [0.104.0] - 2026-02-13
-### Fixed - Kompakta modulfönster
-- **Auto-fit höjd**: Ersatt `StripBuilder::horizontal` (som expanderade celler till full tillgänglig höjd) med `ui.horizontal` + `ui.vertical` — modulfönster anpassar nu höjden till sitt innehåll utan dödyta
-- **Fast modulbredd**: Moduler expanderar inte längre med huvudfönstret — content-kolumnen använder `set_min_width` istället för `available_width()`
-- **Icke-resizable fönster**: Modulfönster är nu `resizable(false)` och auto-fitar alltid till innehållet
-- **Borttaget `StripBuilder`-beroende**: `egui_extras::StripBuilder` och `Size` används inte längre i modullayouten
+### Fixed - Compact module windows
+- **Auto-fit height**: Replaced `StripBuilder::horizontal` (which expanded cells to full available height) with `ui.horizontal` + `ui.vertical` — module windows now adapt height to their content without dead space
+- **Fixed module width**: Modules no longer expand with the main window — content column uses `set_min_width` instead of `available_width()`
+- **Non-resizable windows**: Module windows are now `resizable(false)` and always auto-fit to content
+- **Removed `StripBuilder` dependency**: `egui_extras::StripBuilder` and `Size` are no longer used in module layout
 
 ## [0.103.0] - 2026-02-13
-### Changed - StripBuilder för modullayout
-- **StripBuilder-layout**: Ersatt manuell `ui.horizontal()` + gap-fill med `egui_extras::StripBuilder` för tre-kolumnslayouten (IN | innehåll | OUT). Portkolumner använder `Size::exact()` och mittinnehållet `Size::remainder()`, vilket ger exakta kolumnbredder utan fragil gap-beräkning.
-- **Högerkolumn flush**: OUT-portar sitter nu garanterat flush mot modulens högerkant tack vare StripBuilders fasta kolumnstorlekar.
-- **Förenklad `draw_port_column`**: Borttaget manuellt `set_min_width`/`set_max_width` — StripBuilder hanterar kolumnbredden.
+### Changed - StripBuilder for module layout
+- **StripBuilder layout**: Replaced manual `ui.horizontal()` + gap-fill with `egui_extras::StripBuilder` for the three-column layout (IN | content | OUT). Port columns use `Size::exact()` and center content uses `Size::remainder()`, giving exact column widths without fragile gap calculation.
+- **Right column flush**: OUT ports now sit guaranteed flush against the module's right edge thanks to StripBuilder's fixed column sizes.
+- **Simplified `draw_port_column`**: Removed manual `set_min_width`/`set_max_width` — StripBuilder handles column width.
 
 ## [0.102.0] - 2026-02-11
-### Changed - Ny modullayout: portar på sidorna
-- **Tre-kolumnlayout**: Portar renderas nu i vertikala kolumner till vänster (IN) och höger (OUT) om modulinnehållet, istället för i en horisontell sektion mellan header och parametrar. Minskar modulhöjden och eliminerar dött utrymme.
-- **Portkolumner**: 28px breda kolumner med portar centrerade vertikalt, labels visas som tooltips vid hover
-- **Effekt/Visualizer-moduler**: Behåller full bredd utan portkolumner (har inga portar)
-- **Ökad minsta modulbredd**: 140px → 180px (28px portkolumn + 100px innehåll + 28px portkolumn + marginaler)
-- **Nya theme-konstanter**: `port_column_width`, `port_vertical_spacing`, `module_content_min_width` i `Sizes`
-- **Auto-layout uppdaterad**: `MIN_MODULE_WIDTH` ökad till 180px
+### Changed - New module layout: ports on the sides
+- **Three-column layout**: Ports are now rendered in vertical columns to the left (IN) and right (OUT) of the module content, instead of in a horizontal section between header and parameters. Reduces module height and eliminates dead space.
+- **Port columns**: 28px wide columns with ports centered vertically, labels shown as tooltips on hover
+- **Effect/Visualizer modules**: Keep full width without port columns (have no ports)
+- **Increased minimum module width**: 140px → 180px (28px port column + 100px content + 28px port column + margins)
+- **New theme constants**: `port_column_width`, `port_vertical_spacing`, `module_content_min_width` in `Sizes`
+- **Auto-layout updated**: `MIN_MODULE_WIDTH` increased to 180px
 
 ## [0.101.0] - 2026-02-11
-### Fixed - 3 GUI↔Engine-buggar
-- **Kabelbortkoppling (KRITISK)**: `connections_to_remove` från patch editor processerades aldrig — Disconnect-kommandon skickas nu till engine
-- **Bypass för voice-moduler (HÖG)**: `SetBypass` sökte bara i effect chain. Bypass stöds nu i `ModuleGraph` (voice graph) med nollställda outputs för bypassed moduler
-- **SetTempo (LÅG)**: `EngineCommand::SetTempo` fångades av catch-all `_ => {}` — kopplas nu till `TransportState::set_tempo()`
-- Tog bort onåbar catch-all (`_ => {}`) i command-matchning nu när alla varianter hanteras
+### Fixed - 3 GUI↔Engine bugs
+- **Cable disconnection (CRITICAL)**: `connections_to_remove` from patch editor was never processed — Disconnect commands are now sent to engine
+- **Bypass for voice modules (HIGH)**: `SetBypass` only searched in effect chain. Bypass is now supported in `ModuleGraph` (voice graph) with zeroed outputs for bypassed modules
+- **SetTempo (LOW)**: `EngineCommand::SetTempo` was caught by catch-all `_ => {}` — now connected to `TransportState::set_tempo()`
+- Removed unreachable catch-all (`_ => {}`) in command matching now that all variants are handled
 
 ## [0.100.0] - 2026-02-11
-### Removed - Död kod och icke-fungerande GUI-element
-- **Mixer-vy**: Hela placeholder-vyn (8 dummy-faders + "coming soon"-text), `AppView::Mixer`-variant, vy-selektorn i top bar
-- **layout.rs**: Oanvänd alternativ top bar-implementation (290 rader), `TopPanel`-enum
-- **Sample-dialog**: `OpenSample`-variant, `open_sample_dialog()`-metod, matcharm i fildialogshanteringen (aldrig anropad, handler var TODO)
-- **"Audio settings coming soon"**: Placeholder-sektion i Settings-dialogen
-- **MIDI Refresh-knapp**: Knapp i MIDI-dropdown som bara stängde menyn utan att göra något
-- **MultiPointEnvelope**: Tracker-specifika envelope-typer (`MultiPointEnvelope`, `EnvelopePoint`, `EnvelopeType`)
-- **Tracker-referenser**: Kvarvarande död kod och importer relaterade till borttagen tracker-funktionalitet
-- **Sample-kod**: `SamplePlayer` pitch mod, `WaveformOverview`, `PlaybackPositionBuffer`, hound-referens i ARCHITECTURE.md
+### Removed - Dead code and non-functional GUI elements
+- **Mixer view**: The entire placeholder view (8 dummy faders + "coming soon" text), `AppView::Mixer` variant, view selector in top bar
+- **layout.rs**: Unused alternative top bar implementation (290 lines), `TopPanel` enum
+- **Sample dialog**: `OpenSample` variant, `open_sample_dialog()` method, match arm in file dialog handling (never called, handler was TODO)
+- **"Audio settings coming soon"**: Placeholder section in the Settings dialog
+- **MIDI Refresh button**: Button in MIDI dropdown that only closed the menu without doing anything
+- **MultiPointEnvelope**: Tracker-specific envelope types (`MultiPointEnvelope`, `EnvelopePoint`, `EnvelopeType`)
+- **Tracker references**: Remaining dead code and imports related to removed tracker functionality
+- **Sample code**: `SamplePlayer` pitch mod, `WaveformOverview`, `PlaybackPositionBuffer`, hound reference in ARCHITECTURE.md
 
 ## [0.99.0] - 2026-02-10
 ### Removed - All tracker import functionality
-- **Beslut**: Efter v0.87–v0.98 (2 dagar, 9 buggfixar) insåg vi att tracker-uppspelning (XM/MOD/S3M via xmrs) inte passar arkitekturen. Syntmotorn är polyfonisk/semitone-baserad medan tracker kräver period-baserad pitch med tight-kopplad effektprocessering. Varje fix avslöjade nya buggar.
-- **Borttaget**: Tracker-import (`TrackerImporter`), tracker-effektprocessering (`tracker_effects.rs`, ~2200 rader), tracker-patterns (`tracker_pattern.rs`, ~670 rader), tracker-effekttyper (`effects.rs`), tracker-vyer, tracker-specifika fält i Voice/SynthEngine/Song, Sequencer GUI-vy, alla tracker-analysexempel (9 st), alla tracker-referensdokument
-- **Behållet**: Grundläggande `SequencerEngine` (enkel NoteOn/NoteOff-uppspelning för piano-patterns), `synth_sequencer` crate med Pattern/Song/Note-typer
-- **Taggat**: `v0.98.0-tracker-experiment` — sista versionen med tracker-kod
-- **Se**: `docs/tracker-experiment-summary.md` för fullständig analys och framtida alternativ
+- **Decision**: After v0.87–v0.98 (2 days, 9 bug fixes) we realized that tracker playback (XM/MOD/S3M via xmrs) doesn't fit the architecture. The synth engine is polyphonic/semitone-based while tracker requires period-based pitch with tightly coupled effect processing. Each fix revealed new bugs.
+- **Removed**: Tracker import (`TrackerImporter`), tracker effect processing (`tracker_effects.rs`, ~2200 lines), tracker patterns (`tracker_pattern.rs`, ~670 lines), tracker effect types (`effects.rs`), tracker views, tracker-specific fields in Voice/SynthEngine/Song, Sequencer GUI view, all tracker analysis examples (9 total), all tracker reference documents
+- **Kept**: Basic `SequencerEngine` (simple NoteOn/NoteOff playback for piano patterns), `synth_sequencer` crate with Pattern/Song/Note types
+- **Tagged**: `v0.98.0-tracker-experiment` — last version with tracker code
+- **See**: `docs/tracker-experiment-summary.md` for full analysis and future alternatives
 
 ## [0.98.0] - 2026-02-09
-### Fixed - Vibrato/arpeggio appliceras felaktigt vid tick 0
-- **Problem**: `ChannelEffectState.current_tick` nollställdes aldrig vid radstart. Fältet behöll värdet från förra radens sista `process_tick()` (t.ex. tick 4 vid speed=5). När `current_modulation()` anropades vid tick 0, var `current_tick.as_u8() > 0` sant, vilket fick vibrato att appliceras — trots att FT2 använder `realPeriod` (noll vibrato-offset) vid tick 0.
-- **Konsekvens**: Varje rad med vibrato hade en felaktig pitch-offset vid tick 0. Med vibrato depth=1 kunde offset vara upp till ±12.45ct (ca 1/8 halvton) istället för 0ct. I FT2 fungerar tick 0 som en "ankarpunkt" där pitchen återgår till basnoten, men vår kod hade en slumpmässig vibrato-offset (beroende på fas från förra radens sista tick). Med 113 vibrato-effekter i en enda pattern lät detta genomgående "falskt".
-- **Fix**: Sätter `state.current_tick = TickInRow::ZERO` i `process_row_start()` direkt efter att kanalens state hämtas. Vibrato-checken `current_tick > 0` i `current_modulation()` evalueras nu korrekt till false vid tick 0.
-- **Verifiering**: Debug-output visar nu `pitch=+0.00ct` vid tick 0 för alla vibrato-rader (bekräftat med `debug_playback`).
-- **Påverkan**: Alla XM/MOD/S3M-filer med vibrato (4xx), vibrato+volslide (6xx), eller arpeggio-effekter. Arpeggio tick-cykel (tick % 3) var också felaktig vid tick 0.
+### Fixed - Vibrato/arpeggio applied incorrectly at tick 0
+- **Problem**: `ChannelEffectState.current_tick` was never reset at row start. The field retained the value from the previous row's last `process_tick()` (e.g. tick 4 at speed=5). When `current_modulation()` was called at tick 0, `current_tick.as_u8() > 0` was true, causing vibrato to be applied — even though FT2 uses `realPeriod` (zero vibrato offset) at tick 0.
+- **Consequence**: Every row with vibrato had an incorrect pitch offset at tick 0. With vibrato depth=1, the offset could be up to ±12.45ct (about 1/8 semitone) instead of 0ct. In FT2, tick 0 functions as an "anchor point" where pitch returns to the base note, but our code had a random vibrato offset (depending on phase from the previous row's last tick). With 113 vibrato effects in a single pattern, this sounded consistently "out of tune".
+- **Fix**: Sets `state.current_tick = TickInRow::ZERO` in `process_row_start()` immediately after the channel's state is fetched. The vibrato check `current_tick > 0` in `current_modulation()` now correctly evaluates to false at tick 0.
+- **Verification**: Debug output now shows `pitch=+0.00ct` at tick 0 for all vibrato rows (confirmed with `debug_playback`).
+- **Impact**: All XM/MOD/S3M files with vibrato (4xx), vibrato+volslide (6xx), or arpeggio effects. Arpeggio tick cycle (tick % 3) was also incorrect at tick 0.
 
 ## [0.97.0] - 2026-02-09
-### Fixed - TonePortamento 4x för långsam i Amiga-läge
-- **Problem**: `apply_amiga_tone_portamento()` delade `tone_porta_speed` med 4.0 innan den användes som period-steg. Kommentaren hävdade "FT2 Amiga tone portamento uses raw_param", men FT2-källkoden visar att `portaSpeed = param << 2` (multiplicerar med 4 vid setup) och sedan använder `portaSpeed` direkt i `tonePorta()` — exakt samma som vanlig portamento.
-- **Konsekvens**: Tone portamento (3xx/5xx) gick 4x långsammare än i FT2. Med param=16 (effekt 310) och speed=5 ger FT2 64 period-enheter/tick × 4 ticks = 256 perioder/rad = 4 halvtoner. Vår kod gav 16 period-enheter/tick × 4 ticks = 64 perioder/rad = 1 halvton. Tone slides nådde aldrig sina targets i tid, vilket resulterade i hörbart falska toner.
-- **Fix**: Tog bort `/4.0` divisionen i `apply_amiga_tone_portamento()`. `tone_porta_speed` (= raw_param × 4.0) används nu direkt som period-steg, identiskt med `apply_amiga_portamento()`.
-- **Verifiering**: Jämförelse med FT2-clone källkod (`ft2_replayer.c`: `tonePorta()` + `getNewNote()`) bekräftar att `portaSpeed` används utan division.
-- **Påverkan**: Alla XM/MOD/S3M-filer med Amiga-frekvensläge och TonePortamento-effekter (3xx, 5xx). 567 TonePortamento-effekter i testfilen `joli_untouched.xm`.
+### Fixed - TonePortamento 4x too slow in Amiga mode
+- **Problem**: `apply_amiga_tone_portamento()` divided `tone_porta_speed` by 4.0 before using it as a period step. The comment claimed "FT2 Amiga tone portamento uses raw_param", but the FT2 source code shows that `portaSpeed = param << 2` (multiplies by 4 at setup) and then uses `portaSpeed` directly in `tonePorta()` — exactly the same as regular portamento.
+- **Consequence**: Tone portamento (3xx/5xx) ran 4x slower than in FT2. With param=16 (effect 310) and speed=5, FT2 gives 64 period units/tick x 4 ticks = 256 periods/row = 4 semitones. Our code gave 16 period units/tick x 4 ticks = 64 periods/row = 1 semitone. Tone slides never reached their targets in time, resulting in audibly out-of-tune notes.
+- **Fix**: Removed the `/4.0` division in `apply_amiga_tone_portamento()`. `tone_porta_speed` (= raw_param x 4.0) is now used directly as period step, identical to `apply_amiga_portamento()`.
+- **Verification**: Comparison with FT2-clone source code (`ft2_replayer.c`: `tonePorta()` + `getNewNote()`) confirms that `portaSpeed` is used without division.
+- **Impact**: All XM/MOD/S3M files with Amiga frequency mode and TonePortamento effects (3xx, 5xx). 567 TonePortamento effects in the test file `joli_untouched.xm`.
 
 ## [0.96.0] - 2026-02-09
-### Fixed - Extra effekt-tick per rad (25% för mycket portamento/vibrato/volume slide)
-- **Problem**: `process_tick()` anropades 5 gånger per rad istället för 4 vid speed=5. I FT2 med speed=5 finns det 5 ticks (0-4): tick 0 hanteras av `process_row_start()`, ticks 1-4 hanteras av `process_tick()`. Men vår engine anropade `process_tick()` var 40:e song-tick, och med 200 song-ticks per rad (5×40) blev det 200/40 = 5 anrop istället för 4.
-- **Konsekvens**: Alla kontinuerliga effekter fick **25% mer effekt per rad** (5/4 = 1.25x):
-  - PortamentoDown(5): -156.25ct/rad istället för -125.00ct/rad
-  - Vibrato: fasen avancerades 25% snabbare → snabbare och bredare vibrato
-  - Volume slide: volymförändring 25% snabbare
-  - Tone portamento: glide nådde mål 25% snabbare
-  - **Över 2 rader blev portamento-driften -312.50ct istället för -250.00ct — en skillnad på 62.5ct (~0.6 halvtoner), tydligt hörbara "falska toner".**
-- **Fix**: I `process_tick()`, om `tick_in_row >= speed`, returneras nuvarande modulation utan att applicera effekter. Den 5:e process_tick-iterationen (tick_in_row=5 vid speed=5) skippas nu korrekt.
-- **Påverkan**: Alla XM-filer med kontinuerliga effekter (portamento, vibrato, tremolo, volume slide, panning slide).
+### Fixed - Extra effect tick per row (25% too much portamento/vibrato/volume slide)
+- **Problem**: `process_tick()` was called 5 times per row instead of 4 at speed=5. In FT2 with speed=5 there are 5 ticks (0-4): tick 0 is handled by `process_row_start()`, ticks 1-4 are handled by `process_tick()`. But our engine called `process_tick()` every 40th song tick, and with 200 song ticks per row (5x40) that became 200/40 = 5 calls instead of 4.
+- **Consequence**: All continuous effects got **25% more effect per row** (5/4 = 1.25x):
+  - PortamentoDown(5): -156.25ct/row instead of -125.00ct/row
+  - Vibrato: phase advanced 25% faster → faster and wider vibrato
+  - Volume slide: volume change 25% faster
+  - Tone portamento: glide reached target 25% faster
+  - **Over 2 rows, portamento drift became -312.50ct instead of -250.00ct — a difference of 62.5ct (~0.6 semitones), clearly audible "out of tune notes".**
+- **Fix**: In `process_tick()`, if `tick_in_row >= speed`, current modulation is returned without applying effects. The 5th process_tick iteration (tick_in_row=5 at speed=5) is now correctly skipped.
+- **Impact**: All XM files with continuous effects (portamento, vibrato, tremolo, volume slide, panning slide).
 
 ## [0.95.0] - 2026-02-09
-### Fixed - pitch_offset läcker från PortamentoUp till TonePortamento
-- **Problem**: `apply_amiga_portamento()` (1xx/2xx) ackumulerade pitch-ändring i `pitch_offset`, medan `apply_amiga_tone_portamento()` (3xx) arbetade på `current_pitch`. I FT2 finns bara en periodvariabel, men vår kod har två separata (`current_pitch` + `pitch_offset`). När TonePortamento följde efter PortamentoUp absorberades inte den ackumulerade `pitch_offset`, vilket orsakade att den lades ovanpå TonePortamentos resultat.
-- **Konsekvens**: Med PortamentoUp(2) på 5 ticks ackumulerades +62.5ct i `pitch_offset`. När TonePortamento sedan slidde `current_pitch` mot målnoten (t.ex. E-6 = 88.0), hamnade slutpitchen på 88.0 + 0.625 = 88.625 halvtoner — **62.5 cent för högt**. Vibrato oscillerade sedan runt denna felaktiga pitch.
-- **Fix**: I `process_row_start`, när TonePortamento detekteras, absorberas befintlig `pitch_offset` in i `current_pitch` och `pitch_offset` nollställs. TonePortamento slider sedan från korrekt startposition.
-- **Påverkan**: Alla mönster där PortamentoUp/Down (1xx/2xx) följs av TonePortamento (3xx).
+### Fixed - pitch_offset leaks from PortamentoUp to TonePortamento
+- **Problem**: `apply_amiga_portamento()` (1xx/2xx) accumulated pitch change in `pitch_offset`, while `apply_amiga_tone_portamento()` (3xx) worked on `current_pitch`. In FT2 there is only one period variable, but our code has two separate ones (`current_pitch` + `pitch_offset`). When TonePortamento followed after PortamentoUp, the accumulated `pitch_offset` was not absorbed, causing it to be added on top of TonePortamento's result.
+- **Consequence**: With PortamentoUp(2) over 5 ticks, +62.5ct accumulated in `pitch_offset`. When TonePortamento then slid `current_pitch` toward the target note (e.g. E-6 = 88.0), the final pitch ended up at 88.0 + 0.625 = 88.625 semitones — **62.5 cents too high**. Vibrato then oscillated around this incorrect pitch.
+- **Fix**: In `process_row_start`, when TonePortamento is detected, existing `pitch_offset` is absorbed into `current_pitch` and `pitch_offset` is reset to zero. TonePortamento then slides from the correct start position.
+- **Impact**: All patterns where PortamentoUp/Down (1xx/2xx) is followed by TonePortamento (3xx).
 
 ## [0.94.0] - 2026-02-09
-### Fixed - Tone Portamento target en rad försenad
-- **Problem**: I XM-importen (`process_track_unit_to_cell`) uppdaterades `last_porta_target` EFTER att effekterna processades. TonePortamento (3xx) fick därmed föregående rads not som target istället för den aktuella radens not.
-- **Konsekvens**: I uppspelningskoden satte `trigger_note` korrekt `tone_porta_target` till aktuell not, men sedan överskrev effektprocesseringen med det felaktiga (gamla) targetvärdet. Portamento-slidet startade alltid en rad för sent, och första raden med portamento gav ingen tonändring alls.
-- **Fix**: Pitch beräknas och `last_porta_target` uppdateras nu INNAN effektloopen körs, så att TonePortamento alltid får rätt target-not.
-- **Påverkan**: Alla kanaler med TonePortamento-effekter (3xx) i importerade XM/MOD/S3M-filer.
+### Fixed - Tone Portamento target delayed by one row
+- **Problem**: In the XM import (`process_track_unit_to_cell`), `last_porta_target` was updated AFTER effects were processed. TonePortamento (3xx) thus received the previous row's note as target instead of the current row's note.
+- **Consequence**: In the playback code, `trigger_note` correctly set `tone_porta_target` to the current note, but then the effect processing overwrote it with the incorrect (old) target value. The portamento slide always started one row too late, and the first row with portamento produced no pitch change at all.
+- **Fix**: Pitch is now calculated and `last_porta_target` is updated BEFORE the effect loop runs, so that TonePortamento always gets the correct target note.
+- **Impact**: All channels with TonePortamento effects (3xx) in imported XM/MOD/S3M files.
 
 ## [0.93.0] - 2026-02-09
-### Enhanced - Utökad Debug-knapp i Sequencer-vyn
-- **Kanal mute-status**: Visar aktiv/MUTED-status för varje track
-- **Instrument defaults**: Visar volym och panning per instrument (matchar `analyze_tracker`-format)
-- **Fullständig pattern-grid**: Skriver ut hela pattern-innehållet i samma format som `analyze_tracker`-exemplet (noter, instrument, volym, effekter)
-- **Effektsammanfattning**: Räknar och listar alla använda effekter i aktiv pattern sorterade efter frekvens
-- Debug-output är nu direkt jämförbar med `cargo run --example analyze_tracker`
+### Enhanced - Extended Debug button in Sequencer view
+- **Channel mute status**: Shows active/MUTED status for each track
+- **Instrument defaults**: Shows volume and panning per instrument (matches `analyze_tracker` format)
+- **Full pattern grid**: Prints the entire pattern content in the same format as the `analyze_tracker` example (notes, instruments, volume, effects)
+- **Effect summary**: Counts and lists all used effects in active pattern sorted by frequency
+- Debug output is now directly comparable with `cargo run --example analyze_tracker`
 
 ## [0.92.0] - 2026-02-07
-### Fixed - Tremolo, vibrato och volume slide noggrannhet
+### Fixed - Tremolo, vibrato and volume slide accuracy
 
-#### Tremolo-djup ~4x för svagt
-- **Problem**: `TremoloDepth::from_param` använde `depth / 64.0` men FT2-formeln är `(waveform_peak * depth) >> 6` där peak=255. Resultatet: tremolo var ~4x för svag och nästan ohörbar.
-- **Fix**: Ny formel `depth * 255.0 / 64.0 / 64.0` matchar FT2:s djupskala.
+#### Tremolo depth ~4x too weak
+- **Problem**: `TremoloDepth::from_param` used `depth / 64.0` but the FT2 formula is `(waveform_peak * depth) >> 6` where peak=255. Result: tremolo was ~4x too weak and nearly inaudible.
+- **Fix**: New formula `depth * 255.0 / 64.0 / 64.0` matches FT2's depth scale.
 
-#### Vibrato-offset appliceras på tick 0
-- **Problem**: Vibrato-offset beräknades och applicerades på alla ticks inklusive tick 0. FT2 nollställer vibrato-offset på tick 0 (`outPeriod = realPeriod`) och kör inte `doVibrato` förrän tick 1+.
-- **Fix**: Vibrato-offset appliceras nu bara på ticks 1+. Vibrato/tremolo-fas avanceras också bara på ticks 1+.
+#### Vibrato offset applied at tick 0
+- **Problem**: Vibrato offset was calculated and applied on all ticks including tick 0. FT2 resets vibrato offset at tick 0 (`outPeriod = realPeriod`) and doesn't run `doVibrato` until tick 1+.
+- **Fix**: Vibrato offset is now only applied on ticks 1+. Vibrato/tremolo phase is also only advanced on ticks 1+.
 
-#### Volume slide prioritetsregel felaktig
-- **Problem**: `SlideRate::from_volume_slide` subtraherade `up - down`, men FT2 ger övre nibble (UP) prioritet när båda är icke-noll. Samma bugg i `from_panning_slide`.
-- **Fix**: Ny prioritetslogik — om `up > 0` ignoreras `down` (och vice versa för panning slide).
+#### Volume slide priority rule incorrect
+- **Problem**: `SlideRate::from_volume_slide` subtracted `up - down`, but FT2 gives the upper nibble (UP) priority when both are non-zero. Same bug in `from_panning_slide`.
+- **Fix**: New priority logic — if `up > 0`, `down` is ignored (and vice versa for panning slide).
 
-### Added - Effekt-noggrannhetsanalys
-- Ny fil `docs/effect-accuracy-analysis.md` — genomgående analys av alla tracker-effekter mot FT2-referens
-- Ny fil `docs/references/ft2-effect-reference.md` — komplett FT2-effektreferens med exakta formler och C-kod från ft2-clone
+### Added - Effect accuracy analysis
+- New file `docs/effect-accuracy-analysis.md` — thorough analysis of all tracker effects against FT2 reference
+- New file `docs/references/ft2-effect-reference.md` — complete FT2 effect reference with exact formulas and C code from ft2-clone
 
 ## [0.91.0] - 2026-02-07
-### Fixed - Continuous effects läcker mellan rader
+### Fixed - Continuous effects leak between rows
 
-#### Continuous effects (volume slide, portamento, vibrato, etc.) stoppas inte mellan rader
-- **Problem**: Effekter som volume slide, portamento, vibrato, tremolo och panning slide fortsatte köra på rader där de inte angavs. State resättades aldrig — bara uppdaterades NÄR effekten fanns. Resultatet: effekter "läckte" och körde oändligt tills en ny note med fresh attack triggades.
-- **Rotorsak**: `process_row_start()` processade effekter i en match-loop men resetade aldrig continuous state innan loopen. XM effect memory (param=0 = "continue") blandades ihop med "effekten är aktiv".
-- **Fix**: Continuous effect state resättas nu INNAN effect-loopen varje rad. Effect memory sparas i lokala variabler och återställs bara NÄR effekten faktiskt finns på raden (med param=0). Nytt `tone_porta_active`-fält skiljer "aktiv denna rad" från "har minnesvärde".
+#### Continuous effects (volume slide, portamento, vibrato, etc.) not stopped between rows
+- **Problem**: Effects like volume slide, portamento, vibrato, tremolo and panning slide continued running on rows where they were not specified. State was never reset — only updated WHEN the effect was present. Result: effects "leaked" and ran indefinitely until a new note with fresh attack was triggered.
+- **Root cause**: `process_row_start()` processed effects in a match loop but never reset continuous state before the loop. XM effect memory (param=0 = "continue") was confused with "effect is active".
+- **Fix**: Continuous effect state is now reset BEFORE the effect loop each row. Effect memory is saved in local variables and only restored WHEN the effect actually exists on the row (with param=0). New `tone_porta_active` field distinguishes "active this row" from "has memory value".
 
-#### Berörda effekter
-- **Volume slide (Axy)**: Stoppas på rader utan Axy
-- **Portamento up/down (1xx/2xx)**: Stoppas på rader utan 1xx/2xx
-- **Tone portamento (3xx)**: Stoppas på rader utan 3xx/5xx (nytt `tone_porta_active`-fält)
-- **Vibrato (4xy)**: Depth nollställs på rader utan 4xy (fas bevaras)
-- **Tremolo (7xy)**: Depth nollställs på rader utan 7xy
-- **Panning slide (Pxy)**: Stoppas på rader utan Pxy
-- **Fine volume slide (EAx/EBx)**: Stoppas på rader utan EAx/EBx
-- **Arpeggio (0xy)**: Stoppas på rader utan 0xy
-- **Retrigger (E9x)**: Stoppas på rader utan E9x
-- **Note cut/delay/fadeout**: Rensas varje rad
+#### Affected effects
+- **Volume slide (Axy)**: Stopped on rows without Axy
+- **Portamento up/down (1xx/2xx)**: Stopped on rows without 1xx/2xx
+- **Tone portamento (3xx)**: Stopped on rows without 3xx/5xx (new `tone_porta_active` field)
+- **Vibrato (4xy)**: Depth reset on rows without 4xy (phase preserved)
+- **Tremolo (7xy)**: Depth reset on rows without 7xy
+- **Panning slide (Pxy)**: Stopped on rows without Pxy
+- **Fine volume slide (EAx/EBx)**: Stopped on rows without EAx/EBx
+- **Arpeggio (0xy)**: Stopped on rows without 0xy
+- **Retrigger (E9x)**: Stopped on rows without E9x
+- **Note cut/delay/fadeout**: Cleared each row
 
-#### Känd begränsning
-- XM effekt 5xy (TonePortamento+VolumeSlide) och 6xy (Vibrato+VolumeSlide) med param 0 hanteras inte fullt korrekt av xmrs-biblioteket — det droppar VolumeSlide(0,0). Med denna fix stoppas volume slide korrekt, men 500/600 "continue both" fortsätter bara den första sub-effekten.
+#### Known limitation
+- XM effect 5xy (TonePortamento+VolumeSlide) and 6xy (Vibrato+VolumeSlide) with param 0 are not handled fully correctly by the xmrs library — it drops VolumeSlide(0,0). With this fix, volume slide is stopped correctly, but 500/600 "continue both" only continues the first sub-effect.
 
 ## [0.90.0] - 2026-02-07
-### Fixed - Portamento-konvertering i Amiga-läge (och linjärt läge)
+### Fixed - Portamento conversion in Amiga mode (and linear mode)
 
-#### Portamento ~41x för snabb och inverterad riktning (KRITISK)
-- **Problem**: Portamento-effekter (1xx/2xx) glider ~41x för snabbt och i fel riktning. Tre buggar samverkar:
-  1. Import multiplicerar med `* 16.0` istället för att dividera med `/ 4.0` för att återställa raw param
-  2. Import inverterar riktning (xmrs negativ = porta UP, inte DOWN)
-  3. Effektprocessorn konverterar speed felaktigt med `/ 100.0 * 64.0` istället för att använda direkt
-- **Fix**: Import återställer nu raw param korrekt (`speed.abs() / 4.0`), riktning fixad, effektprocessorn använder period-enheter direkt i Amiga-läge
+#### Portamento ~41x too fast and inverted direction (CRITICAL)
+- **Problem**: Portamento effects (1xx/2xx) glide ~41x too fast and in the wrong direction. Three bugs interact:
+  1. Import multiplies with `* 16.0` instead of dividing with `/ 4.0` to restore raw param
+  2. Import inverts direction (xmrs negative = porta UP, not DOWN)
+  3. Effect processor converts speed incorrectly with `/ 100.0 * 64.0` instead of using directly
+- **Fix**: Import now restores raw param correctly (`speed.abs() / 4.0`), direction fixed, effect processor uses period units directly in Amiga mode
 
-#### Tone portamento felaktig skalning
-- **Problem**: Tone portamento (3xx) skalas felaktigt i både import och effektprocessor
-- **Fix**: Import hanterar nu Amiga/Linear separat. Effektprocessorn konverterar korrekt: Amiga `/4.0`, Linear `*1200.0/768.0/100.0`
+#### Tone portamento incorrect scaling
+- **Problem**: Tone portamento (3xx) is scaled incorrectly in both import and effect processor
+- **Fix**: Import now handles Amiga/Linear separately. Effect processor converts correctly: Amiga `/4.0`, Linear `*1200.0/768.0/100.0`
 
-#### Linjär portamento felaktig konvertering
-- **Problem**: Linjär portamento adderar period-enheter direkt som cents, utan konvertering
-- **Fix**: Konverterar nu period-enheter till cents med `* 1200.0 / 768.0`
+#### Linear portamento incorrect conversion
+- **Problem**: Linear portamento adds period units directly as cents, without conversion
+- **Fix**: Now converts period units to cents with `* 1200.0 / 768.0`
 
-#### Debug-verktyg (analyze_tracker_raw)
-- Fixad riktning och skalning i `format_track_effect` för Portamento och TonePortamento
+#### Debug tool (analyze_tracker_raw)
+- Fixed direction and scaling in `format_track_effect` for Portamento and TonePortamento
 
 ## [0.89.0] - 2026-02-07
 ### Fixed - XM Speed Effect Silence & GUI Row Sync
 
-#### Tystnad vid dynamisk speed-ändring (KRITISK)
-- **Problem**: XM-moduler som byter speed med Fxx-effekt (t.ex. F03 = speed 3) orsakade tystnad efter halva patternet. Pattern-placeringarna beräknades vid import med default speed (6, 240 ticks/rad), men dynamisk speed 3 (120 ticks/rad) processade alla rader dubbelt så snabbt — halvvägs genom tick-fönstret var alla rader klara och resten blev tyst.
-- **Fix**: Ny metod `auto_advance_if_past_pattern()` i sequencer-motorn som detekterar när alla rader processats och hoppar direkt till nästa pattern. Noter bevaras över pattern-gränser (ingen release).
+#### Silence on dynamic speed change (CRITICAL)
+- **Problem**: XM modules that change speed with Fxx effect (e.g. F03 = speed 3) caused silence after half the pattern. Pattern placements were calculated at import with default speed (6, 240 ticks/row), but dynamic speed 3 (120 ticks/row) processed all rows twice as fast — halfway through the tick window all rows were done and the rest became silent.
+- **Fix**: New method `auto_advance_if_past_pattern()` in the sequencer engine that detects when all rows have been processed and jumps directly to the next pattern. Notes are preserved across pattern boundaries (no release).
 
-#### GUI tracker-rad ur synk vid speed-ändring
-- **Problem**: Sequencer-vyn använde statisk `ticks_per_row` (240) för att beräkna vilken rad som visas. Med dynamisk speed 3 gick GUI:t i halv hastighet och bröt vid halva patternet.
-- **Fix**: Dynamisk `ticks_per_row` delas nu från audio-tråden till GUI:t via `TransportState` (atomisk). GUI:t beräknar raden med `offset / dynamic_ticks_per_row` istället för patternets statiska värde.
+#### GUI tracker row out of sync on speed change
+- **Problem**: The sequencer view used static `ticks_per_row` (240) to calculate which row is displayed. With dynamic speed 3, the GUI ran at half speed and broke at half the pattern.
+- **Fix**: Dynamic `ticks_per_row` is now shared from the audio thread to the GUI via `TransportState` (atomic). The GUI calculates the row with `offset / dynamic_ticks_per_row` instead of the pattern's static value.
 
 ## [0.88.0] - 2026-02-07
-### Changed - Solo/Mute per kanal & Modulnamn i toolbar
+### Changed - Solo/Mute per channel & Module name in toolbar
 
-#### Solo/Mute-knappar i Sequencer
-- **Solo (S):** Inte längre togglebar — klick mutar alla andra kanaler och unmutar den valda
-- **Mute (M):** Ny knapp per kanal — togglebar individuell mute med röd/grå indikering
-- **"Unmute All"-knapp** i toolbarn för att snabbt ta bort alla mutar
-- Ersatt `solo_track: Option<TrackId>` med `muted_tracks: Vec<bool>` genom hela stacken (state, engine, commands)
-- Flera kanaler kan nu vara unmutade samtidigt (inte begränsat till en solo-kanal)
+#### Solo/Mute buttons in Sequencer
+- **Solo (S):** No longer toggleable — click mutes all other channels and unmutes the selected one
+- **Mute (M):** New button per channel — toggleable individual mute with red/gray indication
+- **"Unmute All" button** in the toolbar for quickly removing all mutes
+- Replaced `solo_track: Option<TrackId>` with `muted_tracks: Vec<bool>` throughout the stack (state, engine, commands)
+- Multiple channels can now be unmuted simultaneously (not limited to a single solo channel)
 
-#### Modulnamn i toolbar
-- Modulnamn (song.name) visas nu i sequencer-toolbarn efter Debug-knappen
+#### Module name in toolbar
+- Module name (song.name) is now displayed in the sequencer toolbar after the Debug button
 
-#### Solo/Mute i Rack-vyn
-- Solo-knappen i instrument-racket fungerar nu som i sequencern: klick mutar alla andra instrument
-- Ny **"Unmute All"-knapp** i instrument-rackens header
-- Borttagen toggle-baserad solo-state (`InstrumentUiState::solo` används ej längre för solo-toggle)
+#### Solo/Mute in Rack view
+- The solo button in the instrument rack now works like in the sequencer: click mutes all other instruments
+- New **"Unmute All" button** in the instrument rack header
+- Removed toggle-based solo state (`InstrumentUiState::solo` is no longer used for solo toggle)
 
 ## [0.87.0] - 2026-02-06
 ### Fixed - XM Playback & Tracker Display Improvements

@@ -1,0 +1,97 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ubuntu:
+    name: Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev
+      - name: Build
+        run: cargo build --release
+      - name: Clippy
+        run: cargo clippy --all-targets
+      - name: Test
+        run: cargo test
+      - name: Format check
+        run: cargo fmt --check
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pertylizer-ubuntu
+          path: target/release/pertylizer
+
+  fedora:
+    name: Fedora
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: dnf install -y alsa-lib-devel pkg-config libxkbcommon-devel wayland-devel gcc
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Clippy
+        run: cargo clippy --all-targets
+      - name: Test
+        run: cargo test
+      - name: Format check
+        run: cargo fmt --check
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pertylizer-fedora
+          path: target/release/pertylizer
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Clippy
+        run: cargo clippy --all-targets
+      - name: Test
+        run: cargo test
+      - name: Format check
+        run: cargo fmt --check
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pertylizer-macos
+          path: target/release/pertylizer
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Clippy
+        run: cargo clippy --all-targets
+      - name: Test
+        run: cargo test
+      - name: Format check
+        run: cargo fmt --check
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pertylizer-windows
+          path: target/release/pertylizer.exe
