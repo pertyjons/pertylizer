@@ -844,6 +844,13 @@ pub trait PolyModule: Describable + Send {
     /// Trigger note off.
     fn note_off(&mut self) {}
 
+    /// Check if this module has finished its release phase.
+    /// Returns `true` for modules that don't have a release phase (default).
+    /// Envelope-type modules should return `false` while still releasing.
+    fn is_release_done(&self) -> bool {
+        true
+    }
+
     /// Set the sample rate for this module.
     /// Called when the module is added to a graph or when the sample rate changes.
     fn set_sample_rate(&mut self, _sample_rate: SampleRate) {

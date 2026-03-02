@@ -925,6 +925,25 @@ impl Instrument {
                 // Process the voice signal chain at oversampled rate
                 voice.process_audio(&mut temp_left, &mut temp_right, &voice_context);
 
+                // Release finished voices: if output is silent, reclaim the voice
+                if matches!(voice.state, VoiceState::Releasing { .. }) {
+                    let mut peak: f32 = 0.0;
+                    for i in 0..os_count {
+                        let l = temp_left[i].abs();
+                        let r = temp_right[i].abs();
+                        if l > peak {
+                            peak = l;
+                        }
+                        if r > peak {
+                            peak = r;
+                        }
+                    }
+                    if peak < 1e-6 {
+                        voice.reset();
+                        continue;
+                    }
+                }
+
                 // Apply stealing fade-out if needed (at oversampled rate)
                 if let VoiceState::Stealing {
                     fade_counter,
@@ -1022,6 +1041,14 @@ impl Instrument {
 
                 // Process the voice signal chain
                 voice.process_audio(&mut temp_left, &mut temp_right, &voice_context);
+
+                // Reclaim releasing voices once all envelopes have finished
+                if matches!(voice.state, VoiceState::Releasing { .. })
+                    && voice.graph.all_releases_done()
+                {
+                    voice.reset();
+                    continue;
+                }
 
                 // Apply stealing fade-out if needed
                 if let VoiceState::Stealing {

@@ -266,6 +266,30 @@ impl Song {
         }
     }
 
+    /// Move a placement to a new position and/or track.
+    pub fn move_placement(
+        &mut self,
+        pattern_id: PatternId,
+        from_track: TrackId,
+        from_start: Tick,
+        to_track: TrackId,
+        to_start: Tick,
+    ) -> bool {
+        let pos = self.arrangement.iter().position(|p| {
+            p.pattern_id == pattern_id && p.track_id == from_track && p.start == from_start
+        });
+
+        if let Some(idx) = pos {
+            self.arrangement[idx].track_id = to_track;
+            self.arrangement[idx].start = to_start;
+            // Re-sort by start time
+            self.arrangement.sort_by_key(|p| p.start);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Get all placements.
     pub fn arrangement(&self) -> &[PatternPlacement] {
         &self.arrangement
@@ -550,6 +574,25 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick(3840));
 
         assert_eq!(song.calculate_length().0, 7680);
+    }
+
+    #[test]
+    fn test_move_placement() {
+        let mut song = Song::new("Test");
+        let pattern_id = song.create_pattern(Duration(960));
+        let track1 = song.create_track("Track 1");
+        let track2 = song.create_track("Track 2");
+
+        song.place_pattern(pattern_id, track1, Tick(0));
+
+        // Move to different track and position
+        assert!(song.move_placement(pattern_id, track1, Tick(0), track2, Tick(1920)));
+        assert_eq!(song.arrangement().len(), 1);
+        assert_eq!(song.arrangement()[0].track_id, track2);
+        assert_eq!(song.arrangement()[0].start, Tick(1920));
+
+        // Move non-existent placement returns false
+        assert!(!song.move_placement(pattern_id, track1, Tick(0), track2, Tick(0)));
     }
 
     #[test]
