@@ -13,7 +13,6 @@ workspace = true
 
 [features]
 default = ["gui-egui", "mcp"]
-gui-console = []
 gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon"]
 mcp = ["dep:synth_mcp", "dep:tokio"]
 
