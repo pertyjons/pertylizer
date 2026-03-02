@@ -1,4 +1,4 @@
-//! MCP (Model Context Protocol) server for modular-synth.
+//! MCP (Model Context Protocol) server for Pertylizer.
 //!
 //! Provides remote inspection and control of the running synthesizer
 //! via the MCP protocol. AI agents can read module graphs, inspect

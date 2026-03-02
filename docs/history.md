@@ -1,5 +1,14 @@
 # Version History
 
+## [0.201.0] - 2026-03-02
+### Rename to Pertylizer
+- **Project renamed** from `modular_synth` / `modular-synth` to `pertylizer` — crate, binary, data paths, MIDI client names, UI strings, and all documentation updated
+- **Build date in startup banner** — `Pertylizer v0.201.0 (2026-03-02)` printed to stdout on launch
+- **Swedish documentation removed** — ARCHITECTURE.md, MCP.md, plan docs, and all crate READMEs deleted (can be recreated in English)
+- **history.md translated** to English
+- **README.md rewritten** — accurate module/effect counts (35 voice modules, 21 effects, 60 patches, 79 MCP tools), highlights for AWE, Fractal Oscillator, granular synthesis, spectral processing, and MCP
+- **AI disclaimer** added to README
+
 ## [0.200.0] - 2026-03-02
 ### Cable clipping, remixicon patch categories, built-in patch search
 - **Cable clipping fix** — active/hovered cables now clip to scroll area (use `Painter::new()` with explicit clip rect instead of `layer_painter()` which defaulted to `Rect::EVERYTHING`)
@@ -248,706 +257,706 @@ All 23 non-visualizer unused modules now have at least one example patch.
 - **Comprehensive TODO list** added with prioritized roadmap (docs/TODO.md)
 
 ## [0.178.0] - 2026-02-26
-### InstrumentMapping: Stabil SeqInstrumentId ↔ InstrumentId
-- **`InstrumentMapping`** — ny struct i `synth_engine` som mappar `SeqInstrumentId(u16)` ↔ `InstrumentId(u64)` stabilt
-- **`route_sequencer_events`** — använder nu mapping-lookup istället för instabilt vec-index (`instrument.0 as usize`)
-- **`collect_events_at_tick`** — track-instrument overridar nu not-instrument vid uppspelning (track.instrument → note.instrument fallback)
-- **`seq_instrument_id`** — nytt fält i `InstrumentSnapshot` för GUI/MCP-synlighet
-- **MCP `add_note`/`add_notes`** — valfri `instrument_id`-parameter (default 0, track-instrument overridar vid uppspelning)
-- Mappningen uppdateras automatiskt vid instrument-skapande/borttagning
-- Orphaned noter (borttaget instrument) faller tillbaka på första instrumentet
+### InstrumentMapping: Stable SeqInstrumentId ↔ InstrumentId
+- **`InstrumentMapping`** — new struct in `synth_engine` that maps `SeqInstrumentId(u16)` ↔ `InstrumentId(u64)` stably
+- **`route_sequencer_events`** — now uses mapping lookup instead of unstable vec index (`instrument.0 as usize`)
+- **`collect_events_at_tick`** — track instrument now overrides note instrument during playback (track.instrument → note.instrument fallback)
+- **`seq_instrument_id`** — new field in `InstrumentSnapshot` for GUI/MCP visibility
+- **MCP `add_note`/`add_notes`** — optional `instrument_id` parameter (default 0, track instrument overrides during playback)
+- Mapping is automatically updated on instrument creation/deletion
+- Orphaned notes (deleted instrument) fall back to the first instrument
 
 ## [0.177.0] - 2026-02-26
-### MCP: Komplett API med 18 nya verktyg
-- **Automation CRUD** — `list_automation_lanes`, `get_automation_points`, `remove_automation_points`, `clear_automation_lane` + `curve`-parameter (Linear/Step/Exponential/SCurve) på `add_automation_points`
-- **Track-kontroll** — `set_track_volume`, `set_track_pan`, `set_track_mute`, `set_track_solo`, `rename_track`, `delete_track`
-- **Pattern-hantering** — `rename_pattern`, `set_pattern_length`, `duplicate_pattern`
-- **Song-metadata** — `set_song_author`, `set_song_time_signature`
-- **Batch parameter** — `set_parameters` (sätt flera modulparametrar i ett anrop)
-- **Automation i `set_song`/`create_patterns`** — patterns kan nu inkludera automation inline
-- Totalt 79 MCP-verktyg (från 61)
+### MCP: Complete API with 18 new tools
+- **Automation CRUD** — `list_automation_lanes`, `get_automation_points`, `remove_automation_points`, `clear_automation_lane` + `curve` parameter (Linear/Step/Exponential/SCurve) on `add_automation_points`
+- **Track control** — `set_track_volume`, `set_track_pan`, `set_track_mute`, `set_track_solo`, `rename_track`, `delete_track`
+- **Pattern management** — `rename_pattern`, `set_pattern_length`, `duplicate_pattern`
+- **Song metadata** — `set_song_author`, `set_song_time_signature`
+- **Batch parameter** — `set_parameters` (set multiple module parameters in one call)
+- **Automation in `set_song`/`create_patterns`** — patterns can now include automation inline
+- Total 79 MCP tools (up from 61)
 
 ## [0.176.0] - 2026-02-26
 ### MCP: Streamable HTTP + Hybrid Resonator preset
-- **MCP transport: TCP → Streamable HTTP** — Servern använder nu axum + rmcp Streamable HTTP på `http://127.0.0.1:9850/mcp`. Claude Code ansluter direkt utan bridge-process.
-- **Borttagen `synth-mcp-bridge`** — Stdio↔TCP proxy-binären behövs inte längre
-- **Fix: MCP tools capability** — `ServerCapabilities::enable_tools()` annonseras nu i initialize-svar, så Claude Code upptäcker verktygen
-- **Ny preset: Hybrid Resonator** (🔬 Experimental) — Layered hybrid voice med ring-modulerad wavetable, bitwise math oscillator, body resonance och LFO/envelope-modulation
-- Uppdaterad `.mcp.json` till `"type": "http"` konfiguration
-- Uppdaterad `mcp-call.py` helper till HTTP-baserad kommunikation
-- Uppdaterad dokumentation (ARCHITECTURE.md, MCP.md, SKILL.md)
+- **MCP transport: TCP → Streamable HTTP** — Server now uses axum + rmcp Streamable HTTP on `http://127.0.0.1:9850/mcp`. Claude Code connects directly without bridge process.
+- **Removed `synth-mcp-bridge`** — Stdio↔TCP proxy binary is no longer needed
+- **Fix: MCP tools capability** — `ServerCapabilities::enable_tools()` is now advertised in initialize response, so Claude Code discovers the tools
+- **New preset: Hybrid Resonator** (Experimental) — Layered hybrid voice with ring-modulated wavetable, bitwise math oscillator, body resonance and LFO/envelope modulation
+- Updated `.mcp.json` to `"type": "http"` configuration
+- Updated `mcp-call.py` helper to HTTP-based communication
+- Updated documentation (ARCHITECTURE.md, MCP.md, SKILL.md)
 
 ## [0.175.0] - 2026-02-26
-### Sequencer GUI — Automation i Piano Roll (Fas 5)
-- **Automations-zon** under velocity-zonen i piano roll (80px hög, togglas via dropdown)
-- **Lane-väljare** (ComboBox) i toolbar: välj `AutoInstrumentParam` för instrument 0 (Volume, Pan, Filter Cutoff, etc.)
-- Aktiva lanes (med punkter) markeras med `*` i dropdown
-- **Kurvrendering** med pixel-för-pixel interpolation (Linear, Step, Exponential, SCurve)
-- Flat extension före första / efter sista punkt
-- Referenslinjer vid 25%, 50%, 75%
-- **Punktinteraktion**: klick → skapa punkt, högerklick → ta bort punkt, drag → flytta punkt
-- Ghost-preview under drag med semi-transparent cirkel
-- Orange cirklar med vit kant för automationspunkter
-- **Automationsuppspelning** i `SequencerEngine`: `collect_events_at_tick()` genererar `SequencerEvent::Parameter` från automation lanes
-- Deduplicering via `last_automation_values` HashMap (emit bara vid ändring > 0.001)
-- **Event-routing** i `SynthEngine`: Volume → `Instrument::set_volume()`, Pan → `Instrument::set_pan()`
-- `display_name()` på `AutoInstrumentParam` och `AutomationTarget` för GUI-labels
-- `AutoInstrumentParam::ALL` const array för GUI-enumeration
+### Sequencer GUI — Automation in Piano Roll (Phase 5)
+- **Automation zone** below velocity zone in piano roll (80px tall, toggled via dropdown)
+- **Lane selector** (ComboBox) in toolbar: select `AutoInstrumentParam` for instrument 0 (Volume, Pan, Filter Cutoff, etc.)
+- Active lanes (with points) marked with `*` in dropdown
+- **Curve rendering** with pixel-by-pixel interpolation (Linear, Step, Exponential, SCurve)
+- Flat extension before first / after last point
+- Reference lines at 25%, 50%, 75%
+- **Point interaction**: click → create point, right-click → remove point, drag → move point
+- Ghost preview during drag with semi-transparent circle
+- Orange circles with white border for automation points
+- **Automation playback** in `SequencerEngine`: `collect_events_at_tick()` generates `SequencerEvent::Parameter` from automation lanes
+- Deduplication via `last_automation_values` HashMap (emit only on change > 0.001)
+- **Event routing** in `SynthEngine`: Volume → `Instrument::set_volume()`, Pan → `Instrument::set_pan()`
+- `display_name()` on `AutoInstrumentParam` and `AutomationTarget` for GUI labels
+- `AutoInstrumentParam::ALL` const array for GUI enumeration
 
 ## [0.174.0] - 2026-02-26
-### Piano Roll Buggfixar & Förbättringar
-- **Fix: `move_note` återanvände NoteId** — `next_note_id`-räknaren backades felaktigt, vilket orsakade "kopierade" noter (synth_sequencer/pattern.rs)
-- **Fix: Vertikal drag fungerar nu** — `drag_started()` använder `press_origin()` istf `interact_pointer_pos()` så hit-test sker på klick-position, inte efter drag-tröskel
-- **Fix: Relativ grip vid flytt** — noter behåller position relativt muspekaren (grab offset), inte snap till notens start
-- **Fix: Kort-not resize-zon proportionell** — `min(RESIZE_GRAB_ZONE, note_width * 0.3)` så korta noter går att flytta
-- **Fix: `quantize_tick` floor istf nearest** — noter snappar till grid-linjen vid/före klick, inte närmaste
-- **Fix: `y_to_pitch` clamp** — pitch clampas till synligt range vid drag utanför grid
-- **Fix: Zero-duration guard** — `SeqDuration` alltid minst 1 tick
-- Grid-bredd inkluderar nu noter som sträcker sig förbi pattern-längden
-- Open-ended noter (`duration=None`) får explicit duration vid drag-start
-- Expanderade hit-rects för tiny notes (`< RESIZE_GRAB_ZONE`)
+### Piano Roll Bug Fixes & Improvements
+- **Fix: `move_note` reused NoteId** — `next_note_id` counter was incorrectly decremented, causing "copied" notes (synth_sequencer/pattern.rs)
+- **Fix: Vertical drag now works** — `drag_started()` uses `press_origin()` instead of `interact_pointer_pos()` so hit-test occurs at click position, not after drag threshold
+- **Fix: Relative grip when moving** — notes maintain position relative to cursor (grab offset), not snap to note start
+- **Fix: Short-note resize zone proportional** — `min(RESIZE_GRAB_ZONE, note_width * 0.3)` so short notes can be moved
+- **Fix: `quantize_tick` floor instead of nearest** — notes snap to grid line at/before click, not nearest
+- **Fix: `y_to_pitch` clamp** — pitch clamped to visible range when dragging outside grid
+- **Fix: Zero-duration guard** — `SeqDuration` always at least 1 tick
+- Grid width now includes notes extending past pattern length
+- Open-ended notes (`duration=None`) get explicit duration at drag start
+- Expanded hit-rects for tiny notes (`< RESIZE_GRAB_ZONE`)
 
 ## [0.173.0] - 2026-02-26
-### Sequencer GUI — Piano Roll Mus-interaktion (Fas 4)
-- Klicka i griden (Draw-tool) skapar nya noter med kvantisering till `RowResolution`
-- Klicka på not (Select/Draw) väljer noten, Shift+klick togglar i selektion
-- Dra not-kropp → flytta not (tick + pitch), visuell ghost-preview under drag
-- Dra höger kant → resize not (ändra duration)
-- Selection-rektangel (lasso) i Select-tool: dra på tom yta → markera alla noter i rektangeln
-- Delete/Backspace tar bort alla selekterade noter, Escape rensar selektion
-- Verktygsväljare i toolbar: Select / Draw med aktiv markering
-- Visuell feedback: selekterade noter ljusare blå + tjockare kant, hover-highlight, ghost-preview
-- Cursor-ikoner: Crosshair (Draw), PointingHand (hover not), ResizeEast (höger kant)
-- Edit Transactions: Song muteras bara vid drag-release (inte under drag)
-- `NoteId` inkluderat i `PianoRollNote` snapshot för hit-testing och kommandon
-- `draw_piano_roll` tar nu `song` och `view_state` för write-lås och interaktions-state
-- `allocate_rect` med `Sense::click_and_drag()` ersätter `allocate_space`
+### Sequencer GUI — Piano Roll Mouse Interaction (Phase 4)
+- Click in grid (Draw tool) creates new notes with quantization to `RowResolution`
+- Click on note (Select/Draw) selects the note, Shift+click toggles in selection
+- Drag note body → move note (tick + pitch), visual ghost preview during drag
+- Drag right edge → resize note (change duration)
+- Selection rectangle (lasso) in Select tool: drag on empty area → select all notes in rectangle
+- Delete/Backspace removes all selected notes, Escape clears selection
+- Tool selector in toolbar: Select / Draw with active indicator
+- Visual feedback: selected notes lighter blue + thicker border, hover highlight, ghost preview
+- Cursor icons: Crosshair (Draw), PointingHand (hover note), ResizeEast (right edge)
+- Edit Transactions: Song is mutated only on drag release (not during drag)
+- `NoteId` included in `PianoRollNote` snapshot for hit-testing and commands
+- `draw_piano_roll` now takes `song` and `view_state` for write lock and interaction state
+- `allocate_rect` with `Sense::click_and_drag()` replaces `allocate_space`
 
 ## [0.172.0] - 2026-02-25
-### Sequencer GUI — Piano Roll Läs-vy (Fas 3)
-- Piano roll öppnas vid dubbelklick på PatternPlacement i arrangemanget
-- `SequencerViewState` med `opened_pattern` — persisterar mellan frames
-- Dubbelklick-detektion via `allocate_painter` med `Sense::click()` + rect-hit-test
-- Data samlas i snapshot (`PianoRollData`) via kort read-lock (RT-säkert)
-- Keyboard-kolumn (vänster): tangenter med C-noter markerade, svarta/vita tangenter
-- Note grid: horisontella pitch-rader, vertikala beat/sub-beat-linjer, svarta tangenter mörkare
-- Noter som färgkodade rektanglar med alpha baserad på velocity
-- Open-ended noter (duration=None) ritas till pattern-slut med fade-indikator
-- Velocity-staplar (nedre zon) med färggradient grön→gul→röd
-- Playhead-markör (pattern-relativ position)
-- Resizable bottom panel (150-600px) med scroll i båda riktningar
-- Stäng-knapp (X) i toolbar
+### Sequencer GUI — Piano Roll Read View (Phase 3)
+- Piano roll opens on double-click on PatternPlacement in arrangement
+- `SequencerViewState` with `opened_pattern` — persists between frames
+- Double-click detection via `allocate_painter` with `Sense::click()` + rect hit-test
+- Data collected in snapshot (`PianoRollData`) via short read-lock (RT-safe)
+- Keyboard column (left): keys with C notes marked, black/white keys
+- Note grid: horizontal pitch rows, vertical beat/sub-beat lines, black keys darker
+- Notes as color-coded rectangles with alpha based on velocity
+- Open-ended notes (duration=None) drawn to pattern end with fade indicator
+- Velocity bars (bottom zone) with color gradient green→yellow→red
+- Playhead marker (pattern-relative position)
+- Resizable bottom panel (150-600px) with scroll in both directions
+- Close button (X) in toolbar
 
 ## [0.171.0] - 2026-02-25
-### Sequencer GUI — Arrangement-vy (Fas 2)
-- Grafisk arrangement-tidslinje med scrollbar
-- Track-panel (vänster): namn med färgindikator, M/S-flaggor
-- Tidslinje-ruler med taktnummer (1-baserat)
-- Grid-linjer: starka vid taktstreck, svaga vid slag
-- Pattern-placements som färgkodade rektanglar (track-färg) med namn och noträknare
-- Playhead-markör (vertikal linje + triangel i ruler) — rör sig i realtid under uppspelning
-- Culling: enbart synliga placements renderas
-- Data samlas i snapshot (kort read-lock) före rendering (RT-säkert)
+### Sequencer GUI — Arrangement View (Phase 2)
+- Graphical arrangement timeline with scrollbar
+- Track panel (left): names with color indicator, M/S flags
+- Timeline ruler with bar numbers (1-based)
+- Grid lines: strong at bar lines, weak at beats
+- Pattern placements as color-coded rectangles (track color) with name and note count
+- Playhead marker (vertical line + triangle in ruler) — moves in real-time during playback
+- Culling: only visible placements are rendered
+- Data collected in snapshot (short read-lock) before rendering (RT-safe)
 
 ## [0.170.0] - 2026-02-25
-### Sequencer GUI — Transport & Läs-vy (Fas 1)
-- Transport-bar med Play/Pause/Stop-knappar, Go to Start
-- Position display: Bar:Beat:Tick (1-baserat, monospace, uppdateras i realtid)
-- Tempo DragValue (20-300 BPM) — skickar `EngineCommand::SetTempo`
-- Taktart-visning från Song
-- Statusindikatorer: PLAYING (grön) / PAUSED (gul) / STOPPED (grå)
-- Song-info: namn, tracks (med färg/mute/solo), patterns (namn, noter, längd)
-- `ctx.request_repaint()` under playback för smooth position-uppdateringar
-- Transport läser atomära värden från `TransportState` (lock-free)
+### Sequencer GUI — Transport & Read View (Phase 1)
+- Transport bar with Play/Pause/Stop buttons, Go to Start
+- Position display: Bar:Beat:Tick (1-based, monospace, updates in real-time)
+- Tempo DragValue (20-300 BPM) — sends `EngineCommand::SetTempo`
+- Time signature display from Song
+- Status indicators: PLAYING (green) / PAUSED (yellow) / STOPPED (gray)
+- Song info: name, tracks (with color/mute/solo), patterns (name, notes, length)
+- `ctx.request_repaint()` during playback for smooth position updates
+- Transport reads atomic values from `TransportState` (lock-free)
 
 ## [0.169.0] - 2026-02-25
-### Sequencer GUI — Koppling och RT-säkerhet (Fas 0)
-- Song alltid tillgänglig i GUI (inte bara med MCP-feature) — `SynthGuiConfig.song`
-- Song skapas i `main.rs` och delas med engine, GUI och MCP via samma `Arc<RwLock<Song>>`
-- `McpSharedState::with_song()` tar emot extern Song istället för att skapa egen
-- `SequencerEngine`: `song.read()` → `song.try_read()` för RT-säkerhet (aldrig blockerar audio-tråden)
-- Ny `AppView::Sequencer`-variant i navigeringsstate
-- Ny `SequencerGuiInput` (implementerar `InputSource`) — GUI-kommandokö för sequencer
-- Stub sequencer-vy visar Song-info (namn, tempo, antal patterns/tracks)
-- 3-vägs view-switcher i header: Rack / AWE / Seq
+### Sequencer GUI — Integration and RT Safety (Phase 0)
+- Song always available in GUI (not just with MCP feature) — `SynthGuiConfig.song`
+- Song created in `main.rs` and shared with engine, GUI and MCP via same `Arc<RwLock<Song>>`
+- `McpSharedState::with_song()` receives external Song instead of creating its own
+- `SequencerEngine`: `song.read()` → `song.try_read()` for RT safety (never blocks audio thread)
+- New `AppView::Sequencer` variant in navigation state
+- New `SequencerGuiInput` (implements `InputSource`) — GUI command queue for sequencer
+- Stub sequencer view shows Song info (name, tempo, pattern/track count)
+- 3-way view switcher in header: Rack / AWE / Seq
 
 ## [0.168.0] - 2026-02-25
-### Enhetlig högerklicksmeny (kabel-medveten)
-- Kabel- och bakgrundskontextmenyn sammanslagen till en enda meny
-- Högerklick på kabel visar: "Ta bort sladd", "Stoppa in Signal Monitor", separator, "Stoppa in modul..." (med fullständig modulkatalog)
-- Vald modul kopplas in inline på kabeln (from→ny modul→to)
-- Exakt en kabel hovrad åt gången (närmaste, inom 20px) — ingen överlappning
-- Hamburger-ikon (☰) på hovrad kabel borttagen — kabeln highlightas fortfarande
-- Port-högerklick opåverkad
+### Unified right-click menu (cable-aware)
+- Cable and background context menus merged into a single menu
+- Right-click on cable shows: "Delete cable", "Insert Signal Monitor", separator, "Insert module..." (with full module catalog)
+- Selected module is inserted inline on the cable (from→new module→to)
+- Exactly one cable hovered at a time (nearest, within 20px) — no overlap
+- Hamburger icon on hovered cable removed — cable is still highlighted
+- Port right-click unaffected
 
 ## [0.167.0] - 2026-02-25
-### Högerklicksmeny för att lägga till moduler i patch-editorn
-- Högerklick på tom yta i patch-editorn öppnar en hierarkisk kontextmeny med alla modulkategorier
-- Vald modul placeras vid klickpositionen (istället för auto-layout)
-- Samma menystruktur som top bar-paletten: Oscillator, Filter, Envelope, LFO, VCA, Mixer, Effect, Visualizer, Modulation, Generative, Physical, Output, Mod Matrix
-- Undermenyer för Oscillator, Effect, Visualizer, Modulation, Generative och Physical
-- Befintliga högerklicksmenyer (kabel, port) opåverkade
+### Right-click menu for adding modules in the patch editor
+- Right-click on empty area in patch editor opens a hierarchical context menu with all module categories
+- Selected module is placed at click position (instead of auto-layout)
+- Same menu structure as top bar palette: Oscillator, Filter, Envelope, LFO, VCA, Mixer, Effect, Visualizer, Modulation, Generative, Physical, Output, Mod Matrix
+- Submenus for Oscillator, Effect, Visualizer, Modulation, Generative and Physical
+- Existing right-click menus (cable, port) unaffected
 
 ## [0.166.0] - 2026-02-25
-### Typsäkerhet: String → PortName genomgående, GUI-visning av modul/instrument-ID
+### Type safety: String → PortName throughout, GUI display of module/instrument ID
 
-**Typsäkerhet (PortName-refaktor):**
-- `PortId.port`: `String` → `PortName` (Copy, nollallokering). `PortId` nu `Copy`.
-- `ConnectionSnapshot` portfält: `String` → `PortName`. Nu `Copy`.
-- `PortDescriptor.name`: `String` → `PortName` — påverkar alla ~29 moduler.
+**Type safety (PortName refactor):**
+- `PortId.port`: `String` → `PortName` (Copy, zero allocation). `PortId` now `Copy`.
+- `ConnectionSnapshot` port fields: `String` → `PortName`. Now `Copy`.
+- `PortDescriptor.name`: `String` → `PortName` — affects all ~29 modules.
 - `GraphNode.outputs`: `HashMap<String, AudioBuffer>` → `HashMap<PortName, AudioBuffer>`.
-- `PolyModule::process()` output-parameter: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
+- `PolyModule::process()` output parameter: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
 - `Session::connect/disconnect`: `String` → `impl Into<PortName>`.
 - `ModuleGraph::get_module_output`: `&str` → `PortName`.
-- GUI-interna typer (`PendingConnection`, `QuickAddRequest`, `PortContextMenuState`, `port_positions`) → `PortName`.
-- Debug-typer (`ConnectionInfo`, `ProbePoint`) → `PortName`. Nu `Copy`.
-- `ModuleStateSnapshot` nivåer/räknare: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
+- GUI-internal types (`PendingConnection`, `QuickAddRequest`, `PortContextMenuState`, `port_positions`) → `PortName`.
+- Debug types (`ConnectionInfo`, `ProbePoint`) → `PortName`. Now `Copy`.
+- `ModuleStateSnapshot` levels/counters: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
 - `ModuleVisualState.port_states`: `HashMap<String, ..>` → `HashMap<PortName, ..>`.
-- Nya PortName-konstanter: `PITCH`, `PITCH_CV`, `ACCENT`.
-- `Serialize`/`Deserialize` implementerat för `PortName`.
-- `PartialEq<&str>` implementerat för `PortName`.
+- New PortName constants: `PITCH`, `PITCH_CV`, `ACCENT`.
+- `Serialize`/`Deserialize` implemented for `PortName`.
+- `PartialEq<&str>` implemented for `PortName`.
 
-**GUI-förbättringar:**
-- Tooltip med ModuleId vid hover på modultitel i patch-editorn.
-- Tooltip med InstrumentId vid hover på instrumentnamn i instrumentlistan.
+**GUI improvements:**
+- Tooltip with ModuleId on hover over module title in patch editor.
+- Tooltip with InstrumentId on hover over instrument name in instrument list.
 
 ## [0.165.0] - 2026-02-25
-### 3 nya exempelpatchar, PatchModuleType v0.162.0-stöd, parameterfix i alla 48 patchar
+### 3 new example patches, PatchModuleType v0.162.0 support, parameter fixes in all 48 patches
 
-**Nya exempelpatchar:**
-- **LA Synth Pluck** (Experimental) — Roland D-50-stil LA-syntes med perkussiv attack-transient som crossfadar till filtrerad saw.
-- **Vector Pad** (Pad) — 4 oscillatorer blandade via VectorMixer med dubbla LFO:er för ständigt evolverande timbre.
-- **Spectral Drone** (Ambient & Texture) — Detunade sågvågor genom FrequencyShifter för inharmoniskt metalliskt shimmer.
+**New example patches:**
+- **LA Synth Pluck** (Experimental) — Roland D-50-style LA synthesis with percussive attack transient crossfading to filtered saw.
+- **Vector Pad** (Pad) — 4 oscillators blended via VectorMixer with dual LFOs for constantly evolving timbre.
+- **Spectral Drone** (Ambient & Texture) — Detuned sawtooth waves through FrequencyShifter for inharmonic metallic shimmer.
 
-**Nya `PatchModuleType`-varianter:**
-- `VectorMixer`, `LaSynth`, `PitchTracker`, `FrequencyShifter` — stöd i patch-serialisering, `to_module_type()`, `patch_bridge.rs`-mappning.
+**New `PatchModuleType` variants:**
+- `VectorMixer`, `LaSynth`, `PitchTracker`, `FrequencyShifter` — support in patch serialization, `to_module_type()`, `patch_bridge.rs` mapping.
 
-**Buggfixar (parameternamn i alla 48 exempelpatchar):**
-- `filter_mode()` sparade `"filter_type"` → fixat till `"type"` (matchade inte filtrets riktiga parameter).
-- `distortion_mode()` sparade `"mode"` → fixat till `"type"` (Distortion-params heter `Type`, inte `Mode`).
-- StereoOutput `param_f("master")` → `"master level"` i alla patchar (matchade inte `"Master Level"`).
-- Mixer `param_f("level")` → `"master"` i 5 patchar (Mixer har `Master`, inte `Level`).
+**Bug fixes (parameter names in all 48 example patches):**
+- `filter_mode()` saved `"filter_type"` → fixed to `"type"` (did not match the filter's actual parameter).
+- `distortion_mode()` saved `"mode"` → fixed to `"type"` (Distortion params are called `Type`, not `Mode`).
+- StereoOutput `param_f("master")` → `"master level"` in all patches (did not match `"Master Level"`).
+- Mixer `param_f("level")` → `"master"` in 5 patches (Mixer has `Master`, not `Level`).
 - Envelope: `attack_curve`→`atk_curve`, `decay_curve`→`dec_curve`, `release_curve`→`rel_curve`, `velocity_sensitivity`/`velocity_sens`→`vel_sens`.
 - Filter: `key_tracking`→`key_track`, `cutoff_mod`/`env_amount`→`cv_amt`.
 
-**Förbättringar:**
-- **Fuzzy parameter-matchning** — `set_parameter()` normaliserar nu understreck till mellanslag vid namnmatchning (`input_1` matchar `Input 1`).
-- **Mixer-descriptor** — Lade till `Input 1`–`Input 8` parametrar som saknades i ModuleDescriptor. Fixar parameterinställning via `apply_patch` och MCP.
-- **48/48 exempelpatchar laddas nu utan varningar** via `apply_example_patch`.
+**Improvements:**
+- **Fuzzy parameter matching** — `set_parameter()` now normalizes underscores to spaces during name matching (`input_1` matches `Input 1`).
+- **Mixer descriptor** — Added `Input 1`–`Input 8` parameters that were missing in ModuleDescriptor. Fixes parameter setting via `apply_patch` and MCP.
+- **48/48 example patches now load without warnings** via `apply_example_patch`.
 
 ## [0.164.0] - 2026-02-25
-### MCP Batch-patchbygge: build_instrument, build_instruments, apply_example_patch
+### MCP Batch patch building: build_instrument, build_instruments, apply_example_patch
 
-**Nya MCP-verktyg:**
-- **`build_instrument`** — Bygg ett komplett instrument i ETT anrop: skapar instrument, lägger till moduler, sätter parametrar och kopplar kablar. Moduler refereras via 0-baserat arrayindex i connections.
-- **`build_instruments`** — Bygg FLERA instrument i ett enda anrop (batch).
-- **`apply_example_patch`** — Ladda en namngiven exempelpatch direkt utan GUI-kö. Skapar alla moduler, parametrar och kopplingar omedelbart. Skapar nytt instrument om inget instrument_id anges.
+**New MCP tools:**
+- **`build_instrument`** — Build a complete instrument in ONE call: creates instrument, adds modules, sets parameters and wires cables. Modules referenced via 0-based array index in connections.
+- **`build_instruments`** — Build MULTIPLE instruments in a single call (batch).
+- **`apply_example_patch`** — Load a named example patch directly without GUI queue. Creates all modules, parameters and connections immediately. Creates new instrument if no instrument_id is provided.
 
-**Buggfixar:**
-- **Effect parameter routing** — MCP `set_parameter` skickar nu korrekt `SetEffectParameter` för effektmoduler (Delay, Reverb, Chorus etc.) istället för att alltid använda `SetModuleParameter`.
+**Bug fixes:**
+- **Effect parameter routing** — MCP `set_parameter` now correctly sends `SetEffectParameter` for effect modules (Delay, Reverb, Chorus etc.) instead of always using `SetModuleParameter`.
 
-**Ny arkitektur:**
-- `SynthSession::set_parameter()` — GUI-oberoende parameterlogik med korrekt effect/voice-routing och `ParamValue::Choice` → f32 konvertering.
-- `SynthSession::apply_patch()` — GUI-oberoende patchladdning som skapar moduler, applicerar parametrar och kopplar. Skippar visualizers (Oscilloscope, SignalMonitor etc.).
-- `PatchModuleType::to_module_type()` — Ny konverteringsmetod från patch-format till engine `ModuleType`.
-- `ApplyPatchResult` — Resultattyp med module_count, connection_count, module_ids och errors.
+**New architecture:**
+- `SynthSession::set_parameter()` — GUI-independent parameter logic with correct effect/voice routing and `ParamValue::Choice` → f32 conversion.
+- `SynthSession::apply_patch()` — GUI-independent patch loading that creates modules, applies parameters and connects. Skips visualizers (Oscilloscope, SignalMonitor etc.).
+- `PatchModuleType::to_module_type()` — New conversion method from patch format to engine `ModuleType`.
+- `ApplyPatchResult` — Result type with module_count, connection_count, module_ids and errors.
 
 ## [0.163.0] - 2026-02-25
-### Per-instrument modul-ID:n och GUI-rekonciliering för alla instrument
+### Per-instrument module IDs and GUI reconciliation for all instruments
 
-**Buggfixar:**
-- **Per-instrument modul-ID:n** — Varje instrument har nu egna räknare per modultyp. Instrument 0 kan ha `osc-1` och instrument 1 kan också ha `osc-1` (tidigare var ID:n globala: `osc-1`, `osc-2`, `osc-3` oavsett instrument).
-- **GUI-rekonciliering för alla instrument** — `reconcile_with_session()` synkroniserar nu moduler och kopplingar för ALLA instrument, inte bara det aktiva. Moduler och kablar skapade via MCP på icke-aktivt instrument syns direkt vid instrumentbyte.
+**Bug fixes:**
+- **Per-instrument module IDs** — Each instrument now has its own counters per module type. Instrument 0 can have `osc-1` and instrument 1 can also have `osc-1` (previously IDs were global: `osc-1`, `osc-2`, `osc-3` regardless of instrument).
+- **GUI reconciliation for all instruments** — `reconcile_with_session()` now synchronizes modules and connections for ALL instruments, not just the active one. Modules and cables created via MCP on non-active instruments are visible immediately on instrument switch.
 
-**Tekniska ändringar:**
-- `SynthSession.counters` ändrad från `HashMap<ModuleType, u16>` till `HashMap<(InstrumentId, ModuleType), u16>`
-- `SynthSession.registry` ändrad från `HashMap<ModuleId, RegistryEntry>` till `HashMap<(InstrumentId, ModuleId), ModuleDescriptor>`
-- `InstrumentId::MASTER` sentinel-konstant för master bus-effekter
-- `validate_port()` i MCP-bridge tar nu `instrument_id` för korrekt modul-lookup
-- Clippy-fixar: `collapsible_if`, `map_or` → `is_some_and`
+**Technical changes:**
+- `SynthSession.counters` changed from `HashMap<ModuleType, u16>` to `HashMap<(InstrumentId, ModuleType), u16>`
+- `SynthSession.registry` changed from `HashMap<ModuleId, RegistryEntry>` to `HashMap<(InstrumentId, ModuleId), ModuleDescriptor>`
+- `InstrumentId::MASTER` sentinel constant for master bus effects
+- `validate_port()` in MCP bridge now takes `instrument_id` for correct module lookup
+- Clippy fixes: `collapsible_if`, `map_or` → `is_some_and`
 
 ## [0.162.0] - 2026-02-25
-### 4 nya moduler: Frequency Shifter, Vector Mixer, LA Synth, Pitch Tracker
+### 4 new modules: Frequency Shifter, Vector Mixer, LA Synth, Pitch Tracker
 
-**Nya effektmoduler:**
-- **Frequency Shifter** (`fsf`) — Bode frekvensskiftning med Hilbert-transformpar (all-pass kedjor). Tre lägen: Up-shift, Down-shift, Stereo (up L / down R). Parametrar: Shift (-1000 till +1000 Hz), Mix, Mode.
+**New effect modules:**
+- **Frequency Shifter** (`fsf`) — Bode frequency shifting with Hilbert transform pair (all-pass chains). Three modes: Up-shift, Down-shift, Stereo (up L / down R). Parameters: Shift (-1000 to +1000 Hz), Mix, Mode.
 
-**Nya röstmoduler:**
-- **Vector Mixer** (`vec`) — 4-hörns XY-vektormixning med equal-power bilineär interpolation. 4 audio-ingångar (A/B/C/D), X/Y CV-modulering.
-- **LA Synth** (`las`) — Linear Arithmetic syntes (Roland-stil). Genererar attack-transienter (click, noise burst, pluck, hammer) som crossfadas till sustain-ingången. Parametrar: Attack Type, Attack Time, Attack Level, X-Fade Time, Brightness.
-- **Pitch Tracker** (`ptr`) — Autokorrelationsbaserad pitch-detektion. Outputs: 1V/oktav pitch CV och gate-signal. Pre-allokerad ringbuffer (2048 samples), analys var 512:e sample.
+**New voice modules:**
+- **Vector Mixer** (`vec`) — 4-corner XY vector mixing with equal-power bilinear interpolation. 4 audio inputs (A/B/C/D), X/Y CV modulation.
+- **LA Synth** (`las`) — Linear Arithmetic synthesis (Roland-style). Generates attack transients (click, noise burst, pluck, hammer) that crossfade to sustain input. Parameters: Attack Type, Attack Time, Attack Level, X-Fade Time, Brightness.
+- **Pitch Tracker** (`ptr`) — Autocorrelation-based pitch detection. Outputs: 1V/octave pitch CV and gate signal. Pre-allocated ring buffer (2048 samples), analysis every 512 samples.
 
 ## [0.160.0] - 2026-02-25
-### GUI-rekonciliering för MCP-instrumentändringar
+### GUI reconciliation for MCP instrument changes
 
-- GUI uppdateras nu automatiskt när instrument skapas, tas bort, döps om eller ändras via MCP
-- Ny `reconcile_instruments()` i GUI:t — jämför `instrument_snapshots` med GUI-state varje frame
-- MCP-skapade instrument dyker upp i instrument rack, MCP-borttagna försvinner
-- Metadata (namn, volym, pan, mute, solo) synkas från engine till GUI
-- `EngineCommand::RenameInstrument` — nytt engine-kommando för namnbyte (ersätter direkt skrivning till shared state som överskrevs)
-- `next_instrument_id` hålls synkad mellan GUI och MCP
+- GUI now automatically updates when instruments are created, removed, renamed or changed via MCP
+- New `reconcile_instruments()` in GUI — compares `instrument_snapshots` with GUI state every frame
+- MCP-created instruments appear in instrument rack, MCP-deleted ones disappear
+- Metadata (name, volume, pan, mute, solo) synced from engine to GUI
+- `EngineCommand::RenameInstrument` — new engine command for renaming (replaces direct writing to shared state which was overwritten)
+- `next_instrument_id` kept in sync between GUI and MCP
 
 ## [0.159.0] - 2026-02-25
-### MCP: Multi-instrument-stöd
+### MCP: Multi-instrument support
 
-**9 nya MCP-verktyg för instrumenthantering (totalt 56):**
+**9 new MCP tools for instrument management (total 56):**
 
-- `create_instrument` — Skapa nytt instrument med namn
-- `delete_instrument` — Ta bort instrument (ej standard-instrumentet ID 0)
-- `rename_instrument` — Byt namn på instrument
-- `set_instrument_volume` — Ställ volym (0.0–2.0)
-- `set_instrument_pan` — Ställ pan (-1.0–1.0)
-- `set_instrument_mute` — Muta/avmuta
-- `set_instrument_solo` — Solo/avsolo
-- `set_instrument_midi_channel` — MIDI-kanal (1–16)
-- `set_instrument_enabled` — Aktivera/avaktivera
+- `create_instrument` — Create new instrument with name
+- `delete_instrument` — Delete instrument (not the default instrument ID 0)
+- `rename_instrument` — Rename instrument
+- `set_instrument_volume` — Set volume (0.0–2.0)
+- `set_instrument_pan` — Set pan (-1.0–1.0)
+- `set_instrument_mute` — Mute/unmute
+- `set_instrument_solo` — Solo/unsolo
+- `set_instrument_midi_channel` — MIDI channel (1–16)
+- `set_instrument_enabled` — Enable/disable
 
-**Arkitekturändringar:**
+**Architecture changes:**
 
-- `SharedGraphState` taggar snapshots med `instrument_id` — moduler/kopplingar per instrument
-- `InstrumentSnapshot` i `EngineState` — namn, kanal, volym, pan, mute, solo
-- `SynthSession` — instrumentlivscykel (add/remove/rename/configure) + per-instrument modulregister
-- `SynthBridge` trait utökat med 9 nya instrumentmetoder
-- `AppSynthBridge` — alla `instrument_id != 0`-guarder borttagna, validerar via snapshots
-- GUI-rekonciliering filtrerar på aktivt instrument
-- `InstrumentInfo` utökad med volume, pan, muted, solo-fält
-- Engine uppdaterar instrument-snapshots vid varje instrumentförändring
+- `SharedGraphState` tags snapshots with `instrument_id` — modules/connections per instrument
+- `InstrumentSnapshot` in `EngineState` — name, channel, volume, pan, mute, solo
+- `SynthSession` — instrument lifecycle (add/remove/rename/configure) + per-instrument module registry
+- `SynthBridge` trait extended with 9 new instrument methods
+- `AppSynthBridge` — all `instrument_id != 0` guards removed, validates via snapshots
+- GUI reconciliation filters on active instrument
+- `InstrumentInfo` extended with volume, pan, muted, solo fields
+- Engine updates instrument snapshots on every instrument change
 
-**Begränsning borttagen:** "Bara ett instrument (ID 0) exponeras" — nu stöds flertal instrument via MCP.
+**Limitation removed:** "Only one instrument (ID 0) exposed" — multiple instruments now supported via MCP.
 
 ## [0.158.0] - 2026-02-25
-### SynthSession — gemensamt kontrollager för GUI och MCP
+### SynthSession — shared control layer for GUI and MCP
 
-**Ny arkitektur:** Trådsäker `SynthSession` äger modullivscykeln (skapa, ta bort, koppla) och används av både GUI och MCP.
+**New architecture:** Thread-safe `SynthSession` owns module lifecycle (create, remove, connect) and is used by both GUI and MCP.
 
-**Förändringar:**
-- `SynthSession` (`session.rs`) — ny struct med `add_module()`, `remove_module()`, `connect()`, `disconnect()`, `clear_graph()`, queries
-- MCP utför moduloperationer direkt via session (omedelbar feedback med ModuleId)
-- MCP fungerar nu korrekt i headless-läge (`--mcp`) — tidigare helt trasigt
-- GUI reconcilierar med session varje frame — MCP-tillagda moduler dyker upp automatiskt
-- `module_factory.rs` flyttad från `gui/` till crate-root (noll GUI-beroenden)
-- `patch_bridge.rs` reducerad från ~900 rader duplicerad factory-logik till ~80 rader via `session.add_module_with_id()`
-- `PendingMcpOp` och `pending_ops` borttagna — ersatta av direkt session-anrop
-- Eliminerar kodduplikation mellan GUI, MCP och patch-laddning
+**Changes:**
+- `SynthSession` (`session.rs`) — new struct with `add_module()`, `remove_module()`, `connect()`, `disconnect()`, `clear_graph()`, queries
+- MCP performs module operations directly via session (immediate feedback with ModuleId)
+- MCP now works correctly in headless mode (`--mcp`) — previously completely broken
+- GUI reconciles with session every frame — MCP-added modules appear automatically
+- `module_factory.rs` moved from `gui/` to crate root (zero GUI dependencies)
+- `patch_bridge.rs` reduced from ~900 lines of duplicated factory logic to ~80 lines via `session.add_module_with_id()`
+- `PendingMcpOp` and `pending_ops` removed — replaced by direct session calls
+- Eliminates code duplication between GUI, MCP and patch loading
 
 ## [0.157.0] - 2026-02-25
-### MCP: Batch-operationer för sequencern
+### MCP: Batch operations for the sequencer
 
-**8 nya batch-MCP-verktyg (totalt 47):**
+**8 new batch MCP tools (total 47):**
 
-*Batch-noter:*
-- `add_notes` — Lägg till N noter i ett pattern i ett anrop
-- `update_notes` — Uppdatera N noter i ett pattern i ett anrop
-- `replace_notes` — Rensa + lägg till N noter (full overwrite)
-- `clear_pattern` — Rensa alla noter ur ett pattern
+*Batch notes:*
+- `add_notes` — Add N notes to a pattern in one call
+- `update_notes` — Update N notes in a pattern in one call
+- `replace_notes` — Clear + add N notes (full overwrite)
+- `clear_pattern` — Clear all notes from a pattern
 
-*Batch-skapande:*
-- `create_patterns` — Skapa N patterns med valfria inline-noter
-- `create_tracks` — Skapa N tracks i ett anrop
+*Batch creation:*
+- `create_patterns` — Create N patterns with optional inline notes
+- `create_tracks` — Create N tracks in one call
 
-*Batch-arrangement:*
-- `place_patterns` — Placera N patterns i arrangemanget
+*Batch arrangement:*
+- `place_patterns` — Place N patterns in the arrangement
 
 *Full song:*
-- `set_song` — Bygg en hel låt i ett anrop (patterns + tracks + noter + arrangement)
+- `set_song` — Build an entire song in one call (patterns + tracks + notes + arrangement)
 
-**Designbeslut:**
-- Partial success: varje batch-resultat rapporterar per-item success/failure (ingen rollback)
-- `set_song` använder array-index (0-baserat) för placements, inte ID:n — returnerar mappning index → ID
-- Befintliga single-item-verktyg behålls
+**Design decisions:**
+- Partial success: each batch result reports per-item success/failure (no rollback)
+- `set_song` uses array indices (0-based) for placements, not IDs — returns mapping index → ID
+- Existing single-item tools retained
 
-**Nya typer:**
-- `BatchItemResult`, `BatchResult`, `SetSongResult` — response-typer
-- Bridge-structs: `BridgeNoteData`, `BridgeNoteUpdate`, `BridgePatternData`, `BridgeTrackData`, `BridgePlacementData`, `BridgeSongPlacement`
+**New types:**
+- `BatchItemResult`, `BatchResult`, `SetSongResult` — response types
+- Bridge structs: `BridgeNoteData`, `BridgeNoteUpdate`, `BridgePatternData`, `BridgeTrackData`, `BridgePlacementData`, `BridgeSongPlacement`
 
 ## [0.156.0] - 2026-02-25
-### MCP: Sequencer-verktyg — Song, Pattern, Note, Track, Transport
+### MCP: Sequencer tools — Song, Pattern, Note, Track, Transport
 
-**Ny delad Song via `McpSharedState`:**
-- `Arc<RwLock<Song>>` skapas i `McpSharedState` och skickas till engine via `SetSong` vid uppstart
-- MCP redigerar Song direkt via RwLock, SequencerEngine läser den i process-loopen
+**New shared Song via `McpSharedState`:**
+- `Arc<RwLock<Song>>` created in `McpSharedState` and sent to engine via `SetSong` at startup
+- MCP edits Song directly via RwLock, SequencerEngine reads it in the process loop
 
-**17 nya MCP-verktyg (totalt 39):**
+**17 new MCP tools (total 39):**
 
 *Song:*
-- `get_song_info` — Namn, tempo, taktart, längd, antal patterns/tracks
-- `set_song_tempo` — Ändra tempo (BPM)
-- `set_song_name` — Ändra songnamn
+- `get_song_info` — Name, tempo, time signature, length, pattern/track count
+- `set_song_tempo` — Change tempo (BPM)
+- `set_song_name` — Change song name
 
 *Patterns:*
-- `list_patterns` — Lista alla patterns med längd och antal noter
-- `create_pattern` — Skapa nytt pattern (namn, längd i beats)
-- `delete_pattern` — Ta bort pattern (och alla dess placements)
+- `list_patterns` — List all patterns with length and note count
+- `create_pattern` — Create new pattern (name, length in beats)
+- `delete_pattern` — Delete pattern (and all its placements)
 
 *Notes:*
-- `list_notes` — Lista alla noter i ett pattern
-- `add_note` — Lägg till not (pitch, start_beat, duration_beats, velocity)
-- `remove_note` — Ta bort not
-- `update_note` — Uppdatera not (valfria fält: pitch, start, duration, velocity)
+- `list_notes` — List all notes in a pattern
+- `add_note` — Add note (pitch, start_beat, duration_beats, velocity)
+- `remove_note` — Remove note
+- `update_note` — Update note (optional fields: pitch, start, duration, velocity)
 
 *Tracks:*
-- `list_tracks` — Lista alla spår med instrument, volym, mute/solo
-- `create_track` — Skapa nytt spår (namn, valfritt instrument)
+- `list_tracks` — List all tracks with instrument, volume, mute/solo
+- `create_track` — Create new track (name, optional instrument)
 
 *Arrangement:*
-- `place_pattern` — Placera pattern på spår vid beat-position
-- `remove_placement` — Ta bort placement
-- `list_arrangement` — Lista alla placements
+- `place_pattern` — Place pattern on track at beat position
+- `remove_placement` — Remove placement
+- `list_arrangement` — List all placements
 
 *Transport:*
-- `seq_play` — Starta sequencer-uppspelning
-- `seq_stop` — Stoppa sequencer
-- `seq_seek` — Hoppa till beat-position
+- `seq_play` — Start sequencer playback
+- `seq_stop` — Stop sequencer
+- `seq_seek` — Seek to beat position
 
-**Tidskonvertering:** MCP API:t använder beats (float) — internt: `beat × 960 = tick`.
+**Time conversion:** MCP API uses beats (float) — internally: `beat × 960 = tick`.
 
-**Nya feltyper:** `PatternNotFound`, `NoteNotFound`, `TrackNotFound`, `SongLockPoisoned`.
+**New error types:** `PatternNotFound`, `NoteNotFound`, `TrackNotFound`, `SongLockPoisoned`.
 
 ## [0.155.0] - 2026-02-25
-### Ny exempelpatch: Moog Resonant Sweep
+### New example patch: Moog Resonant Sweep
 
-**Ny patch:** "Moog Resonant Sweep" — fat Moog-inspirerad lead/bass med:
-- Dubbla detunade sågtandsosc + sub-osc en oktav ner
-- Ladder-filter med hög resonans (0.55), 6000Hz envelope-sweep, drive 1.8
-- LFO-wobble på filtret (1.8Hz triangle)
-- Chorus + reverb-effekter
+**New patch:** "Moog Resonant Sweep" — fat Moog-inspired lead/bass with:
+- Dual detuned sawtooth oscs + sub-osc one octave down
+- Ladder filter with high resonance (0.55), 6000Hz envelope sweep, drive 1.8
+- LFO wobble on filter (1.8Hz triangle)
+- Chorus + reverb effects
 
-Tillagd i Lead-kategorin i patch-browsern.
+Added to Lead category in patch browser.
 
 ## [0.154.0] - 2026-02-25
-### MCP: Portvalidering i connect/disconnect
+### MCP: Port validation in connect/disconnect
 
-**Buggfix:**
-- `connect`/`disconnect` validerar nu modul-ID:n och portnamn mot `ModuleDescriptor` innan operationen köas. Returnerar `PortNotFound`-fel med modul och portnamn om porten inte existerar (istället för tyst "OK").
+**Bug fix:**
+- `connect`/`disconnect` now validates module IDs and port names against `ModuleDescriptor` before queueing the operation. Returns `PortNotFound` error with module and port name if the port does not exist (instead of silent "OK").
 
-**Ny felvariant:** `McpBridgeError::PortNotFound { module, port }` i `synth_mcp::error`.
+**New error variant:** `McpBridgeError::PortNotFound { module, port }` in `synth_mcp::error`.
 
 ## [0.153.0] - 2026-02-25
-### MCP: Effektmoduler via add_module/remove_module
+### MCP: Effect modules via add_module/remove_module
 
-**Förbättringar:**
-- `add_module` stödjer nu effektmoduler (chr, rev, dly, dist, phs, fln, comp, eq, ws, bbd, ms, lim, conv, pvoc) — inte bara voice-moduler
-- `remove_module` skickar nu rätt `EngineCommand` beroende på modulkategori (Effect → `RemoveEffect`, Visualizer → `RemoveVisualizer`, annars `RemoveModule`)
+**Improvements:**
+- `add_module` now supports effect modules (chr, rev, dly, dist, phs, fln, comp, eq, ws, bbd, ms, lim, conv, pvoc) — not just voice modules
+- `remove_module` now sends the correct `EngineCommand` depending on module category (Effect → `RemoveEffect`, Visualizer → `RemoveVisualizer`, otherwise `RemoveModule`)
 
-**Ny fabriksfunktion:** `create_effect(ModuleType)` i `module_factory.rs` — skapar effektinstanser (`Box<dyn AudioEffect>` + `ModuleDescriptor`), parallell till `create_voice_module`. `get_descriptor()` förenklas att använda den.
+**New factory function:** `create_effect(ModuleType)` in `module_factory.rs` — creates effect instances (`Box<dyn AudioEffect>` + `ModuleDescriptor`), parallel to `create_voice_module`. `get_descriptor()` simplified to use it.
 
 ## [0.152.0] - 2026-02-24
-### MCP: clear_graph + städning
+### MCP: clear_graph + cleanup
 
-**Nytt MCP-verktyg (totalt 21):**
-- `clear_graph` — Rensar hela voice graph:en för ett instrument (tar bort alla moduler, effekter, visualiserare och kablar). Användbart för att börja från scratch.
+**New MCP tool (total 21):**
+- `clear_graph` — Clears the entire voice graph for an instrument (removes all modules, effects, visualizers and cables). Useful for starting from scratch.
 
-**Borttaget:**
-- `signal_level` fältet i `ConnectionSnapshot` och `ConnectionInfo` (GUI använder separat `CableVisualState`-system, MCP-fältet var redundant)
+**Removed:**
+- `signal_level` field in `ConnectionSnapshot` and `ConnectionInfo` (GUI uses separate `CableVisualState` system, MCP field was redundant)
 
 ## [0.151.0] - 2026-02-24
-### MCP: Modulhantering + buggfixar
+### MCP: Module management + bug fixes
 
-**5 nya MCP-verktyg (totalt 20):**
-- `list_module_types` — Listar alla tillgängliga modultyper med portar och parametrar
-- `add_module` — Lägger till en modul i voice graph (syns i GUI nästa frame)
-- `remove_module` — Tar bort en modul och alla dess kablar
-- `connect` — Kopplar ihop två modulportar med en kabel
-- `disconnect` — Tar bort en kabel mellan två modulportar
+**5 new MCP tools (total 20):**
+- `list_module_types` — Lists all available module types with ports and parameters
+- `add_module` — Adds a module to the voice graph (visible in GUI next frame)
+- `remove_module` — Removes a module and all its cables
+- `connect` — Connects two module ports with a cable
+- `disconnect` — Removes a cable between two module ports
 
-**Ny modulfabrik:** `module_factory.rs` centraliserar skapande av modulinstanser från `ModuleType` (25 voice-moduler + 14 effekter + 3 visualiserare).
+**New module factory:** `module_factory.rs` centralizes creation of module instances from `ModuleType` (25 voice modules + 14 effects + 3 visualizers).
 
-**Ny delad state:** `PendingMcpOp` — kö för MCP→GUI-operationer (AddModule, RemoveModule, Connect, Disconnect), pollas varje frame av GUI.
+**New shared state:** `PendingMcpOp` — queue for MCP→GUI operations (AddModule, RemoveModule, Connect, Disconnect), polled every frame by GUI.
 
-**Buggfixar:**
-- `effect_count` i `InstrumentInfo` läser nu från `EngineState` (var hårdkodat till 0)
+**Bug fixes:**
+- `effect_count` in `InstrumentInfo` now reads from `EngineState` (was hardcoded to 0)
 
-**Nya bridge-typer:** `ModuleTypeInfo`, `PendingMcpOp`, `InvalidModuleType`-felvariant
+**New bridge types:** `ModuleTypeInfo`, `PendingMcpOp`, `InvalidModuleType` error variant
 
 ## [0.150.0] - 2026-02-24
-### Fixa buggar i exempelpatchar
+### Fix bugs in example patches
 
-**10 patchar fixade** via MCP-driven testning (alla 44 passerar nu utan fel):
+**10 patches fixed** via MCP-driven testing (all 44 now pass without errors):
 
-- **8 patchar med redundant modulering:** Tog bort kablar som dubblerade ModMatrix-routing (env/lfo → filter cutoff_cv). Berörda: Fluid Keys, Acid Bass, Screamer Lead, Waveshaper Lead, Unison Supersaw, Glitch Pad, Fluid Pad, Unison Sync Lead
-- **Unison Sync Lead:** Waveshaper är effektkedjemodul — kan inte kopplas inline i voice graph. Fixat: osc→flt direkt, waveshaper appliceras automatiskt via effektkedjan
-- **FM Bell:** Oscillator har ingen "cv"-port. Fixat: lade till amp-2 som envelopperar modulatorsignalen (osc-2 → amp-1 → osc-1 fm), korrekt FM-djupskontroll med env-1
-- **Warm Evolving:** lfo-2 var definierad men aldrig kopplad. Fixat: lfo-2 → flt-1 cutoff_cv (morph_cv finns inte som filterport)
+- **8 patches with redundant modulation:** Removed cables that duplicated ModMatrix routing (env/lfo → filter cutoff_cv). Affected: Fluid Keys, Acid Bass, Screamer Lead, Waveshaper Lead, Unison Supersaw, Glitch Pad, Fluid Pad, Unison Sync Lead
+- **Unison Sync Lead:** Waveshaper is an effect chain module — cannot be connected inline in voice graph. Fixed: osc→flt directly, waveshaper applied automatically via effect chain
+- **FM Bell:** Oscillator has no "cv" port. Fixed: added amp-2 to envelope the modulator signal (osc-2 → amp-1 → osc-1 fm), correct FM depth control with env-1
+- **Warm Evolving:** lfo-2 was defined but never connected. Fixed: lfo-2 → flt-1 cutoff_cv (morph_cv does not exist as a filter port)
 
 ## [0.149.0] - 2026-02-24
-### MCP: Exempelpatchar + UI-snapshot
+### MCP: Example patches + UI snapshot
 
-**3 nya MCP-verktyg (totalt 15):**
-- `list_example_patches` — Listar alla 45 exempelpatchar med kategori, beskrivning, taggar, antal moduler/kopplingar
-- `load_example_patch` — Laddar en exempelpatch via namn (case-insensitive), GUI uppdateras nästa frame
-- `get_ui_snapshot` — Returnerar modulpositioner, storlekar, parametrar, kopplingar och överlappningsanalys
+**3 new MCP tools (total 15):**
+- `list_example_patches` — Lists all 45 example patches with category, description, tags, module/connection count
+- `load_example_patch` — Loads an example patch by name (case-insensitive), GUI updates next frame
+- `get_ui_snapshot` — Returns module positions, sizes, parameters, connections and overlap analysis
 
-**Ny delad state: `McpSharedState`**
-- `pending_patch: Mutex<Option<(Patch, String)>>` — MCP skriver, GUI pollar varje frame
-- `ui_layout: Mutex<UiLayoutData>` — GUI skriver varje frame, MCP läser vid begäran
-- Delas via `Arc` mellan `AppSynthBridge` och `SynthApp`
+**New shared state: `McpSharedState`**
+- `pending_patch: Mutex<Option<(Patch, String)>>` — MCP writes, GUI polls every frame
+- `ui_layout: Mutex<UiLayoutData>` — GUI writes every frame, MCP reads on request
+- Shared via `Arc` between `AppSynthBridge` and `SynthApp`
 
-**Nya MCP-typer:** `ExamplePatchInfo`, `UiSnapshot`, `UiModuleInfo`, `UiConnectionInfo`, `UiOverlap`
+**New MCP types:** `ExamplePatchInfo`, `UiSnapshot`, `UiModuleInfo`, `UiConnectionInfo`, `UiOverlap`
 
 ## [0.148.0] - 2026-02-24
-### MCP-bugfixar och förbättrad dokumentation
+### MCP bug fixes and improved documentation
 
-**5 bugfixar:**
-- `list_instruments` och `get_engine_status` fungerar nu (Parameters<()> → NoParams-struct)
-- Modul-ID:n använder Display-format (`osc-1`) istället för Debug (`ModuleId { module_type: Oscillator, instance: 1 }`)
-- `format_param_display()` matchar nu case-insensitivt — enheter visas korrekt (`"2.0 kHz"`, `"440.0 Hz"`)
-- `get_graph_diagnostics` rapporterar inte längre StereoOutput som "signal dead-end"
-- `module_type` i ModuleInfo använder `ModuleType::name()` istället för Debug-format
+**5 bug fixes:**
+- `list_instruments` and `get_engine_status` now work (Parameters<()> → NoParams struct)
+- Module IDs use Display format (`osc-1`) instead of Debug (`ModuleId { module_type: Oscillator, instance: 1 }`)
+- `format_param_display()` now matches case-insensitively — units display correctly (`"2.0 kHz"`, `"440.0 Hz"`)
+- `get_graph_diagnostics` no longer reports StereoOutput as "signal dead-end"
+- `module_type` in ModuleInfo uses `ModuleType::name()` instead of Debug format
 
-**Dokumentation:** Uppdaterad `docs/MCP.md` med exempelsession, kända begränsningar, fas 2/3-planering, och kreativa användningsfall
+**Documentation:** Updated `docs/MCP.md` with example session, known limitations, phase 2/3 planning, and creative use cases
 
 ## [0.147.0] - 2026-02-24
-### MCP-stöd (Model Context Protocol) för AI-agent-integration
+### MCP support (Model Context Protocol) for AI agent integration
 
-**Ny crate: `synth_mcp`** — MCP-server som låter AI-agenter inspektera och styra synthen:
-- 11 verktyg: list_instruments, list_modules, get_module_info, get_connections, get_parameter, get_engine_status, get_graph_diagnostics, set_parameter, note_on, note_off
-- `SynthBridge` trait för ren separation mellan MCP-protokoll och synth-engine
-- TCP-server på port 9850 (GUI + MCP samtidigt) och stdio-läge (`--mcp` headless)
-- Stdio↔TCP bridge-binär (`synth-mcp-bridge`) för Claude Code-integration
+**New crate: `synth_mcp`** — MCP server that lets AI agents inspect and control the synth:
+- 11 tools: list_instruments, list_modules, get_module_info, get_connections, get_parameter, get_engine_status, get_graph_diagnostics, set_parameter, note_on, note_off
+- `SynthBridge` trait for clean separation between MCP protocol and synth engine
+- TCP server on port 9850 (GUI + MCP simultaneously) and stdio mode (`--mcp` headless)
+- Stdio↔TCP bridge binary (`synth-mcp-bridge`) for Claude Code integration
 
-**SharedGraphState kopplad till EngineState:**
-- `EngineState.shared_graph` uppdateras vid topologiändringar och parameterändringar
-- Snapshot byggs från `Instrument.voice_graph()` vid AddModule, RemoveModule, Connect, Disconnect, SetModuleParameter, SetVoiceParameter
+**SharedGraphState connected to EngineState:**
+- `EngineState.shared_graph` updated on topology changes and parameter changes
+- Snapshot built from `Instrument.voice_graph()` on AddModule, RemoveModule, Connect, Disconnect, SetModuleParameter, SetVoiceParameter
 
-**Feature flag:** `mcp` — bakom feature flag, default-builds opåverkade
+**Feature flag:** `mcp` — behind feature flag, default builds unaffected
 
 ## [0.146.0] - 2026-02-24
-### Öka AudioBuffer-startstorlek till 1024 samples
+### Increase AudioBuffer initial size to 1024 samples
 
-- Alla modulers `AudioBuffer::new()` ändrade från 256 till 1024 samples
-- Matchar cpal-backendens faktiska bufferstorlek och undviker onödig reallokering vid första audio-callback
-- Ta bort oanvänd `Default`-impl för `CpalBackend`
+- All modules' `AudioBuffer::new()` changed from 256 to 1024 samples
+- Matches cpal backend's actual buffer size and avoids unnecessary reallocation on first audio callback
+- Remove unused `Default` impl for `CpalBackend`
 
 ## [0.145.0] - 2026-02-21
-### Högerklicka på port → Lägg till ny modul med auto-koppling
+### Right-click on port → Add new module with auto-connection
 
-**Snabb modulbyggnad direkt från portar:**
-- Högerklicka på valfri port öppnar en kontextmeny med relevanta moduler att lägga till
-- Ny modul skapas automatiskt och kopplas till den klickade porten
-- Menyn filtreras baserat på porttyp (Audio/Control/Gate) och riktning (Input/Output)
+**Quick module building directly from ports:**
+- Right-click on any port opens a context menu with relevant modules to add
+- New module is automatically created and connected to the clicked port
+- Menu is filtered based on port type (Audio/Control/Gate) and direction (Input/Output)
 
-**Input-portar visar källmoduler:**
+**Input ports show source modules:**
 - Audio: Oscillator, Sub Osc, Wavetable, Math Osc, Additive, Granular, Noise, Ring Mod
 - Control: LFO, Envelope, MSEG, Kinetic Modulator, Envelope Follower
 - Gate: Euclidean, Turing Machine, Random Gates
 
-**Output-portar visar destinationsmoduler:**
-- Audio: Filter, VCA, Mixer, Signal Monitor + effekter (Delay, Reverb, Distortion, Chorus, m.fl.)
+**Output ports show destination modules:**
+- Audio: Filter, VCA, Mixer, Signal Monitor + effects (Delay, Reverb, Distortion, Chorus, etc.)
 - Control: VCA, Filter, Oscillator
 - Gate: Envelope, VCA
 
-**Smart placering:**
-- Nya moduler placeras till vänster om input-portar, till höger om output-portar
-- Escape eller klick utanför stänger menyn
+**Smart placement:**
+- New modules are placed to the left of input ports, to the right of output ports
+- Escape or click outside closes the menu
 
 ## [0.144.0] - 2026-02-21
-### Förbättrade port-beskrivningar med kopplingsförslag
+### Improved port descriptions with connection suggestions
 
-**Informativa tooltips på alla portar:**
-- Alla modulers portar har nu beskrivningar med konkreta kopplingsförslag
-- Format: "Kort beskrivning. Koppla: Modul1, Modul2, Modul3"
-- Hjälper nya användare förstå vad som kan kopplas var
+**Informative tooltips on all ports:**
+- All module ports now have descriptions with concrete connection suggestions
+- Format: "Short description. Connect: Module1, Module2, Module3"
+- Helps new users understand what can be connected where
 
-**Uppdaterade moduler:**
-- Oscillator: FM, PM, PWM, X-Mod, Sync — förklarar vad varje ingång gör och föreslår modulationskällor
-- Envelope: Gate, Velocity, Out — med info om automatiska kopplingar och destinationer
-- LFO: Retrig, Rate CV, Out — med förslag på modulationskällor och destinationer
-- Amplifier (VCA): In, In L/R, CV, Pan CV, outputs — förslag på kopplingar
-- Mixer: In 1–8, Out — med förslag på ljudkällor
-- Filter (SVF + Ladder): In, Cutoff CV, Res CV, Out — föreslår Envelope/LFO
-- Kinetic Modulator, Sub Osc, Wavetable, Granular, Math Oscillator, Noise, Ring Mod, Signal Monitor, Additive Osc — alla med kopplingsförslag
+**Updated modules:**
+- Oscillator: FM, PM, PWM, X-Mod, Sync — explains what each input does and suggests modulation sources
+- Envelope: Gate, Velocity, Out — with info about automatic connections and destinations
+- LFO: Retrig, Rate CV, Out — with suggestions for modulation sources and destinations
+- Amplifier (VCA): In, In L/R, CV, Pan CV, outputs — connection suggestions
+- Mixer: In 1–8, Out — with suggestions for audio sources
+- Filter (SVF + Ladder): In, Cutoff CV, Res CV, Out — suggests Envelope/LFO
+- Kinetic Modulator, Sub Osc, Wavetable, Granular, Math Oscillator, Noise, Ring Mod, Signal Monitor, Additive Osc — all with connection suggestions
 
 ## [0.143.0] - 2026-02-18
-### Ny — Kompakt Inline Signal Monitor + Polyfoniskt sweep-lås
+### New — Compact Inline Signal Monitor + Polyphonic sweep lock
 
 **Inline Signal Monitor (100×50px):**
-- Ny kompakt variant av Signal Monitor som sätts in via högerklicksmenyn på kablar
-- Visar bara oscilloskop-vågformen utan titelrad, parametrar eller kontroller
-- 2 gridceller bred × 1 gridcell hög (100×50px)
-- Små portpunkter på vänster (in) och höger (ut) sida
-- Stängknapp (×) i övre högra hörnet
+- New compact variant of Signal Monitor inserted via right-click menu on cables
+- Shows only oscilloscope waveform without title bar, parameters or controls
+- 2 grid cells wide × 1 grid cell tall (100×50px)
+- Small port dots on left (in) and right (out) side
+- Close button (×) in upper right corner
 
-**Stäng och återkoppla:**
-- Vid stängning av inline-monitorn återkopplas kablarna automatiskt
-- Inkommande anslutning (källa → monitor) och utgående (monitor → destination) ersätts med direktanslutning (källa → destination)
-- Monitorn tas bort efter återkoppling
+**Close and reconnect:**
+- When closing the inline monitor, cables are automatically reconnected
+- Incoming connection (source → monitor) and outgoing (monitor → destination) replaced with direct connection (source → destination)
+- Monitor is removed after reconnection
 
-**Polyfoniskt sweep-lås (alla Signal Monitors):**
-- Ny `Arc<AtomicBool>` sweep-lås delad mellan alla röstkloner
-- Bara en röst i taget skriver till visualiseringsbuffern
-- "Senast triggade röst vinner" — ny trigger tar alltid över
-- Förhindrar den röriga blandning av flera rösters vågformer som visades tidigare
-- Gäller både den stora Signal Monitor och den kompakta inline-varianten
+**Polyphonic sweep lock (all Signal Monitors):**
+- New `Arc<AtomicBool>` sweep lock shared between all voice clones
+- Only one voice at a time writes to the visualization buffer
+- "Last triggered voice wins" — new trigger always takes over
+- Prevents the messy mixing of multiple voices' waveforms that was displayed before
+- Applies to both the large Signal Monitor and the compact inline variant
 
-**Serialisering:**
-- Ny PatchModuleType::InlineSignalMonitor för korrekt sparning/laddning
-- Inline-monitorer bevaras vid sparning och återställs vid laddning
+**Serialization:**
+- New PatchModuleType::InlineSignalMonitor for correct save/load
+- Inline monitors are preserved on save and restored on load
 
 ## [0.142.0] - 2026-02-18
-### Ny — Högerklicksmeny på kablar med Signal Monitor-insättning
+### New — Right-click menu on cables with Signal Monitor insertion
 
-**Kabelmeny (högerklick):**
-- Högerklick på en kabel öppnar nu en kontextmeny istället för att direkt ta bort sladden
-- Menyval: "Ta bort sladd" — tar bort kabeln
-- Menyval: "Stoppa in Signal Monitor" — sätter in en Signal Monitor mellan de två modulerna
-- Kabeln lyser med sin egen färg (glow-effekt) vid hover istället för illröd
+**Cable menu (right-click):**
+- Right-click on a cable now opens a context menu instead of directly deleting the cable
+- Menu option: "Delete cable" — removes the cable
+- Menu option: "Insert Signal Monitor" — inserts a Signal Monitor between the two modules
+- Cable glows with its own color (glow effect) on hover instead of bright red
 
-**Automatisk Signal Monitor-insättning:**
-- Vid insättning skapas en ny Signal Monitor-modul placerad mitt emellan de två anslutna modulerna
-- Originalanslutningen tas bort och ersätts med: källa → Signal Monitor → destination
-- Visualiseringsbuffer kopplas automatiskt för realtidsvisning av vågformen
+**Automatic Signal Monitor insertion:**
+- On insertion, a new Signal Monitor module is created and placed midway between the two connected modules
+- Original connection is removed and replaced with: source → Signal Monitor → destination
+- Visualization buffer is automatically connected for real-time waveform display
 
 ## [0.141.0] - 2026-02-16
-### Ny — Signal Monitor (inline vågformsvisare)
+### New — Signal Monitor (inline waveform viewer)
 
 **Signal Monitor PolyModule:**
-- Ny voice-graf modul som kan kopplas in var som helst i signalkedjan
-- Pass-through: kopierar input till output utan modifikation
-- Visar vågformen i realtid med rising-edge trigger-detektion för stabil display
-- Parametrar: Time (tidsskala/zoom), Gain (vertikal förstärkning), Trigger (tröskelnivå), Frozen (pausa)
-- Kategori: Utility — renderas med in/ut-portar i three-column layout
+- New voice graph module that can be connected anywhere in the signal chain
+- Pass-through: copies input to output without modification
+- Displays waveform in real-time with rising-edge trigger detection for stable display
+- Parameters: Time (time scale/zoom), Gain (vertical amplification), Trigger (threshold level), Frozen (pause)
+- Category: Utility — rendered with in/out ports in three-column layout
 
 **VisualizationSink trait (synth_core):**
-- Nytt trait som bryter cirkulärt beroende mellan synth_modules och synth_engine
-- SignalMonitor använder `Option<Arc<dyn VisualizationSink>>` med injektion från GUI-lagret
-- VisualizationBuffer implementerar VisualizationSink i synth_engine
+- New trait that breaks circular dependency between synth_modules and synth_engine
+- SignalMonitor uses `Option<Arc<dyn VisualizationSink>>` with injection from the GUI layer
+- VisualizationBuffer implements VisualizationSink in synth_engine
 
-**Förbättrad Oscilloscope:**
-- Rising-edge trigger-detektion för stabil vågformsvisning (samma algoritm som Signal Monitor)
-- Stack-allokerade buffertar istället för Vec-allokeringar i process() (realtidssäkert)
+**Improved Oscilloscope:**
+- Rising-edge trigger detection for stable waveform display (same algorithm as Signal Monitor)
+- Stack-allocated buffers instead of Vec allocations in process() (real-time safe)
 
-**GUI-integration:**
-- Signal Monitor tillgänglig i Visualizer-palettmenyn
-- Oscilloskop-widget med trigger-nivålinje (gul horisontell linje)
-- Patch-serialisering (spara/ladda) för Signal Monitor
-- Vis-buffer cleanup vid modulborttagning för Utility/PhysicalModeling-kategorier
+**GUI integration:**
+- Signal Monitor available in Visualizer palette menu
+- Oscilloscope widget with trigger level line (yellow horizontal line)
+- Patch serialization (save/load) for Signal Monitor
+- Vis buffer cleanup on module removal for Utility/PhysicalModeling categories
 
 ## [0.140.0] - 2026-02-16
-### Ny — Ortogonala kablar med animerat signalflöde
+### New — Orthogonal cables with animated signal flow
 
-**Ortogonal kabelrouting:**
-- Kablar ritas som rätvinkliga linjer (horisontellt→vertikalt→horisontellt) istället för bezier-kurvor
-- Matchar auto-layoutens vänster→höger signalflöde visuellt
-- Avrundade hörn (5px radie) vid svängar för mjukare utseende
-- Subtilare skuggor (1px, 2px offset, alpha 40) som passar den nya stilen
-- Nästan horisontella kablar (inom 8px) förenklas till raka linjer
+**Orthogonal cable routing:**
+- Cables drawn as right-angled lines (horizontal→vertical→horizontal) instead of bezier curves
+- Visually matches auto-layout's left→right signal flow
+- Rounded corners (5px radius) at bends for smoother appearance
+- Subtler shadows (1px, 2px offset, alpha 40) fitting the new style
+- Nearly horizontal cables (within 8px) simplified to straight lines
 
-**Animerade flödespartiklar:**
-- Små cirklar rör sig längs kablarna i signalriktningen
-- Audio: snabba partiklar (120px/s), tät spacing (30px)
-- Control/CV: medelhastighet (60px/s), glesare spacing (50px)
-- Gate: pulserande partiklar (80px/s), blinkande alpha
+**Animated flow particles:**
+- Small circles move along cables in signal direction
+- Audio: fast particles (120px/s), dense spacing (30px)
+- Control/CV: medium speed (60px/s), wider spacing (50px)
+- Gate: pulsing particles (80px/s), blinking alpha
 - MIDI: 70px/s, 45px spacing
 
-**Förbättrad hit-testing:**
-- Exakt punkt-till-linjesegment-avstånd istället för bezier-sampling
-- Snabbare och mer precis hover-detektion
+**Improved hit-testing:**
+- Exact point-to-line-segment distance instead of bezier sampling
+- Faster and more precise hover detection
 
 ## [0.139.0] - 2026-02-16
-### Förbättrad — Storleksmedveten auto-layout + smart modulationsplacering
+### Improved — Size-aware auto-layout + smart modulation placement
 
-**Modulationsmoduler placeras per kolumn:**
-- ADSR/LFO placeras direkt under sin målkolumns signalmoduler, inte under den globalt högsta kolumnen
-- Före: 3 oscillatorer i kolumn 0 (600px) → ADSR för Filter i kolumn 1 hamnade under 600px
-- Efter: ADSR placeras direkt under Filter (~200px) — sparar utrymme och håller modulatorer synliga
+**Modulation modules placed per column:**
+- ADSR/LFO placed directly below their target column's signal modules, not below the globally tallest column
+- Before: 3 oscillators in column 0 (600px) → ADSR for Filter in column 1 ended up below 600px
+- After: ADSR placed directly below Filter (~200px) — saves space and keeps modulators visible
 
 **Mod matrix fix:**
-- Fast slotbredd (140px) istället för `ui.available_width()` som växte obegränsat i auto-sized Areas
+- Fixed slot width (140px) instead of `ui.available_width()` which grew unbounded in auto-sized Areas
 
 ## [0.138.0] - 2026-02-16
-### Förbättrad — Storleksmedveten auto-layout (inga överlapp)
+### Improved — Size-aware auto-layout (no overlaps)
 
-**Problem:** Moduler överlappade varandra eftersom auto-layout använde fasta cellstorlekar (250×200px) medan modulerna har varierande storlekar (envelope ~360px hög, oscillator ~260px, LFO ~150px).
+**Problem:** Modules overlapped each other because auto-layout used fixed cell sizes (250×200px) while modules have varying sizes (envelope ~360px tall, oscillator ~260px, LFO ~150px).
 
-**Lösning:**
-- `ModulePanelState` sparar nu varje moduls faktiska renderade storlek (`size: Vec2`)
-- `patch_editor.rs` uppdaterar `panel_state.size` från `area_rect.size()` efter varje frame
-- Auto-layout använder faktiska storlekar istället för fasta celler:
-  - Kolumnbredd = max snappade bredd av alla moduler i kolumnen + 1 gridcells gap
-  - Radpositioner beräknas kumulativt per kolumn med faktisk (snappahöjd + gap
-  - Modulationszon startar under den högsta signalkolumnen
-- `snap_size_to_grid()` rundar upp modulstorlekar till hela gridceller (50px)
+**Solution:**
+- `ModulePanelState` now saves each module's actual rendered size (`size: Vec2`)
+- `patch_editor.rs` updates `panel_state.size` from `area_rect.size()` after each frame
+- Auto-layout uses actual sizes instead of fixed cells:
+  - Column width = max snapped width of all modules in column + 1 grid cell gap
+  - Row positions calculated cumulatively per column with actual (snapped height + gap)
+  - Modulation zone starts below the tallest signal column
+- `snap_size_to_grid()` rounds up module sizes to whole grid cells (50px)
 
-**Nytt test:** `test_no_overlap_mixed_sizes` — verifierar att moduler med blandade storlekar inte överlappar (rect-intersection check)
+**New test:** `test_no_overlap_mixed_sizes` — verifies that modules with mixed sizes don't overlap (rect intersection check)
 
 ## [0.137.0] - 2026-02-16
-### Förbättrad — Auto-layout baserad på signalflödesanalys
+### Improved — Auto-layout based on signal flow analysis
 
-**Ny 5-fas layoutalgoritm:**
-- Fas 1: Klassificerar moduler i fyra grupper — SignalChain, Modulation, Global (Effect/Visualizer/Utility), Disconnected
-- Fas 2: Topologisk djuptilldelning via Kahns algoritm → kolumner vänster-till-höger med longest-path
-- Fas 3: Vertikal ordning inom kolumner med median-heuristik (minimerar kabelkorsningar)
-- Fas 4: Modulationskällor (Envelope/LFO) placeras under sina primära signalkedjemål
-- Fas 5: Pixelpositioner med fasta estimerade storlekar (ScrollArea hanterar overflow)
+**New 5-phase layout algorithm:**
+- Phase 1: Classifies modules into four groups — SignalChain, Modulation, Global (Effect/Visualizer/Utility), Disconnected
+- Phase 2: Topological depth assignment via Kahn's algorithm → columns left-to-right with longest path
+- Phase 3: Vertical ordering within columns with median heuristic (minimizes cable crossings)
+- Phase 4: Modulation sources (Envelope/LFO) placed below their primary signal chain targets
+- Phase 5: Pixel positions with fixed estimated sizes (ScrollArea handles overflow)
 
-**Förbättringar jämfört med tidigare BFS-layout:**
-- Parallella signalvägar (t.ex. två oscillatorer → mixer) hanteras korrekt
-- Output-moduler tvingas till sista signalkolumnen
-- Utility-moduler placeras i global-zonen (ej disconnected)
-- Cykler hanteras gracefully via Kahns algoritm
-- Moduler överlappar inte längre varandra
+**Improvements compared to previous BFS layout:**
+- Parallel signal paths (e.g. two oscillators → mixer) handled correctly
+- Output modules forced to last signal column
+- Utility modules placed in global zone (not disconnected)
+- Cycles handled gracefully via Kahn's algorithm
+- Modules no longer overlap each other
 
-**Nya tester:** `test_multi_source_to_mixer`, `test_complex_patch`, `test_no_overlap`, `test_output_rightmost`, `test_utility_is_global`
+**New tests:** `test_multi_source_to_mixer`, `test_complex_patch`, `test_no_overlap`, `test_output_rightmost`, `test_utility_is_global`
 
 ## [0.136.0] - 2026-02-16
-### Förbättrad — Moduler klipps av paneler
+### Improved — Modules clipped by panels
 
-**Area + Frame istället för Window:**
-- Moduler renderas nu med `egui::Area` + `Frame::window` istället för `egui::Window`
-- Moduler hamnar i `Order::Background` (samma lager som paneler) istället för `Order::Middle`
-- Varje modul-Area klipps till scroll-ytans synliga rektangel via `set_clip_rect(visible_rect)`
-- Moduler som sticker ut utanför patch-editorn klipps nu av omgivande paneler
+**Area + Frame instead of Window:**
+- Modules now rendered with `egui::Area` + `Frame::window` instead of `egui::Window`
+- Modules placed in `Order::Background` (same layer as panels) instead of `Order::Middle`
+- Each module Area clipped to scroll area's visible rect via `set_clip_rect(visible_rect)`
+- Modules extending outside patch editor are now clipped by surrounding panels
 
-**Manuell titelrad:**
-- Ersätter Windows inbyggda titelrad med rubrik + stängknapp (✕)
-- Stängknapp visas bara för okopplade moduler (Disconnected)
-- Kablar och toolbar-overlay renderas fortfarande i förgrunden
+**Manual title bar:**
+- Replaces Window's built-in title bar with heading + close button
+- Close button shown only for disconnected modules (Disconnected)
+- Cables and toolbar overlay still rendered in foreground
 
 ## [0.135.0] - 2026-02-16
-### Förbättrad — ScrollArea i patch-editorn
+### Improved — ScrollArea in the patch editor
 
-**ScrollArea med constrain_to:**
-- Patch-editorns innehåll wrappat i `egui::ScrollArea::both()` — scrollbars visas automatiskt när moduler inte ryms
-- Varje modul-fönster använder `Window::constrain_to(scroll_rect)` så moduler inte kan dras utanför ytan
-- Borttagen manuell canvas-panering (`canvas_offset`) — ScrollArea hanterar scrollning inbyggt
-- Grid-linjer ritas relativt till scroll-ytan utan offset-beräkning
-- Auto-layout fungerar direkt med scroll-rektangeln utan offset-konvertering
-- Toolbar förblir synlig i förgrundslagret, positionerad relativt till den synliga ytan
+**ScrollArea with constrain_to:**
+- Patch editor content wrapped in `egui::ScrollArea::both()` — scrollbars appear automatically when modules don't fit
+- Each module window uses `Window::constrain_to(scroll_rect)` so modules can't be dragged outside the area
+- Removed manual canvas panning (`canvas_offset`) — ScrollArea handles scrolling natively
+- Grid lines drawn relative to scroll area without offset calculation
+- Auto-layout works directly with scroll rect without offset conversion
+- Toolbar remains visible in foreground layer, positioned relative to visible area
 
 ## [0.134.0] - 2026-02-15
-### Förbättrad — AWE perceptuellt distinkt absorption
+### Improved — AWE perceptually distinct absorption
 
-**Perceptuella materialvärden:**
-- Alla 15 materials absorptionsvärden uppjusterade från fysikaliskt exakta till perceptuellt distinkta
-- Metall/kakel/betong nu tydligt hårdare; trä/vatten/tyg/matta tydligt mjukare
-- Varje material har en unik klangkaraktär (t.ex. glas: tunt i basen, is: krispig HF-absorption)
+**Perceptual material values:**
+- All 15 materials' absorption values adjusted from physically accurate to perceptually distinct
+- Metal/tile/concrete now clearly harder; wood/water/fabric/carpet clearly softer
+- Each material has a unique tonal character (e.g. glass: thin in bass, ice: crisp HF absorption)
 
-**sqrt()-mappning ersätter linjär amplifiering:**
-- Tar bort `ABSORPTION_AMPLIFICATION` (3.0x) från alla tre DSP-filer
-- sqrt()-mappning sprider hårda material bättre utan att saturera mjuka
-- Vidgade LP/HP-koefficient-ranges ger större perceptuella skillnader
+**sqrt() mapping replaces linear amplification:**
+- Removes `ABSORPTION_AMPLIFICATION` (3.0x) from all three DSP files
+- sqrt() mapping spreads hard materials better without saturating soft ones
+- Widened LP/HP coefficient ranges give larger perceptual differences
 
-**Aggressivare room modes feedback:**
-- Feedback-dämpning ökad från `avg * 0.5` till `avg * 0.8` för tydligare materialskillnad
+**More aggressive room modes feedback:**
+- Feedback damping increased from `avg * 0.5` to `avg * 0.8` for clearer material distinction
 
 ## [0.133.0] - 2026-02-15
-### Fixed - AWE frekvensberoende absorption
+### Fixed - AWE frequency-dependent absorption
 
-**Frekvensberoende dämpning genom hela DSP-kedjan:**
-- Ersätter `Material::average_absorption()` (en enda skalär) med per-band absorption (low/mid/high) genom alla DSP-steg
-- Early Reflections: varje tap har nu separata LP- och HP-filter istället för ett enda dämpningsfilter
-- Room Modes: varje combfilter har nu LP + HP i feedback-loopen
-- FDN: `lp_coeff` beräknas från `absorption_high`, `hp_coeff` från `absorption_low`
-- Absorption Amplification-faktor (3.0x) för att sprida små fysikaliska skillnader till hörbara filterskillnader
-- Olika material (betong, metall, glas, trä, tyg) ger nu markant olika klangkaraktär
+**Frequency-dependent damping throughout the entire DSP chain:**
+- Replaces `Material::average_absorption()` (a single scalar) with per-band absorption (low/mid/high) through all DSP stages
+- Early Reflections: each tap now has separate LP and HP filters instead of a single damping filter
+- Room Modes: each comb filter now has LP + HP in the feedback loop
+- FDN: `lp_coeff` calculated from `absorption_high`, `hp_coeff` from `absorption_low`
+- Absorption Amplification factor (3.0x) to spread small physical differences into audible filter differences
+- Different materials (concrete, metal, glass, wood, fabric) now produce distinctly different tonal character
 
-**Fixar i Spatializer (huvud-skuggning):**
-- Inverterade head shadow-koefficienter: one_pole med coeff 1.0 = full LP (inte pass-through)
-- Nära örat får nu coeff ≈ 0 (pass-through), avlägset öra får högre coeff (mer HF-dämpning)
+**Fixes in Spatializer (head shadow):**
+- Inverted head shadow coefficients: one_pole with coeff 1.0 = full LP (not pass-through)
+- Near ear now gets coeff ≈ 0 (pass-through), far ear gets higher coeff (more HF damping)
 
-**Fixar i tester:**
-- Alla awe_engine-tester uppdaterade med korrekta newtype-wrappers (NormalizedValue, SampleRate, Meters, etc.)
-- presets-test fixat med `.as_f32()` konvertering
+**Fixes in tests:**
+- All awe_engine tests updated with correct newtype wrappers (NormalizedValue, SampleRate, Meters, etc.)
+- Presets test fixed with `.as_f32()` conversion
 
 ## [0.132.0] - 2026-02-15
 ### Added - Kinetic Modulator
@@ -971,231 +980,231 @@ Tillagd i Lead-kategorin i patch-browsern.
 - "Kinetic Pad" — ElasticOut-kurva (2s) i loop-läge för evolverande padljud
 
 ## [0.131.0] - 2026-02-15
-### Changed - Isometrisk 3D AWE-vy med ljudanimationer
+### Changed - Isometric 3D AWE view with sound animations
 
-**Isometrisk 3D-rendering (cutaway-stil):**
-- Ersätter 2D planritning med isometrisk 3D-vy
-- Cutaway-stil: bakvägg, högervägg och golv synliga, framväggar utelämnade
-- Solid skuggning: golv mörkast, väggar ljusare med alpha-transparens
-- Alla 6 rumsformer renderas isometriskt: Box, Cylinder, L-Shape, Sphere, Dome, Tube
-- Dimensionslabels placerade längs isometriska golvkanter
+**Isometric 3D rendering (cutaway style):**
+- Replaces 2D floor plan with isometric 3D view
+- Cutaway style: back wall, right wall and floor visible, front walls omitted
+- Solid shading: floor darkest, walls lighter with alpha transparency
+- All 6 room shapes rendered isometrically: Box, Cylinder, L-Shape, Sphere, Dome, Tube
+- Dimension labels placed along isometric floor edges
 
-**Expanderande ljudringar:**
-- Animerade ringar expanderar från källan på golvplanet
-- Ny ring var 0.5s, max 6 samtidiga, minskar i opacity med ålder
-- Ringar ritas som isometriska ellipser (48 punkter)
-- Reflektionsringar spawnas från spegelkällor vid väggar (Box/Tube)
+**Expanding sound rings:**
+- Animated rings expand from source on the floor plane
+- New ring every 0.5s, max 6 simultaneous, decreasing in opacity with age
+- Rings drawn as isometric ellipses (48 points)
+- Reflection rings spawned from mirror sources at walls (Box/Tube)
 
-**Animerade reflektionslinjer (marching ants):**
-- Streckade reflektionslinjer animeras med löpande offset
-- Strecken flödar kontinuerligt S → vägg → L
-- Ersätter statiska streckade linjer
+**Animated reflection lines (marching ants):**
+- Dashed reflection lines animated with running offset
+- Dashes flow continuously S → wall → L
+- Replaces static dashed lines
 
-**Uppdaterad interaktion:**
-- Drag använder invers isometrisk projektion (screen_to_floor)
-- Markörer (S/L) placeras via iso_to_screen på golvplanet
-- Spatial mapping dots projiceras isometriskt
+**Updated interaction:**
+- Drag uses inverse isometric projection (screen_to_floor)
+- Markers (S/L) placed via iso_to_screen on floor plane
+- Spatial mapping dots projected isometrically
 
 ## [0.130.0] - 2026-02-15
-### Changed - AWE-vy: Förbättrad grafisk representation
+### Changed - AWE view: Improved graphical representation
 
-**Formspecifik rumskontur i planritningen:**
-- Box: rektangel (som tidigare)
-- Cylinder: rektangel med rundade kortsidor
-- L-Shape: L-formad polygon
-- Sphere: cirkel
-- Dome: cirkel med streckad undre halva (halvsfär)
-- Tube: rektangel med streckade öppna kortsidor
+**Shape-specific room outline in floor plan:**
+- Box: rectangle (as before)
+- Cylinder: rectangle with rounded short sides
+- L-Shape: L-shaped polygon
+- Sphere: circle
+- Dome: circle with dashed lower half (hemisphere)
+- Tube: rectangle with dashed open short sides
 
-**Reflektionsvägar:**
-- Första ordningens reflektioner visas som streckade linjer (källa → vägg → lyssnare)
-- Box: 4 reflektioner (alla väggar), Tube: 2 reflektioner (lång­sidorna)
-- Beräknas med spegelkällemetoden
+**Reflection paths:**
+- First-order reflections shown as dashed lines (source → wall → listener)
+- Box: 4 reflections (all walls), Tube: 2 reflections (long sides)
+- Calculated with the image source method
 
-**Info-ruta i planritningen:**
-- Visar avstånd (S→L), RT60 (Sabines formel), och rumsvolym
-- Halvtransparent bakgrund för läsbarhet
+**Info box in floor plan:**
+- Shows distance (S→L), RT60 (Sabine's formula), and room volume
+- Semi-transparent background for readability
 
-**Förbättrade markörer:**
-- Större cirklar (14px) med outline-ring
-- Pil från källa till lyssnare (triangelformat pilhuvud)
-- Hover-text "Källa" / "Lyssnare" vid markörerna
+**Improved markers:**
+- Larger circles (14px) with outline ring
+- Arrow from source to listener (triangle arrowhead)
+- Hover text "Source" / "Listener" at markers
 
-**Förenklad kontrollpanel:**
-- LFO-sektioner ihopfällbara (stängda som default) via CollapsingHeader
-- "Impossible" omdöpt till "Effekter" med undertext "Effekter bortom fysiken"
-- Undertext "Balans mellan torr/våt signal" under Mix-rubriken
-- Tooltips på alla parametrar: Dry/Wet, Early/Late, Modes, Tail, Freq Warp, Resonance, Portal, Diffusion
+**Simplified control panel:**
+- LFO sections collapsible (closed by default) via CollapsingHeader
+- "Impossible" renamed to "Effects" with subtitle "Effects beyond physics"
+- Subtitle "Balance between dry/wet signal" under Mix heading
+- Tooltips on all parameters: Dry/Wet, Early/Late, Modes, Tail, Freq Warp, Resonance, Portal, Diffusion
 
 ## [0.129.0] - 2026-02-15
-### Added - AWE-indikator, Oscilloskop vid piano & AWE newtype-migrering
+### Added - AWE indicator, Oscilloscope at piano & AWE newtype migration
 
-**AWE-indikator i toolbar:**
-- Knappen visar grön prick (●) när AWE-effekten är aktiv, dämpad/grå när av.
-- Fungerar fortfarande som vy-växlare (AWE/Rack).
+**AWE indicator in toolbar:**
+- Button shows green dot (●) when AWE effect is active, dimmed/gray when off.
+- Still functions as view switcher (AWE/Rack).
 
-**Master-output oscilloskop:**
-- Vänster och höger kanal visas som oscilloskop bredvid pianot i bottenpanelen.
-- Tar automatiskt det utrymme som blir över om pianot inte fyller hela bredden.
-- Döljs om skärmen är för smal (< 120px kvar).
-- Cyan färg för vänster kanal, grön för höger.
+**Master output oscilloscope:**
+- Left and right channels displayed as oscilloscope next to the piano in the bottom panel.
+- Automatically takes the remaining space if the piano doesn't fill the entire width.
+- Hidden if the screen is too narrow (< 120px remaining).
+- Cyan color for left channel, green for right.
 
-**VisualizationBuffer i EngineState:**
-- Ny `master_scope` buffer i `EngineState` för master-output waveform-data.
-- `SynthEngine` skriver final output (efter master volume) till buffern varje callback.
+**VisualizationBuffer in EngineState:**
+- New `master_scope` buffer in `EngineState` for master output waveform data.
+- `SynthEngine` writes final output (after master volume) to the buffer every callback.
 
-### Changed - synth_awe: Komplett newtype-migrering
+### Changed - synth_awe: Complete newtype migration
 
-**Ny `types`-modul** med 7 AWE-lokala newtypes:
-- `Meters`, `SquareMeters`, `CubicMeters` — rumdimensioner och ytor/volymer.
-- `MetersPerSecond` — ljudhastighet.
-- `SampleOffset` — fraktionell sample-position för interpolerade delay-lines.
-- `StretchFactor` — tail stretch (0.5–4.0, clampat).
-- `Position3` — 3D-position `[Meters; 3]` med `x()/y()/z()` accessors.
+**New `types` module** with 7 AWE-local newtypes:
+- `Meters`, `SquareMeters`, `CubicMeters` — room dimensions and surfaces/volumes.
+- `MetersPerSecond` — speed of sound.
+- `SampleOffset` — fractional sample position for interpolated delay lines.
+- `StretchFactor` — tail stretch (0.5–4.0, clamped).
+- `Position3` — 3D position `[Meters; 3]` with `x()/y()/z()` accessors.
 
-**Migrering från råa primitiver till typade domänvärden** i hela craten:
-- `f32` → `Meters` (alla rumsdimensioner i `RoomShape`, `EarlyReflections`, `RoomModeBank`, `SpatialContext`, `Spatializer`).
-- `f32` → `NormalizedValue` (absorption, diffusion, dry/wet, portal amount, LFO amount m.fl.).
+**Migration from raw primitives to typed domain values** throughout the crate:
+- `f32` → `Meters` (all room dimensions in `RoomShape`, `EarlyReflections`, `RoomModeBank`, `SpatialContext`, `Spatializer`).
+- `f32` → `NormalizedValue` (absorption, diffusion, dry/wet, portal amount, LFO amount etc.).
 - `f32` → `Gain` (feedback, tap gains).
 - `f32` → `FilterState` (one-pole filter states).
-- `f32` → `SampleOffset` (delay tap positioner).
-- `f32` → `SampleRate`, `Seconds`, `Hertz`, `BipolarValue` (alla publika API:er).
+- `f32` → `SampleOffset` (delay tap positions).
+- `f32` → `SampleRate`, `Seconds`, `Hertz`, `BipolarValue` (all public APIs).
 - `f32` → `StretchFactor` (tail stretch parameter).
-- `[f32; 3]` → `Position3` (käll-/lyssnarpositioner).
-- `usize` → `SampleCount` (delay-buffertstorlekar, block sizes).
-- `u8` → `MidiNote` (per-röst spatialisering).
+- `[f32; 3]` → `Position3` (source/listener positions).
+- `usize` → `SampleCount` (delay buffer sizes, block sizes).
+- `u8` → `MidiNote` (per-voice spatialization).
 
-**DSP-förbättringar (utan beteendeändringar):**
-- One-pole filter: manuell beräkning ersatt med `FilterState::one_pole()`.
-- Gain-applicering: manuell multiplikation ersatt med `Gain::apply()`.
-- Hot-path-optimering: filter-state och mix-parametrar hissade till lokala variabler före per-sample-loop.
-- Magiska siffror ersatta med namngivna konstanter (`PORTAL_MAX_DELAY`, `PORTAL_MAX_DELAY_SAMPLES`).
+**DSP improvements (no behavior changes):**
+- One-pole filter: manual calculation replaced with `FilterState::one_pole()`.
+- Gain application: manual multiplication replaced with `Gain::apply()`.
+- Hot-path optimization: filter state and mix parameters hoisted to local variables before per-sample loop.
+- Magic numbers replaced with named constants (`PORTAL_MAX_DELAY`, `PORTAL_MAX_DELAY_SAMPLES`).
 
-**Alla 36 presets** uppdaterade med `.into()`-konvertering.
-**GUI (awe_view.rs)** uppdaterad med `.as_f32()`-extraktion och newtype-wrapping vid gränssnittet mot sliders.
+**All 36 presets** updated with `.into()` conversion.
+**GUI (awe_view.rs)** updated with `.as_f32()` extraction and newtype wrapping at the interface with sliders.
 
 ## [0.128.0] - 2026-02-15
-### Added - AWE: Nya material, fler presets, diffusion & LFO-stabilitet
+### Added - AWE: New materials, more presets, diffusion & LFO stability
 
-**9 nya material:**
+**9 new materials:**
 - Marble, Ice, Carpet, Water, Void, Prism, Plasma, Membrane, Nanogel.
-- Kreativa/icke-fysiska material (Void, Prism, Plasma, Membrane, Nanogel) för extrema ljuddesigner.
+- Creative/non-physical materials (Void, Prism, Plasma, Membrane, Nanogel) for extreme sound design.
 
-**36 presets (upp från 14):**
-- 22 nya presets: bl.a. Basaltklyfta, Aurorahall, Gravitationstunnel, Regnrum, Svävande Kör, Spegelplan, Kristallvalv.
-- 6 "EXT:"-presets med extrema material: Singularitet, Plasmastorm, Prismaspiral, Membranhåla, Nanodimma, Antigrav.
-- Befintliga presets finjusterade (realistiskare dimensioner och positioner).
-- Preset-menyn uppdelad i Standard / Extreme-sektioner.
+**36 presets (up from 14):**
+- 22 new presets: including Basalt Chasm, Aurora Hall, Gravity Tunnel, Rain Room, Floating Choir, Mirror Plane, Crystal Vault.
+- 6 "EXT:" presets with extreme materials: Singularity, Plasma Storm, Prism Spiral, Membrane Cavity, Nano Fog, Antigrav.
+- Existing presets fine-tuned (more realistic dimensions and positions).
+- Preset menu split into Standard / Extreme sections.
 
-**Materialdiffusion i DSP:**
-- `Material::diffusion` påverkar nu FDN-diffusion (0.35 + diffusion × 0.55).
-- Tidiga reflektioner: per-tap jitter baserat på diffusion samt reducerade riktningscues.
-- Delay-buffert utökad till 1.0 s (stöd för rum upp till ~170 m).
+**Material diffusion in DSP:**
+- `Material::diffusion` now affects FDN diffusion (0.35 + diffusion × 0.55).
+- Early reflections: per-tap jitter based on diffusion and reduced directional cues.
+- Delay buffer extended to 1.0 s (support for rooms up to ~170 m).
 
-**LFO-stabilitet (base value tracking):**
-- `base_room` och `base_snapshot` sparar användarens inställda värden.
-- LFO:er återställer basvärden före varje modulations-pass — eliminerar drift.
+**LFO stability (base value tracking):**
+- `base_room` and `base_snapshot` save user-set values.
+- LFOs reset base values before each modulation pass — eliminates drift.
 
-**Buffertförstoringar:**
-- FDN: pre-allokering ×48 (från ×32) för stora rum med tail stretch.
-- Room modes: max delay 48 000 samples (från 5 000).
+**Buffer enlargements:**
+- FDN: pre-allocation ×48 (from ×32) for large rooms with tail stretch.
+- Room modes: max delay 48,000 samples (from 5,000).
 
 **GUI:**
-- 15 material i materialväljaren (från 6).
-- Bättre material-matchning med flerbands-jämförelse.
+- 15 materials in material selector (from 6).
+- Better material matching with multi-band comparison.
 
-**Övrigt:**
-- `Instrument::process_visualizers()` anropas efter effektkedjan.
-- Borttagen `docs/AWE-Implementation-Review.md`.
+**Other:**
+- `Instrument::process_visualizers()` called after effect chain.
+- Removed `docs/AWE-Implementation-Review.md`.
 
 ## [0.127.0] - 2026-02-15
-### Added - AWE: Nya rumsformer + Preset-meny
+### Added - AWE: New room shapes + Preset menu
 
-**Nya rumsformer (3 st):**
-- **Sphere**: Sfäriskt rum (alla dimensioner = diameter). Sammanfallande moder ger fokuserad resonans.
-- **Dome**: Halvsfär (höjd = radie, bredd/längd = diameter). Kupol-reflektioner.
-- **Tube**: Öppet rör utan ändlock. Mindre yta ger längre RT60 och flutterekos.
-- Korrekta geometriformler (volym, ytarea, axiella moder) för alla nya former.
-- LFO-modulering av RoomLength/RoomWidth fungerar med alla 6 former.
+**New room shapes (3):**
+- **Sphere**: Spherical room (all dimensions = diameter). Coinciding modes give focused resonance.
+- **Dome**: Hemisphere (height = radius, width/length = diameter). Dome reflections.
+- **Tube**: Open tube without end caps. Less surface area gives longer RT60 and flutter echoes.
+- Correct geometry formulas (volume, surface area, axial modes) for all new shapes.
+- LFO modulation of RoomLength/RoomWidth works with all 6 shapes.
 
-**AWE Preset-meny (14 presets):**
-- Ny preset-väljare i AWE-toolbaren med hover-beskrivningar.
-- 14 kreativa presets: Katedral, Badrum, Grotta, Pipeline, Konserthall, Sci-Fi Korridor, Dröm, Underjorden, Industrihall, Liten Studio, Rymdstation, Bergseko, Kupol, Portal.
-- Presets demonstrerar alla 6 rumsformer, alla material, och Impossible-parametrar.
-- Val av preset laddar fullständigt AWE-tillstånd (rum, material, mix, LFO:er, spatial).
-- Manuella ändringar nollställer preset-valet.
+**AWE Preset menu (14 presets):**
+- New preset selector in AWE toolbar with hover descriptions.
+- 14 creative presets: Cathedral, Bathroom, Cave, Pipeline, Concert Hall, Sci-Fi Corridor, Dream, Underground, Industrial Hall, Small Studio, Space Station, Mountain Echo, Dome, Portal.
+- Presets demonstrate all 6 room shapes, all materials, and Impossible parameters.
+- Selecting a preset loads complete AWE state (room, material, mix, LFOs, spatial).
+- Manual changes reset preset selection.
 
 **GUI:**
-- RoomShapeKind utökad med Sphere, Dome, Tube.
-- Dimensionssliders för alla nya former (radius, length).
-- `restore_from()` och `to_awe_state()` hanterar alla 6 former korrekt.
-- Fixat höjdberäkning för source/listener z-position (använder effektiv rumshöjd).
+- RoomShapeKind extended with Sphere, Dome, Tube.
+- Dimension sliders for all new shapes (radius, length).
+- `restore_from()` and `to_awe_state()` handle all 6 shapes correctly.
+- Fixed height calculation for source/listener z-position (uses effective room height).
 
 ## [0.126.0] - 2026-02-15
-### Added - AWE Fas 3: Per-röst Spatialisering
+### Added - AWE Phase 3: Per-voice Spatialization
 
-**Per-röst rumspositionering:**
-- Varje aktiv röst kan tilldelas en egen position i rummet baserat på MIDI-not.
-- 4 mappningslägen: Off, Linear X, Linear Y, Circular.
-- Individuella tidiga reflektioner (ISM) per röst med egna `EarlyReflections`-instanser.
-- Individuell spatializer (ITD/ILD) per röst.
-- Delad FDN-reverb och rumsmoder matade av summerad mono.
+**Per-voice room positioning:**
+- Each active voice can be assigned its own position in the room based on MIDI note.
+- 4 mapping modes: Off, Linear X, Linear Y, Circular.
+- Individual early reflections (ISM) per voice with own `EarlyReflections` instances.
+- Individual spatializer (ITD/ILD) per voice.
+- Shared FDN reverb and room modes fed by summed mono.
 
 **SpatialVoiceBank & SpatialVoicePool:**
-- Pre-allokerad bank med 16 mono-buffertar (4096 samples var) - ~1.3 MB totalt.
-- Per-röst DSP-pool med 16 slots: `EarlyReflections` (16K delay) + `Spatializer`.
-- `NotePositionMapping` enum med `position_for_note()` och `pan_for_note()`.
-- `SpatialContext` struct för att kommunicera spatial-kontext till instrument.
+- Pre-allocated bank with 16 mono buffers (4096 samples each) - ~1.3 MB total.
+- Per-voice DSP pool with 16 slots: `EarlyReflections` (16K delay) + `Spatializer`.
+- `NotePositionMapping` enum with `position_for_note()` and `pan_for_note()`.
+- `SpatialContext` struct to communicate spatial context to instruments.
 
-**Instrument per-röst capture:**
-- `Instrument::process()` tar nu emot `SpatialContext` och `SpatialVoiceBank`.
-- Per-röst mono-capture till spatial bank i både normal och oversampled path.
-- Per-röst dry panning baserat på notens position relativt lyssnaren.
+**Instrument per-voice capture:**
+- `Instrument::process()` now receives `SpatialContext` and `SpatialVoiceBank`.
+- Per-voice mono capture to spatial bank in both normal and oversampled paths.
+- Per-voice dry panning based on note position relative to listener.
 
 **GUI:**
-- Ny "Spatial"-sektion i AWE-kontrollpanelen med On/Off-toggle och Mapping-väljare.
-- Visualisering av not-positioner som svaga prickar i floor plan.
+- New "Spatial" section in AWE control panel with On/Off toggle and Mapping selector.
+- Visualization of note positions as faint dots in floor plan.
 
 **Persistence:**
-- `spatial_enabled` och `note_mapping` i AweSnapshot, AweState och patch-format.
-- Bakåtkompatibel deserialisering via `#[serde(default)]`.
+- `spatial_enabled` and `note_mapping` in AweSnapshot, AweState and patch format.
+- Backwards-compatible deserialization via `#[serde(default)]`.
 
-**Ny konstruktor:**
-- `EarlyReflections::with_max_delay()` för anpassningsbar delay-storlek.
+**New constructor:**
+- `EarlyReflections::with_max_delay()` for customizable delay size.
 
 ## [0.125.0] - 2026-02-15
-### Added - AWE Fas 2: Avancerad Geometri & Kreativa Features
+### Added - AWE Phase 2: Advanced Geometry & Creative Features
 
-**Nya rumsformer:**
-- Cylinder-rum (pipeline/tunnel mode) med radie och längd.
-- L-format rum (två sammankopplade rektanglar) med individuella dimensioner.
-- Nya `RoomShape`-varianter med volume/surface_area/axial_modes-stöd.
-- `DEFAULT_CYLINDER` (r=1m, L=20m) och `DEFAULT_LSHAPE` (8×5 + 6×4, H=3m) konstanter.
+**New room shapes:**
+- Cylinder room (pipeline/tunnel mode) with radius and length.
+- L-shaped room (two connected rectangles) with individual dimensions.
+- New `RoomShape` variants with volume/surface_area/axial_modes support.
+- `DEFAULT_CYLINDER` (r=1m, L=20m) and `DEFAULT_LSHAPE` (8×5 + 6×4, H=3m) constants.
 
-**"Omöjliga rum"-parametrar:**
-- Freq Warp: Modulerar FDN LP-damping — positiv ger mer HF-reverb.
-- Resonance Boost: Adderar energi till FDN-feedback (klampad vid 0.97).
-- GUI-sliders i ny "Impossible"-sektion.
+**"Impossible room" parameters:**
+- Freq Warp: Modulates FDN LP damping — positive gives more HF reverb.
+- Resonance Boost: Adds energy to FDN feedback (clamped at 0.97).
+- GUI sliders in new "Impossible" section.
 
-**Akustisk portal:**
-- Extra stereo delay-path med feedback som simulerar angränsande virtuellt rum.
-- One-pole LP-damping för mumlande portalljud.
-- Portal Amount-kontroll (0–1) med smooth ramping.
-- `PortalAmount` som nytt LFO-target.
+**Acoustic portal:**
+- Extra stereo delay path with feedback simulating adjacent virtual room.
+- One-pole LP damping for muffled portal sound.
+- Portal Amount control (0–1) with smooth ramping.
+- `PortalAmount` as new LFO target.
 
-**4 interna LFO:er (utökat från 2):**
-- LFO 3 & 4 med Rate/Amount/Target-kontroller.
-- 13 modulations-targets (utökat från 8): +EarlyLate, ModesAmount, ResonanceBoost, TailStretch, PortalAmount.
-- Full GUI med 4 LFO-sektioner.
+**4 internal LFOs (expanded from 2):**
+- LFO 3 & 4 with Rate/Amount/Target controls.
+- 13 modulation targets (expanded from 8): +EarlyLate, ModesAmount, ResonanceBoost, TailStretch, PortalAmount.
+- Full GUI with 4 LFO sections.
 
-**GUI-förbättringar:**
-- Rumsform-väljare (ComboBox: Box/Cylinder/L-Shape).
-- Dimensionssliders anpassade per rumsform.
-- Floor plan anpassad till effektiva dimensioner oavsett form.
-- Slider-range utökat till 100m för Box (stödjer "The Void"-preset).
+**GUI improvements:**
+- Room shape selector (ComboBox: Box/Cylinder/L-Shape).
+- Dimension sliders adapted per room shape.
+- Floor plan adapted to effective dimensions regardless of shape.
+- Slider range extended to 100m for Box (supports "The Void" preset).
 
 ## [0.124.0] - 2026-02-15
-### Added - AWE Fas 1: Parametriskt Rum
+### Added - AWE Phase 1: Parametric Room
 
 **Early Reflections (ISM):**
 - Image Source Method med 6 taps (en per vägg i rektangulärt rum).
@@ -1238,7 +1247,7 @@ Tillagd i Lead-kategorin i patch-browsern.
 - `SPEED_OF_SOUND` som publik konstant i `room.rs`.
 
 ## [0.123.0] - 2026-02-14
-### Added - AWE (Acoustic World Engine) Fas 0 — Infrastruktur
+### Added - AWE (Acoustic World Engine) Phase 0 — Infrastructure
 
 **FDN-extraktion (synth_dsp):**
 - Ny `fdn`-modul med `FdnCore` struct — extraherad från Reverb.
@@ -1267,7 +1276,7 @@ Tillagd i Lead-kategorin i patch-browsern.
 - `PatchSettings.awe: Option<AweState>` — sparas/laddas automatiskt.
 
 ## [0.122.0] - 2026-02-14
-### Added - Vosim, Spectrum Analyzer, Oversampling
+### Added - VOSIM, Spectrum Analyzer, Oversampling
 
 **Vosim (MathOscillator):**
 - Ny `Vosim` algoritm i MathOscillator — klassisk röstsyntes via kvadrerade sinuspulser.
@@ -1290,14 +1299,14 @@ Tillagd i Lead-kategorin i patch-browsern.
 - Röster processas vid högre sample rate, effektkedjan kör vid originalrate.
 
 ## [0.121.0] - 2026-02-14
-### Added - Polyfon Aftertouch, Granulär Syntes, Convolution Reverb, Phase Vocoder & FFT-infrastruktur
+### Added - Polyphonic Aftertouch, Granular Synthesis, Convolution Reverb, Phase Vocoder & FFT Infrastructure
 
-**Polyfon Aftertouch:**
-- Ny `PolyAftertouch` modulationskälla i mod matrix (per-ton tryck).
-- Separat från kanal-aftertouch — varje röst har eget aftertouch-värde.
+**Polyphonic Aftertouch:**
+- New `PolyAftertouch` modulation source in mod matrix (per-note pressure).
+- Separate from channel aftertouch — each voice has its own aftertouch value.
 
-**FFT-infrastruktur (synth_dsp):**
-- Ny `spectral`-modul med `realfft`-baserade verktyg.
+**FFT Infrastructure (synth_dsp):**
+- New `spectral` module with `realfft`-based utilities.
 - `FftProcessor`: Pre-allokerad real FFT wrapper med forward/inverse.
 - `StftProcessor`: Overlap-add STFT med ring buffer och spectral callback.
 - `PartitionedConvolver`: Uniform partitioned convolution för långa impulse responses.
@@ -1353,7 +1362,7 @@ Tillagd i Lead-kategorin i patch-browsern.
 - Integration i Voice: `set_tuning_table()` ersätter statisk frekvenstabell.
 
 ## [0.119.0] - 2026-02-14
-### Added - 10 nya ljudtekniker: MSEG, BBD Delay, Additive Synth, Generativa moduler m.m.
+### Added - 10 new audio techniques: MSEG, BBD Delay, Additive Synth, Generative modules etc.
 
 **Nya effekter (AudioEffect):**
 - **BBD Delay**: Analog bucket-brigade delay-emulering med kompander (tanh), bandbreddsbegränsning, wow & flutter LFO, clock noise och feedback med per-repeat mörkläggning.
@@ -1386,10 +1395,10 @@ Tillagd i Lead-kategorin i patch-browsern.
 - **PWM E-Piano**: Varmt elpiano med PWM wavetable, envelope-driven pulsbredd-sweep, Fluid-filter och klassisk chorus.
 
 ## [0.117.0] - 2026-02-14
-### Improved - Kategoriserade undermenyer för Example Patches
-- **Kategoriserad patch-meny**: Example Patches-menyn visar nu patchar i 8 undermenyer grupperade efter kategori istället för en platt lista med 35 patchar.
-- **Kategorier**: Keys & Piano, Bass, Lead, Pad, Drums, Strings & Bell, Experimental, Ambient & Texture.
-- **Ny funktion `categorized_patches()`**: Returnerar patchar grupperade per kategori, används av menyn. `example_patches()` finns kvar som platt lista.
+### Improved - Categorized submenus for Example Patches
+- **Categorized patch menu**: Example Patches menu now shows patches in 8 submenus grouped by category instead of a flat list of 35 patches.
+- **Categories**: Keys & Piano, Bass, Lead, Pad, Drums, Strings & Bell, Experimental, Ambient & Texture.
+- **New function `categorized_patches()`**: Returns patches grouped by category, used by the menu. `example_patches()` remains as a flat list.
 
 ## [0.116.0] - 2026-02-13
 ### Added - Våg 1: Ring Modulation, Envelope Follower, Wavetable Syntes

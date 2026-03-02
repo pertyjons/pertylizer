@@ -8,11 +8,11 @@ members = [
     "crates/synth_awe",
     "crates/synth_engine",
     "crates/synth_mcp",
-    "crates/modular_synth",
+    "crates/pertylizer",
 ]
 
 # Default to run the main application
-default-members = ["crates/modular_synth"]
+default-members = ["crates/pertylizer"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,70 @@
+[package]
+name = "pertylizer"
+version = "0.201.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Pertylizer — a modular synthesizer"
+authors = ["Per"]
+license = "MIT"
+default-run = "pertylizer"
+
+[lints]
+workspace = true
+
+[features]
+default = ["gui-egui", "mcp"]
+gui-console = []
+gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon"]
+mcp = ["dep:synth_mcp", "dep:tokio"]
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }
+synth_sequencer = { path = "../synth_sequencer" }
+synth_modules = { path = "../synth_modules" }
+synth_awe = { path = "../synth_awe" }
+synth_engine = { path = "../synth_engine" }
+
+# Audio I/O
+cpal = { workspace = true }
+
+# MIDI I/O
+midir = { workspace = true }
+
+# Lock-free communication
+ringbuf = { workspace = true }
+
+# Fast mutex for visualization buffers
+parking_lot = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Fast random number generation
+fastrand = { workspace = true }
+
+# Serialization for save/load
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# File system paths
+dirs = { workspace = true }
+
+# GUI - egui (optional)
+eframe = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+egui_extras = { workspace = true, optional = true }
+egui-file-dialog = { workspace = true, optional = true }
+egui-remixicon = { workspace = true, optional = true }
+
+# MCP server (optional)
+synth_mcp = { path = "../synth_mcp", optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3.26.0"
+
+[[bin]]
+name = "pertylizer"
+path = "src/main.rs"
+

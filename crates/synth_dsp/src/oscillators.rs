@@ -12,7 +12,7 @@
 //! ## Example
 //!
 //! ```ignore
-//! use modular_synth::dsp::oscillators::poly_blep;
+//! use pertylizer::dsp::oscillators::poly_blep;
 //!
 //! let phase = 0.01; // Near the discontinuity
 //! let dt = 0.01;    // Phase increment per sample

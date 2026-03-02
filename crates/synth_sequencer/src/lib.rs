@@ -1,4 +1,4 @@
-//! Sequencer module for the modular synthesizer.
+//! Sequencer module for Pertylizer.
 //!
 //! This crate provides a flexible sequencer that supports piano roll-style editing.
 //!

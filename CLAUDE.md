@@ -1,4 +1,4 @@
-# Project Instructions for modular-synth
+# Project Instructions for Pertylizer
 
 ## Language
 

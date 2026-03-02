@@ -1,11 +1,11 @@
 ---
 name: start-synth
-description: Start the modular synth with MCP support so Claude can inspect and control it
+description: Start Pertylizer with MCP support so Claude can inspect and control it
 disable-model-invocation: true
 allowed-tools: Bash
 ---
 
-Start the modular synth with MCP support enabled.
+Start Pertylizer with MCP support enabled.
 
 ## Steps
 

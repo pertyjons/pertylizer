@@ -1,4 +1,4 @@
-//! Core types, traits, and audio abstractions for modular synthesizer.
+//! Core types, traits, and audio abstractions for Pertylizer.
 //!
 //! This crate provides the foundational types used throughout the synthesizer:
 //! - Type-safe audio domain types (Hertz, Gain, etc.)

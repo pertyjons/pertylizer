@@ -1,4 +1,4 @@
-//! Low-level DSP primitives for the modular synthesizer.
+//! Low-level DSP primitives for Pertylizer.
 //!
 //! This module contains reusable DSP building blocks that are used
 //! by multiple modules and effects.

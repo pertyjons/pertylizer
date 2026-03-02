@@ -270,8 +270,8 @@ impl FmMode {
 ///
 /// # Example
 /// ```ignore
-/// use modular_synth::engine::params::OscillatorParam;
-/// use modular_synth::types::Hertz;
+/// use pertylizer::engine::params::OscillatorParam;
+/// use pertylizer::types::Hertz;
 ///
 /// // Type-safe parameter setting
 /// let param = OscillatorParam::Frequency(Hertz::new(440.0));

@@ -753,7 +753,7 @@ impl ServerHandler for SynthMcpServer {
                 .enable_resources()
                 .build(),
             instructions: Some(
-                "Modular synthesizer MCP server. Inspect and control the running synth: \
+                "Pertylizer MCP server. Inspect and control the running synth: \
                  list modules, read parameters, change settings, play notes."
                     .into(),
             ),

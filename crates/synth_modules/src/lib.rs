@@ -1,4 +1,4 @@
-//! Synth modules and audio effects for modular synthesizer.
+//! Synth modules and audio effects for Pertylizer.
 //!
 //! This crate provides ready-to-use audio modules:
 //! - Oscillators (sine, saw, square, etc.)

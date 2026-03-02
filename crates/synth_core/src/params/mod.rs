@@ -1,4 +1,4 @@
-//! Type-safe parameter system for the modular synthesizer.
+//! Type-safe parameter system for Pertylizer.
 //!
 //! This module provides strongly-typed parameters where each parameter
 //! variant carries its properly typed value (e.g., `Frequency(Hertz)`).
