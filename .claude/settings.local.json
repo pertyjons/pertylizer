@@ -247,7 +247,14 @@
       "mcp__synth__list_notes",
       "mcp__synth__list_automation_lanes",
       "mcp__synth__save_project",
-      "mcp__synth__load_project"
+      "mcp__synth__load_project",
+      "mcp__synth__set_instrument_solo",
+      "mcp__synth__note_on",
+      "mcp__synth__note_off",
+      "mcp__synth__get_graph_diagnostics",
+      "mcp__synth__connect",
+      "mcp__synth__disconnect",
+      "mcp__synth__remove_module"
     ],
     "deny": [],
     "ask": []

@@ -22,6 +22,7 @@ mod fluid_keys;
 mod fluid_pad;
 mod fm_bell;
 mod formant_voice;
+mod fractal_cosmos;
 mod glitch_pad;
 mod grand_piano;
 mod granular_cathedral;
@@ -82,6 +83,7 @@ pub use fluid_keys::patch_fluid_keys;
 pub use fluid_pad::patch_fluid_pad;
 pub use fm_bell::patch_fm_bell;
 pub use formant_voice::patch_formant_voice;
+pub use fractal_cosmos::patch_fractal_cosmos;
 pub use glitch_pad::patch_glitch_pad;
 pub use grand_piano::patch_grand_piano;
 pub use granular_cathedral::patch_granular_cathedral;
@@ -188,6 +190,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
                 patch_vector_pad(),
                 patch_ethereal_shimmer_pad(),
                 patch_spectral_freeze_pad(),
+                patch_fractal_cosmos(),
             ],
         ),
         (
