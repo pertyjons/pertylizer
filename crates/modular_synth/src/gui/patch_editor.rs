@@ -1981,9 +1981,11 @@ impl PatchEditor {
         // Draw pending connection in foreground (less sag for responsive feel)
         if let Some(ref pending) = self.pending_connection {
             let color = cable_color(pending.from_type, 180);
-            let painter = ui
-                .ctx()
-                .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables")));
+            let painter = eframe::egui::Painter::new(
+                ui.ctx().clone(),
+                LayerId::new(Order::Background, egui::Id::new("cables_active")),
+                visible_rect,
+            );
             draw_cable_dragging(&painter, pending.from_position, pending.current_pos, color);
         }
 
@@ -2256,9 +2258,11 @@ impl PatchEditor {
         module_rects: &[Rect],
     ) {
         let bg_painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
-        let fg_painter = ui
-            .ctx()
-            .layer_painter(LayerId::new(Order::Foreground, egui::Id::new("cables_fg")));
+        let fg_painter = eframe::egui::Painter::new(
+            ui.ctx().clone(),
+            LayerId::new(Order::Background, egui::Id::new("cables_active_fg")),
+            clip_rect,
+        );
 
         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
 

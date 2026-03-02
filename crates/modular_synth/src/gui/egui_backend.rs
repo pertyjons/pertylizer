@@ -1754,7 +1754,11 @@ impl SynthApp {
         show_about_dialog(ctx, &mut self.dialog_state.show_about);
 
         // Load built-in patch dialog
-        match show_load_patch_dialog(ctx, &mut self.dialog_state.show_load_patch) {
+        match show_load_patch_dialog(
+            ctx,
+            &mut self.dialog_state.show_load_patch,
+            &mut self.dialog_state.load_patch_search,
+        ) {
             LoadPatchResult::LoadBuiltin(patch) => {
                 self.load_patch_data(&patch);
                 self.current_patch_name = patch.name.clone();

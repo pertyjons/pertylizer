@@ -125,6 +125,7 @@ pub use wave_folder_bass::patch_wave_folder_bass;
 pub use waveshaper_lead::patch_waveshaper_lead;
 
 use crate::patch::Patch;
+use egui_remixicon::icons as ri;
 
 /// Get the default patch (loaded on startup).
 pub fn default_patch() -> Patch {
@@ -141,10 +142,10 @@ pub fn example_patches() -> Vec<Patch> {
 
 /// Get example patches grouped by category.
 #[must_use]
-pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
+pub fn categorized_patches() -> Vec<(String, Vec<Patch>)> {
     vec![
         (
-            "\u{1f3b9} Keys & Piano",
+            format!("{} Keys & Piano", ri::PIANO_FILL),
             vec![
                 patch_grand_piano(),
                 patch_ambient_keys(),
@@ -154,7 +155,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f3b8} Bass",
+            format!("{} Bass", ri::VOICEPRINT_FILL),
             vec![
                 patch_spacey_bass(),
                 patch_aggressive_bass(),
@@ -165,7 +166,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f3b5} Lead",
+            format!("{} Lead", ri::MUSIC_FILL),
             vec![
                 patch_vintage_lead(),
                 patch_moog_resonant_sweep(),
@@ -179,7 +180,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f30a} Pad",
+            format!("{} Pad", ri::HAZE_FILL),
             vec![
                 patch_deep_space_pad(),
                 patch_velocity_pad(),
@@ -194,7 +195,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f941} Drums",
+            format!("{} Drums", ri::RHYTHM_FILL),
             vec![
                 patch_drum_kick(),
                 patch_drum_snare(),
@@ -203,7 +204,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f3bb} Strings & Bell",
+            format!("{} Strings & Bell", ri::BELL_FILL),
             vec![
                 patch_string_ensemble(),
                 patch_unison_pwm_strings(),
@@ -214,7 +215,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f52c} Experimental",
+            format!("{} Experimental", ri::FLASK_FILL),
             vec![
                 patch_chaos_drone(),
                 patch_karplus_guitar(),
@@ -231,7 +232,7 @@ pub fn categorized_patches() -> Vec<(&'static str, Vec<Patch>)> {
             ],
         ),
         (
-            "\u{1f32b}\u{fe0f} Ambient & Texture",
+            format!("{} Ambient & Texture", ri::MIST_FILL),
             vec![
                 patch_brown_drone(),
                 patch_noise_sweep(),

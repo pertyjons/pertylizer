@@ -13,7 +13,7 @@ use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
 use crate::io::settings::{AppSettings, settings_path};
 use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
-use crate::patch::{GroupCategory, GroupId, Patch, example_patches};
+use crate::patch::{GroupCategory, GroupId, Patch, categorized_patches};
 use crate::project;
 
 /// Type of file dialog operation.
@@ -39,6 +39,8 @@ pub struct DialogState {
     pub show_about: bool,
     /// Show load patch dialog (built-in patches).
     pub show_load_patch: bool,
+    /// Search filter for built-in patch browser.
+    pub load_patch_search: String,
     /// Show group template browser dialog.
     pub show_group_templates: bool,
     /// Search filter for group template browser.
@@ -75,6 +77,7 @@ impl Default for DialogState {
             show_settings: false,
             show_about: false,
             show_load_patch: false,
+            load_patch_search: String::new(),
             show_group_templates: false,
             group_template_search: String::new(),
             group_template_selected: None,
@@ -533,47 +536,107 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
-/// Show the load patch dialog.
+/// Show the load patch dialog with search and categories.
 ///
 /// Returns the action the user wants to take.
-pub fn show_load_patch_dialog(ctx: &egui::Context, open: &mut bool) -> LoadPatchResult {
+pub fn show_load_patch_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    search: &mut String,
+) -> LoadPatchResult {
     if !*open {
         return LoadPatchResult::None;
     }
 
     let mut result = LoadPatchResult::None;
 
-    egui::Window::new("Load Patch")
+    egui::Window::new("Load Built-in Patch")
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
+        .default_width(450.0)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            ui.label("Select a patch to load:");
-            ui.add_space(8.0);
+            // Search field
+            ui.horizontal(|ui| {
+                ui.label(egui_remixicon::icons::SEARCH_LINE);
+                let response = ui.add(
+                    egui::TextEdit::singleline(search)
+                        .hint_text("Search name, description, tags...")
+                        .desired_width(f32::INFINITY),
+                );
+                // Auto-focus the search field when dialog opens
+                if search.is_empty() {
+                    response.request_focus();
+                }
+            });
+            ui.add_space(4.0);
+
+            let query = search.trim().to_ascii_lowercase();
+            let categories = categorized_patches();
 
             egui::ScrollArea::vertical()
-                .max_height(300.0)
+                .max_height(400.0)
                 .show(ui, |ui| {
-                    ui.heading("Built-in Patches");
-                    for patch in example_patches() {
-                        ui.horizontal(|ui| {
-                            if ui.button(&patch.name).clicked() {
-                                result = LoadPatchResult::LoadBuiltin(Box::new(patch.clone()));
-                                *open = false;
-                            }
-                            if let Some(ref desc) = patch.description {
-                                ui.label(
-                                    RichText::new(desc).small().color(theme().colors.text_dim),
-                                );
-                            }
-                        });
+                    let dim = theme().colors.text_dim;
+                    let mut any_match = false;
+
+                    for (category, patches) in &categories {
+                        // Filter patches matching the search query
+                        let matching: Vec<&Patch> = patches
+                            .iter()
+                            .filter(|p| {
+                                if query.is_empty() {
+                                    return true;
+                                }
+                                let name = p.name.to_ascii_lowercase();
+                                if name.contains(&query) {
+                                    return true;
+                                }
+                                if let Some(ref desc) = p.description
+                                    && desc.to_ascii_lowercase().contains(&query)
+                                {
+                                    return true;
+                                }
+                                p.tags
+                                    .iter()
+                                    .any(|t| t.to_ascii_lowercase().contains(&query))
+                            })
+                            .collect();
+
+                        if matching.is_empty() {
+                            continue;
+                        }
+                        any_match = true;
+
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(category).strong());
+                        ui.separator();
+
+                        for patch in matching {
+                            ui.horizontal(|ui| {
+                                if ui.button(&patch.name).clicked() {
+                                    result = LoadPatchResult::LoadBuiltin(Box::new(patch.clone()));
+                                    *open = false;
+                                    search.clear();
+                                }
+                                if let Some(ref desc) = patch.description {
+                                    ui.label(RichText::new(desc).small().color(dim));
+                                }
+                            });
+                        }
+                    }
+
+                    if !any_match {
+                        ui.add_space(16.0);
+                        ui.label(RichText::new("No patches match your search.").color(dim));
                     }
                 });
 
-            ui.add_space(16.0);
+            ui.add_space(8.0);
             if ui.button("Cancel").clicked() {
                 result = LoadPatchResult::Cancelled;
                 *open = false;
+                search.clear();
             }
         });
 

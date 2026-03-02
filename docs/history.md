@@ -1,5 +1,12 @@
 # Version History
 
+## [0.200.0] - 2026-03-02
+### Cable clipping, remixicon patch categories, built-in patch search
+- **Cable clipping fix** — active/hovered cables now clip to scroll area (use `Painter::new()` with explicit clip rect instead of `layer_painter()` which defaulted to `Rect::EVERYTHING`)
+- **Cables moved to `Order::Background`** — drag and hover cables use late-allocated Background layers so they render above modules but stay within the patch viewport
+- **Remixicon icons for patch categories** — replaced Unicode emoji (🎹🎸🎵🌊🥁🎻🔬🌫️) with `egui_remixicon` icons that render reliably on all systems
+- **Built-in patch browser with search** — "Load Built-in" dialog now shows patches grouped by category with a free-text search field filtering on name, description, and tags
+
 ## [0.199.0] - 2026-03-02
 ### Fractal Oscillator (Weierstrass function)
 - New **FractalOsc** module — stereo additive oscillator based on the Weierstrass function

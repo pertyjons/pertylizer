@@ -1,4 +1,4 @@
-# TODO - Modular Synth (v0.199.0)
+# TODO - Modular Synth (v0.200.0)
 
 ## Priority 1 — Foundation & Core Functionality
 
@@ -53,9 +53,8 @@
 - Current state: Effects show as "Effect Chain" with full-width layout, but distinction is subtle.
 
 ### 2.2 Cable rendering — clip to patch area
-- [ ] Ensure cables don't render outside the patch/rack view bounds when hovered
-- Current: `painter.with_clip_rect(inner_rect)` exists but may not account for hover glow layers
-- Check: The glow effect (8px outer, 5px inner) may extend beyond clip rect
+- [x] Ensure cables don't render outside the patch/rack view bounds when hovered
+- Fixed: Active/hovered cables now use `Painter::new()` with explicit clip rect instead of `layer_painter()` which defaulted to `Rect::EVERYTHING`
 
 ### 2.3 Module Groups — Phases 1–3 (see `docs/Module-Groups-Plan.md`)
 - [x] Phase 1: Visual grouping data model + patch serialization (`groups`)

@@ -254,7 +254,9 @@
       "mcp__synth__get_graph_diagnostics",
       "mcp__synth__connect",
       "mcp__synth__disconnect",
-      "mcp__synth__remove_module"
+      "mcp__synth__remove_module",
+      "Bash(read icon:*)",
+      "Bash(do grep:*)"
     ],
     "deny": [],
     "ask": []
