@@ -106,7 +106,10 @@ jobs:
       - name: Format check
         run: cargo fmt --check
       - name: Binary size
-        run: Get-Item target\release\pertylizer.exe | ForEach-Object { "Binary size: $([math]::Round($_.Length / 1MB, 1)) MB" }
+        shell: pwsh
+        run: |
+          $size = (Get-Item target\release\pertylizer.exe).Length / 1MB
+          Write-Host ("Binary size: {0:N1} MB" -f $size)
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
