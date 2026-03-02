@@ -17,8 +17,10 @@ default-members = ["crates/pertylizer"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.93"
-authors = ["Per"]
+authors = ["Per Jonsson"]
 license = "MIT"
+repository = "https://github.com/pertyjons/pertylizer"
+description = "Pertylizer — a modular synthesizer with 35 voice modules, 21 effects, and MCP integration"
 
 [workspace.dependencies]
 # Core dependencies
@@ -88,4 +90,4 @@ codegen-units = 1
 panic = "abort"
 
 [profile.dev]
-opt-level = 1  # Lite optimering även i dev för audio
+opt-level = 1  # Some optimization in dev for audio performance

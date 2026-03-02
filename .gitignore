@@ -4,6 +4,16 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.profraw
+*.profdata
+.env
+
+# AI tool local config
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
+.gemini/settings.json
+.ai/
