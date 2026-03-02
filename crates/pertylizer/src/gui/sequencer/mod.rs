@@ -123,6 +123,18 @@ enum DragState {
         current_tick: u32,
         current_value: f32,
     },
+    /// Drag-move a pattern placement in the arrangement.
+    DragPlacement {
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start_tick: u64,
+        /// Current drag tick position (snapped to grid).
+        current_tick: u64,
+        /// Current target track ID.
+        current_track_id: TrackId,
+        /// Offset from placement start to where mouse grabbed (in ticks).
+        grab_offset_ticks: u64,
+    },
 }
 
 // ============================================================================
@@ -151,6 +163,12 @@ pub struct SequencerViewState {
     loop_start: Tick,
     /// Loop end position.
     loop_end: Tick,
+    /// Stored right-click position (captured at click time, before menu opens).
+    context_menu_pos: Option<Pos2>,
+    /// Track to highlight (set on right-click, cleared on primary click).
+    highlighted_track: Option<TrackId>,
+    /// Arrangement timeline zoom level (1.0 = default).
+    zoom_level: f32,
 }
 
 impl SequencerViewState {
@@ -166,6 +184,9 @@ impl SequencerViewState {
             loop_enabled: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
+            context_menu_pos: None,
+            highlighted_track: None,
+            zoom_level: 1.0,
         }
     }
 }
@@ -192,6 +213,12 @@ const PIXELS_PER_BEAT: f32 = 40.0;
 const MIN_VISIBLE_BARS: u32 = 8;
 /// Padding inside pattern placement boxes.
 const PLACEMENT_PADDING: f32 = 2.0;
+/// Minimum zoom level for arrangement timeline.
+const MIN_ZOOM: f32 = 0.25;
+/// Maximum zoom level for arrangement timeline.
+const MAX_ZOOM: f32 = 4.0;
+/// Maximum number of note miniatures per placement.
+const MAX_MINIATURE_NOTES: usize = 200;
 
 // Piano roll constants
 /// Height of the piano roll bottom panel.
@@ -390,6 +417,16 @@ struct PatternInfo {
     length_ticks: u32,
 }
 
+/// A miniature note rectangle for pattern preview.
+struct NoteMiniature {
+    /// Horizontal position as fraction of pattern length (0.0–1.0).
+    start_frac: f32,
+    /// Width as fraction of pattern length.
+    duration_frac: f32,
+    /// Vertical position as fraction of pitch range (0.0 = lowest, 1.0 = highest).
+    pitch_frac: f32,
+}
+
 /// Snapshot of a pattern placement for rendering.
 struct PlacementInfo {
     pattern_id: PatternId,
@@ -399,6 +436,10 @@ struct PlacementInfo {
     pattern_name: String,
     note_count: usize,
     color: Color32,
+    /// Length in beats (for tooltip).
+    length_beats: f32,
+    /// Note miniatures for preview drawing.
+    note_miniatures: Vec<NoteMiniature>,
 }
 
 /// Collected song data for arrangement rendering.
@@ -451,6 +492,35 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
                 .map(|t| track_color_to_egui(t.color))
                 .unwrap_or(Color32::GRAY);
 
+            let length_beats = pattern.length.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+
+            // Build note miniatures for preview
+            let notes = pattern.notes();
+            let note_miniatures = if notes.is_empty() || pattern.length.0 == 0 {
+                Vec::new()
+            } else {
+                let len = pattern.length.0 as f32;
+                // Find pitch range for normalization
+                let (min_pitch, max_pitch) = notes.iter().fold((127_u8, 0_u8), |(lo, hi), n| {
+                    let p = n.pitch.as_midi();
+                    (lo.min(p), hi.max(p))
+                });
+                let pitch_range = (max_pitch - min_pitch).max(1) as f32;
+
+                notes
+                    .iter()
+                    .take(MAX_MINIATURE_NOTES)
+                    .map(|n| {
+                        let dur = n.duration.map_or(len * 0.02, |d| d.0 as f32);
+                        NoteMiniature {
+                            start_frac: n.start.0 as f32 / len,
+                            duration_frac: dur / len,
+                            pitch_frac: (n.pitch.as_midi() - min_pitch) as f32 / pitch_range,
+                        }
+                    })
+                    .collect()
+            };
+
             Some(PlacementInfo {
                 pattern_id: p.pattern_id,
                 track_id: p.track_id,
@@ -459,6 +529,8 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
                 pattern_name: pattern.name.clone(),
                 note_count: pattern.notes().len(),
                 color,
+                length_beats,
+                note_miniatures,
             })
         })
         .collect();
@@ -518,6 +590,8 @@ fn draw_arrangement(
     let ticks_per_beat = data.time_sig.ticks_per_beat() as u64;
     let beats_per_bar = data.time_sig.numerator as u64;
 
+    let pixels_per_beat = PIXELS_PER_BEAT * view_state.zoom_level;
+
     let song_bars = if ticks_per_bar > 0 {
         data.song_end_tick.div_ceil(ticks_per_bar) as u32
     } else {
@@ -525,7 +599,7 @@ fn draw_arrangement(
     };
     let total_bars = song_bars.max(MIN_VISIBLE_BARS) + 2;
     let total_beats = total_bars as f32 * beats_per_bar as f32;
-    let timeline_width = total_beats * PIXELS_PER_BEAT;
+    let timeline_width = total_beats * pixels_per_beat;
 
     let mut double_clicked_pattern: Option<PatternId> = None;
 
@@ -534,11 +608,16 @@ fn draw_arrangement(
         .exact_width(TRACK_HEADER_WIDTH)
         .resizable(false)
         .show_inside(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+
             // Ruler corner placeholder
             ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
 
             for (i, track) in data.tracks.iter().enumerate() {
-                let bg = if i % 2 == 0 {
+                let is_highlighted = view_state.highlighted_track == Some(track.id);
+                let bg = if is_highlighted {
+                    Color32::from_rgba_premultiplied(80, 120, 200, 40)
+                } else if i % 2 == 0 {
                     t.colors.bg_module
                 } else {
                     t.colors.bg_panel
@@ -550,6 +629,7 @@ fn draw_arrangement(
 
                 frame.show(ui, |ui| {
                     ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
+                    ui.set_max_height(TRACK_ROW_HEIGHT - 4.0);
                     ui.set_max_width(TRACK_HEADER_WIDTH - 8.0);
 
                     // Color indicator + name row
@@ -724,7 +804,7 @@ fn draw_arrangement(
                 timeline_width,
                 RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
             );
-            let (response, painter) = ui.allocate_painter(total_size, Sense::click());
+            let (response, painter) = ui.allocate_painter(total_size, Sense::click_and_drag());
             let painter_rect = response.rect;
 
             let tl_x = painter_rect.min.x;
@@ -735,7 +815,7 @@ fn draw_arrangement(
                     return tl_x;
                 }
                 let beats = tick_val as f32 / ticks_per_beat as f32;
-                tl_x + beats * PIXELS_PER_BEAT
+                tl_x + beats * pixels_per_beat
             };
 
             // Helper: x position to tick
@@ -743,8 +823,18 @@ fn draw_arrangement(
                 if ticks_per_beat == 0 {
                     return 0;
                 }
-                let beats = (x - tl_x) / PIXELS_PER_BEAT;
+                let beats = (x - tl_x) / pixels_per_beat;
                 (beats * ticks_per_beat as f32).max(0.0) as u64
+            };
+
+            // Helper: y position to track row index
+            let y_to_row = |y: f32| -> Option<usize> {
+                let row_offset = y - (tl_y + RULER_HEIGHT);
+                if row_offset < 0.0 || TRACK_ROW_HEIGHT <= 0.0 {
+                    return None;
+                }
+                let idx = (row_offset / TRACK_ROW_HEIGHT) as usize;
+                if idx < track_count { Some(idx) } else { None }
             };
 
             // ── Ruler (bar/beat numbers) ──
@@ -788,7 +878,10 @@ fn draw_arrangement(
             // ── Track row backgrounds ──
             for i in 0..track_count {
                 let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
-                let bg = if i % 2 == 0 {
+                let is_highlighted = view_state.highlighted_track == Some(data.tracks[i].id);
+                let bg = if is_highlighted {
+                    Color32::from_rgba_premultiplied(80, 120, 200, 40)
+                } else if i % 2 == 0 {
                     Color32::from_rgba_premultiplied(40, 42, 46, 80)
                 } else {
                     Color32::TRANSPARENT
@@ -864,48 +957,250 @@ fn draw_arrangement(
                         egui::FontId::proportional(11.0),
                         t.colors.text_primary,
                     );
-                    if text_clip.width() > 50.0 {
-                        painter.with_clip_rect(text_clip).text(
-                            Pos2::new(rect.min.x + 4.0, rect.min.y + 18.0),
-                            egui::Align2::LEFT_TOP,
-                            format!("{} notes", placement.note_count),
-                            egui::FontId::proportional(9.0),
-                            t.colors.text_dim,
+                }
+
+                // ── Note miniatures ──
+                if !placement.note_miniatures.is_empty() {
+                    let mini_top = rect.min.y + 18.0;
+                    let mini_height = rect.max.y - mini_top - 2.0;
+                    if mini_height > 4.0 {
+                        let mini_width = rect.width() - 4.0;
+                        let note_color = Color32::from_rgba_unmultiplied(
+                            placement.color.r(),
+                            placement.color.g(),
+                            placement.color.b(),
+                            180,
+                        );
+                        let clipped = painter.with_clip_rect(rect);
+                        for mini in &placement.note_miniatures {
+                            let nx = rect.min.x + 2.0 + mini.start_frac * mini_width;
+                            let nw = (mini.duration_frac * mini_width).max(1.0);
+                            let ny = mini_top + (1.0 - mini.pitch_frac) * (mini_height - 2.0);
+                            clipped.rect_filled(
+                                Rect::from_min_size(Pos2::new(nx, ny), Vec2::new(nw, 2.0)),
+                                0.0,
+                                note_color,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // ── Double-click → open piano roll or create pattern ──
+            if response.double_clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let mut hit_placement = false;
+                for (rect, pattern_id, _, _) in &placement_rects {
+                    if rect.contains(pos) {
+                        double_clicked_pattern = Some(*pattern_id);
+                        hit_placement = true;
+                        break;
+                    }
+                }
+                // Double-click on empty area → create pattern + place + open
+                if !hit_placement && let Some(row_idx) = y_to_row(pos.y) {
+                    let target_track = data.tracks[row_idx].id;
+                    let click_tick = x_to_tick(pos.x);
+                    let bar_tick = if ticks_per_bar > 0 {
+                        (click_tick / ticks_per_bar) * ticks_per_bar
+                    } else {
+                        click_tick
+                    };
+                    if let Ok(mut song_w) = song.write() {
+                        let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
+                        song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
+                        double_clicked_pattern = Some(new_pat_id);
+                    }
+                }
+            }
+
+            // ── Hover hint + tooltip on placements ──
+            if response.hovered()
+                && let Some(pos) = ui.ctx().pointer_hover_pos()
+            {
+                let hovered_placement = data
+                    .placements
+                    .iter()
+                    .zip(placement_rects.iter())
+                    .find(|(_, (r, _, _, _))| r.contains(pos));
+
+                if let Some((pl, _)) = hovered_placement {
+                    ui.ctx().output_mut(|o| {
+                        o.cursor_icon = CursorIcon::PointingHand;
+                    });
+                    // Tooltip with pattern info
+                    let instr_name = data
+                        .tracks
+                        .iter()
+                        .find(|t| t.id == pl.track_id)
+                        .and_then(|t| t.instrument_id)
+                        .and_then(|seq_id| {
+                            instruments.iter().find(|inst| inst.id.0 == seq_id.0 as u64)
+                        })
+                        .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
+                    let tip_name = pl.pattern_name.clone();
+                    let tip_beats = pl.length_beats;
+                    let tip_notes = pl.note_count;
+                    response.clone().on_hover_ui(|ui: &mut egui::Ui| {
+                        ui.label(
+                            RichText::new(&tip_name)
+                                .strong()
+                                .color(t.colors.text_primary),
+                        );
+                        ui.label(format!("{tip_beats:.1} beats"));
+                        ui.label(format!("{tip_notes} notes"));
+                        ui.label(format!("Instrument: {instr_name}"));
+                    });
+                }
+            }
+
+            // ── Ctrl+scroll → timeline zoom ──
+            if response.hovered() {
+                let scroll_delta = ui.input(|i| {
+                    if i.modifiers.ctrl || i.modifiers.command {
+                        i.smooth_scroll_delta.y
+                    } else {
+                        0.0
+                    }
+                });
+                if scroll_delta != 0.0 {
+                    let factor = 1.0 + scroll_delta * 0.002;
+                    view_state.zoom_level =
+                        (view_state.zoom_level * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                }
+            }
+
+            // ── Primary click clears highlight ──
+            if response.clicked() {
+                view_state.highlighted_track = None;
+            }
+
+            // ── Capture right-click position + set highlighted track ──
+            if response.secondary_clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                view_state.context_menu_pos = Some(pos);
+                view_state.highlighted_track = y_to_row(pos.y).map(|i| data.tracks[i].id);
+            }
+
+            // ── Drag-to-move placements ──
+            if response.drag_started_by(egui::PointerButton::Primary)
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                // Check if dragging on an existing placement
+                if let Some((_, pat_id, trk_id, start_tick)) =
+                    placement_rects.iter().find(|(r, _, _, _)| r.contains(pos))
+                {
+                    let grab_tick = x_to_tick(pos.x);
+                    view_state.drag = Some(DragState::DragPlacement {
+                        pattern_id: *pat_id,
+                        track_id: *trk_id,
+                        start_tick: *start_tick,
+                        current_tick: *start_tick,
+                        current_track_id: *trk_id,
+                        grab_offset_ticks: grab_tick.saturating_sub(*start_tick),
+                    });
+                }
+            }
+
+            // ── Update drag state ──
+            if response.dragged_by(egui::PointerButton::Primary)
+                && let Some(DragState::DragPlacement {
+                    current_tick,
+                    current_track_id,
+                    grab_offset_ticks,
+                    ..
+                }) = &mut view_state.drag
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let raw_tick = x_to_tick(pos.x).saturating_sub(*grab_offset_ticks);
+                // Snap to beat grid
+                *current_tick = if ticks_per_beat > 0 {
+                    (raw_tick / ticks_per_beat) * ticks_per_beat
+                } else {
+                    raw_tick
+                };
+                if let Some(row_idx) = y_to_row(pos.y) {
+                    *current_track_id = data.tracks[row_idx].id;
+                }
+            }
+
+            // ── Release drag → move placement ──
+            if response.drag_stopped_by(egui::PointerButton::Primary)
+                && let Some(DragState::DragPlacement {
+                    pattern_id,
+                    track_id,
+                    start_tick,
+                    current_tick,
+                    current_track_id,
+                    ..
+                }) = view_state.drag.take()
+            {
+                // Only move if something changed
+                if (current_tick != start_tick || current_track_id != track_id)
+                    && let Ok(mut song_w) = song.write()
+                {
+                    song_w.move_placement(
+                        pattern_id,
+                        track_id,
+                        Tick(start_tick),
+                        current_track_id,
+                        Tick(current_tick),
+                    );
+                }
+            }
+
+            // ── Draw drag ghost ──
+            if let Some(DragState::DragPlacement {
+                pattern_id,
+                current_tick,
+                current_track_id,
+                ..
+            }) = &view_state.drag
+            {
+                // Find original placement length
+                if let Some(placement) =
+                    data.placements.iter().find(|p| p.pattern_id == *pattern_id)
+                {
+                    let duration_ticks = placement.end_tick - placement.start_tick;
+                    let ghost_x = tick_to_x(*current_tick);
+                    let ghost_end_x = tick_to_x(*current_tick + duration_ticks);
+                    if let Some(row_idx) =
+                        data.tracks.iter().position(|t| t.id == *current_track_id)
+                    {
+                        let ghost_y = tl_y
+                            + RULER_HEIGHT
+                            + row_idx as f32 * TRACK_ROW_HEIGHT
+                            + PLACEMENT_PADDING;
+                        let ghost_rect = Rect::from_min_size(
+                            Pos2::new(ghost_x, ghost_y),
+                            Vec2::new(
+                                (ghost_end_x - ghost_x).max(4.0),
+                                TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
+                            ),
+                        );
+                        painter.rect_filled(
+                            ghost_rect,
+                            3.0,
+                            Color32::from_rgba_unmultiplied(120, 180, 255, 60),
+                        );
+                        painter.rect_stroke(
+                            ghost_rect,
+                            3.0,
+                            Stroke::new(1.5, Color32::from_rgb(120, 180, 255)),
+                            egui::StrokeKind::Inside,
                         );
                     }
                 }
             }
 
-            // ── Double-click → open piano roll ──
-            if response.double_clicked()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                for (rect, pattern_id, _, _) in &placement_rects {
-                    if rect.contains(pos) {
-                        double_clicked_pattern = Some(*pattern_id);
-                        break;
-                    }
-                }
-            }
-
-            // ── Hover hint on placements ──
-            if response.hovered()
-                && let Some(pos) = ui.ctx().pointer_hover_pos()
-            {
-                let on_placement = placement_rects.iter().any(|(r, _, _, _)| r.contains(pos));
-                if on_placement {
-                    ui.ctx().output_mut(|o| {
-                        o.cursor_icon = CursorIcon::PointingHand;
-                    });
-                }
-            }
-
             // ── Right-click context menu on timeline ──
+            // Use stored position from secondary_clicked, not current hover
+            let ctx_pos = view_state.context_menu_pos;
             response.context_menu(|ui| {
                 ui.set_min_width(180.0);
-                let click_pos = ui.min_rect().min;
-                // Determine which track row was clicked
-                let hover_pos = ui.ctx().pointer_hover_pos().unwrap_or(click_pos);
+                let hover_pos = ctx_pos.unwrap_or(ui.min_rect().min);
 
                 // Check if right-click is on an existing placement
                 let clicked_placement = placement_rects
@@ -2270,7 +2565,7 @@ fn handle_piano_roll_interaction(
                 *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
                 *current_value = (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0);
             }
-            None => {}
+            Some(DragState::DragPlacement { .. }) | None => {}
         }
     }
 
@@ -2389,6 +2684,8 @@ fn handle_piano_roll_interaction(
                     ));
                 }
             }
+            // DragPlacement is handled in the arrangement view, not here
+            DragState::DragPlacement { .. } => {}
         }
     }
 }

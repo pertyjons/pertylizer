@@ -1,5 +1,12 @@
 # Version History
 
+## [0.204.0] - 2026-03-02
+### Voice leak fix, arrangement view improvements, example project
+- **Fixed voice leak bug** — voices in `Releasing` state never transitioned back to `Idle`, causing CPU to spike to 100% as voices accumulated indefinitely. Added `is_release_done()` trait method on `PolyModule`, implemented in `Envelope` and `Mseg`, with `all_releases_done()` check on `ModuleGraph` to reclaim finished voices
+- **Arrangement view fixes** — fixed right-click menu position, track highlight on right-click, double-click to create pattern, Ctrl+scroll timeline zoom, pattern miniature note preview, hover tooltip, track header alignment, drag-to-move placements with beat grid snap
+- **Added `move_placement()`** to Song for repositioning pattern placements
+- **Example project** — "Oxygene Dreams" JMJ-inspired 2.5-minute composition with 9 instruments, drums, bells, and vocal pad
+
 ## [0.203.0] - 2026-03-02
 ### CI improvements, console removal, public release prep
 - **Removed console GUI backend** — simplified CLI to just `--headless` and `--help`

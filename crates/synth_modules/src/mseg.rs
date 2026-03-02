@@ -630,6 +630,10 @@ impl PolyModule for Mseg {
         self.release_envelope();
     }
 
+    fn is_release_done(&self) -> bool {
+        matches!(self.state, MsegState::Idle)
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }

@@ -402,6 +402,14 @@ impl ModuleGraph {
             .for_each(|node| node.module.note_off());
     }
 
+    /// Check if all envelope-type modules have finished releasing.
+    /// Returns `true` when every module reports `is_release_done()`.
+    pub fn all_releases_done(&self) -> bool {
+        self.nodes
+            .values()
+            .all(|node| node.module.is_release_done())
+    }
+
     /// Reset all modules.
     pub fn reset(&mut self) {
         self.nodes.values_mut().for_each(|node| node.module.reset());

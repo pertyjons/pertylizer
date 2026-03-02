@@ -510,6 +510,10 @@ impl PolyModule for Envelope {
         self.release();
     }
 
+    fn is_release_done(&self) -> bool {
+        self.stage == EnvelopeStage::Idle
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
