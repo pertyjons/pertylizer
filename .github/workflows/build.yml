@@ -15,6 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -42,6 +44,8 @@ jobs:
       - name: Install system dependencies
         run: dnf install -y alsa-lib-devel pkg-config libxkbcommon-devel wayland-devel gcc
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Build
         run: cargo build --release
       - name: Clippy
@@ -62,6 +66,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Build
         run: cargo build --release
       - name: Clippy
@@ -82,6 +88,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Build
         run: cargo build --release
       - name: Clippy
