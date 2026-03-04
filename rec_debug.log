@@ -1,0 +1,50 @@
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.17s
+     Running `target/debug/pertylizer`
+MCP HTTP server listening on http://127.0.0.1:9850/mcp
+[REC] note_on IGNORED (state=Armed)
+[REC] note_on IGNORED (state=Armed)
+[REC] Stop received, recording state=Idle
+[REC] Play received, recording state=Idle
+[REC] Stop received, recording state=Idle
+[REC] note_on IGNORED (state=Idle)
+[REC] Stop received, recording state=Idle
+[REC] Play received, recording state=Idle
+[REC] Stop received, recording state=Idle
+[REC] Play received, recording state=Idle
+[REC] note_on IGNORED (state=Idle)
+[REC] note_on IGNORED (state=Idle)
+[REC] note_on IGNORED (state=Idle)
+[REC] Stop received, recording state=Idle
+[REC] Play received, recording state=Idle
+[REC] note_on IGNORED (state=Armed)
+[REC] note_on IGNORED (state=Armed)
+[REC] Play received, recording state=Armed
+[REC] Count-in started, seek_to=0, capture_start=Some(PatternId(0))
+[REC] note_on pitch=53 vel=102 tick=942
+[REC] note_on pitch=69 vel=102 tick=2324
+[REC] note_on pitch=53 vel=102 tick=3092
+[REC] note_on pitch=69 vel=102 tick=4341
+[REC] note_on pitch=53 vel=102 tick=5877
+[REC] note_on pitch=59 vel=102 tick=7086
+[REC] note_on pitch=69 vel=102 tick=8427
+[REC] note_on pitch=53 vel=102 tick=9431
+[REC] note_on pitch=71 vel=102 tick=10229
+[REC] note_on pitch=53 vel=102 tick=11212
+[REC] note_on pitch=71 vel=102 tick=11673
+[REC] note_on pitch=71 vel=102 tick=12328
+[REC] Stop received, recording state=Capturing
+[REC] Flushing 12 notes to pattern Some(PatternId(0))
+[REC] Play received, recording state=Armed
+[REC] Count-in started, seek_to=0, capture_start=Some(PatternId(0))
+[REC] note_on pitch=53 vel=102 tick=1157
+[REC] note_on pitch=72 vel=102 tick=12083
+[REC] note_on pitch=72 vel=102 tick=12451
+[REC] note_on pitch=72 vel=102 tick=12779
+[REC] note_on pitch=72 vel=102 tick=13117
+[REC] note_on pitch=72 vel=102 tick=13465
+[REC] note_on pitch=72 vel=102 tick=13752
+[REC] note_on pitch=72 vel=102 tick=14059
+[REC] note_on pitch=72 vel=102 tick=14622
+[REC] note_on pitch=72 vel=102 tick=14755
+[REC] Stop received, recording state=Capturing
+[REC] Flushing 10 notes to pattern Some(PatternId(0))
