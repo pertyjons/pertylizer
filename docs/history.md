@@ -5,6 +5,8 @@
 - **Live note preview** — notes appear as orange rectangles in the piano roll immediately during recording, before being committed; held notes extend in real-time from start tick to playhead
 - **Loop during recording** — playback automatically loops around the target pattern region when recording starts, enabling multiple overdub passes without stopping; loop state is saved and restored when recording ends
 - **Recording preview events** — new `RecordingPreview` engine event sends completed and held notes to the GUI at buffer rate (~86Hz) via the existing lock-free ringbuffer
+- **Mid-recording flush** — recorded notes are written to the pattern at each loop boundary so they play back on subsequent passes; first flush respects the user's overdub/replace setting, subsequent flushes always overdub
+- **Piano roll 50/50 split** — piano roll now defaults to ~50% of available height instead of fixed 300px; the existing resizable divider allows dragging to any proportion
 
 ## [0.206.0] - 2026-03-04
 ### Recording quantization and overdub mode

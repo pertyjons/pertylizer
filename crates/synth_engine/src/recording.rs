@@ -277,6 +277,15 @@ impl RecordingBuffer {
         self.recorded_notes.drain(..).collect()
     }
 
+    /// Drain completed notes without stopping recording.
+    ///
+    /// Used at loop boundaries to flush notes to the pattern mid-recording,
+    /// so they play back on subsequent loop passes.
+    /// Preserves held notes and recording state.
+    pub(crate) fn drain_completed(&mut self) -> Vec<RecordedNote> {
+        self.recorded_notes.drain(..).collect()
+    }
+
     /// Convert a song tick to a pattern-relative tick.
     #[allow(clippy::cast_possible_truncation)] // pattern_tick fits in u32 after modulo
     fn song_tick_to_pattern_tick(&self, song_tick: Tick) -> PatternTick {
