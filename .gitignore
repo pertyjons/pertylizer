@@ -16,3 +16,4 @@ Thumbs.db
 .claude/worktrees/
 .gemini/settings.json
 .ai/
+rec_debug.log
