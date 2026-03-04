@@ -13,3 +13,4 @@ workspace = true
 [dependencies]
 synth_core = { path = "../synth_core" }
 serde = { workspace = true }
+fastrand = "2.3.0"
