@@ -1,5 +1,11 @@
 # Version History
 
+## [0.210.0] - 2026-03-04
+### Newtype enforcement, build optimization, project docs
+- **Newtype pattern enforcement** — replaced raw primitives with domain types across all crates (47 files, ~140 violations fixed): `Gain`, `BipolarValue`, `NormalizedValue`, `Phase`, `Hertz`, `Seconds`, `FilterState`, `SampleCount`, `Amplitude`, `CpuUsage`, `Velocity`, `Bpm`, `Pitch`, `RowCount`, `TicksPerRow`, `RowIndex`, `Duration`, `BlockSize`, `SampleRate`, `SamplePosition`, `Semitones`, `VoiceCount`
+- **Release profile optimization** — added `opt-level = 3` and `strip = true` for smaller, faster release binaries
+- **CLAUDE.md improvements** — clarified newtype rules (domain type list is examples, not exhaustive), added testing, error handling, code organization, and GUI sections
+
 ## [0.209.0] - 2026-03-04
 ### Piano roll: swing, scale velocities, step entry
 - **Swing/shuffle control** — adjustable swing amount (0-100%) with Apply button; offsets even subdivisions relative to the selected grid resolution
