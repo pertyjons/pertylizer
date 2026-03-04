@@ -88,6 +88,9 @@ pub(crate) struct RecordingBuffer {
     capture_start_tick: Tick,
     /// Quantization grid size (Duration(0) = no quantization).
     quantize_grid: Duration,
+    /// Whether notes have been flushed at a loop boundary during this session.
+    /// After the first flush, overdub is always true to preserve earlier passes.
+    loop_flushed: bool,
 }
 
 impl RecordingBuffer {
@@ -100,6 +103,7 @@ impl RecordingBuffer {
             recorded_notes: Vec::with_capacity(MAX_RECORDED_NOTES),
             capture_start_tick: Tick::ZERO,
             quantize_grid: Duration(0),
+            loop_flushed: false,
         }
     }
 
@@ -137,9 +141,10 @@ impl RecordingBuffer {
         (completed, held)
     }
 
-    /// Whether the current recording session uses overdub mode.
+    /// Whether recorded notes should be layered rather than replacing the pattern.
+    /// After the first loop-boundary flush, always returns true to preserve earlier passes.
     pub(crate) fn is_overdub(&self) -> bool {
-        self.target.is_none_or(|t| t.overdub)
+        self.loop_flushed || self.target.is_none_or(|t| t.overdub)
     }
 
     /// Arm recording for a specific pattern.
@@ -273,17 +278,28 @@ impl RecordingBuffer {
             }
         }
         self.state = RecordingState::Idle;
-        // drain preserves capacity so next recording won't allocate on audio thread
-        self.recorded_notes.drain(..).collect()
+        // Replace with a fresh pre-allocated vec — avoids the double allocation of drain+collect.
+        std::mem::replace(
+            &mut self.recorded_notes,
+            Vec::with_capacity(MAX_RECORDED_NOTES),
+        )
     }
 
-    /// Drain completed notes without stopping recording.
+    /// Take all released notes without stopping recording.
     ///
     /// Used at loop boundaries to flush notes to the pattern mid-recording,
     /// so they play back on subsequent loop passes.
-    /// Preserves held notes and recording state.
-    pub(crate) fn drain_completed(&mut self) -> Vec<RecordedNote> {
-        self.recorded_notes.drain(..).collect()
+    /// Preserves held notes and recording state. Sets `loop_flushed` so
+    /// subsequent `is_overdub()` calls always return true.
+    ///
+    /// **Call `is_overdub()` before this** if the first flush should respect
+    /// the user's original replace/overdub choice.
+    pub(crate) fn take_released_notes(&mut self) -> Vec<RecordedNote> {
+        self.loop_flushed = true;
+        std::mem::replace(
+            &mut self.recorded_notes,
+            Vec::with_capacity(MAX_RECORDED_NOTES),
+        )
     }
 
     /// Convert a song tick to a pattern-relative tick.
@@ -313,6 +329,7 @@ impl RecordingBuffer {
     fn clear(&mut self) {
         self.held_notes = [None; MAX_HELD_NOTES];
         self.recorded_notes.clear();
+        self.loop_flushed = false;
     }
 }
 
