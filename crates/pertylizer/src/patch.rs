@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use synth_core::{BipolarValue, Gain, Semitones};
+use synth_core::{BipolarValue, Bpm, Gain, Seconds, Semitones};
 use synth_engine::instrument::InstrumentId;
 use thiserror::Error;
 
@@ -269,32 +269,32 @@ impl ConnectionState {
 pub struct PatchSettings {
     /// Master volume (0.0 - 1.0).
     #[serde(default = "default_master_volume")]
-    pub master_volume: f32,
+    pub master_volume: Gain,
     /// Tempo in BPM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bpm: Option<f32>,
+    pub bpm: Option<Bpm>,
     /// Octave offset for keyboard.
     #[serde(default)]
     pub octave_offset: i32,
     /// Glide/portamento time in seconds (0.0 = off).
     #[serde(default)]
-    pub glide_time: f32,
+    pub glide_time: Seconds,
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe: Option<synth_awe::AweState>,
 }
 
-fn default_master_volume() -> f32 {
-    0.8
+fn default_master_volume() -> Gain {
+    Gain::new(0.8)
 }
 
 impl Default for PatchSettings {
     fn default() -> Self {
         Self {
-            master_volume: 0.8,
-            bpm: Some(120.0),
+            master_volume: Gain::new(0.8),
+            bpm: Some(Bpm::new(120.0)),
             octave_offset: 0,
-            glide_time: 0.0,
+            glide_time: Seconds::new(0.0),
             awe: None,
         }
     }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use synth_core::Semitones;
+use synth_core::{Hertz, Semitones};
 
 /// MIDI-compatible pitch (0-127).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -37,8 +37,8 @@ impl Pitch {
 
     /// Calculate the frequency in Hz.
     /// Uses A4 = 440 Hz as reference by default.
-    pub fn frequency(&self, a4_hz: f32) -> f32 {
-        a4_hz * 2.0_f32.powf((self.0 as f32 - 69.0) / 12.0)
+    pub fn frequency(&self, a4_hz: Hertz) -> Hertz {
+        Hertz(a4_hz.0 * 2.0_f32.powf((self.0 as f32 - 69.0) / 12.0))
     }
 
     /// Get the raw MIDI note number.
@@ -168,10 +168,10 @@ mod tests {
     #[test]
     fn test_pitch_frequency() {
         let a4 = Pitch::new(69).unwrap();
-        assert!((a4.frequency(440.0) - 440.0).abs() < 0.01);
+        assert!((a4.frequency(Hertz(440.0)).0 - 440.0).abs() < 0.01);
 
         let a5 = Pitch::new(81).unwrap();
-        assert!((a5.frequency(440.0) - 880.0).abs() < 0.01);
+        assert!((a5.frequency(Hertz(440.0)).0 - 880.0).abs() < 0.01);
     }
 
     #[test]

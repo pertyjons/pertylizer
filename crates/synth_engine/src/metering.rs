@@ -5,6 +5,8 @@
 use ringbuf::traits::Producer;
 use std::sync::Arc;
 
+use synth_core::Amplitude;
+
 use crate::commands::EngineEvent;
 use crate::state::EngineState;
 
@@ -15,29 +17,31 @@ pub struct MeteringSystem {
     /// Samples between meter updates
     interval: usize,
     /// Current peak left level
-    peak_left: f32,
+    peak_left: Amplitude,
     /// Current peak right level
-    peak_right: f32,
-    /// Running RMS sum for left channel
+    peak_right: Amplitude,
+    /// Running RMS sum for left channel (intermediate accumulator)
     rms_sum_left: f32,
-    /// Running RMS sum for right channel
+    /// Running RMS sum for right channel (intermediate accumulator)
     rms_sum_right: f32,
 }
 
 impl MeteringSystem {
     /// Create a new metering system with the given sample rate.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn new(sample_rate: f32) -> Self {
         Self {
             counter: 0,
             interval: (sample_rate / 24.0) as usize, // ~24 updates per second
-            peak_left: 0.0,
-            peak_right: 0.0,
+            peak_left: Amplitude::ZERO,
+            peak_right: Amplitude::ZERO,
             rms_sum_left: 0.0,
             rms_sum_right: 0.0,
         }
     }
 
     /// Set the sample rate and update the meter interval.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.interval = (sample_rate / 24.0) as usize;
     }
@@ -45,6 +49,7 @@ impl MeteringSystem {
     /// Update meters with output audio data.
     ///
     /// Returns true if a meter update was sent (interval reached).
+    #[allow(clippy::cast_precision_loss)]
     pub fn update(
         &mut self,
         output: &[f32],
@@ -57,8 +62,8 @@ impl MeteringSystem {
             let left = frame.first().copied().unwrap_or(0.0);
             let right = frame.get(1).copied().unwrap_or(left);
 
-            self.peak_left = self.peak_left.max(left.abs());
-            self.peak_right = self.peak_right.max(right.abs());
+            self.peak_left = Amplitude::new(self.peak_left.as_f32().max(left.abs()));
+            self.peak_right = Amplitude::new(self.peak_right.as_f32().max(right.abs()));
             self.rms_sum_left += left * left;
             self.rms_sum_right += right * right;
         }
@@ -69,8 +74,8 @@ impl MeteringSystem {
             // Update shared state
             state.meters.update_peak(self.peak_left, self.peak_right);
 
-            let rms_left = (self.rms_sum_left / self.counter as f32).sqrt();
-            let rms_right = (self.rms_sum_right / self.counter as f32).sqrt();
+            let rms_left = Amplitude::new((self.rms_sum_left / self.counter as f32).sqrt());
+            let rms_right = Amplitude::new((self.rms_sum_right / self.counter as f32).sqrt());
             state.meters.update_rms(rms_left, rms_right);
 
             // Send event to UI
@@ -80,8 +85,8 @@ impl MeteringSystem {
             });
 
             // Reset accumulators
-            self.peak_left = 0.0;
-            self.peak_right = 0.0;
+            self.peak_left = Amplitude::ZERO;
+            self.peak_right = Amplitude::ZERO;
             self.rms_sum_left = 0.0;
             self.rms_sum_right = 0.0;
             self.counter = 0;
@@ -94,8 +99,8 @@ impl MeteringSystem {
 
     /// Reset all meter values to zero.
     pub fn reset(&mut self) {
-        self.peak_left = 0.0;
-        self.peak_right = 0.0;
+        self.peak_left = Amplitude::ZERO;
+        self.peak_right = Amplitude::ZERO;
         self.rms_sum_left = 0.0;
         self.rms_sum_right = 0.0;
         self.counter = 0;

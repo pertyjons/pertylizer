@@ -37,9 +37,9 @@ pub struct PitchTracker {
     hop_counter: usize,
 
     // Detected pitch state
-    current_freq: f32,
+    current_freq: Hertz,
     current_confidence: f32,
-    smoothed_freq: f32,
+    smoothed_freq: Hertz,
     gate_open: bool,
 
     // State
@@ -60,9 +60,9 @@ impl PitchTracker {
             ring_buffer: vec![0.0; RING_BUFFER_SIZE],
             write_pos: 0,
             hop_counter: 0,
-            current_freq: 0.0,
+            current_freq: Hertz::new(0.0),
             current_confidence: 0.0,
-            smoothed_freq: 0.0,
+            smoothed_freq: Hertz::new(0.0),
             gate_open: false,
             sample_rate: SampleRate::DVD_QUALITY,
             pitch_buffer: AudioBuffer::new(1024),
@@ -123,13 +123,13 @@ impl PitchTracker {
                 let delta = 0.5 * (prev - next) / denom;
                 let refined_lag = best_lag as f32 + delta;
                 if refined_lag > 0.0 {
-                    self.current_freq = sr / refined_lag;
+                    self.current_freq = Hertz::new(sr / refined_lag);
                 }
             } else {
-                self.current_freq = sr / best_lag as f32;
+                self.current_freq = Hertz::new(sr / best_lag as f32);
             }
         } else if best_lag > 0 {
-            self.current_freq = sr / best_lag as f32;
+            self.current_freq = Hertz::new(sr / best_lag as f32);
         }
 
         // Confidence: normalized correlation relative to energy
@@ -154,12 +154,12 @@ impl PitchTracker {
 
     /// Convert frequency to 1V/octave CV (relative to C4 = MIDI 60).
     #[inline]
-    fn freq_to_cv(freq: f32) -> f32 {
-        if freq <= 0.0 {
+    fn freq_to_cv(freq: Hertz) -> f32 {
+        if freq.as_f32() <= 0.0 {
             return 0.0;
         }
         // C4 = 261.63 Hz = 0V, each octave = 1V
-        (freq / 261.63).log2()
+        (freq.as_f32() / 261.63).log2()
     }
 }
 
@@ -266,8 +266,12 @@ impl PolyModule for PitchTracker {
             }
 
             // Smooth the frequency output
-            if self.gate_open && self.current_freq > 0.0 {
-                self.smoothed_freq += (1.0 - smooth) * (self.current_freq - self.smoothed_freq);
+            if self.gate_open && self.current_freq.as_f32() > 0.0 {
+                self.smoothed_freq = Hertz::new(
+                    self.smoothed_freq.as_f32()
+                        + (1.0 - smooth)
+                            * (self.current_freq.as_f32() - self.smoothed_freq.as_f32()),
+                );
             }
 
             // Output pitch CV (1V/octave)
@@ -330,9 +334,9 @@ impl PolyModule for PitchTracker {
         self.ring_buffer.fill(0.0);
         self.write_pos = 0;
         self.hop_counter = 0;
-        self.current_freq = 0.0;
+        self.current_freq = Hertz::new(0.0);
         self.current_confidence = 0.0;
-        self.smoothed_freq = 0.0;
+        self.smoothed_freq = Hertz::new(0.0);
         self.gate_open = false;
     }
 
@@ -365,11 +369,11 @@ mod tests {
     #[test]
     fn test_freq_to_cv() {
         // C4 = 261.63 Hz should give ~0V
-        let cv = PitchTracker::freq_to_cv(261.63);
+        let cv = PitchTracker::freq_to_cv(Hertz::new(261.63));
         assert!(cv.abs() < 0.01, "C4 should be ~0V, got {cv}");
 
         // C5 = 523.26 Hz should give ~1V
-        let cv = PitchTracker::freq_to_cv(523.26);
+        let cv = PitchTracker::freq_to_cv(Hertz::new(523.26));
         assert!((cv - 1.0).abs() < 0.01, "C5 should be ~1V, got {cv}");
     }
 

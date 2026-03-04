@@ -57,13 +57,14 @@ impl BodyResonance {
     fn process_resonator(
         state: &mut [FilterState; 2],
         input: f32,
-        freq: f32,
+        freq: Hertz,
         q: f32,
-        sample_rate: f32,
+        sample_rate: SampleRate,
     ) -> f32 {
         // Coefficient calculation with dynamic Nyquist limit
-        let nyquist_limit = sample_rate * 0.49;
-        let f = (freq.min(nyquist_limit)) / sample_rate;
+        let sr = sample_rate.as_f32();
+        let nyquist_limit = sr * 0.49;
+        let f = (freq.as_f32().min(nyquist_limit)) / sr;
         let w = 2.0 * std::f32::consts::PI * f;
         let sin_w = w.sin();
         let alpha = sin_w / (2.0 * q.max(0.5));
@@ -180,23 +181,38 @@ impl PolyModule for BodyResonance {
         let size = self.size.as_f32();
         let brightness = self.brightness.as_f32();
         let mix = self.mix.as_f32();
-        let sr = self.sample_rate.as_f32();
 
         // Calculate frequencies for three resonant modes
         // Smaller body = higher frequencies, larger spread
-        let freq1 = base_freq * (1.0 - size * 0.3);
-        let freq2 = base_freq * (1.0 + brightness * 0.5);
-        let freq3 = base_freq * (1.5 + size * 0.5);
+        let freq1 = Hertz::new(base_freq * (1.0 - size * 0.3));
+        let freq2 = Hertz::new(base_freq * (1.0 + brightness * 0.5));
+        let freq3 = Hertz::new(base_freq * (1.5 + size * 0.5));
 
         for i in 0..context.samples.as_usize() {
             let input_sample = input.map_or(0.0, |buf| buf[i]);
 
             // Process through three parallel resonators
-            let r1 = Self::process_resonator(&mut self.filter1_state, input_sample, freq1, q, sr);
-            let r2 =
-                Self::process_resonator(&mut self.filter2_state, input_sample, freq2, q * 0.7, sr);
-            let r3 =
-                Self::process_resonator(&mut self.filter3_state, input_sample, freq3, q * 0.5, sr);
+            let r1 = Self::process_resonator(
+                &mut self.filter1_state,
+                input_sample,
+                freq1,
+                q,
+                self.sample_rate,
+            );
+            let r2 = Self::process_resonator(
+                &mut self.filter2_state,
+                input_sample,
+                freq2,
+                q * 0.7,
+                self.sample_rate,
+            );
+            let r3 = Self::process_resonator(
+                &mut self.filter3_state,
+                input_sample,
+                freq3,
+                q * 0.5,
+                self.sample_rate,
+            );
 
             // Mix resonators with different weights
             let resonance = r1 * 0.5 + r2 * 0.3 + r3 * 0.2;

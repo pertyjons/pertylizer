@@ -183,13 +183,13 @@ impl SynthSession {
     pub fn set_instrument_volume(
         &self,
         instrument_id: InstrumentId,
-        volume: f32,
+        volume: Gain,
     ) -> Result<(), SessionError> {
         if !self
             .command_sender
             .send(EngineCommand::SetInstrumentParameter {
                 instrument_id,
-                param: synth_engine::commands::InstrumentParam::Volume(Gain::new(volume)),
+                param: synth_engine::commands::InstrumentParam::Volume(volume),
             })
         {
             return Err(SessionError::SendFailed);
@@ -201,13 +201,13 @@ impl SynthSession {
     pub fn set_instrument_pan(
         &self,
         instrument_id: InstrumentId,
-        pan: f32,
+        pan: BipolarValue,
     ) -> Result<(), SessionError> {
         if !self
             .command_sender
             .send(EngineCommand::SetInstrumentParameter {
                 instrument_id,
-                param: synth_engine::commands::InstrumentParam::Pan(BipolarValue::new(pan)),
+                param: synth_engine::commands::InstrumentParam::Pan(pan),
             })
         {
             return Err(SessionError::SendFailed);

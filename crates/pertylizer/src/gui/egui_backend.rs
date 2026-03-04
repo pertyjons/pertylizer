@@ -36,10 +36,8 @@ use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
 use crate::patch::{GroupCategory, InstrumentState, Patch, categorized_patches};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
-use synth_core::Velocity;
-#[cfg(feature = "mcp")]
-use synth_core::{BipolarValue, Gain};
 use synth_core::{Describable, ModuleCategory};
+use synth_core::{Seconds, Velocity};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
@@ -224,7 +222,7 @@ struct SynthApp {
     current_project_path: Option<PathBuf>,
 
     // Global synth settings
-    glide_time: f32,
+    glide_time: synth_core::Seconds,
 
     // Instrument rack state
     instruments: Vec<InstrumentUiState>,
@@ -277,7 +275,7 @@ impl SynthApp {
         let session = config.session.clone();
         let song = config.song.clone();
         let mut keyboard = PianoKeyboard::new();
-        let mut glide_time = 0.0;
+        let mut glide_time = Seconds::new(0.0);
 
         // Initialize instruments with a default instrument that matches the engine's default
         // The engine starts with one instrument on CH1 (InstrumentId::FIRST)
@@ -719,8 +717,9 @@ impl eframe::App for SynthApp {
                         ui.separator();
 
                         ui.label(RichText::new("Glide:").color(theme().colors.text_dim));
+                        let mut glide_val = self.glide_time.as_f32();
                         let glide_response = ui.add(
-                            egui::Slider::new(&mut self.glide_time, 0.0..=2.0)
+                            egui::Slider::new(&mut glide_val, 0.0..=2.0)
                                 .suffix(" s")
                                 .fixed_decimals(2)
                                 .custom_formatter(|v, _| {
@@ -732,9 +731,9 @@ impl eframe::App for SynthApp {
                                 }),
                         );
                         if glide_response.changed() {
-                            self.handle.send(EngineCommand::SetGlideTime(
-                                synth_core::Seconds::new(self.glide_time),
-                            ));
+                            self.glide_time = synth_core::Seconds::new(glide_val);
+                            self.handle
+                                .send(EngineCommand::SetGlideTime(self.glide_time));
                         }
                         ui.separator();
                     }
@@ -1700,7 +1699,9 @@ impl SynthApp {
         };
 
         let (peak_l, peak_r) = self.handle.peak_meters();
+        let (peak_l, peak_r) = (peak_l.as_f32(), peak_r.as_f32());
         let (rms_l, rms_r) = self.handle.rms_meters();
+        let (rms_l, rms_r) = (rms_l.as_f32(), rms_r.as_f32());
 
         ui.horizontal(|ui| {
             if show_scopes {
@@ -2239,11 +2240,13 @@ impl SynthApp {
         // Instruments added by MCP (in engine but not in GUI)
         for snap in &snapshots {
             if !gui_ids.contains(&snap.id) {
-                let channel =
-                    MidiChannel::from_one_indexed(snap.midi_channel).unwrap_or(MidiChannel::CH1);
+                let channel = synth_engine::MidiChannel::from_zero_indexed(
+                    snap.midi_channel.as_u8().saturating_sub(1),
+                )
+                .unwrap_or(synth_engine::MidiChannel::CH1);
                 let mut ui_inst = InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
-                ui_inst.volume = Gain::new(snap.volume);
-                ui_inst.pan = BipolarValue::new(snap.pan);
+                ui_inst.volume = snap.volume;
+                ui_inst.pan = snap.pan;
                 ui_inst.muted = snap.muted;
                 ui_inst.solo = snap.solo;
                 self.instruments.push(ui_inst);
@@ -2280,9 +2283,9 @@ impl SynthApp {
                 // Only update volume/pan/mute/solo if not currently being edited by GUI
                 // For now, always sync from engine (MCP is source of truth when changed)
                 if !ui_inst.muted {
-                    ui_inst.volume = Gain::new(snap.volume);
+                    ui_inst.volume = snap.volume;
                 }
-                ui_inst.pan = BipolarValue::new(snap.pan);
+                ui_inst.pan = snap.pan;
                 ui_inst.muted = snap.muted;
                 ui_inst.solo = snap.solo;
             }
@@ -2382,7 +2385,7 @@ impl SynthApp {
 
         // 2. Reset keyboard state
         self.keyboard = PianoKeyboard::new();
-        self.glide_time = 0.0;
+        self.glide_time = synth_core::Seconds::new(0.0);
 
         // 3. Add default StereoOutput so user gets sound immediately
         self.add_stereo_output_module();
@@ -2444,7 +2447,7 @@ impl SynthApp {
         let global = GlobalProjectState {
             master_volume: synth_core::Gain::new(self.handle.master_volume()),
             octave_offset: self.keyboard.octave_offset(),
-            glide_time: synth_core::Seconds::new(self.glide_time),
+            glide_time: self.glide_time,
             awe: if self.awe_enabled {
                 Some(self.awe_ui.to_awe_state(true))
             } else {
@@ -2539,10 +2542,8 @@ impl SynthApp {
             let _ = self.session.rename_instrument(inst_id, &inst_state.name);
             let _ = self
                 .session
-                .set_instrument_volume(inst_id, inst_state.volume.as_f32());
-            let _ = self
-                .session
-                .set_instrument_pan(inst_id, inst_state.pan.as_f32());
+                .set_instrument_volume(inst_id, inst_state.volume);
+            let _ = self.session.set_instrument_pan(inst_id, inst_state.pan);
             let _ = self.session.set_instrument_mute(inst_id, inst_state.muted);
             let _ = self.session.set_instrument_solo(inst_id, inst_state.solo);
             let _ = self.session.set_instrument_midi_channel(inst_id, channel);
@@ -2575,11 +2576,9 @@ impl SynthApp {
             .send(EngineCommand::SetMasterVolume(project.global.master_volume));
         self.keyboard
             .set_octave_offset(project.global.octave_offset);
-        self.glide_time = project.global.glide_time.as_f32();
+        self.glide_time = project.global.glide_time;
         self.handle
-            .send(EngineCommand::SetGlideTime(synth_core::Seconds::new(
-                project.global.glide_time.as_f32(),
-            )));
+            .send(EngineCommand::SetGlideTime(project.global.glide_time));
 
         if let Some(awe) = &project.global.awe {
             self.awe_enabled = awe.enabled;

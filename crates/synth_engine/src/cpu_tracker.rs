@@ -7,12 +7,13 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::commands::ModuleId;
+use synth_core::{BlockSize, CpuUsage, NormalizedValue};
 
 /// Per-module CPU usage statistics.
 #[derive(Debug, Clone, Default)]
 pub struct ModuleCpuStats {
     /// Current CPU usage as percentage (0.0 - 100.0+).
-    pub cpu_percent: f32,
+    pub cpu_percent: CpuUsage,
     /// Average processing time per block.
     pub avg_process_time: Duration,
     /// Peak processing time (worst case).
@@ -26,17 +27,17 @@ pub struct ModuleCpuStats {
 impl ModuleCpuStats {
     /// Get CPU usage as a 0.0-1.0 fraction.
     pub fn cpu_fraction(&self) -> f32 {
-        self.cpu_percent / 100.0
+        self.cpu_percent.as_f32() / 100.0
     }
 
     /// Check if this module is using significant CPU.
     pub fn is_hot(&self) -> bool {
-        self.cpu_percent > 10.0
+        self.cpu_percent.as_f32() > 10.0
     }
 
     /// Check if this module is overloading.
     pub fn is_overloading(&self) -> bool {
-        self.cpu_percent > 50.0
+        self.cpu_percent.as_f32() > 50.0
     }
 }
 
@@ -52,7 +53,7 @@ struct ModuleTracker {
     /// Current stats.
     stats: ModuleCpuStats,
     /// Smoothing factor for exponential moving average.
-    smoothing: f32,
+    smoothing: NormalizedValue,
 }
 
 impl ModuleTracker {
@@ -62,7 +63,7 @@ impl ModuleTracker {
             block_count: 0,
             peak_time: Duration::ZERO,
             stats: ModuleCpuStats::default(),
-            smoothing: 0.1, // 10% new, 90% old
+            smoothing: NormalizedValue::new(0.1), // 10% new, 90% old
         }
     }
 
@@ -83,8 +84,9 @@ impl ModuleTracker {
         let cpu_percent = (avg_time.as_secs_f32() / block_duration.as_secs_f32()) * 100.0;
 
         // Exponential moving average for smooth display
+        let s = self.smoothing.as_f32();
         self.stats.cpu_percent =
-            self.stats.cpu_percent * (1.0 - self.smoothing) + cpu_percent * self.smoothing;
+            CpuUsage::new(self.stats.cpu_percent.as_f32() * (1.0 - s) + cpu_percent * s);
         self.stats.avg_process_time = avg_time;
         self.stats.peak_process_time = self.peak_time;
         self.stats.blocks_processed += self.block_count as u64;
@@ -102,9 +104,9 @@ pub struct ModuleCpuTracker {
     /// Per-module trackers.
     trackers: HashMap<ModuleId, ModuleTracker>,
     /// Block size in samples.
-    block_size: usize,
+    block_size: BlockSize,
     /// Sample rate.
-    sample_rate: f32,
+    sample_rate: synth_core::SampleRate,
     /// Duration of one block.
     block_duration: Duration,
     /// Update interval for stats.
@@ -124,8 +126,8 @@ impl ModuleCpuTracker {
 
         Self {
             trackers: HashMap::new(),
-            block_size,
-            sample_rate,
+            block_size: BlockSize::new(block_size),
+            sample_rate: synth_core::SampleRate::new(sample_rate),
             block_duration,
             update_interval: Duration::from_millis(100), // Update every 100ms
             last_update: Instant::now(),
@@ -185,19 +187,28 @@ impl ModuleCpuTracker {
     }
 
     /// Get total CPU usage across all modules.
-    pub fn total_cpu_percent(&self) -> f32 {
-        self.trackers.values().map(|t| t.stats.cpu_percent).sum()
+    pub fn total_cpu_percent(&self) -> CpuUsage {
+        CpuUsage::new(
+            self.trackers
+                .values()
+                .map(|t| t.stats.cpu_percent.as_f32())
+                .sum(),
+        )
     }
 
     /// Get the top N CPU-consuming modules.
-    pub fn top_modules(&self, n: usize) -> Vec<(ModuleId, f32)> {
+    pub fn top_modules(&self, n: usize) -> Vec<(ModuleId, CpuUsage)> {
         let mut modules: Vec<_> = self
             .trackers
             .iter()
             .map(|(id, t)| (*id, t.stats.cpu_percent))
             .collect();
 
-        modules.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        modules.sort_by(|a, b| {
+            b.1.as_f32()
+                .partial_cmp(&a.1.as_f32())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         modules.truncate(n);
         modules
     }
@@ -225,8 +236,8 @@ impl ModuleCpuTracker {
 
     /// Update configuration (e.g., after sample rate change).
     pub fn configure(&mut self, block_size: usize, sample_rate: f32) {
-        self.block_size = block_size;
-        self.sample_rate = sample_rate;
+        self.block_size = BlockSize::new(block_size);
+        self.sample_rate = synth_core::SampleRate::new(sample_rate);
         self.block_duration = Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
     }
 }
@@ -342,7 +353,7 @@ mod tests {
         let block_duration = Duration::from_secs_f64(128.0 / 44100.0);
         tracker.update_stats(block_duration);
 
-        assert!(tracker.stats.cpu_percent > 0.0);
+        assert!(tracker.stats.cpu_percent.as_f32() > 0.0);
         assert_eq!(tracker.stats.blocks_processed, 3);
     }
 

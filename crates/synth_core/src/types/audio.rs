@@ -4,7 +4,7 @@ use std::ops::{Add, Sub};
 
 use serde::{Deserialize, Serialize};
 
-use super::Decibels;
+use super::{Decibels, Gain};
 
 /// Deprecated: Use Bpm instead.
 #[deprecated(since = "0.33.0", note = "Use Bpm instead")]
@@ -308,7 +308,8 @@ impl From<FilterState> for f32 {
 }
 
 /// Amplitude for peak/RMS measurements.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct Amplitude(pub f32);
 
@@ -519,12 +520,12 @@ impl StereoBalance {
     /// Returns (left_gain, right_gain) where both are in 0.0-1.0 range.
     #[inline]
     #[must_use]
-    pub fn gains(self) -> (f32, f32) {
+    pub fn gains(self) -> (Gain, Gain) {
         // Constant power panning using sin/cos
         let angle = (self.0.as_f32() + 1.0) * 0.25 * std::f32::consts::PI;
         let left = angle.cos();
         let right = angle.sin();
-        (left, right)
+        (Gain::new(left), Gain::new(right))
     }
 
     /// Calculate left and right gains using linear panning.
@@ -532,11 +533,11 @@ impl StereoBalance {
     /// Returns (left_gain, right_gain) where both are in 0.0-1.0 range.
     #[inline]
     #[must_use]
-    pub fn linear_gains(self) -> (f32, f32) {
+    pub fn linear_gains(self) -> (Gain, Gain) {
         let pan = self.0.as_f32();
         let left = (1.0 - pan) * 0.5;
         let right = (1.0 + pan) * 0.5;
-        (left, right)
+        (Gain::new(left), Gain::new(right))
     }
 
     /// Clamp to valid range.
@@ -623,19 +624,20 @@ impl StereoSample {
 
     /// Apply a gain factor to both channels.
     #[inline]
-    pub fn apply_gain(self, gain: f32) -> Self {
+    pub fn apply_gain(self, gain: Gain) -> Self {
+        let g = gain.as_f32();
         Self {
-            left: self.left * gain,
-            right: self.right * gain,
+            left: self.left * g,
+            right: self.right * g,
         }
     }
 
     /// Apply separate gains to left and right channels.
     #[inline]
-    pub fn apply_stereo_gain(self, left_gain: f32, right_gain: f32) -> Self {
+    pub fn apply_stereo_gain(self, left_gain: Gain, right_gain: Gain) -> Self {
         Self {
-            left: self.left * left_gain,
-            right: self.right * right_gain,
+            left: self.left * left_gain.as_f32(),
+            right: self.right * right_gain.as_f32(),
         }
     }
 
@@ -769,7 +771,8 @@ impl From<StereoSample> for [f32; 2] {
 /// CPU usage percentage (0.0 - 1.0).
 ///
 /// Represents the fraction of available CPU time used by audio processing.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct CpuUsage(pub f32);
 
@@ -1051,17 +1054,17 @@ mod tests {
         let center = StereoBalance::CENTER;
         let (l, r) = center.gains();
         // At center, both should be equal (constant power = sqrt(0.5) ≈ 0.707)
-        assert!((l - r).abs() < 0.001);
+        assert!((l.as_f32() - r.as_f32()).abs() < 0.001);
 
         let left = StereoBalance::LEFT;
         let (l, r) = left.gains();
-        assert!(l > 0.99); // Full left
-        assert!(r < 0.01); // No right
+        assert!(l.as_f32() > 0.99); // Full left
+        assert!(r.as_f32() < 0.01); // No right
 
         let right = StereoBalance::RIGHT;
         let (l, r) = right.gains();
-        assert!(l < 0.01); // No left
-        assert!(r > 0.99); // Full right
+        assert!(l.as_f32() < 0.01); // No left
+        assert!(r.as_f32() > 0.99); // Full right
     }
 
     #[test]
@@ -1088,7 +1091,7 @@ mod tests {
     #[test]
     fn test_stereo_sample_apply_gain() {
         let sample = StereoSample::new(1.0, 0.5);
-        let gained = sample.apply_gain(0.5);
+        let gained = sample.apply_gain(Gain::new(0.5));
         assert!((gained.left - 0.5).abs() < 0.001);
         assert!((gained.right - 0.25).abs() < 0.001);
     }

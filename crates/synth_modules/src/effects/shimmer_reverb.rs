@@ -7,8 +7,8 @@
 //! - Pre-delay up to 500ms
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
-    ParameterDescriptor, ParameterUnit, ProcessContext, SampleCount, SampleRate, Seconds,
+    AudioEffect, Describable, Gain, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue,
+    Param, ParameterDescriptor, ParameterUnit, ProcessContext, SampleCount, SampleRate, Seconds,
     Semitones, ShimmerReverbParam, StereoSample, WidgetHint,
 };
 use synth_dsp::FdnCore;
@@ -170,13 +170,13 @@ impl ShimmerReverb {
     }
 
     #[inline]
-    fn feedback_gain(&self) -> f32 {
-        0.3 + self.decay.as_f32() * 0.67
+    fn feedback_gain(&self) -> Gain {
+        Gain::new(0.3 + self.decay.as_f32() * 0.67)
     }
 
     #[inline]
-    fn lowpass_coeff(&self) -> f32 {
-        self.damping.as_f32() * 0.9
+    fn lowpass_coeff(&self) -> NormalizedValue {
+        NormalizedValue::new(self.damping.as_f32() * 0.9)
     }
 }
 
@@ -308,16 +308,16 @@ impl AudioEffect for ShimmerReverb {
             };
 
             // Mix in pitch-shifted feedback
-            let input_with_shimmer = pre_delayed + self.feedback_acc * feedback_gain;
+            let input_with_shimmer = pre_delayed + self.feedback_acc * feedback_gain.as_f32();
 
             // FDN processing
             let wet = self.core.process_sample(
                 input_with_shimmer,
                 feedback_gain,
                 lp_coeff,
-                0.0, // no highpass
-                0.3, // moderate diffusion
-                1.0, // full width
+                NormalizedValue::new(0.0), // no highpass
+                NormalizedValue::new(0.3), // moderate diffusion
+                NormalizedValue::new(1.0), // full width
                 sr_recip,
             );
 

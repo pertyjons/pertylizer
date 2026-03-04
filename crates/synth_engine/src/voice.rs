@@ -62,9 +62,9 @@ pub enum VoiceState {
     /// Voice was stolen and is fading out quickly.
     Stealing {
         /// Remaining fade-out samples
-        fade_counter: usize,
+        fade_counter: SampleCount,
         /// Total fade samples (for calculating fade ratio)
-        fade_total: usize,
+        fade_total: SampleCount,
     },
 }
 
@@ -276,7 +276,7 @@ pub struct Voice {
     pub graph: ModuleGraph,
 
     /// Default steal fade duration in samples.
-    steal_fade_samples: usize,
+    steal_fade_samples: SampleCount,
 
     /// Glide state for portamento.
     pub(crate) glide: GlideState,
@@ -312,7 +312,7 @@ impl Voice {
             poly_aftertouch: NormalizedValue::MIN,
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
-            steal_fade_samples: 128,
+            steal_fade_samples: SampleCount::new(128),
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: None,
@@ -342,7 +342,7 @@ impl Voice {
             poly_aftertouch: NormalizedValue::MIN,
             expression: ExpressionSettings::default(),
             graph,
-            steal_fade_samples: 128,
+            steal_fade_samples: SampleCount::new(128),
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             output_module_id: output_id,

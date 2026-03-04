@@ -3,14 +3,16 @@
 //! Generates short sine wave clicks at beat boundaries.
 //! Fully real-time safe — no heap allocations.
 
+use synth_core::{Gain, Hertz, Milliseconds, Phase, SampleCount};
+
 /// Frequency for accented clicks (beat 1).
-const ACCENT_FREQ: f32 = 1200.0;
+const ACCENT_FREQ: Hertz = Hertz(1200.0);
 /// Frequency for normal clicks.
-const NORMAL_FREQ: f32 = 800.0;
-/// Duration of accented click in samples at 44100 Hz baseline.
-const ACCENT_DURATION_MS: f32 = 40.0;
-/// Duration of normal click in samples at 44100 Hz baseline.
-const NORMAL_DURATION_MS: f32 = 30.0;
+const NORMAL_FREQ: Hertz = Hertz(800.0);
+/// Duration of accented click.
+const ACCENT_DURATION: Milliseconds = Milliseconds(40.0);
+/// Duration of normal click.
+const NORMAL_DURATION: Milliseconds = Milliseconds(30.0);
 
 /// Generates metronome click sounds.
 ///
@@ -19,20 +21,20 @@ const NORMAL_DURATION_MS: f32 = 30.0;
 pub(crate) struct ClickGenerator {
     /// Whether the metronome is enabled.
     enabled: bool,
-    /// Volume level (0.0–1.0).
-    volume: f32,
+    /// Volume level.
+    volume: Gain,
     /// Current sample rate.
-    sample_rate: f32,
+    sample_rate: synth_core::SampleRate,
     /// Samples remaining in the current click.
-    click_remaining: u32,
+    click_remaining: SampleCount,
     /// Total samples for the current click (for envelope calculation).
-    click_total: u32,
+    click_total: SampleCount,
     /// Whether the current click is accented (beat 1).
     accented: bool,
     /// Sine wave phase accumulator.
-    phase: f32,
+    phase: Phase,
     /// Phase increment per sample.
-    phase_inc: f32,
+    phase_inc: Phase,
 }
 
 impl ClickGenerator {
@@ -40,13 +42,13 @@ impl ClickGenerator {
     pub(crate) fn new(sample_rate: f32) -> Self {
         Self {
             enabled: false,
-            volume: 0.6,
-            sample_rate,
-            click_remaining: 0,
-            click_total: 0,
+            volume: Gain::new(0.6),
+            sample_rate: synth_core::SampleRate::new(sample_rate),
+            click_remaining: SampleCount::ZERO,
+            click_total: SampleCount::ZERO,
             accented: false,
-            phase: 0.0,
-            phase_inc: 0.0,
+            phase: Phase::ZERO,
+            phase_inc: Phase::ZERO,
         }
     }
 
@@ -62,7 +64,7 @@ impl ClickGenerator {
 
     /// Set the volume (0.0–1.0).
     pub(crate) fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, 1.0);
+        self.volume = Gain::new(volume.clamp(0.0, 1.0));
     }
 
     /// Trigger a click sound.
@@ -71,34 +73,37 @@ impl ClickGenerator {
 
         let freq = if accented { ACCENT_FREQ } else { NORMAL_FREQ };
         let duration_ms = if accented {
-            ACCENT_DURATION_MS
+            ACCENT_DURATION
         } else {
-            NORMAL_DURATION_MS
+            NORMAL_DURATION
         };
 
-        let samples = (self.sample_rate * duration_ms / 1000.0) as u32;
-        self.click_remaining = samples;
-        self.click_total = samples;
-        self.phase = 0.0;
-        self.phase_inc = freq * std::f32::consts::TAU / self.sample_rate;
+        #[allow(clippy::cast_possible_truncation)]
+        let samples = (self.sample_rate.as_f32() * duration_ms.as_f32() / 1000.0) as usize;
+        self.click_remaining = SampleCount::new(samples);
+        self.click_total = SampleCount::new(samples);
+        self.phase = Phase::ZERO;
+        self.phase_inc =
+            Phase::new(freq.as_f32() * std::f32::consts::TAU / self.sample_rate.as_f32());
     }
 
     /// Mix click audio into an interleaved stereo buffer (additive).
     ///
     /// Real-time safe — no allocations.
     pub(crate) fn process(&mut self, buffer: &mut [f32], frames: usize) {
-        if self.click_remaining == 0 {
+        if self.click_remaining.as_usize() == 0 {
             return;
         }
 
-        let samples_to_process = frames.min(self.click_remaining as usize);
+        let samples_to_process = frames.min(self.click_remaining.as_usize());
 
         for i in 0..samples_to_process {
             // Exponential decay envelope
-            let progress = 1.0 - (self.click_remaining as f32 / self.click_total as f32);
+            let progress =
+                1.0 - (self.click_remaining.as_usize() as f32 / self.click_total.as_usize() as f32);
             let envelope = (-progress * 5.0).exp();
 
-            let sample = self.phase.sin() * envelope * self.volume;
+            let sample = self.phase.as_f32().sin() * envelope * self.volume.as_f32();
 
             // Mix into stereo interleaved buffer
             let idx = i * 2;
@@ -107,13 +112,13 @@ impl ClickGenerator {
                 buffer[idx + 1] += sample;
             }
 
-            self.phase += self.phase_inc;
-            if self.phase >= std::f32::consts::TAU {
-                self.phase -= std::f32::consts::TAU;
+            self.phase = Phase::new(self.phase.as_f32() + self.phase_inc.as_f32());
+            if self.phase.as_f32() >= std::f32::consts::TAU {
+                self.phase = Phase::new(self.phase.as_f32() - std::f32::consts::TAU);
             }
-            self.click_remaining -= 1;
+            self.click_remaining = SampleCount::new(self.click_remaining.as_usize() - 1);
 
-            if self.click_remaining == 0 {
+            if self.click_remaining.as_usize() == 0 {
                 break;
             }
         }
@@ -121,7 +126,7 @@ impl ClickGenerator {
 
     /// Update sample rate (e.g., on stream start).
     pub(crate) fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate;
+        self.sample_rate = synth_core::SampleRate::new(sample_rate);
     }
 }
 
@@ -133,7 +138,7 @@ mod tests {
     fn test_click_generator_creation() {
         let click = ClickGenerator::new(44100.0);
         assert!(!click.is_enabled());
-        assert_eq!(click.click_remaining, 0);
+        assert_eq!(click.click_remaining.as_usize(), 0);
     }
 
     #[test]
@@ -141,8 +146,9 @@ mod tests {
         let mut click = ClickGenerator::new(44100.0);
         click.trigger_click(true);
 
-        let expected_samples = (44100.0 * ACCENT_DURATION_MS / 1000.0) as u32;
-        assert_eq!(click.click_remaining, expected_samples);
+        #[allow(clippy::cast_possible_truncation)]
+        let expected_samples = (44100.0 * ACCENT_DURATION.as_f32() / 1000.0) as usize;
+        assert_eq!(click.click_remaining.as_usize(), expected_samples);
         assert!(click.accented);
     }
 
@@ -179,6 +185,6 @@ mod tests {
         let mut buffer = vec![0.0_f32; 44100 * 2];
         click.process(&mut buffer, 44100);
 
-        assert_eq!(click.click_remaining, 0);
+        assert_eq!(click.click_remaining.as_usize(), 0);
     }
 }

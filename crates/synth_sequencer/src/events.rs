@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use synth_core::NormalizedValue;
+
 use super::automation::AutomationTarget;
 use super::ids::SeqInstrumentId;
 use super::pitch::{Pitch, Velocity};
@@ -39,7 +41,7 @@ pub enum SequencerEvent {
         /// Target parameter.
         target: AutomationTarget,
         /// Normalized value (0.0 - 1.0).
-        value: f32,
+        value: NormalizedValue,
     },
 }
 

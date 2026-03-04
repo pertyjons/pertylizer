@@ -7,8 +7,8 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
-    BeatDivision, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode, SampleRate,
-    SyncMode, Velocity,
+    BeatDivision, BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode,
+    SampleRate, SyncMode, Velocity,
 };
 use synth_core::{LfoParam, LfoWaveform, ModuleType, Param};
 
@@ -30,17 +30,17 @@ pub struct Lfo {
     phase: Phase,
     sample_rate: SampleRate,
     sh_value: f32,
-    sh_trigger_prev: f32,
+    sh_trigger_prev: NormalizedValue,
     sync_mode: SyncMode,
     sync_division: BeatDivision,
     retrigger_mode: RetriggerMode,
     /// Previous retrigger signal value for edge detection (persists across buffers).
-    prev_retrigger: f32,
+    prev_retrigger: NormalizedValue,
     // Mod matrix offsets
     /// Rate offset (additive Hz, from mod matrix).
-    mod_offset_rate: f32,
+    mod_offset_rate: BipolarValue,
     /// Depth offset (additive, from mod matrix).
-    mod_offset_depth: f32,
+    mod_offset_depth: BipolarValue,
     output_buffer: AudioBuffer,
 }
 
@@ -55,13 +55,13 @@ impl Lfo {
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             sh_value: 0.0,
-            sh_trigger_prev: 0.0,
+            sh_trigger_prev: NormalizedValue::MIN,
             sync_mode: SyncMode::Free,
             sync_division: BeatDivision::QUARTER,
             retrigger_mode: RetriggerMode::Continue,
-            prev_retrigger: 0.0,
-            mod_offset_rate: 0.0,
-            mod_offset_depth: 0.0,
+            prev_retrigger: NormalizedValue::MIN,
+            mod_offset_rate: BipolarValue::CENTER,
+            mod_offset_depth: BipolarValue::CENTER,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -84,10 +84,10 @@ impl Lfo {
             LfoWaveform::Square => phase_wrapped.pulse(NormalizedValue::CENTER),
             LfoWaveform::SampleAndHold => {
                 let trigger = if phase < phase_inc { 1.0 } else { 0.0 };
-                if trigger > 0.5 && self.sh_trigger_prev <= 0.5 {
+                if trigger > 0.5 && self.sh_trigger_prev.as_f32() <= 0.5 {
                     self.sh_value = self.random();
                 }
-                self.sh_trigger_prev = trigger;
+                self.sh_trigger_prev = NormalizedValue::new(trigger);
                 self.sh_value
             }
         };
@@ -99,7 +99,8 @@ impl Lfo {
             LfoMode::Unipolar => (raw + 1.0) * 0.5,
         };
 
-        let effective_depth = (self.depth.as_f32() + self.mod_offset_depth).clamp(0.0, 1.0);
+        let effective_depth =
+            (self.depth.as_f32() + self.mod_offset_depth.as_f32()).clamp(0.0, 1.0);
         output * effective_depth
     }
 
@@ -177,10 +178,10 @@ impl PolyModule for Lfo {
                 && let Some(retrig) = retrigger_input
             {
                 let val = retrig[i];
-                if val > 0.5 && self.prev_retrigger <= 0.5 {
+                if val > 0.5 && self.prev_retrigger.as_f32() <= 0.5 {
                     self.retrigger();
                 }
-                self.prev_retrigger = val;
+                self.prev_retrigger = NormalizedValue::new(val);
             }
 
             if use_beat_sync {
@@ -197,7 +198,9 @@ impl PolyModule for Lfo {
                     Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
                 } else {
                     // Apply mod matrix rate offset
-                    Hertz::new((self.rate.as_f32() + self.mod_offset_rate).clamp(0.01, 50.0))
+                    Hertz::new(
+                        (self.rate.as_f32() + self.mod_offset_rate.as_f32()).clamp(0.01, 50.0),
+                    )
                 };
 
                 let effective_rate = if let Some(cv) = rate_cv {
@@ -278,7 +281,7 @@ impl PolyModule for Lfo {
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
         self.sh_value = 0.0;
-        self.prev_retrigger = 0.0;
+        self.prev_retrigger = NormalizedValue::MIN;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
@@ -286,15 +289,15 @@ impl PolyModule for Lfo {
 
     fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
         match dest_index {
-            0 => self.mod_offset_rate += value,
-            1 => self.mod_offset_depth += value,
+            0 => self.mod_offset_rate = BipolarValue::new(self.mod_offset_rate.as_f32() + value),
+            1 => self.mod_offset_depth = BipolarValue::new(self.mod_offset_depth.as_f32() + value),
             _ => {}
         }
     }
 
     fn clear_mod_offsets(&mut self) {
-        self.mod_offset_rate = 0.0;
-        self.mod_offset_depth = 0.0;
+        self.mod_offset_rate = BipolarValue::CENTER;
+        self.mod_offset_depth = BipolarValue::CENTER;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

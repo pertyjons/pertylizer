@@ -9,7 +9,9 @@ use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, ResponseCurve, WidgetHint,
 };
-use synth_core::{Gain, Hertz, MidiNote, Milliseconds, NormalizedValue, SampleRate, Velocity};
+use synth_core::{
+    FilterState, Gain, Hertz, MidiNote, Milliseconds, NormalizedValue, SampleRate, Velocity,
+};
 use synth_core::{MechanicalNoiseParam, MechanicalNoiseType, ModuleType, Param};
 
 /// Mechanical noise generator.
@@ -27,10 +29,10 @@ pub struct MechanicalNoise {
     current_sample: usize,
 
     // Filter state for noise shaping
-    filter_state: f32,
+    filter_state: FilterState,
 
-    // Velocity for current note
-    current_velocity: f32,
+    // Velocity for current note (0.0-1.0 scaled factor)
+    current_velocity: NormalizedValue,
 
     // Sample rate
     sample_rate: SampleRate,
@@ -51,8 +53,8 @@ impl MechanicalNoise {
             envelope_samples: 0,
             current_sample: 0,
 
-            filter_state: 0.0,
-            current_velocity: 0.0,
+            filter_state: FilterState::ZERO,
+            current_velocity: NormalizedValue::MIN,
 
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(1024),
@@ -60,14 +62,14 @@ impl MechanicalNoise {
     }
 
     /// Trigger a mechanical noise burst.
-    fn trigger(&mut self, velocity: f32) {
-        let vel_factor = 1.0 - self.velocity_sens.as_f32() * (1.0 - velocity);
-        self.current_velocity = vel_factor;
+    fn trigger(&mut self, velocity: Velocity) {
+        let vel_factor = 1.0 - self.velocity_sens.as_f32() * (1.0 - velocity.as_f32());
+        self.current_velocity = NormalizedValue::new(vel_factor);
         self.current_sample = 0;
         // Ensure at least 1 sample to prevent division by zero in generate_noise()
         self.envelope_samples =
             ((self.duration.as_f32() / 1000.0 * self.sample_rate.as_f32()) as usize).max(1);
-        self.filter_state = 0.0;
+        self.filter_state = FilterState::ZERO;
     }
 
     /// Generate filtered noise based on type.
@@ -83,8 +85,9 @@ impl MechanicalNoise {
         // Simple one-pole lowpass filter
         let cutoff_norm = (self.cutoff.as_f32() / self.sample_rate.as_f32()).min(0.5);
         let alpha = cutoff_norm; // Simplified coefficient
-        self.filter_state = self.filter_state * (1.0 - alpha) + noise * alpha;
-        let filtered = self.filter_state;
+        self.filter_state =
+            FilterState::new(self.filter_state.as_f32() * (1.0 - alpha) + noise * alpha);
+        let filtered = self.filter_state.as_f32();
 
         // Envelope shape based on noise type
         let envelope = match self.noise_type {
@@ -126,7 +129,7 @@ impl MechanicalNoise {
 
         self.current_sample += 1;
 
-        filtered * envelope * self.current_velocity * self.level.as_f32()
+        filtered * envelope * self.current_velocity.as_f32() * self.level.as_f32()
     }
 }
 
@@ -268,7 +271,7 @@ impl PolyModule for MechanicalNoise {
 
     fn reset(&mut self) {
         self.current_sample = self.envelope_samples;
-        self.filter_state = 0.0;
+        self.filter_state = FilterState::ZERO;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {
@@ -277,14 +280,14 @@ impl PolyModule for MechanicalNoise {
             self.noise_type,
             MechanicalNoiseType::KeyDown | MechanicalNoiseType::Hammer
         ) {
-            self.trigger(velocity.as_f32());
+            self.trigger(velocity);
         }
     }
 
     fn note_off(&mut self) {
         // Trigger noise on key up (for KeyUp type)
         if matches!(self.noise_type, MechanicalNoiseType::KeyUp) {
-            self.trigger(0.5); // Fixed velocity for key release
+            self.trigger(Velocity::new(0.5)); // Fixed velocity for key release
         }
     }
 

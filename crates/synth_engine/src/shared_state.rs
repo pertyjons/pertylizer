@@ -12,7 +12,9 @@ use parking_lot::RwLock;
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
 use super::instrument::InstrumentId;
-use synth_core::{BypassState, MuteState, PortName, SoloState};
+use synth_core::{
+    Amplitude, BipolarValue, BypassState, CpuUsage, Gain, MuteState, PortName, SoloState,
+};
 use synth_core::{ModuleType, Param};
 
 /// Atomic f32 wrapper for lock-free meter access.
@@ -76,25 +78,31 @@ impl SharedMeterState {
     }
 
     /// Update peak meters.
-    pub fn set_peak(&self, left: f32, right: f32) {
-        self.peak_left.store(left);
-        self.peak_right.store(right);
+    pub fn set_peak(&self, left: Amplitude, right: Amplitude) {
+        self.peak_left.store(left.as_f32());
+        self.peak_right.store(right.as_f32());
     }
 
     /// Update RMS meters.
-    pub fn set_rms(&self, left: f32, right: f32) {
-        self.rms_left.store(left);
-        self.rms_right.store(right);
+    pub fn set_rms(&self, left: Amplitude, right: Amplitude) {
+        self.rms_left.store(left.as_f32());
+        self.rms_right.store(right.as_f32());
     }
 
     /// Get peak meter values.
-    pub fn get_peak(&self) -> (f32, f32) {
-        (self.peak_left.load(), self.peak_right.load())
+    pub fn get_peak(&self) -> (Amplitude, Amplitude) {
+        (
+            Amplitude::new(self.peak_left.load()),
+            Amplitude::new(self.peak_right.load()),
+        )
     }
 
     /// Get RMS meter values.
-    pub fn get_rms(&self) -> (f32, f32) {
-        (self.rms_left.load(), self.rms_right.load())
+    pub fn get_rms(&self) -> (Amplitude, Amplitude) {
+        (
+            Amplitude::new(self.rms_left.load()),
+            Amplitude::new(self.rms_right.load()),
+        )
     }
 }
 
@@ -159,8 +167,8 @@ impl SharedTransportState {
     }
 
     /// Get current tempo.
-    pub fn tempo(&self) -> f32 {
-        self.tempo.load()
+    pub fn tempo(&self) -> synth_core::Bpm {
+        synth_core::Bpm::new(self.tempo.load())
     }
 
     /// Get current position in samples.
@@ -236,9 +244,9 @@ pub struct ModuleStateSnapshot {
     /// Number of connections from each output port.
     pub output_connection_counts: HashMap<PortName, usize>,
     /// CPU usage percentage for this module.
-    pub cpu_usage: f32,
+    pub cpu_usage: CpuUsage,
     /// Output levels per port.
-    pub output_levels: HashMap<PortName, f32>,
+    pub output_levels: HashMap<PortName, Amplitude>,
 }
 
 impl ModuleStateSnapshot {
@@ -261,7 +269,7 @@ impl ModuleStateSnapshot {
             parameters: Vec::new(),
             input_connection_counts: HashMap::new(),
             output_connection_counts: HashMap::new(),
-            cpu_usage: 0.0,
+            cpu_usage: CpuUsage::default(),
             output_levels: HashMap::new(),
         }
     }
@@ -328,11 +336,11 @@ pub struct InstrumentSnapshot {
     /// Instrument name.
     pub name: String,
     /// MIDI channel (1-indexed).
-    pub midi_channel: u8,
-    /// Volume (0.0-2.0).
-    pub volume: f32,
+    pub midi_channel: synth_core::MidiChannel,
+    /// Volume.
+    pub volume: Gain,
     /// Pan (-1.0 to 1.0).
-    pub pan: f32,
+    pub pan: BipolarValue,
     /// Whether the instrument is enabled (not muted).
     pub enabled: bool,
     /// Whether the instrument is muted.
@@ -571,7 +579,7 @@ impl SharedGraphState {
     }
 
     /// Update a module's CPU usage.
-    pub fn update_cpu_usage(&self, instrument_id: InstrumentId, id: ModuleId, usage: f32) {
+    pub fn update_cpu_usage(&self, instrument_id: InstrumentId, id: ModuleId, usage: CpuUsage) {
         if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
             module.cpu_usage = usage;
             // Don't bump version for CPU updates (too frequent)
@@ -584,7 +592,7 @@ impl SharedGraphState {
         instrument_id: InstrumentId,
         id: ModuleId,
         port: PortName,
-        level: f32,
+        level: Amplitude,
     ) {
         if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
             module.output_levels.insert(port, level);
@@ -685,10 +693,10 @@ mod tests {
     #[test]
     fn test_meter_state() {
         let meters = SharedMeterState::new();
-        meters.set_peak(0.8, 0.7);
+        meters.set_peak(Amplitude::new(0.8), Amplitude::new(0.7));
         let (l, r) = meters.get_peak();
-        assert!((l - 0.8).abs() < 0.001);
-        assert!((r - 0.7).abs() < 0.001);
+        assert!((l.as_f32() - 0.8).abs() < 0.001);
+        assert!((r.as_f32() - 0.7).abs() < 0.001);
     }
 
     #[test]

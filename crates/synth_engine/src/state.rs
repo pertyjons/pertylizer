@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
+use synth_core::{Amplitude, Bpm};
+
 use crate::shared_state::{InstrumentSnapshot, SharedGraphState};
 use crate::visualizers::VisualizationBuffer;
 
@@ -149,26 +151,32 @@ impl MeterState {
     }
 
     /// Update peak values (called from audio thread).
-    pub fn update_peak(&self, left: f32, right: f32) {
+    pub fn update_peak(&self, left: Amplitude, right: Amplitude) {
         // Peak hold with decay would go here
-        self.peak_left.store(left);
-        self.peak_right.store(right);
+        self.peak_left.store(left.as_f32());
+        self.peak_right.store(right.as_f32());
     }
 
     /// Update RMS values (called from audio thread).
-    pub fn update_rms(&self, left: f32, right: f32) {
-        self.rms_left.store(left);
-        self.rms_right.store(right);
+    pub fn update_rms(&self, left: Amplitude, right: Amplitude) {
+        self.rms_left.store(left.as_f32());
+        self.rms_right.store(right.as_f32());
     }
 
     /// Get peak values (called from UI thread).
-    pub fn get_peak(&self) -> (f32, f32) {
-        (self.peak_left.load(), self.peak_right.load())
+    pub fn get_peak(&self) -> (Amplitude, Amplitude) {
+        (
+            Amplitude::new(self.peak_left.load()),
+            Amplitude::new(self.peak_right.load()),
+        )
     }
 
     /// Get RMS values (called from UI thread).
-    pub fn get_rms(&self) -> (f32, f32) {
-        (self.rms_left.load(), self.rms_right.load())
+    pub fn get_rms(&self) -> (Amplitude, Amplitude) {
+        (
+            Amplitude::new(self.rms_left.load()),
+            Amplitude::new(self.rms_right.load()),
+        )
     }
 }
 
@@ -204,12 +212,12 @@ impl TransportState {
         }
     }
 
-    pub fn set_tempo(&self, bpm: f32) {
-        self.tempo.store(bpm);
+    pub fn set_tempo(&self, bpm: Bpm) {
+        self.tempo.store(bpm.as_f32());
     }
 
-    pub fn get_tempo(&self) -> f32 {
-        self.tempo.load()
+    pub fn get_tempo(&self) -> Bpm {
+        Bpm::new(self.tempo.load())
     }
 
     pub fn set_playing(&self, playing: bool) {
@@ -220,10 +228,10 @@ impl TransportState {
         self.is_playing.load(Ordering::Relaxed)
     }
 
-    pub fn advance(&self, samples: u64, sample_rate: f32) {
+    pub fn advance(&self, samples: u64, sample_rate: synth_core::SampleRate) {
         let old_samples = self.position_samples.fetch_add(samples, Ordering::Relaxed);
         let tempo = self.tempo.load();
-        let beats_per_sample = tempo / 60.0 / sample_rate;
+        let beats_per_sample = tempo / 60.0 / sample_rate.as_f32();
         let beats = (old_samples + samples) as f64 * beats_per_sample as f64;
         self.position_beats.store(beats);
     }

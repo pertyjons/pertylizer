@@ -906,7 +906,7 @@ impl Instrument {
 
                 // Handle stealing fade-out completion
                 if let VoiceState::Stealing { fade_counter, .. } = voice.state
-                    && fade_counter == 0
+                    && fade_counter.as_usize() == 0
                 {
                     voice.reset();
                     continue;
@@ -950,9 +950,11 @@ impl Instrument {
                     fade_total,
                 } = voice.state
                 {
+                    let fc = fade_counter.as_usize();
+                    let ft = fade_total.as_usize();
                     // Scale fade counters to oversampled domain
-                    let os_fade_counter = fade_counter * os_factor;
-                    let os_fade_total = fade_total * os_factor;
+                    let os_fade_counter = fc * os_factor;
+                    let os_fade_total = ft * os_factor;
                     let fade_samples = os_fade_counter.min(os_count);
                     for i in 0..os_count {
                         let fade = if i < fade_samples {
@@ -964,7 +966,7 @@ impl Instrument {
                         temp_right[i] *= fade;
                     }
                     // Update the fade counter (at original rate)
-                    let new_counter = fade_counter.saturating_sub(sample_count);
+                    let new_counter = SampleCount::new(fc.saturating_sub(sample_count));
                     voice.state = VoiceState::Stealing {
                         fade_counter: new_counter,
                         fade_total,
@@ -1023,7 +1025,7 @@ impl Instrument {
 
                 // Handle stealing fade-out completion
                 if let VoiceState::Stealing { fade_counter, .. } = voice.state
-                    && fade_counter == 0
+                    && fade_counter.as_usize() == 0
                 {
                     voice.reset();
                     continue;
@@ -1056,10 +1058,12 @@ impl Instrument {
                     fade_total,
                 } = voice.state
                 {
-                    let fade_samples = fade_counter.min(sample_count);
+                    let fc = fade_counter.as_usize();
+                    let ft = fade_total.as_usize();
+                    let fade_samples = fc.min(sample_count);
                     for i in 0..sample_count {
                         let fade = if i < fade_samples {
-                            (fade_counter - i) as f32 / fade_total as f32
+                            (fc - i) as f32 / ft as f32
                         } else {
                             0.0
                         };
@@ -1067,7 +1071,7 @@ impl Instrument {
                         temp_right[i] *= fade;
                     }
                     // Update the fade counter in the state
-                    let new_counter = fade_counter.saturating_sub(sample_count);
+                    let new_counter = SampleCount::new(fc.saturating_sub(sample_count));
                     voice.state = VoiceState::Stealing {
                         fade_counter: new_counter,
                         fade_total,

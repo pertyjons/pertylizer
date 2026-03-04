@@ -8,9 +8,9 @@
 
 use synth_core::NoiseState;
 use synth_core::{
-    AudioEffect, Describable, GranularFxParam, Milliseconds, ModuleCategory, ModuleDescriptor,
-    ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext,
-    SampleRate, Seconds, WidgetHint,
+    AudioEffect, BipolarValue, Describable, GranularFxParam, Milliseconds, ModuleCategory,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
+    ProcessContext, SampleRate, Seconds, WidgetHint,
 };
 
 const MAX_GRAINS: usize = 64;
@@ -24,7 +24,7 @@ struct Grain {
     length: usize,
     pos: f32,
     rate: f32,
-    pan: f32,
+    pan: BipolarValue,
     age: usize,
 }
 
@@ -36,7 +36,7 @@ impl Default for Grain {
             length: MIN_GRAIN_SAMPLES,
             pos: 0.0,
             rate: 1.0,
-            pan: 0.0,
+            pan: BipolarValue::CENTER,
             age: 0,
         }
     }
@@ -128,7 +128,7 @@ impl GranularFx {
         let rate = 2.0f32.powf(pitch_rng);
 
         // Pan
-        let pan = self.noise.next() * self.pan_spread.as_f32();
+        let pan = BipolarValue::new(self.noise.next() * self.pan_spread.as_f32());
 
         *grain = Grain {
             active: true,
@@ -314,8 +314,8 @@ impl AudioEffect for GranularFx {
                 let sample_r = Self::read_buffer(&self.buffer_r, self.buffer_len, read_idx);
 
                 // Apply envelope and pan
-                let gain_l = (0.5 - grain.pan * 0.5).sqrt();
-                let gain_r = (0.5 + grain.pan * 0.5).sqrt();
+                let gain_l = (0.5_f32 - grain.pan.as_f32() * 0.5).sqrt();
+                let gain_r = (0.5_f32 + grain.pan.as_f32() * 0.5).sqrt();
 
                 wet_l += sample_l * env * gain_l;
                 wet_r += sample_r * env * gain_r;

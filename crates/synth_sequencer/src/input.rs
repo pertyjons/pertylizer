@@ -5,6 +5,7 @@
 use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick, Tick};
+use synth_core::NormalizedValue;
 
 /// Input commands from any source.
 #[derive(Debug, Clone)]
@@ -115,8 +116,8 @@ pub enum InputCommand {
     /// Humanize timing.
     Humanize {
         pattern: PatternId,
-        timing_amount: f32,
-        velocity_amount: f32,
+        timing_amount: NormalizedValue,
+        velocity_amount: NormalizedValue,
     },
 
     // === Transport ===

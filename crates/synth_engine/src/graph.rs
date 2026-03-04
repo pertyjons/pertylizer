@@ -79,7 +79,7 @@ pub struct ModuleGraph {
     /// Is the processing order dirty (needs recalculation).
     order_dirty: bool,
     /// Buffer size.
-    buffer_size: usize,
+    buffer_size: synth_core::BlockSize,
     /// Pre-allocated input buffers for processing (avoid allocations in audio thread).
     /// Vec of (port_name, buffer) pairs - allows creating a reference slice without allocation.
     input_buffers: Vec<(PortName, AudioBuffer)>,
@@ -99,7 +99,7 @@ impl ModuleGraph {
             processing_order: Vec::new(),
             instance_counters: HashMap::new(),
             order_dirty: true,
-            buffer_size: 256,
+            buffer_size: synth_core::BlockSize::new(256),
             input_buffers: Vec::with_capacity(8),
             incoming_cache: Vec::with_capacity(16),
             bypassed: HashSet::new(),
@@ -137,7 +137,7 @@ impl ModuleGraph {
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
             if port.direction == PortDirection::Output {
-                outputs.insert(port.name, AudioBuffer::new(self.buffer_size));
+                outputs.insert(port.name, AudioBuffer::new(self.buffer_size.as_usize()));
             }
         }
 
@@ -161,7 +161,7 @@ impl ModuleGraph {
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
             if port.direction == PortDirection::Output {
-                outputs.insert(port.name, AudioBuffer::new(self.buffer_size));
+                outputs.insert(port.name, AudioBuffer::new(self.buffer_size.as_usize()));
             }
         }
 
@@ -759,8 +759,8 @@ impl ModuleGraph {
     }
 
     fn resize_buffers(&mut self, size: usize) {
-        if self.buffer_size != size {
-            self.buffer_size = size;
+        if self.buffer_size.as_usize() != size {
+            self.buffer_size = synth_core::BlockSize::new(size);
             for node in self.nodes.values_mut() {
                 for buf in node.outputs.values_mut() {
                     buf.resize(size);

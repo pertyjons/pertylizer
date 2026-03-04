@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use synth_core::{Bpm, SampleCount, SampleRate};
+use synth_core::{Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
     AutomationTarget, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER,
     Tick,
@@ -61,7 +61,7 @@ pub struct SequencerEngine {
     /// Loop end position.
     loop_end: Tick,
     /// Last emitted automation values (for deduplication).
-    last_automation_values: HashMap<AutomationTarget, f32>,
+    last_automation_values: HashMap<AutomationTarget, NormalizedValue>,
 }
 
 impl SequencerEngine {
@@ -343,7 +343,7 @@ impl SequencerEngine {
             let changed = self
                 .last_automation_values
                 .get(&target)
-                .is_none_or(|last| (value - last).abs() > 0.001);
+                .is_none_or(|last| (value.as_f32() - last.as_f32()).abs() > 0.001);
 
             if changed {
                 self.last_automation_values.insert(target.clone(), value);

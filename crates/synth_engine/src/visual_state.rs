@@ -8,13 +8,13 @@ use std::f32::consts::PI;
 
 use super::connectivity::{ModuleConnectivityStatus, PortVisualState};
 use super::shared_state::ModuleStateSnapshot;
-use synth_core::PortName;
+use synth_core::{Amplitude, NormalizedValue, Phase, PortName, Seconds};
 
 /// Visual style for rendering a module.
 #[derive(Debug, Clone)]
 pub struct ModuleStyle {
     /// Background opacity (0.0 - 1.0).
-    pub background_opacity: f32,
+    pub background_opacity: NormalizedValue,
     /// Border color as RGBA.
     pub border_color: [f32; 4],
     /// Glow color as RGBA.
@@ -22,17 +22,17 @@ pub struct ModuleStyle {
     /// Whether to show error overlay.
     pub error_overlay: bool,
     /// Pulse intensity for activity animation (0.0 - 1.0).
-    pub pulse_intensity: f32,
+    pub pulse_intensity: NormalizedValue,
 }
 
 impl Default for ModuleStyle {
     fn default() -> Self {
         Self {
-            background_opacity: 1.0,
+            background_opacity: NormalizedValue::MAX,
             border_color: [0.5, 0.5, 0.5, 1.0],
             glow_color: [0.0, 0.0, 0.0, 0.0],
             error_overlay: false,
-            pulse_intensity: 0.0,
+            pulse_intensity: NormalizedValue::MIN,
         }
     }
 }
@@ -45,13 +45,13 @@ pub struct ModuleVisualState {
 
     // Animation states
     /// Target opacity based on connectivity.
-    pub opacity_target: f32,
+    pub opacity_target: NormalizedValue,
     /// Current animated opacity.
-    pub opacity_current: f32,
+    pub opacity_current: NormalizedValue,
     /// Glow intensity for "live" indication.
-    pub glow_intensity: f32,
+    pub glow_intensity: NormalizedValue,
     /// Pulse phase for activity animation.
-    pub pulse_phase: f32,
+    pub pulse_phase: Phase,
 
     /// Port states.
     pub port_states: HashMap<PortName, PortVisualState>,
@@ -59,7 +59,7 @@ pub struct ModuleVisualState {
     /// Current error (if any).
     pub error: Option<String>,
     /// Time remaining for error flash animation.
-    pub error_flash_time: f32,
+    pub error_flash_time: Seconds,
 
     /// Whether module is selected.
     pub selected: bool,
@@ -71,13 +71,13 @@ impl Default for ModuleVisualState {
     fn default() -> Self {
         Self {
             connectivity: ModuleConnectivityStatus::Disconnected,
-            opacity_target: 0.4,
-            opacity_current: 0.4,
-            glow_intensity: 0.0,
-            pulse_phase: 0.0,
+            opacity_target: NormalizedValue::new(0.4),
+            opacity_current: NormalizedValue::new(0.4),
+            glow_intensity: NormalizedValue::MIN,
+            pulse_phase: Phase::ZERO,
             port_states: HashMap::new(),
             error: None,
-            error_flash_time: 0.0,
+            error_flash_time: Seconds::ZERO,
             selected: false,
             hovered: false,
         }
@@ -95,28 +95,33 @@ impl ModuleVisualState {
         self.connectivity = snapshot.connectivity;
 
         // Calculate target opacity based on connectivity
-        self.opacity_target = snapshot.connectivity.opacity();
+        self.opacity_target = NormalizedValue::new(snapshot.connectivity.opacity());
 
         // Lerp current opacity toward target
         let lerp_speed = 5.0;
-        self.opacity_current += (self.opacity_target - self.opacity_current) * lerp_speed * dt;
+        self.opacity_current = NormalizedValue::new(
+            self.opacity_current.as_f32()
+                + (self.opacity_target.as_f32() - self.opacity_current.as_f32()) * lerp_speed * dt,
+        );
 
         // Glow for live modules
         if snapshot.connectivity == ModuleConnectivityStatus::Connected {
-            self.glow_intensity = 0.3 + snapshot.cpu_usage.min(1.0) * 0.5;
+            self.glow_intensity =
+                NormalizedValue::new(0.3 + snapshot.cpu_usage.as_f32().min(1.0) * 0.5);
         } else {
-            self.glow_intensity *= 0.95; // Fade out
+            self.glow_intensity = NormalizedValue::new(self.glow_intensity.as_f32() * 0.95);
         }
 
         // Pulse animation based on output level
         let max_output = snapshot
             .output_levels
             .values()
-            .cloned()
+            .map(|a| a.as_f32())
             .fold(0.0f32, f32::max);
 
         if max_output > 0.01 {
-            self.pulse_phase = (self.pulse_phase + dt * 10.0 * max_output) % (2.0 * PI);
+            self.pulse_phase =
+                Phase::new((self.pulse_phase.as_f32() + dt * 10.0 * max_output) % (2.0 * PI));
         }
 
         // Update port states
@@ -132,23 +137,23 @@ impl ModuleVisualState {
         }
 
         // Update output levels in port states
-        for (port_name, &level) in &snapshot.output_levels {
+        for (port_name, level) in &snapshot.output_levels {
             if let Some(port_state) = self.port_states.get_mut(port_name) {
-                port_state.update_level(level, 0.9);
+                port_state.update_level(level.as_f32(), 0.9);
             }
         }
 
         // Error flash decay
-        if self.error_flash_time > 0.0 {
-            self.error_flash_time -= dt;
-            if self.error_flash_time <= 0.0 {
+        if self.error_flash_time.as_f32() > 0.0 {
+            self.error_flash_time = Seconds::new(self.error_flash_time.as_f32() - dt);
+            if self.error_flash_time.as_f32() <= 0.0 {
                 self.error = None;
             }
         }
     }
 
     /// Set an error with flash animation.
-    pub fn set_error(&mut self, error: String, flash_duration: f32) {
+    pub fn set_error(&mut self, error: String, flash_duration: Seconds) {
         self.error = Some(error);
         self.error_flash_time = flash_duration;
     }
@@ -156,7 +161,7 @@ impl ModuleVisualState {
     /// Clear any error.
     pub fn clear_error(&mut self) {
         self.error = None;
-        self.error_flash_time = 0.0;
+        self.error_flash_time = Seconds::ZERO;
     }
 
     /// Get the visual style for rendering.
@@ -186,9 +191,11 @@ impl ModuleVisualState {
         ModuleStyle {
             background_opacity: self.opacity_current,
             border_color,
-            glow_color: [0.3, 0.7, 1.0, self.glow_intensity],
+            glow_color: [0.3, 0.7, 1.0, self.glow_intensity.as_f32()],
             error_overlay: self.error.is_some(),
-            pulse_intensity: (self.pulse_phase.sin() * 0.5 + 0.5) * 0.2,
+            pulse_intensity: NormalizedValue::new(
+                (self.pulse_phase.as_f32().sin() * 0.5 + 0.5) * 0.2,
+            ),
         }
     }
 
@@ -217,7 +224,8 @@ impl Point {
     }
 
     /// Linear interpolation to another point.
-    pub fn lerp(&self, other: &Self, t: f32) -> Self {
+    pub fn lerp(&self, other: &Self, t: NormalizedValue) -> Self {
+        let t = t.as_f32();
         Self {
             x: self.x + (other.x - self.x) * t,
             y: self.y + (other.y - self.y) * t,
@@ -232,10 +240,10 @@ pub struct CableVisualState {
     pub from_pos: Point,
     /// End position.
     pub to_pos: Point,
-    /// Current signal level (0.0 - 1.0+).
-    pub signal_level: f32,
+    /// Current signal level.
+    pub signal_level: Amplitude,
     /// Animation phase for signal flow direction.
-    pub flow_phase: f32,
+    pub flow_phase: Phase,
     /// Cable color as RGBA.
     pub color: [f32; 4],
     /// Whether this cable is selected.
@@ -250,8 +258,8 @@ impl CableVisualState {
         Self {
             from_pos,
             to_pos,
-            signal_level: 0.0,
-            flow_phase: 0.0,
+            signal_level: Amplitude::ZERO,
+            flow_phase: Phase::ZERO,
             color: [0.3, 0.7, 0.9, 0.6],
             selected: false,
             hovered: false,
@@ -259,17 +267,18 @@ impl CableVisualState {
     }
 
     /// Update cable animation.
-    pub fn update(&mut self, signal_level: f32, dt: f32) {
+    pub fn update(&mut self, signal_level: Amplitude, dt: f32) {
         // Smooth signal level
-        self.signal_level = self.signal_level * 0.9 + signal_level * 0.1;
+        let sl = self.signal_level.as_f32() * 0.9 + signal_level.as_f32() * 0.1;
+        self.signal_level = Amplitude::new(sl);
 
         // Animate flow based on signal presence
-        if self.signal_level > 0.001 {
-            self.flow_phase = (self.flow_phase + dt * self.signal_level * 5.0) % 1.0;
+        if sl > 0.001 {
+            self.flow_phase = Phase::new((self.flow_phase.as_f32() + dt * sl * 5.0) % 1.0);
         }
 
         // Update color based on signal level
-        let intensity = self.signal_level.sqrt().min(1.0);
+        let intensity = sl.sqrt().min(1.0);
         self.color = [
             0.3 + intensity * 0.5, // More red at high levels
             0.7 - intensity * 0.3,
@@ -286,11 +295,12 @@ impl CableVisualState {
     }
 
     /// Calculate a point along a bezier curve.
-    pub fn bezier_point(&self, t: f32) -> Point {
+    pub fn bezier_point(&self, t: NormalizedValue) -> Point {
         let control1 = Point::new(self.from_pos.x + 50.0, self.from_pos.y);
         let control2 = Point::new(self.to_pos.x - 50.0, self.to_pos.y);
 
-        // Cubic bezier: B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+        // Cubic bezier: B(t) = (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)*t^2*P2 + t^3*P3
+        let t = t.as_f32();
         let t2 = t * t;
         let t3 = t2 * t;
         let mt = 1.0 - t;
@@ -311,14 +321,14 @@ impl CableVisualState {
 
     /// Get positions of animated flow dots.
     pub fn get_flow_dots(&self, num_dots: usize) -> Vec<Point> {
-        if self.signal_level < 0.001 {
+        if self.signal_level.as_f32() < 0.001 {
             return Vec::new();
         }
 
         (0..num_dots)
             .map(|i| {
-                let t = (self.flow_phase + i as f32 / num_dots as f32) % 1.0;
-                self.bezier_point(t)
+                let t = (self.flow_phase.as_f32() + i as f32 / num_dots as f32) % 1.0;
+                self.bezier_point(NormalizedValue::new(t))
             })
             .collect()
     }
@@ -332,15 +342,15 @@ impl CableVisualState {
 /// Tiny level meter for module output visualization.
 #[derive(Debug, Clone)]
 pub struct MiniMeter {
-    /// Current level (0.0 - 1.0+).
-    pub level: f32,
+    /// Current level.
+    pub level: Amplitude,
     /// Peak hold level.
-    pub peak: f32,
+    pub peak: Amplitude,
     /// Time remaining for peak hold.
-    pub peak_hold_time: f32,
-    /// Meter width in pixels.
+    pub peak_hold_time: Seconds,
+    /// Meter width in pixels (UI dimension, not a domain concept).
     pub width: f32,
-    /// Meter height in pixels.
+    /// Meter height in pixels (UI dimension, not a domain concept).
     pub height: f32,
 }
 
@@ -348,36 +358,38 @@ impl MiniMeter {
     /// Create a new mini meter.
     pub fn new(width: f32, height: f32) -> Self {
         Self {
-            level: 0.0,
-            peak: 0.0,
-            peak_hold_time: 0.0,
+            level: Amplitude::ZERO,
+            peak: Amplitude::ZERO,
+            peak_hold_time: Seconds::ZERO,
             width,
             height,
         }
     }
 
     /// Update the meter with a new level.
-    pub fn update(&mut self, new_level: f32, dt: f32) {
+    pub fn update(&mut self, new_level: Amplitude, dt: f32) {
         // Smooth level
-        self.level = self.level * 0.8 + new_level * 0.2;
+        let l = self.level.as_f32() * 0.8 + new_level.as_f32() * 0.2;
+        self.level = Amplitude::new(l);
 
         // Peak hold
-        if new_level > self.peak {
+        if new_level.as_f32() > self.peak.as_f32() {
             self.peak = new_level;
-            self.peak_hold_time = 1.0; // Hold for 1 second
+            self.peak_hold_time = Seconds::new(1.0); // Hold for 1 second
         } else {
-            self.peak_hold_time -= dt;
-            if self.peak_hold_time <= 0.0 {
-                self.peak *= 0.99; // Slow decay
+            self.peak_hold_time = Seconds::new(self.peak_hold_time.as_f32() - dt);
+            if self.peak_hold_time.as_f32() <= 0.0 {
+                self.peak = Amplitude::new(self.peak.as_f32() * 0.99); // Slow decay
             }
         }
     }
 
     /// Get the color for the current level.
     pub fn level_color(&self) -> [f32; 4] {
-        if self.level > 0.9 {
+        let l = self.level.as_f32();
+        if l > 0.9 {
             [1.0, 0.2, 0.2, 1.0] // Red (clipping)
-        } else if self.level > 0.7 {
+        } else if l > 0.7 {
             [1.0, 0.8, 0.2, 1.0] // Yellow (hot)
         } else {
             [0.2, 0.8, 0.4, 1.0] // Green (normal)
@@ -386,25 +398,19 @@ impl MiniMeter {
 
     /// Get level as dB (-60 to 0).
     pub fn level_db(&self) -> f32 {
-        if self.level > 0.0001 {
-            20.0 * self.level.log10()
-        } else {
-            -60.0
-        }
+        let l = self.level.as_f32();
+        if l > 0.0001 { 20.0 * l.log10() } else { -60.0 }
     }
 
     /// Get peak as dB.
     pub fn peak_db(&self) -> f32 {
-        if self.peak > 0.0001 {
-            20.0 * self.peak.log10()
-        } else {
-            -60.0
-        }
+        let p = self.peak.as_f32();
+        if p > 0.0001 { 20.0 * p.log10() } else { -60.0 }
     }
 
     /// Check if currently clipping.
     pub fn is_clipping(&self) -> bool {
-        self.level > 1.0 || self.peak > 1.0
+        self.level.as_f32() > 1.0 || self.peak.as_f32() > 1.0
     }
 }
 
@@ -436,16 +442,16 @@ mod tests {
         );
 
         let style = state.get_style();
-        assert!(style.background_opacity > 0.0);
+        assert!(style.background_opacity.as_f32() > 0.0);
     }
 
     #[test]
     fn test_cable_visual_state() {
         let mut cable = CableVisualState::new(Point::new(0.0, 0.0), Point::new(100.0, 100.0));
 
-        cable.update(0.5, 0.016);
-        assert!(cable.signal_level > 0.0);
-        assert!(cable.flow_phase > 0.0);
+        cable.update(Amplitude::new(0.5), 0.016);
+        assert!(cable.signal_level.as_f32() > 0.0);
+        assert!(cable.flow_phase.as_f32() > 0.0);
 
         let dots = cable.get_flow_dots(3);
         assert_eq!(dots.len(), 3);
@@ -455,12 +461,12 @@ mod tests {
     fn test_mini_meter() {
         let mut meter = MiniMeter::new(10.0, 50.0);
 
-        meter.update(0.8, 0.016);
-        assert!(meter.level > 0.0);
-        assert!(meter.peak >= meter.level);
+        meter.update(Amplitude::new(0.8), 0.016);
+        assert!(meter.level.as_f32() > 0.0);
+        assert!(meter.peak.as_f32() >= meter.level.as_f32());
 
-        meter.update(0.2, 0.016);
-        assert!(meter.peak > meter.level); // Peak should hold
+        meter.update(Amplitude::new(0.2), 0.016);
+        assert!(meter.peak.as_f32() > meter.level.as_f32()); // Peak should hold
     }
 
     #[test]
@@ -470,7 +476,7 @@ mod tests {
 
         assert!((p1.distance(&p2) - 5.0).abs() < 0.001);
 
-        let mid = p1.lerp(&p2, 0.5);
+        let mid = p1.lerp(&p2, NormalizedValue::CENTER);
         assert!((mid.x - 1.5).abs() < 0.001);
         assert!((mid.y - 2.0).abs() < 0.001);
     }
