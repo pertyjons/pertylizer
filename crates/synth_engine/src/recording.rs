@@ -37,6 +37,8 @@ struct RecordTarget {
     region_start: Tick,
     pattern_length_ticks: u32,
     ticks_per_bar: u32,
+    /// Whether to layer notes on existing pattern (true) or replace (false).
+    overdub: bool,
 }
 
 /// Recording state machine.
@@ -111,6 +113,16 @@ impl RecordingBuffer {
         self.target.map(|t| t.pattern_id)
     }
 
+    /// Set the quantization grid size (0 = no quantization).
+    pub(crate) fn set_quantize_grid(&mut self, grid_ticks: u32) {
+        self.quantize_grid = grid_ticks;
+    }
+
+    /// Whether the current recording session uses overdub mode.
+    pub(crate) fn is_overdub(&self) -> bool {
+        self.target.is_none_or(|t| t.overdub)
+    }
+
     /// Arm recording for a specific pattern.
     pub(crate) fn arm(
         &mut self,
@@ -119,6 +131,7 @@ impl RecordingBuffer {
         region_start: Tick,
         pattern_length_ticks: u32,
         ticks_per_bar: u32,
+        overdub: bool,
     ) {
         self.state = RecordingState::Armed;
         self.target = Some(RecordTarget {
@@ -127,6 +140,7 @@ impl RecordingBuffer {
             region_start,
             pattern_length_ticks,
             ticks_per_bar,
+            overdub,
         });
         self.clear();
     }
@@ -279,7 +293,14 @@ mod tests {
         let mut buf = RecordingBuffer::new();
         assert_eq!(buf.state(), RecordingState::Idle);
 
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(3840), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(3840),
+            3840,
+            3840,
+            true,
+        );
         assert_eq!(buf.state(), RecordingState::Armed);
         assert_eq!(buf.target_pattern(), Some(PatternId::new(1)));
     }
@@ -287,7 +308,14 @@ mod tests {
     #[test]
     fn test_count_in_transition() {
         let mut buf = RecordingBuffer::new();
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(3840), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(3840),
+            3840,
+            3840,
+            true,
+        );
 
         let seek = buf.start_playback();
         assert_eq!(buf.state(), RecordingState::CountIn);
@@ -305,7 +333,14 @@ mod tests {
     #[test]
     fn test_note_recording() {
         let mut buf = RecordingBuffer::new();
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(0), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            3840,
+            3840,
+            true,
+        );
         buf.state = RecordingState::Capturing;
 
         buf.note_on(60, 100, Tick(0));
@@ -327,7 +362,14 @@ mod tests {
     fn test_pattern_wrapping() {
         let mut buf = RecordingBuffer::new();
         // Pattern at tick 3840, length 3840 (1 bar)
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(3840), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(3840),
+            3840,
+            3840,
+            true,
+        );
         buf.state = RecordingState::Capturing;
 
         // Note at song tick 7680 = region_start + 3840 = wraps to pattern tick 0
@@ -343,7 +385,14 @@ mod tests {
     #[test]
     fn test_disarm_returns_notes() {
         let mut buf = RecordingBuffer::new();
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(0), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            3840,
+            3840,
+            true,
+        );
         buf.state = RecordingState::Capturing;
 
         buf.note_on(60, 100, Tick(0));
@@ -357,7 +406,14 @@ mod tests {
     #[test]
     fn test_notes_ignored_during_count_in() {
         let mut buf = RecordingBuffer::new();
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(3840), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(3840),
+            3840,
+            3840,
+            true,
+        );
         let _ = buf.start_playback();
 
         // Note during count-in should be ignored
@@ -371,7 +427,14 @@ mod tests {
     #[test]
     fn test_held_notes_completed_on_flush() {
         let mut buf = RecordingBuffer::new();
-        buf.arm(PatternId::new(1), TrackId::new(0), Tick(0), 3840, 3840);
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            3840,
+            3840,
+            true,
+        );
         buf.state = RecordingState::Capturing;
 
         // Start a note but never release it

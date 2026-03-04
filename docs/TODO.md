@@ -24,8 +24,8 @@
 - [x] Count-in (pre-roll) — 1 bar metronome before recording starts
 - [x] Recording target = opened piano roll pattern (button disabled if none open)
 - [x] Visual recording indicator — red blinking REC/ARM/COUNT-IN in transport
-- [ ] Recording quantization — snap recorded notes to grid on input
-- [ ] Overdub mode — layer new notes on top of existing pattern
+- [x] Recording quantization — snap recorded notes to grid on input
+- [x] Overdub mode — layer new notes on top of existing pattern
 
 ### 0.3 Copy/paste/duplicate in piano roll
 - [ ] Ctrl+C — copy selected notes

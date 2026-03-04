@@ -537,6 +537,10 @@ pub enum EngineCommand {
         pattern_length_ticks: u32,
         /// Ticks per bar for count-in calculation (avoids song lock on audio thread).
         ticks_per_bar: u32,
+        /// Quantization grid in ticks (0 = off, 480 = 1/8, etc.).
+        quantize_grid: u32,
+        /// Overdub mode: true = layer on existing notes, false = replace.
+        overdub: bool,
     },
 
     /// Disarm recording (flushes any captured notes first).
@@ -775,6 +779,8 @@ pub enum EngineEvent {
         pattern_id: PatternId,
         /// The recorded notes.
         notes: Vec<crate::recording::RecordedNote>,
+        /// Whether to layer on existing notes (true) or replace them (false).
+        overdub: bool,
     },
 }
 
@@ -1021,6 +1027,8 @@ impl std::fmt::Debug for EngineCommand {
                 region_start,
                 pattern_length_ticks,
                 ticks_per_bar,
+                quantize_grid,
+                overdub,
             } => f
                 .debug_struct("ArmRecord")
                 .field("pattern_id", pattern_id)
@@ -1028,6 +1036,8 @@ impl std::fmt::Debug for EngineCommand {
                 .field("region_start", region_start)
                 .field("pattern_length_ticks", pattern_length_ticks)
                 .field("ticks_per_bar", ticks_per_bar)
+                .field("quantize_grid", quantize_grid)
+                .field("overdub", overdub)
                 .finish(),
             Self::DisarmRecord => write!(f, "DisarmRecord"),
             Self::SetMetronome(enabled) => write!(f, "SetMetronome({enabled})"),

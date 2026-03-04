@@ -173,6 +173,10 @@ pub struct SequencerViewState {
     auto_follow_playhead: bool,
     /// Last scroll offset set by auto-follow (to detect manual scrolling).
     last_auto_scroll_offset: Option<f32>,
+    /// Recording quantize grid in ticks (0=off, 960=1/4, 480=1/8, 240=1/16, 120=1/32).
+    pub record_quantize: u32,
+    /// Overdub mode: true = layer on existing notes, false = replace.
+    pub overdub: bool,
 }
 
 impl SequencerViewState {
@@ -193,6 +197,8 @@ impl SequencerViewState {
             zoom_level: 1.0,
             auto_follow_playhead: true,
             last_auto_scroll_offset: None,
+            record_quantize: 0,
+            overdub: true,
         }
     }
 }
@@ -385,6 +391,8 @@ fn draw_transport_bar(
                         region_start,
                         pattern_length_ticks: pattern_length,
                         ticks_per_bar,
+                        quantize_grid: view_state.record_quantize,
+                        overdub: view_state.overdub,
                     });
                 }
             }
@@ -410,6 +418,57 @@ fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::SetMetronome(!metro_on));
+        }
+
+        // Quantize button — cycles Off → 1/4 → 1/8 → 1/16 → 1/32
+        let q_label = match view_state.record_quantize {
+            960 => "Q:1/4",
+            480 => "Q:1/8",
+            240 => "Q:1/16",
+            120 => "Q:1/32",
+            _ => "Q",
+        };
+        let q_color = if view_state.record_quantize > 0 {
+            t.colors.accent_primary
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .button(RichText::new(q_label).strong().color(q_color))
+            .on_hover_text(match view_state.record_quantize {
+                960 => "Quantize: 1/4 note (click to cycle)",
+                480 => "Quantize: 1/8 note (click to cycle)",
+                240 => "Quantize: 1/16 note (click to cycle)",
+                120 => "Quantize: 1/32 note (click to cycle)",
+                _ => "Quantize: Off (click to cycle)",
+            })
+            .clicked()
+        {
+            view_state.record_quantize = match view_state.record_quantize {
+                0 => 960,
+                960 => 480,
+                480 => 240,
+                240 => 120,
+                _ => 0,
+            };
+        }
+
+        // Overdub toggle
+        let ovr_color = if view_state.overdub {
+            t.colors.accent_primary
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .button(RichText::new("OVR").strong().color(ovr_color))
+            .on_hover_text(if view_state.overdub {
+                "Overdub on (click for replace)"
+            } else {
+                "Overdub off (click to layer)"
+            })
+            .clicked()
+        {
+            view_state.overdub = !view_state.overdub;
         }
 
         ui.separator();

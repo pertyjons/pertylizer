@@ -418,11 +418,18 @@ impl eframe::App for SynthApp {
                         inst.learn_state = learn_state;
                     }
                 }
-                EngineEvent::RecordedNotesFlushed { pattern_id, notes } => {
+                EngineEvent::RecordedNotesFlushed {
+                    pattern_id,
+                    notes,
+                    overdub,
+                } => {
                     // Write recorded notes into the pattern (on UI thread, safe to lock)
                     if let Ok(mut song) = self.song.write()
                         && let Some(pattern) = song.pattern_mut(pattern_id)
                     {
+                        if !overdub {
+                            pattern.clear_notes();
+                        }
                         for note in &notes {
                             if let Some(pitch) = synth_sequencer::Pitch::new(note.pitch) {
                                 let velocity = synth_sequencer::Velocity::from_midi(note.velocity);
