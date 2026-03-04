@@ -5,7 +5,7 @@
 use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick, Tick};
-use synth_core::NormalizedValue;
+use synth_core::{Bpm, NormalizedValue, Octaves, Semitones};
 
 /// Input commands from any source.
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ pub enum InputCommand {
     TransposeNote {
         pattern: PatternId,
         note_id: NoteId,
-        semitones: i8,
+        semitones: Semitones,
     },
     /// Set note velocity.
     SetNoteVelocity {
@@ -104,13 +104,16 @@ pub enum InputCommand {
 
     // === Quantization ===
     /// Quantize notes to grid.
-    Quantize { pattern: PatternId, strength: f32 },
+    Quantize {
+        pattern: PatternId,
+        strength: NormalizedValue,
+    },
     /// Quantize selected notes only.
-    QuantizeSelection { strength: f32 },
+    QuantizeSelection { strength: NormalizedValue },
 
     // === Bulk operations ===
     /// Transpose selection.
-    TransposeSelection { semitones: i8 },
+    TransposeSelection { semitones: Semitones },
     /// Scale velocities.
     ScaleVelocities { pattern: PatternId, factor: f32 },
     /// Humanize timing.
@@ -154,7 +157,7 @@ pub enum InputCommand {
 
     // === Tempo and time signature ===
     /// Set tempo (BPM).
-    SetTempo(f32),
+    SetTempo(Bpm),
     /// Tap tempo.
     TapTempo,
     /// Set time signature.
@@ -284,7 +287,7 @@ pub struct KeyboardInputSource {
     name: String,
     enabled: bool,
     pending_commands: Vec<InputCommand>,
-    base_octave: i8,
+    base_octave: Octaves,
     velocity: Velocity,
 }
 
@@ -295,18 +298,18 @@ impl KeyboardInputSource {
             name: name.into(),
             enabled: true,
             pending_commands: Vec::new(),
-            base_octave: 4,
+            base_octave: Octaves::new(4),
             velocity: Velocity::MF,
         }
     }
 
     /// Set the base octave for keyboard input.
-    pub fn set_base_octave(&mut self, octave: i8) {
-        self.base_octave = octave.clamp(-1, 8);
+    pub fn set_base_octave(&mut self, octave: Octaves) {
+        self.base_octave = Octaves::new(octave.as_i32().clamp(-1, 8));
     }
 
     /// Get the current base octave.
-    pub fn base_octave(&self) -> i8 {
+    pub fn base_octave(&self) -> Octaves {
         self.base_octave
     }
 
@@ -328,8 +331,9 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key press (note on).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn key_down(&mut self, note_offset: u8, instrument: Option<SeqInstrumentId>) {
-        let midi_note = (self.base_octave + 1) as u8 * 12 + note_offset;
+        let midi_note = (self.base_octave.as_i32() + 1) as u8 * 12 + note_offset;
         if let Some(pitch) = Pitch::new(midi_note) {
             self.push_command(InputCommand::NoteOn {
                 pitch,
@@ -340,8 +344,9 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key release (note off).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn key_up(&mut self, note_offset: u8) {
-        let midi_note = (self.base_octave + 1) as u8 * 12 + note_offset;
+        let midi_note = (self.base_octave.as_i32() + 1) as u8 * 12 + note_offset;
         if let Some(pitch) = Pitch::new(midi_note) {
             self.push_command(InputCommand::NoteOff { pitch });
         }
@@ -478,8 +483,8 @@ mod tests {
     #[test]
     fn test_keyboard_octave() {
         let mut keyboard = KeyboardInputSource::new("Test");
-        keyboard.set_base_octave(5);
-        assert_eq!(keyboard.base_octave(), 5);
+        keyboard.set_base_octave(Octaves::new(5));
+        assert_eq!(keyboard.base_octave(), Octaves::new(5));
 
         keyboard.key_down(0, None);
         let commands = keyboard.poll();

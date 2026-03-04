@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Cents, Gain, NormalizedValue};
+use crate::types::{Cents, Gain, NormalizedValue, Octaves};
 
 // ============================================================================
 // WAVETABLE SELECT ENUM
@@ -100,7 +100,7 @@ pub enum WavetableParam {
     /// Detune in cents (-100 to +100)
     Detune(Cents),
     /// Octave offset (-2 to +2)
-    Octave(i8),
+    Octave(Octaves),
     /// Output level (0.0 - 1.0)
     Level(Gain),
 }
@@ -128,7 +128,7 @@ impl WavetableParam {
             Self::Table(t) => t.index() as f32,
             Self::Position(v) => v.as_f32(),
             Self::Detune(c) => c.as_f32(),
-            Self::Octave(o) => f32::from(*o),
+            Self::Octave(o) => o.as_i32() as f32,
             Self::Level(g) => g.as_f32(),
         }
     }
@@ -142,7 +142,7 @@ impl WavetableParam {
             }
             Self::Position(_) => Self::Position(NormalizedValue::new(value)),
             Self::Detune(_) => Self::Detune(Cents::new(value)),
-            Self::Octave(_) => Self::Octave(value.round() as i8),
+            Self::Octave(_) => Self::Octave(Octaves::new(value.round() as i32)),
             Self::Level(_) => Self::Level(Gain::new(value)),
         }
     }
@@ -158,7 +158,7 @@ impl WavetableParam {
         Self::Detune(Cents::ZERO)
     }
     pub fn octave_default() -> Self {
-        Self::Octave(0)
+        Self::Octave(Octaves::ZERO)
     }
     pub fn level_default() -> Self {
         Self::Level(Gain::new(0.8))

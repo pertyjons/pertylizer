@@ -1,6 +1,34 @@
-# TODO - Pertylizer (v0.210.0)
+# TODO - Pertylizer (v0.211.0)
 
-## Priority 0 — Sequencer & Music Creation
+## Priority 0 — DSP Helper Abstractions
+
+> Full plan: [dsp-helpers-plan.md](dsp-helpers-plan.md)
+
+### 0.1 InputReader — zero-cost input port reader
+- [ ] Add `InputReader<'a>` struct with `Index<usize>` to `synth_core/src/module_traits.rs`
+- [ ] Add `InputPorts::reader()` method
+- [ ] Tests for connected/unconnected paths
+- [ ] Migrate modules: `amplifier.rs`, `filter.rs`, `oscillator.rs`, `lfo.rs`, `output.rs`, `envelope.rs`
+
+### 0.2 Stereo Frame Helpers
+- [ ] Add `StereoSample::read_frame()` and `write_frame()` to `synth_core/src/types/audio.rs`
+- [ ] Add `StereoFrameIter` iterator type
+- [ ] Tests for even/odd/empty slices
+- [ ] Migrate all 18 effects to use frame helpers
+
+### 0.3 DenormalGuard (FTZ/DAZ)
+- [ ] Add `DenormalGuard` RAII type in new `synth_core/src/types/denormal.rs`
+- [ ] Integrate in cpal audio callback (`cpal_backend.rs`)
+- [ ] Remove 23 manual `flush_denormals()` calls from modules and DSP code
+
+### 0.4 Composable DSP Primitives
+- [ ] Add `StereoSvf` and `StereoBiquad` to `synth_dsp/src/filters.rs`
+- [ ] Add `OnePoleSmooth` parameter smoother to `synth_core/src/types/audio.rs`
+- [ ] Tests for all new types
+
+---
+
+## Priority 0.A — Sequencer & Music Creation (completed)
 
 ### 0.1 Arrangement view fixes
 - [x] Pattern miniature preview — draw note positions as tiny rectangles in placements

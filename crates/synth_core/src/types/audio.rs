@@ -969,6 +969,74 @@ impl std::fmt::Display for PatternIndex {
     }
 }
 
+// ============================================================================
+// STEP COUNT
+// ============================================================================
+
+/// Step count for sequencer patterns and shift registers.
+///
+/// Represents a number of steps in generative modules like Euclidean sequencers,
+/// Turing machines, etc. Typical range is 1-32.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[must_use]
+#[repr(transparent)]
+pub struct StepCount(pub u8);
+
+impl StepCount {
+    /// Create a new step count.
+    #[inline]
+    pub const fn new(count: u8) -> Self {
+        Self(count)
+    }
+
+    /// Zero steps.
+    pub const ZERO: Self = Self(0);
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as usize for array indexing.
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Get as f32 for arithmetic.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0 as f32
+    }
+}
+
+impl From<u8> for StepCount {
+    fn from(count: u8) -> Self {
+        Self(count)
+    }
+}
+
+impl From<StepCount> for u8 {
+    fn from(count: StepCount) -> Self {
+        count.0
+    }
+}
+
+impl From<StepCount> for usize {
+    fn from(count: StepCount) -> Self {
+        count.0 as Self
+    }
+}
+
+impl std::fmt::Display for StepCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

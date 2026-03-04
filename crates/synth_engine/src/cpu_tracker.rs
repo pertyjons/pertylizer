@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::commands::ModuleId;
-use synth_core::{BlockSize, CpuUsage, NormalizedValue};
+use synth_core::{BlockSize, CpuUsage, NormalizedValue, SampleRate};
 
 /// Per-module CPU usage statistics.
 #[derive(Debug, Clone, Default)]
@@ -121,13 +121,14 @@ pub struct ModuleCpuTracker {
 
 impl ModuleCpuTracker {
     /// Create a new CPU tracker.
-    pub fn new(block_size: usize, sample_rate: f32) -> Self {
-        let block_duration = Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
+    pub fn new(block_size: BlockSize, sample_rate: SampleRate) -> Self {
+        let block_duration =
+            Duration::from_secs_f64(block_size.as_usize() as f64 / sample_rate.as_f32() as f64);
 
         Self {
             trackers: HashMap::new(),
-            block_size: BlockSize::new(block_size),
-            sample_rate: synth_core::SampleRate::new(sample_rate),
+            block_size,
+            sample_rate,
             block_duration,
             update_interval: Duration::from_millis(100), // Update every 100ms
             last_update: Instant::now(),
@@ -235,10 +236,11 @@ impl ModuleCpuTracker {
     }
 
     /// Update configuration (e.g., after sample rate change).
-    pub fn configure(&mut self, block_size: usize, sample_rate: f32) {
-        self.block_size = BlockSize::new(block_size);
-        self.sample_rate = synth_core::SampleRate::new(sample_rate);
-        self.block_duration = Duration::from_secs_f64(block_size as f64 / sample_rate as f64);
+    pub fn configure(&mut self, block_size: BlockSize, sample_rate: SampleRate) {
+        self.block_size = block_size;
+        self.sample_rate = sample_rate;
+        self.block_duration =
+            Duration::from_secs_f64(block_size.as_usize() as f64 / sample_rate.as_f32() as f64);
     }
 }
 
@@ -359,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_cpu_tracker() {
-        let mut tracker = ModuleCpuTracker::new(128, 44100.0);
+        let mut tracker = ModuleCpuTracker::new(BlockSize::new(128), SampleRate::new(44100.0));
 
         let osc1 = ModuleId::new(ModuleType::Oscillator, 1);
         let filter = ModuleId::new(ModuleType::Filter, 1);
@@ -403,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_top_modules() {
-        let mut tracker = ModuleCpuTracker::new(128, 44100.0);
+        let mut tracker = ModuleCpuTracker::new(BlockSize::new(128), SampleRate::new(44100.0));
 
         let osc1 = ModuleId::new(ModuleType::Oscillator, 1);
         let osc2 = ModuleId::new(ModuleType::Oscillator, 2);

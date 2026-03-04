@@ -12,7 +12,7 @@ use synth_core::{
     NormalizedValue, Param, ParameterDescriptor, ProcessContext, SampleRate, StereoSample,
     WidgetHint,
 };
-use synth_core::{ModalResonatorParam, NoiseState};
+use synth_core::{ModalResonatorParam, NoiseState, VoiceCount};
 use synth_dsp::BiquadCoeffs;
 
 const MAX_MODES: usize = 16;
@@ -39,7 +39,7 @@ pub struct ModalResonator {
     // Parameters
     base_note: MidiNote,
     spread: NormalizedValue,
-    modes: u8,
+    modes: VoiceCount,
     decay: NormalizedValue,
     brightness: NormalizedValue,
     mix: NormalizedValue,
@@ -59,7 +59,7 @@ impl ModalResonator {
         let mut effect = Self {
             base_note: MidiNote::new(60),
             spread: NormalizedValue::new(0.3),
-            modes: 8,
+            modes: VoiceCount::new(8),
             decay: NormalizedValue::new(0.6),
             brightness: NormalizedValue::CENTER,
             mix: NormalizedValue::MAX,
@@ -90,7 +90,7 @@ impl ModalResonator {
         let f0 = self.base_note.to_frequency();
         let q = 0.5 + self.decay.as_f32() * 20.0;
         let nyquist = self.sample_rate.as_f32() * 0.5;
-        let mode_count = (self.modes as usize).clamp(1, MAX_MODES);
+        let mode_count = self.modes.as_usize().clamp(1, MAX_MODES);
 
         for i in 0..mode_count {
             // Harmonic frequency with inharmonicity spread
@@ -155,7 +155,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::ModalResonator(ModalResonatorParam::Modes(8)),
+                    Param::ModalResonator(ModalResonatorParam::Modes(VoiceCount::new(8))),
                     "Modes",
                 )
                 .description("Number of resonant modes")
@@ -199,7 +199,7 @@ impl AudioEffect for ModalResonator {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.update_coeffs();
 
-        let mode_count = (self.modes as usize).clamp(1, MAX_MODES);
+        let mode_count = self.modes.as_usize().clamp(1, MAX_MODES);
         let mix = self.mix.as_f32();
         let brightness = self.brightness.as_f32();
 
@@ -273,7 +273,7 @@ impl AudioEffect for ModalResonator {
                     self.params_dirty = true;
                 }
                 ModalResonatorParam::Modes(v) => {
-                    self.modes = v.clamp(4, 16);
+                    self.modes = VoiceCount::new_unchecked(v.as_u8().clamp(4, 16));
                     self.params_dirty = true;
                 }
                 ModalResonatorParam::Decay(v) => {
@@ -294,7 +294,7 @@ impl AudioEffect for ModalResonator {
             Some(match p {
                 ModalResonatorParam::BaseNote(_) => self.base_note.as_u8() as f32,
                 ModalResonatorParam::Spread(_) => self.spread.as_f32(),
-                ModalResonatorParam::Modes(_) => self.modes as f32,
+                ModalResonatorParam::Modes(_) => self.modes.as_u8() as f32,
                 ModalResonatorParam::Decay(_) => self.decay.as_f32(),
                 ModalResonatorParam::Brightness(_) => self.brightness.as_f32(),
                 ModalResonatorParam::Mix(_) => self.mix.as_f32(),

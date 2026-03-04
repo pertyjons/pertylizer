@@ -551,7 +551,7 @@ pub enum EngineCommand {
     SetMetronome(bool),
 
     /// Set metronome volume.
-    SetMetronomeVolume(NormalizedValue),
+    SetMetronomeVolume(Gain),
 
     // === AWE (Acoustic World Engine) ===
     /// Set a single AWE parameter.
