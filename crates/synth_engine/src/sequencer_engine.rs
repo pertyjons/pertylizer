@@ -177,6 +177,16 @@ impl SequencerEngine {
         self.looping
     }
 
+    /// Get the loop start position.
+    pub fn loop_start(&self) -> Tick {
+        self.loop_start
+    }
+
+    /// Get the loop end position.
+    pub fn loop_end(&self) -> Tick {
+        self.loop_end
+    }
+
     /// Process samples up to the next song tick boundary.
     ///
     /// Returns the number of samples consumed (the "chunk size").

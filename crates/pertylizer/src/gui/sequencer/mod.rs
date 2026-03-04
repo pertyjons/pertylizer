@@ -177,6 +177,12 @@ pub struct SequencerViewState {
     pub record_quantize: u32,
     /// Overdub mode: true = layer on existing notes, false = replace.
     pub overdub: bool,
+    /// Live recording preview: completed notes.
+    pub recording_preview_completed: Vec<synth_engine::recording::RecordedNote>,
+    /// Live recording preview: held note starts (pitch, start_tick).
+    pub recording_preview_held: Vec<(Pitch, PatternTick)>,
+    /// Pattern length for preview rendering.
+    pub recording_preview_pattern_length: SeqDuration,
 }
 
 impl SequencerViewState {
@@ -199,6 +205,9 @@ impl SequencerViewState {
             last_auto_scroll_offset: None,
             record_quantize: 0,
             overdub: true,
+            recording_preview_completed: Vec::new(),
+            recording_preview_held: Vec::new(),
+            recording_preview_pattern_length: SeqDuration(0),
         }
     }
 }
@@ -2296,6 +2305,97 @@ fn draw_piano_roll(
                         ),
                     );
                 }
+            }
+
+            // ── Recording preview notes (orange) ──
+            if !view_state.recording_preview_completed.is_empty()
+                || !view_state.recording_preview_held.is_empty()
+            {
+                let preview_color = Color32::from_rgb(255, 160, 60);
+
+                // Draw completed preview notes
+                for note in &view_state.recording_preview_completed {
+                    let midi = note.pitch.as_midi();
+                    if midi < view_pitch_min || midi > view_pitch_max {
+                        continue;
+                    }
+                    let y = pitch_to_y(midi);
+                    let x_start = tick_to_x(note.start.0);
+                    let x_end = tick_to_x(note.start.0 + note.duration.0);
+                    let note_width = (x_end - x_start).max(3.0);
+                    let alpha = 180_u8;
+
+                    let preview_rect = Rect::from_min_size(
+                        Pos2::new(x_start, y + 1.0),
+                        Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
+                    );
+                    painter.rect_filled(
+                        preview_rect,
+                        2.0,
+                        Color32::from_rgba_unmultiplied(
+                            preview_color.r(),
+                            preview_color.g(),
+                            preview_color.b(),
+                            alpha,
+                        ),
+                    );
+                    painter.rect_stroke(
+                        preview_rect,
+                        2.0,
+                        Stroke::new(0.5, preview_color),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+
+                // Draw held notes extending from start to current playhead
+                if !view_state.recording_preview_held.is_empty() {
+                    let pattern_len = view_state.recording_preview_pattern_length.0;
+                    // Compute playhead position within pattern
+                    #[allow(clippy::cast_possible_truncation)]
+                    let playhead_in_pattern = if pattern_len > 0 && current_tick > 0 {
+                        // We need region_start to compute this properly.
+                        // Use data.length_ticks as pattern length proxy.
+                        (current_tick % pattern_len as u64) as u32
+                    } else {
+                        0
+                    };
+
+                    for (pitch, start_tick) in &view_state.recording_preview_held {
+                        let midi = pitch.as_midi();
+                        if midi < view_pitch_min || midi > view_pitch_max {
+                            continue;
+                        }
+                        let y = pitch_to_y(midi);
+                        let x_start = tick_to_x(start_tick.0);
+                        let end = if playhead_in_pattern >= start_tick.0 {
+                            playhead_in_pattern
+                        } else {
+                            // Note wraps around pattern — draw to end
+                            data.length_ticks
+                        };
+                        let x_end = tick_to_x(end);
+                        let note_width = (x_end - x_start).max(3.0);
+
+                        let held_rect = Rect::from_min_size(
+                            Pos2::new(x_start, y + 1.0),
+                            Vec2::new(note_width, NOTE_ROW_HEIGHT - 2.0),
+                        );
+                        painter.rect_filled(
+                            held_rect,
+                            2.0,
+                            Color32::from_rgba_unmultiplied(255, 160, 60, 140),
+                        );
+                        painter.rect_stroke(
+                            held_rect,
+                            2.0,
+                            Stroke::new(0.5, preview_color),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                }
+
+                // Request repaint during recording for live updates
+                ui.ctx().request_repaint();
             }
 
             // ── Ghost note for MoveNote drag ──

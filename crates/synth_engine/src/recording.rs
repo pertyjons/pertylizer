@@ -118,6 +118,25 @@ impl RecordingBuffer {
         self.quantize_grid = grid;
     }
 
+    /// Get recording target info: (region_start, pattern_length).
+    pub(crate) fn target_info(&self) -> Option<(Tick, Duration)> {
+        self.target.map(|t| (t.region_start, t.pattern_length))
+    }
+
+    /// Get a snapshot of current recording for live preview.
+    ///
+    /// Returns (completed_notes, held_note_starts).
+    /// Called at buffer-rate (~86Hz), not per-sample.
+    pub(crate) fn preview_snapshot(&self) -> (Vec<RecordedNote>, Vec<(Pitch, PatternTick)>) {
+        let completed = self.recorded_notes.clone();
+        let held: Vec<(Pitch, PatternTick)> = self
+            .held_notes
+            .iter()
+            .filter_map(|slot| slot.map(|h| (h.pitch, h.start_tick)))
+            .collect();
+        (completed, held)
+    }
+
     /// Whether the current recording session uses overdub mode.
     pub(crate) fn is_overdub(&self) -> bool {
         self.target.is_none_or(|t| t.overdub)

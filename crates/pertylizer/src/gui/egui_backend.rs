@@ -418,6 +418,15 @@ impl eframe::App for SynthApp {
                         inst.learn_state = learn_state;
                     }
                 }
+                EngineEvent::RecordingPreview {
+                    completed,
+                    held,
+                    pattern_length,
+                } => {
+                    self.sequencer_view_state.recording_preview_completed = completed;
+                    self.sequencer_view_state.recording_preview_held = held;
+                    self.sequencer_view_state.recording_preview_pattern_length = pattern_length;
+                }
                 EngineEvent::RecordedNotesFlushed {
                     pattern_id,
                     notes,
@@ -442,6 +451,11 @@ impl eframe::App for SynthApp {
                             }
                         }
                     }
+                    // Clear preview — notes are now committed
+                    self.sequencer_view_state
+                        .recording_preview_completed
+                        .clear();
+                    self.sequencer_view_state.recording_preview_held.clear();
                 }
                 // Other events (meters, etc.) are handled elsewhere
                 _ => {}
