@@ -2,24 +2,23 @@
 
 ## Language
 
-This project uses **English** for all code, comments, UI strings, documentation, and commit messages.
+All code, comments, UI strings, documentation, and commit messages in **English**.
 
 ## Project Phase
 
-Active development — **no backward compatibility required**. Break APIs freely to improve the code.
+Active development — **no backward compatibility required**. Break APIs freely.
 
 ## Commands
 
 ### `git commit`
-Stage all files (new and changed) and commit with a short description:
 ```bash
 git add --all
 git commit -m "<short description of changes>"
 ```
 
 ### `new version`
-1. Update `docs/history.md` with new version number and changes since last version
-2. Review `docs/TODO.md` and mark completed tasks as done
+1. Update `docs/history.md` with new version number and changes
+2. Review `docs/TODO.md` and mark completed tasks
 3. Update version number in `Cargo.toml`
 
 ---
@@ -28,52 +27,35 @@ git commit -m "<short description of changes>"
 
 ### Newtype Pattern (CRITICAL — strictly enforced)
 
-**NEVER use raw primitives** (`f32`, `u8`, `u16`, `u32`, `u64`, `usize`, `i32`) for domain concepts. ALWAYS use or create a newtype wrapper. This applies everywhere: function parameters, return types, struct fields, local variables that represent a domain concept.
+**NEVER use raw primitives** (`f32`, `u8`, `u16`, `u32`, `u64`, `usize`, `i32`) for domain concepts. ALWAYS wrap them in a newtype. This applies to: function parameters, return types, struct fields, and local variables representing domain concepts.
 
-**Before writing `f32` or `u8` etc. in a struct field or function signature, STOP and check if a newtype already exists below.** If one exists, use it. If none fits, create a new newtype.
+**Rule of thumb:** If the value has a *unit* or *meaning* beyond "just a number", it MUST be a newtype.
 
 ```rust
-// WRONG — raw primitives for domain values:
+// WRONG:
 fn set_frequency(hz: f32) { ... }
 struct ClipboardNote { pitch: u8, velocity: f32 }
-fn quantize(tick: u32, grid: u32) { ... }
 
-// RIGHT — newtypes:
+// RIGHT:
 fn set_frequency(freq: Hertz) { ... }
 struct ClipboardNote { pitch: Pitch, velocity: Velocity }
-fn quantize(tick: PatternTick, grid: Duration) { ... }
 ```
 
-**The only acceptable uses of raw primitives are:**
-- Loop counters and array indices (not representing domain concepts)
+**Raw primitives are ONLY acceptable for:**
+- Loop counters and array indices (not domain concepts)
 - Intermediate arithmetic inside a function that returns a newtype
 - FFI boundaries and serialization internals
 
-#### Domain types by crate
+**Before adding a new primitive, ALWAYS search the codebase first** — a suitable newtype likely already exists. If none fits, create one. The list below shows *examples* of existing types, not a complete inventory:
 
-**`synth_core`** (30 types):
-- **Frequency:** `Hertz`, `SampleRate` (f32, for DSP)
-- **Pitch:** `Cents`, `Semitones`, `Octaves`, `MidiNote`, `Velocity`, `MidiChannel`
-- **Amplitude:** `Gain`, `Decibels`, `Ratio`, `Amplitude`
-- **Time:** `Seconds`, `Milliseconds`, `Bpm`, `BeatDivision`, `BeatPosition`
-- **Normalized:** `NormalizedValue` (0.0–1.0), `BipolarValue` (-1.0–1.0), `Phase` (0.0–1.0)
-- **Samples:** `SampleCount`, `SamplePosition`, `BlockSize`
-- **Audio:** `BufferIndex`, `FrameCount`, `NoiseState`, `FilterState`, `VoiceCount`, `CpuUsage`, `PatternIndex`
-- **Interned:** `PortName`
-- **Audio backend:** `SampleRate` (u32), `BufferSize`
+#### Existing domain types (examples, not exhaustive)
 
-**`synth_sequencer`** (13 types):
-- **IDs:** `PatternId`, `TrackId`, `SeqInstrumentId`, `NoteId`
-- **Indices:** `TrackIndex`, `RowIndex`, `TrackCount`, `RowCount`, `TicksPerRow`
-- **Time:** `Tick` (absolute), `PatternTick` (pattern-local), `Duration` (in ticks)
-- **Pitch:** `Pitch` (0–127)
-
-**`synth_engine`** (5 types):
-- `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`
-
-**`synth_awe`** (6 types):
-- **Physical:** `Meters`, `SquareMeters`, `CubicMeters`, `MetersPerSecond`
-- **Audio:** `SampleOffset`, `StretchFactor`
+| Crate | Examples |
+|-------|----------|
+| `synth_core` | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName` |
+| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex` |
+| `synth_engine` | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount` |
+| `synth_awe` | `Meters`, `SquareMeters`, `CubicMeters`, `SampleOffset`, `StretchFactor` |
 
 ### Naming Conventions
 
@@ -82,73 +64,85 @@ fn quantize(tick: PatternTick, grid: Duration) { ... }
 - **Constants:** `SCREAMING_SNAKE_CASE` — `Hertz::A4`, `Gain::UNITY`
 - **Use `Self`** in impl blocks, not the type name
 
+### Error Handling
+
+- **`thiserror`** for all error types — no manual `Display + Error` impls
+- Return `Result<T, E>` with descriptive error variants, not stringly-typed errors
+- No `.unwrap()` or `.expect()` in production code — use `unwrap_or`, `unwrap_or_default`, `?`, or `if let`
+- `.unwrap()`/`.expect()` allowed in: tests, one-time init guaranteed to succeed
+
+### Code Organization
+
+- **`pub(crate)`** for internal types where reasonable — minimize public API surface
+- **`#[must_use]`** on newtypes, builder methods, and functions whose return values shouldn't be ignored
+- **No `unsafe` code** — discuss first if absolutely necessary
+- Prefer composition over deep inheritance-like trait hierarchies
+- Keep modules focused — split when a file exceeds ~500 lines
+
 ---
 
 ## Build & Code Quality
 
 ### Required Checks
 
-Before a task is considered done, ALL of the following must pass with zero warnings or errors:
+Before a task is done, ALL must pass with **zero warnings or errors**:
 
 ```bash
-# Step 1: Compile (RUSTFLAGS="-D warnings" configured in .cargo/config.toml)
-cargo build
-
-# Step 2: Clippy (lints configured in Cargo.toml)
-cargo clippy --all-targets
-
-# Step 3: Run all tests
+cargo build                  # RUSTFLAGS="-D warnings" in .cargo/config.toml
+cargo clippy --all-targets   # Lints configured in Cargo.toml
 cargo test
-
-# Step 4: Check formatting
 cargo fmt --check
 ```
 
-### Strict Rules
+### Allowed Clippy Exceptions
 
-1. **No `.unwrap()` or `.expect()` in production code** — use `unwrap_or`, `unwrap_or_default`, `?`, or `if let`
-2. **No `unsafe` code** — discuss first if absolutely necessary
-3. **`pub(crate)`** for internal types where reasonable
-4. **`#[must_use]`** on newtypes, builder methods, and functions returning values that shouldn't be ignored
-5. **`thiserror`** for all error types — no manual `Display + Error` impls
-
-### Allowed Exceptions
-
-These clippy allows are OK:
 ```rust
-#[allow(clippy::too_many_lines)]           // On large process() functions
+#[allow(clippy::too_many_lines)]           // Large process() functions
 #[allow(clippy::cast_precision_loss)]      // usize -> f32 in audio
-#[allow(clippy::cast_possible_truncation)] // Where value is guaranteed to fit
+#[allow(clippy::cast_possible_truncation)] // Value guaranteed to fit
 ```
 
-`.unwrap()` and `.expect()` are allowed in:
-- Tests
-- One-time initializations guaranteed to succeed (e.g., regex, constants)
+---
+
+## Testing
+
+- Test public behavior, not implementation details
+- Use descriptive test names: `test_velocity_clamps_to_valid_range`, not `test1`
+- Prefer small focused tests over large integration tests
+- Use `assert_eq!` / `assert_ne!` with meaningful messages for non-obvious comparisons
 
 ---
 
 ## Real-Time Safety (audio thread)
 
-In `process()` functions and other real-time-critical code:
+In `process()` functions and real-time-critical code:
 
 ### Forbidden
 - **Heap allocations:** `Vec::push`, `HashMap::insert`, `String::clone`, `Box::new`
 - **Blocking locks:** `Mutex::lock`, `RwLock::write`
 - **Panics:** `unwrap()`, `expect()`, `panic!`, out-of-bounds indexing
+- **System calls:** file I/O, logging, printing
 
 ### Allowed
 - `unwrap_or(0.0)` for safe sample defaults
 - Pre-allocated buffers
-- Atomic operations
-- Lock-free structures
+- Atomic operations and lock-free structures
 
 ### For-loops vs Iterators
 
-**Keep for-loops** in audio DSP for sample processing:
+**For-loops** in audio DSP sample processing:
 ```rust
 for i in 0..samples {
     output[i] = input[i] * gain;
 }
 ```
 
-**Use iterators** outside the hot path for collection operations.
+**Iterators** outside the hot path for collection operations.
+
+---
+
+## GUI (egui)
+
+- Keep UI code separate from business logic
+- Avoid allocations in per-frame rendering where possible
+- Use `egui::Id` for stable widget identity across frames
