@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext,
-    TuringMachineParam, TuringScale, WidgetHint,
+    StepCount, TuringMachineParam, TuringScale, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -26,7 +26,7 @@ pub struct TuringMachine {
     mutation_rate: NormalizedValue,
     range: NormalizedValue,
     scale: TuringScale,
-    length: u8,
+    length: StepCount,
 
     // State
     shift_register: u16,
@@ -50,7 +50,7 @@ impl TuringMachine {
             mutation_rate: NormalizedValue::CENTER,
             range: NormalizedValue::new(0.5),
             scale: TuringScale::default(),
-            length: 16,
+            length: StepCount::new(16),
 
             shift_register: 0xACE1, // Initial seed
             sample_rate: SampleRate::DVD_QUALITY,
@@ -78,14 +78,15 @@ impl TuringMachine {
     /// Advance the shift register by one step.
     fn step(&mut self) {
         let mutation = self.mutation_rate.as_f32();
-        let mask = if self.length >= 16 {
+        let length = self.length.as_u8();
+        let mask = if length >= 16 {
             0xFFFF
         } else {
-            (1u16 << self.length) - 1
+            (1u16 << length) - 1
         };
 
         // Get the bit that's about to fall off
-        let feedback_bit = (self.shift_register >> (self.length - 1)) & 1;
+        let feedback_bit = (self.shift_register >> (length - 1)) & 1;
 
         // Mutation: probability of flipping the feedback bit
         let bit = if mutation < 0.01 {
@@ -192,7 +193,7 @@ impl Describable for TuringMachine {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::TuringMachine(TuringMachineParam::Length(16)),
+                    Param::TuringMachine(TuringMachineParam::Length(StepCount::new(16))),
                     "Length",
                 )
                 .description("Shift register length (8 or 16)")
@@ -273,7 +274,9 @@ impl PolyModule for TuringMachine {
                 TuringMachineParam::MutationRate(v) => self.mutation_rate = v,
                 TuringMachineParam::Range(v) => self.range = v,
                 TuringMachineParam::Scale(s) => self.scale = s,
-                TuringMachineParam::Length(n) => self.length = if n > 12 { 16 } else { 8 },
+                TuringMachineParam::Length(n) => {
+                    self.length = StepCount::new(if n.as_u8() > 12 { 16 } else { 8 })
+                }
             }
         }
     }
@@ -284,7 +287,7 @@ impl PolyModule for TuringMachine {
                 TuringMachineParam::MutationRate(_) => self.mutation_rate.as_f32(),
                 TuringMachineParam::Range(_) => self.range.as_f32(),
                 TuringMachineParam::Scale(_) => self.scale.index() as f32,
-                TuringMachineParam::Length(_) => self.length as f32,
+                TuringMachineParam::Length(_) => self.length.as_f32(),
             })
         } else {
             None
@@ -327,7 +330,7 @@ mod tests {
     #[test]
     fn test_turing_machine_creation() {
         let tm = TuringMachine::new();
-        assert_eq!(tm.length, 16);
+        assert_eq!(tm.length, StepCount::new(16));
     }
 
     #[test]

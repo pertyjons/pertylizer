@@ -3,7 +3,7 @@
 //! Generates short sine wave clicks at beat boundaries.
 //! Fully real-time safe — no heap allocations.
 
-use synth_core::{Gain, Hertz, Milliseconds, Phase, SampleCount};
+use synth_core::{Gain, Hertz, Milliseconds, Phase, SampleCount, SampleRate};
 
 /// Frequency for accented clicks (beat 1).
 const ACCENT_FREQ: Hertz = Hertz(1200.0);
@@ -39,11 +39,11 @@ pub(crate) struct ClickGenerator {
 
 impl ClickGenerator {
     /// Create a new click generator.
-    pub(crate) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         Self {
             enabled: false,
             volume: Gain::new(0.6),
-            sample_rate: synth_core::SampleRate::new(sample_rate),
+            sample_rate,
             click_remaining: SampleCount::ZERO,
             click_total: SampleCount::ZERO,
             accented: false,
@@ -63,8 +63,8 @@ impl ClickGenerator {
     }
 
     /// Set the volume (0.0–1.0).
-    pub(crate) fn set_volume(&mut self, volume: f32) {
-        self.volume = Gain::new(volume.clamp(0.0, 1.0));
+    pub(crate) fn set_volume(&mut self, volume: Gain) {
+        self.volume = volume;
     }
 
     /// Trigger a click sound.
@@ -125,8 +125,8 @@ impl ClickGenerator {
     }
 
     /// Update sample rate (e.g., on stream start).
-    pub(crate) fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = synth_core::SampleRate::new(sample_rate);
+    pub(crate) fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.sample_rate = sample_rate;
     }
 }
 
@@ -136,14 +136,14 @@ mod tests {
 
     #[test]
     fn test_click_generator_creation() {
-        let click = ClickGenerator::new(44100.0);
+        let click = ClickGenerator::new(SampleRate::new(44100.0));
         assert!(!click.is_enabled());
         assert_eq!(click.click_remaining.as_usize(), 0);
     }
 
     #[test]
     fn test_trigger_click() {
-        let mut click = ClickGenerator::new(44100.0);
+        let mut click = ClickGenerator::new(SampleRate::new(44100.0));
         click.trigger_click(true);
 
         #[allow(clippy::cast_possible_truncation)]
@@ -154,8 +154,8 @@ mod tests {
 
     #[test]
     fn test_process_generates_audio() {
-        let mut click = ClickGenerator::new(44100.0);
-        click.set_volume(1.0);
+        let mut click = ClickGenerator::new(SampleRate::new(44100.0));
+        click.set_volume(Gain::new(1.0));
         click.trigger_click(false);
 
         let mut buffer = vec![0.0_f32; 256]; // 128 frames stereo
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_process_no_click() {
-        let mut click = ClickGenerator::new(44100.0);
+        let mut click = ClickGenerator::new(SampleRate::new(44100.0));
         let mut buffer = vec![0.0_f32; 256];
         click.process(&mut buffer, 128);
 
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_click_finishes() {
-        let mut click = ClickGenerator::new(44100.0);
+        let mut click = ClickGenerator::new(SampleRate::new(44100.0));
         click.trigger_click(false);
 
         // Process enough frames to exhaust the click

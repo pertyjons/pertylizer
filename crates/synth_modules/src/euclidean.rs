@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, EuclideanParam, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, NormalizedValue, Param, ParameterDescriptor, PolyModule, PortDescriptor,
-    ProcessContext, WidgetHint,
+    ProcessContext, StepCount, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -19,9 +19,9 @@ const MAX_STEPS: usize = 32;
 #[derive(Clone)]
 pub struct Euclidean {
     // Parameters
-    steps: u8,
-    pulses: u8,
-    rotation: u8,
+    steps: StepCount,
+    pulses: StepCount,
+    rotation: StepCount,
     swing: NormalizedValue,
 
     // State
@@ -40,9 +40,9 @@ pub struct Euclidean {
 impl Euclidean {
     pub fn new() -> Self {
         let mut s = Self {
-            steps: 16,
-            pulses: 4,
-            rotation: 0,
+            steps: StepCount::new(16),
+            pulses: StepCount::new(4),
+            rotation: StepCount::new(0),
             swing: NormalizedValue::MIN,
 
             pattern: [false; MAX_STEPS],
@@ -61,9 +61,9 @@ impl Euclidean {
 
     /// Björklund algorithm to generate Euclidean rhythm.
     fn rebuild_pattern(&mut self) {
-        let steps = self.steps as usize;
-        let pulses = (self.pulses as usize).min(steps);
-        let rotation = (self.rotation as usize) % steps.max(1);
+        let steps = self.steps.as_usize();
+        let pulses = self.pulses.as_usize().min(steps);
+        let rotation = self.rotation.as_usize() % steps.max(1);
 
         // Clear pattern
         self.pattern.fill(false);
@@ -166,22 +166,28 @@ impl Describable for Euclidean {
             .tag("generative")
             .tag("sequencer")
             .parameter(
-                ParameterDescriptor::float(Param::Euclidean(EuclideanParam::Steps(16)), "Steps")
-                    .description("Number of steps in the pattern")
-                    .range(1.0, 32.0)
-                    .default(16.0)
-                    .widget(WidgetHint::Knob),
-            )
-            .parameter(
-                ParameterDescriptor::float(Param::Euclidean(EuclideanParam::Pulses(4)), "Pulses")
-                    .description("Number of active pulses")
-                    .range(0.0, 32.0)
-                    .default(4.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    Param::Euclidean(EuclideanParam::Steps(StepCount::new(16))),
+                    "Steps",
+                )
+                .description("Number of steps in the pattern")
+                .range(1.0, 32.0)
+                .default(16.0)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::Euclidean(EuclideanParam::Rotation(0)),
+                    Param::Euclidean(EuclideanParam::Pulses(StepCount::new(4))),
+                    "Pulses",
+                )
+                .description("Number of active pulses")
+                .range(0.0, 32.0)
+                .default(4.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    Param::Euclidean(EuclideanParam::Rotation(StepCount::new(0))),
                     "Rotation",
                 )
                 .description("Pattern rotation offset")
@@ -225,7 +231,7 @@ impl PolyModule for Euclidean {
         let bpm = context.tempo.as_f32().max(20.0);
         self.samples_per_step = self.sample_rate.as_f32() * 60.0 / bpm / 4.0;
 
-        let steps = self.steps as usize;
+        let steps = self.steps.as_usize();
         let swing_amount = self.swing.as_f32() * 0.33; // Max 33% swing
 
         for i in 0..num_samples {
@@ -288,15 +294,15 @@ impl PolyModule for Euclidean {
         if let Param::Euclidean(p) = param {
             match p {
                 EuclideanParam::Steps(n) => {
-                    self.steps = n.clamp(1, 32);
+                    self.steps = StepCount::new(n.as_u8().clamp(1, 32));
                     self.rebuild_pattern();
                 }
                 EuclideanParam::Pulses(n) => {
-                    self.pulses = n.min(32);
+                    self.pulses = StepCount::new(n.as_u8().min(32));
                     self.rebuild_pattern();
                 }
                 EuclideanParam::Rotation(n) => {
-                    self.rotation = n.min(31);
+                    self.rotation = StepCount::new(n.as_u8().min(31));
                     self.rebuild_pattern();
                 }
                 EuclideanParam::Swing(v) => self.swing = v,
@@ -307,9 +313,9 @@ impl PolyModule for Euclidean {
     fn get_param(&self, param: &Param) -> Option<f32> {
         if let Param::Euclidean(p) = param {
             Some(match p {
-                EuclideanParam::Steps(_) => self.steps as f32,
-                EuclideanParam::Pulses(_) => self.pulses as f32,
-                EuclideanParam::Rotation(_) => self.rotation as f32,
+                EuclideanParam::Steps(_) => self.steps.as_f32(),
+                EuclideanParam::Pulses(_) => self.pulses.as_f32(),
+                EuclideanParam::Rotation(_) => self.rotation.as_f32(),
                 EuclideanParam::Swing(_) => self.swing.as_f32(),
             })
         } else {
@@ -354,8 +360,8 @@ mod tests {
     #[test]
     fn test_euclidean_pattern_4_16() {
         let mut seq = Euclidean::new();
-        seq.steps = 16;
-        seq.pulses = 4;
+        seq.steps = StepCount::new(16);
+        seq.pulses = StepCount::new(4);
         seq.rebuild_pattern();
 
         let active: usize = seq.pattern[..16].iter().filter(|&&x| x).count();
@@ -365,8 +371,8 @@ mod tests {
     #[test]
     fn test_euclidean_pattern_all_pulses() {
         let mut seq = Euclidean::new();
-        seq.steps = 8;
-        seq.pulses = 8;
+        seq.steps = StepCount::new(8);
+        seq.pulses = StepCount::new(8);
         seq.rebuild_pattern();
 
         let active: usize = seq.pattern[..8].iter().filter(|&&x| x).count();

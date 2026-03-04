@@ -17,7 +17,7 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity,
+    Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName, SampleRate, Velocity,
 };
 use synth_core::{ModuleType, Param, WavetableParam, WavetableSelect};
 
@@ -30,7 +30,7 @@ pub struct WavetableOsc {
     table: WavetableSelect,
     position: NormalizedValue,
     detune: Cents,
-    octave: i8,
+    octave: Octaves,
     level: Gain,
 
     // State
@@ -48,7 +48,7 @@ impl WavetableOsc {
             table: WavetableSelect::default(),
             position: NormalizedValue::MIN,
             detune: Cents::ZERO,
-            octave: 0,
+            octave: Octaves::ZERO,
             level: Gain::new(0.8),
             phase: Phase::ZERO,
             note_freq: Hertz::A4,
@@ -63,8 +63,8 @@ impl WavetableOsc {
         let mut freq = self.note_freq.as_f32();
 
         // Apply octave offset
-        if self.octave != 0 {
-            freq *= (2.0_f32).powi(i32::from(self.octave));
+        if self.octave != Octaves::ZERO {
+            freq *= (2.0_f32).powi(self.octave.as_i32());
         }
 
         // Apply detune in cents
@@ -124,7 +124,7 @@ impl Describable for WavetableOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
-                    Param::WavetableOsc(WavetableParam::Octave(0)),
+                    Param::WavetableOsc(WavetableParam::Octave(Octaves::ZERO)),
                     "Octave",
                 )
                 .description("Octave offset (-2 to +2)")
@@ -218,7 +218,7 @@ impl PolyModule for WavetableOsc {
                 WavetableParam::Detune(c) => {
                     self.detune = Cents::new(c.as_f32().clamp(-100.0, 100.0));
                 }
-                WavetableParam::Octave(o) => self.octave = o.clamp(-2, 2),
+                WavetableParam::Octave(o) => self.octave = Octaves::new(o.as_i32().clamp(-2, 2)),
                 WavetableParam::Level(g) => {
                     self.level = Gain::new(g.as_f32().clamp(0.0, 1.0));
                 }
@@ -232,7 +232,7 @@ impl PolyModule for WavetableOsc {
                 WavetableParam::Table(_) => self.table.index() as f32,
                 WavetableParam::Position(_) => self.position.as_f32(),
                 WavetableParam::Detune(_) => self.detune.as_f32(),
-                WavetableParam::Octave(_) => f32::from(self.octave),
+                WavetableParam::Octave(_) => self.octave.as_i32() as f32,
                 WavetableParam::Level(_) => self.level.as_f32(),
             })
         } else {
@@ -280,7 +280,7 @@ mod tests {
     fn test_wavetable_osc_creation() {
         let wt = WavetableOsc::new();
         assert_eq!(wt.table, WavetableSelect::Basic);
-        assert_eq!(wt.octave, 0);
+        assert_eq!(wt.octave, Octaves::ZERO);
     }
 
     #[test]
@@ -317,8 +317,10 @@ mod tests {
         )));
         assert!((wt.position.as_f32() - 0.5).abs() < 0.001);
 
-        wt.set_param(Param::WavetableOsc(WavetableParam::Octave(-1)));
-        assert_eq!(wt.octave, -1);
+        wt.set_param(Param::WavetableOsc(WavetableParam::Octave(Octaves::new(
+            -1,
+        ))));
+        assert_eq!(wt.octave, Octaves::new(-1));
 
         let params = wt.get_params();
         assert_eq!(params.len(), 5);

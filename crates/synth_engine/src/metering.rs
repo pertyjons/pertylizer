@@ -5,7 +5,7 @@
 use ringbuf::traits::Producer;
 use std::sync::Arc;
 
-use synth_core::Amplitude;
+use synth_core::{Amplitude, SampleRate};
 
 use crate::commands::EngineEvent;
 use crate::state::EngineState;
@@ -29,10 +29,10 @@ pub struct MeteringSystem {
 impl MeteringSystem {
     /// Create a new metering system with the given sample rate.
     #[allow(clippy::cast_possible_truncation)]
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: SampleRate) -> Self {
         Self {
             counter: 0,
-            interval: (sample_rate / 24.0) as usize, // ~24 updates per second
+            interval: (sample_rate.as_f32() / 24.0) as usize, // ~24 updates per second
             peak_left: Amplitude::ZERO,
             peak_right: Amplitude::ZERO,
             rms_sum_left: 0.0,
@@ -42,8 +42,8 @@ impl MeteringSystem {
 
     /// Set the sample rate and update the meter interval.
     #[allow(clippy::cast_possible_truncation)]
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.interval = (sample_rate / 24.0) as usize;
+    pub fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        self.interval = (sample_rate.as_f32() / 24.0) as usize;
     }
 
     /// Update meters with output audio data.
@@ -109,6 +109,6 @@ impl MeteringSystem {
 
 impl Default for MeteringSystem {
     fn default() -> Self {
-        Self::new(48000.0)
+        Self::new(SampleRate::DVD_QUALITY)
     }
 }

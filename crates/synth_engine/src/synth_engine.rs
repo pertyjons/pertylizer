@@ -450,12 +450,14 @@ impl SynthEngine {
             master_volume: 1.0,
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(1024),
-            metering: MeteringSystem::new(48000.0),
+            metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
             instrument_mapping,
             recording: crate::recording::RecordingBuffer::new(),
-            click_generator: crate::click_generator::ClickGenerator::new(48000.0),
+            click_generator: crate::click_generator::ClickGenerator::new(
+                synth_core::SampleRate::DVD_QUALITY,
+            ),
             pre_record_loop: None,
             callback_duration_sum: 0.0,
             callback_count: 0,
@@ -1000,7 +1002,7 @@ impl SynthEngine {
                 self.state.transport.set_metronome(enabled);
             }
             EngineCommand::SetMetronomeVolume(vol) => {
-                self.click_generator.set_volume(vol.as_f32());
+                self.click_generator.set_volume(vol);
             }
 
             EngineCommand::SetTempo(bpm) => {
@@ -2185,10 +2187,10 @@ impl AudioProcessor for SynthEngine {
     fn on_stream_start(&mut self, info: &StreamInfo) {
         self.sample_rate = info.sample_rate.as_f32();
         self.state.sample_rate.store(info.sample_rate.0);
-        self.metering.set_sample_rate(self.sample_rate);
-        self.sequencer
-            .set_sample_rate(synth_core::SampleRate::new(self.sample_rate));
-        self.click_generator.set_sample_rate(self.sample_rate);
+        let sr = SampleRate::new(self.sample_rate);
+        self.metering.set_sample_rate(sr);
+        self.sequencer.set_sample_rate(sr);
+        self.click_generator.set_sample_rate(sr);
         // AWE delay lines depend on sample rate — recalculate on next process()
         self.awe_engine.mark_geometry_dirty();
     }

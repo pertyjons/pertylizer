@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::NormalizedValue;
+use crate::types::{NormalizedValue, StepCount};
 
 // ============================================================================
 // EUCLIDEAN SEQUENCER
@@ -12,11 +12,11 @@ use crate::types::NormalizedValue;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum EuclideanParam {
     /// Number of steps (1-32).
-    Steps(u8),
+    Steps(StepCount),
     /// Number of pulses (0-steps).
-    Pulses(u8),
+    Pulses(StepCount),
     /// Rotation offset (0-steps).
-    Rotation(u8),
+    Rotation(StepCount),
     /// Swing amount.
     Swing(NormalizedValue),
 }
@@ -37,16 +37,16 @@ impl EuclideanParam {
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Steps(n) | Self::Pulses(n) | Self::Rotation(n) => *n as f32,
+            Self::Steps(n) | Self::Pulses(n) | Self::Rotation(n) => n.as_f32(),
             Self::Swing(v) => v.as_f32(),
         }
     }
 
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Steps(_) => Self::Steps((value as u8).clamp(1, 32)),
-            Self::Pulses(_) => Self::Pulses((value as u8).min(32)),
-            Self::Rotation(_) => Self::Rotation((value as u8).min(31)),
+            Self::Steps(_) => Self::Steps(StepCount::new((value as u8).clamp(1, 32))),
+            Self::Pulses(_) => Self::Pulses(StepCount::new((value as u8).min(32))),
+            Self::Rotation(_) => Self::Rotation(StepCount::new((value as u8).min(31))),
             Self::Swing(_) => Self::Swing(NormalizedValue::new(value)),
         }
     }
@@ -54,7 +54,7 @@ impl EuclideanParam {
 
 impl Default for EuclideanParam {
     fn default() -> Self {
-        Self::Steps(16)
+        Self::Steps(StepCount::new(16))
     }
 }
 
@@ -119,7 +119,7 @@ pub enum TuringMachineParam {
     /// Scale quantization.
     Scale(TuringScale),
     /// Number of register bits (8 or 16).
-    Length(u8),
+    Length(StepCount),
 }
 
 impl TuringMachineParam {
@@ -140,7 +140,7 @@ impl TuringMachineParam {
         match self {
             Self::MutationRate(v) | Self::Range(v) => v.as_f32(),
             Self::Scale(s) => s.index() as f32,
-            Self::Length(n) => *n as f32,
+            Self::Length(n) => n.as_f32(),
         }
     }
 
@@ -151,7 +151,7 @@ impl TuringMachineParam {
             Self::Scale(_) => {
                 Self::Scale(TuringScale::from_index(value as usize).unwrap_or_default())
             }
-            Self::Length(_) => Self::Length(if value > 12.0 { 16 } else { 8 }),
+            Self::Length(_) => Self::Length(StepCount::new(if value > 12.0 { 16 } else { 8 })),
         }
     }
 }

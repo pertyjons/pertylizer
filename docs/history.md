@@ -1,5 +1,14 @@
 # Version History
 
+## [0.211.0] - 2026-03-05
+### Deep newtype enforcement pass 2
+- **New `StepCount(u8)` type** — for step-based pattern counts in generative modules (Euclidean, Turing Machine)
+- **Param enum newtype upgrades** — `EuclideanParam::Steps/Pulses/Rotation` → `StepCount`, `TuringMachineParam::Length` → `StepCount`, `ModalResonatorParam::Modes` → `VoiceCount`, `WavetableParam::Octave` → `Octaves`
+- **synth_engine function signatures** — `click_generator`, `cpu_tracker`, `metering` params changed from raw `f32`/`usize` to `SampleRate`/`Gain`/`BlockSize`
+- **synth_sequencer input types** — `base_octave` → `Octaves`, `semitones` → `Semitones`, `strength` → `NormalizedValue`, `SetTempo` → `Bpm`
+- **Piano roll GUI types** — `DragState`, `ClipboardNote`, `PianoRollNote`, `SequencerViewState`, `AutomationPointSnapshot`, `PianoRollData` fields replaced with `PatternTick`/`Pitch`/`Duration`/`Tick`/`Velocity`/`NormalizedValue`
+- **Code quality cleanup** — removed redundant clamping, fixed semantic type mismatches (`ClipboardNote.tick_offset` → `SeqDuration`), `SetMetronomeVolume` → `Gain`
+
 ## [0.210.0] - 2026-03-04
 ### Newtype enforcement, build optimization, project docs
 - **Newtype pattern enforcement** — replaced raw primitives with domain types across all crates (47 files, ~140 violations fixed): `Gain`, `BipolarValue`, `NormalizedValue`, `Phase`, `Hertz`, `Seconds`, `FilterState`, `SampleCount`, `Amplitude`, `CpuUsage`, `Velocity`, `Bpm`, `Pitch`, `RowCount`, `TicksPerRow`, `RowIndex`, `Duration`, `BlockSize`, `SampleRate`, `SamplePosition`, `Semitones`, `VoiceCount`

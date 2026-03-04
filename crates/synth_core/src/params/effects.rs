@@ -1066,7 +1066,7 @@ impl Default for SpectralBlurParam {
 pub enum ModalResonatorParam {
     BaseNote(MidiNote),
     Spread(NormalizedValue),
-    Modes(u8),
+    Modes(VoiceCount),
     Decay(NormalizedValue),
     Brightness(NormalizedValue),
     Mix(NormalizedValue),
@@ -1092,7 +1092,7 @@ impl ModalResonatorParam {
         match self {
             Self::BaseNote(n) => n.as_u8() as f32,
             Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => v.as_f32(),
-            Self::Modes(m) => *m as f32,
+            Self::Modes(m) => m.as_u8() as f32,
         }
     }
 
@@ -1100,7 +1100,7 @@ impl ModalResonatorParam {
         match self {
             Self::BaseNote(_) => Self::BaseNote(MidiNote::new(value as u8)),
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
-            Self::Modes(_) => Self::Modes(value as u8),
+            Self::Modes(_) => Self::Modes(VoiceCount::new(value as u8)),
             Self::Decay(_) => Self::Decay(NormalizedValue::new(value)),
             Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),

@@ -95,34 +95,34 @@ enum DragState {
     /// Drag-move a note.
     MoveNote {
         note_id: NoteId,
-        original_tick: u32,
-        original_pitch: u8,
-        current_tick: u32,
-        current_pitch: u8,
+        original_tick: PatternTick,
+        original_pitch: Pitch,
+        current_tick: PatternTick,
+        current_pitch: Pitch,
         /// Offset from note start to where the mouse grabbed (in ticks).
-        grab_offset_ticks: u32,
+        grab_offset_ticks: SeqDuration,
     },
     /// Drag-resize a note (right edge).
     ResizeNote {
         note_id: NoteId,
-        original_end_tick: u32,
-        current_end_tick: u32,
+        original_end_tick: PatternTick,
+        current_end_tick: PatternTick,
     },
     /// Draw a new note by dragging (Draw tool on empty space).
     DrawNote {
-        start_tick: u32,
-        pitch: u8,
-        current_end_tick: u32,
+        start_tick: PatternTick,
+        pitch: Pitch,
+        current_end_tick: PatternTick,
     },
     /// Selection rectangle (lasso).
     SelectRect { start_pos: Pos2, current_pos: Pos2 },
     /// Drag-move an automation point.
     DragAutomationPoint {
         target: AutomationTarget,
-        original_tick: u32,
-        original_value: f32,
-        current_tick: u32,
-        current_value: f32,
+        original_tick: PatternTick,
+        original_value: NormalizedValue,
+        current_tick: PatternTick,
+        current_value: NormalizedValue,
     },
     /// Drag-edit a velocity bar.
     DragVelocity {
@@ -133,13 +133,13 @@ enum DragState {
     DragPlacement {
         pattern_id: PatternId,
         track_id: TrackId,
-        start_tick: u64,
+        start_tick: Tick,
         /// Current drag tick position (snapped to grid).
-        current_tick: u64,
+        current_tick: Tick,
         /// Current target track ID.
         current_track_id: TrackId,
         /// Offset from placement start to where mouse grabbed (in ticks).
-        grab_offset_ticks: u64,
+        grab_offset_ticks: Tick,
     },
 }
 
@@ -150,10 +150,10 @@ enum DragState {
 /// A note stored in the clipboard, with position relative to the selection origin.
 #[derive(Debug, Clone)]
 struct ClipboardNote {
-    tick_offset: u32,
+    tick_offset: SeqDuration,
     pitch: Pitch,
     velocity: Velocity,
-    duration: Option<u32>,
+    duration: Option<SeqDuration>,
     instrument: SeqInstrumentId,
 }
 
@@ -162,7 +162,7 @@ struct ClipboardNote {
 struct Clipboard {
     notes: Vec<ClipboardNote>,
     /// Total width of the copied selection (max end - min start), in ticks.
-    selection_width: u32,
+    selection_width: SeqDuration,
 }
 
 // ============================================================================
@@ -174,11 +174,11 @@ pub struct SequencerViewState {
     /// Clipboard for copy/paste operations.
     clipboard: Clipboard,
     /// Default velocity for newly drawn/recorded notes (0.0-1.0).
-    pub default_velocity: f32,
+    pub default_velocity: Velocity,
     /// Quantization strength for the quantize button (0.0-1.0).
-    quantize_strength: f32,
+    quantize_strength: NormalizedValue,
     /// Swing amount (0.0-1.0, 0.0 = no swing).
-    swing_amount: f32,
+    swing_amount: NormalizedValue,
     /// Velocity scale factor for scale-velocities operation (1–200%).
     velocity_scale_pct: u32,
     /// Draw-mode grid resolution in ticks (0 = use pattern default).
@@ -188,7 +188,7 @@ pub struct SequencerViewState {
     /// Step entry mode enabled.
     step_entry_mode: bool,
     /// Step entry cursor position.
-    step_cursor_tick: u32,
+    step_cursor_tick: PatternTick,
     /// Currently opened pattern (None = piano roll closed).
     opened_pattern: Option<PatternId>,
     /// Currently selected notes.
@@ -235,14 +235,14 @@ impl SequencerViewState {
     pub fn new() -> Self {
         Self {
             clipboard: Clipboard::default(),
-            default_velocity: 0.8,
-            quantize_strength: 1.0,
-            swing_amount: 0.0,
+            default_velocity: Velocity::new(0.8),
+            quantize_strength: NormalizedValue::new(1.0),
+            swing_amount: NormalizedValue::new(0.0),
             velocity_scale_pct: 100,
             draw_grid_resolution: 0,
             draw_note_length: 0,
             step_entry_mode: false,
-            step_cursor_tick: 0,
+            step_cursor_tick: PatternTick::ZERO,
             opened_pattern: None,
             selected_notes: HashSet::new(),
             edit_tool: EditTool::Draw,
@@ -1396,10 +1396,10 @@ fn draw_arrangement(
                     view_state.drag = Some(DragState::DragPlacement {
                         pattern_id: *pat_id,
                         track_id: *trk_id,
-                        start_tick: *start_tick,
-                        current_tick: *start_tick,
+                        start_tick: Tick(*start_tick),
+                        current_tick: Tick(*start_tick),
                         current_track_id: *trk_id,
-                        grab_offset_ticks: grab_tick.saturating_sub(*start_tick),
+                        grab_offset_ticks: Tick(grab_tick.saturating_sub(*start_tick)),
                     });
                 }
             }
@@ -1414,13 +1414,13 @@ fn draw_arrangement(
                 }) = &mut view_state.drag
                 && let Some(pos) = response.interact_pointer_pos()
             {
-                let raw_tick = x_to_tick(pos.x).saturating_sub(*grab_offset_ticks);
+                let raw_tick = x_to_tick(pos.x).saturating_sub(grab_offset_ticks.0);
                 // Snap to beat grid
-                *current_tick = if ticks_per_beat > 0 {
+                *current_tick = Tick(if ticks_per_beat > 0 {
                     (raw_tick / ticks_per_beat) * ticks_per_beat
                 } else {
                     raw_tick
-                };
+                });
                 if let Some(row_idx) = y_to_row(pos.y) {
                     *current_track_id = data.tracks[row_idx].id;
                 }
@@ -1444,9 +1444,9 @@ fn draw_arrangement(
                     song_w.move_placement(
                         pattern_id,
                         track_id,
-                        Tick(start_tick),
+                        start_tick,
                         current_track_id,
-                        Tick(current_tick),
+                        current_tick,
                     );
                 }
             }
@@ -1464,8 +1464,8 @@ fn draw_arrangement(
                     data.placements.iter().find(|p| p.pattern_id == *pattern_id)
                 {
                     let duration_ticks = placement.end_tick - placement.start_tick;
-                    let ghost_x = tick_to_x(*current_tick);
-                    let ghost_end_x = tick_to_x(*current_tick + duration_ticks);
+                    let ghost_x = tick_to_x(current_tick.0);
+                    let ghost_end_x = tick_to_x(current_tick.0 + duration_ticks);
                     if let Some(row_idx) =
                         data.tracks.iter().position(|t| t.id == *current_track_id)
                     {
@@ -1710,16 +1710,16 @@ fn draw_arrangement(
 /// Snapshot of a note for piano roll rendering.
 struct PianoRollNote {
     note_id: NoteId,
-    pitch: u8,
-    start_tick: u32,
-    end_tick: Option<u32>,
-    velocity: f32,
+    pitch: Pitch,
+    start_tick: PatternTick,
+    end_tick: Option<PatternTick>,
+    velocity: Velocity,
 }
 
 /// Snapshot of a single automation point for rendering.
 struct AutomationPointSnapshot {
-    tick: u32,
-    value: f32,
+    tick: PatternTick,
+    value: NormalizedValue,
     curve: CurveType,
 }
 
@@ -1733,11 +1733,11 @@ struct AutomationLaneSnapshot {
 struct PianoRollData {
     pattern_name: String,
     pattern_id: PatternId,
-    length_ticks: u32,
+    length_ticks: SeqDuration,
     ticks_per_row: u16,
     notes: Vec<PianoRollNote>,
-    pitch_min: u8,
-    pitch_max: u8,
+    pitch_min: Pitch,
+    pitch_max: Pitch,
     automation_lanes: Vec<AutomationLaneSnapshot>,
 }
 
@@ -1749,34 +1749,33 @@ fn collect_piano_roll_data(
     let song = song.try_read().ok()?;
     let pattern = song.pattern(pattern_id)?;
 
-    let mut pitch_min: u8 = 127;
-    let mut pitch_max: u8 = 0;
+    let mut pitch_min = Pitch::MAX;
+    let mut pitch_max = Pitch::MIN;
 
     let notes: Vec<PianoRollNote> = pattern
         .notes()
         .iter()
         .map(|n| {
-            let midi = n.pitch.as_midi();
-            if midi < pitch_min {
-                pitch_min = midi;
+            if n.pitch < pitch_min {
+                pitch_min = n.pitch;
             }
-            if midi > pitch_max {
-                pitch_max = midi;
+            if n.pitch > pitch_max {
+                pitch_max = n.pitch;
             }
             PianoRollNote {
                 note_id: n.id,
-                pitch: midi,
-                start_tick: n.start.0,
-                end_tick: n.end().map(|e| e.0),
-                velocity: n.velocity.as_f32(),
+                pitch: n.pitch,
+                start_tick: n.start,
+                end_tick: n.end(),
+                velocity: n.velocity,
             }
         })
         .collect();
 
     // Default range if no notes
     if pitch_min > pitch_max {
-        pitch_min = 48; // C3
-        pitch_max = 72; // C5
+        pitch_min = Pitch::new(48).unwrap_or(Pitch::MIDDLE_C); // C3
+        pitch_max = Pitch::new(72).unwrap_or(Pitch::MIDDLE_C); // C5
     }
 
     let automation_lanes: Vec<AutomationLaneSnapshot> = pattern
@@ -1788,8 +1787,8 @@ fn collect_piano_roll_data(
                 .points()
                 .iter()
                 .map(|p| AutomationPointSnapshot {
-                    tick: p.tick.0,
-                    value: p.value.as_f32(),
+                    tick: p.tick,
+                    value: p.value,
                     curve: p.curve,
                 })
                 .collect(),
@@ -1803,7 +1802,7 @@ fn collect_piano_roll_data(
             pattern.name.clone()
         },
         pattern_id,
-        length_ticks: pattern.length.0,
+        length_ticks: pattern.length,
         ticks_per_row: pattern.row_resolution.ticks_per_row.as_u16(),
         notes,
         pitch_min,
@@ -1816,11 +1815,11 @@ fn collect_piano_roll_data(
 fn note_at_pos(
     notes: &[PianoRollNote],
     pos: Pos2,
-    tick_to_x: &dyn Fn(u32) -> f32,
-    pitch_to_y: &dyn Fn(u8) -> f32,
-    length_ticks: u32,
-    view_pitch_min: u8,
-    view_pitch_max: u8,
+    tick_to_x: &dyn Fn(PatternTick) -> f32,
+    pitch_to_y: &dyn Fn(Pitch) -> f32,
+    length_ticks: SeqDuration,
+    view_pitch_min: Pitch,
+    view_pitch_max: Pitch,
 ) -> Option<(NoteId, HitZone)> {
     // Iterate in reverse so top-most (last drawn) notes are checked first
     for note in notes.iter().rev() {
@@ -1832,7 +1831,7 @@ fn note_at_pos(
         let x_start = tick_to_x(note.start_tick);
         let x_end = match note.end_tick {
             Some(end) => tick_to_x(end),
-            None => tick_to_x(length_ticks),
+            None => tick_to_x(PatternTick(length_ticks.0)),
         };
         let note_width = (x_end - x_start).max(3.0);
 
@@ -1863,19 +1862,21 @@ fn note_at_pos(
 }
 
 /// Check if a note already exists at the given tick and pitch.
-fn has_note_at(notes: &[PianoRollNote], tick: u32, pitch: u8) -> bool {
-    notes
-        .iter()
-        .any(|n| n.pitch == pitch && n.start_tick <= tick && n.end_tick.unwrap_or(u32::MAX) > tick)
+fn has_note_at(notes: &[PianoRollNote], tick: PatternTick, pitch: Pitch) -> bool {
+    notes.iter().any(|n| {
+        n.pitch == pitch
+            && n.start_tick <= tick
+            && n.end_tick.unwrap_or(PatternTick(u32::MAX)) > tick
+    })
 }
 
 /// Quantize a tick value to the nearest row boundary (floor).
-fn quantize_tick(tick: u32, ticks_per_row: u16) -> u32 {
+fn quantize_tick(tick: PatternTick, ticks_per_row: u16) -> PatternTick {
     if ticks_per_row == 0 {
         return tick;
     }
     let tpr = ticks_per_row as u32;
-    (tick / tpr) * tpr
+    PatternTick((tick.0 / tpr) * tpr)
 }
 
 /// Draw the piano roll in a bottom panel.
@@ -2117,7 +2118,7 @@ fn draw_piano_roll(
 
         // ── Default velocity ──
         ui.label(RichText::new("Vel:").color(t.colors.text_dim).size(10.0));
-        let mut vel_pct = (view_state.default_velocity * 100.0).round();
+        let mut vel_pct = (view_state.default_velocity.as_f32() * 100.0).round();
         if ui
             .add(
                 egui::DragValue::new(&mut vel_pct)
@@ -2127,7 +2128,7 @@ fn draw_piano_roll(
             )
             .changed()
         {
-            view_state.default_velocity = (vel_pct / 100.0).clamp(0.01, 1.0);
+            view_state.default_velocity = Velocity::new((vel_pct / 100.0).max(0.01));
         }
 
         // ── Quantize button ──
@@ -2138,7 +2139,7 @@ fn draw_piano_roll(
             )
             .on_hover_text(format!(
                 "Quantize selected (strength {:.0}%)",
-                view_state.quantize_strength * 100.0
+                view_state.quantize_strength.as_f32() * 100.0
             ))
             .clicked()
         {
@@ -2149,13 +2150,13 @@ fn draw_piano_roll(
                 pattern.quantize_selected(
                     &view_state.selected_notes,
                     grid,
-                    NormalizedValue::new(view_state.quantize_strength),
+                    view_state.quantize_strength,
                 );
             }
         }
 
         // ── Quantize strength (small drag value) ──
-        let mut q_str_pct = (view_state.quantize_strength * 100.0).round();
+        let mut q_str_pct = (view_state.quantize_strength.as_f32() * 100.0).round();
         if ui
             .add(
                 egui::DragValue::new(&mut q_str_pct)
@@ -2167,7 +2168,7 @@ fn draw_piano_roll(
             .on_hover_text("Quantize strength")
             .changed()
         {
-            view_state.quantize_strength = (q_str_pct / 100.0).clamp(0.0, 1.0);
+            view_state.quantize_strength = NormalizedValue::new(q_str_pct / 100.0);
         }
 
         // ── Humanize button ──
@@ -2192,7 +2193,7 @@ fn draw_piano_roll(
 
         // ── Swing control ──
         ui.label(RichText::new("Sw:").color(t.colors.text_dim).size(10.0));
-        let mut sw_pct = (view_state.swing_amount * 100.0).round();
+        let mut sw_pct = (view_state.swing_amount.as_f32() * 100.0).round();
         if ui
             .add(
                 egui::DragValue::new(&mut sw_pct)
@@ -2203,11 +2204,11 @@ fn draw_piano_roll(
             .on_hover_text("Swing amount (offset even subdivisions)")
             .changed()
         {
-            view_state.swing_amount = (sw_pct / 100.0).clamp(0.0, 1.0);
+            view_state.swing_amount = NormalizedValue::new(sw_pct / 100.0);
         }
         if ui
             .add_enabled(
-                !view_state.selected_notes.is_empty() && view_state.swing_amount > 0.0,
+                !view_state.selected_notes.is_empty() && view_state.swing_amount.as_f32() > 0.0,
                 egui::Button::new(RichText::new("Apply").color(t.colors.text_secondary)),
             )
             .on_hover_text("Apply swing to selected notes")
@@ -2217,11 +2218,7 @@ fn draw_piano_roll(
             if let Ok(mut song_w) = song.write()
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
-                pattern.apply_swing(
-                    &view_state.selected_notes,
-                    grid,
-                    NormalizedValue::new(view_state.swing_amount),
-                );
+                pattern.apply_swing(&view_state.selected_notes, grid, view_state.swing_amount);
             }
         }
 
@@ -2264,7 +2261,7 @@ fn draw_piano_roll(
         {
             view_state.step_entry_mode = !view_state.step_entry_mode;
             if view_state.step_entry_mode {
-                view_state.step_cursor_tick = 0;
+                view_state.step_cursor_tick = PatternTick::ZERO;
             }
         }
 
@@ -2296,8 +2293,8 @@ fn draw_piano_roll(
 
     // ── Pitch range with margin ──
     let margin = 6_u8;
-    let view_pitch_min = data.pitch_min.saturating_sub(margin);
-    let view_pitch_max = (data.pitch_max + margin).min(127);
+    let view_pitch_min = data.pitch_min.as_midi().saturating_sub(margin);
+    let view_pitch_max = (data.pitch_max.as_midi() + margin).min(127);
     let pitch_range = view_pitch_max - view_pitch_min + 1;
 
     let grid_height = pitch_range as f32 * NOTE_ROW_HEIGHT;
@@ -2315,8 +2312,8 @@ fn draw_piano_roll(
         .iter()
         .filter_map(|n| n.end_tick)
         .max()
-        .unwrap_or(0);
-    let effective_ticks = data.length_ticks.max(max_note_end);
+        .map_or(0, |t| t.0);
+    let effective_ticks = data.length_ticks.0.max(max_note_end);
     let beats_in_pattern = if ticks_per_beat > 0 {
         effective_ticks as f32 / ticks_per_beat as f32
     } else {
@@ -2349,34 +2346,35 @@ fn draw_piano_roll(
             let grid_y = origin.y;
 
             // Helper: tick to x position
-            let tick_to_x = |tick_val: u32| -> f32 {
+            let tick_to_x = |tick_val: PatternTick| -> f32 {
                 if ticks_per_beat == 0 {
                     return grid_x;
                 }
-                let beats = tick_val as f32 / ticks_per_beat as f32;
+                let beats = tick_val.0 as f32 / ticks_per_beat as f32;
                 grid_x + beats * PR_PIXELS_PER_BEAT
             };
 
             // Helper: pitch to y position (higher pitch = lower y, piano style)
-            let pitch_to_y = |pitch: u8| -> f32 {
-                let row = view_pitch_max.saturating_sub(pitch);
+            let pitch_to_y = |pitch: Pitch| -> f32 {
+                let row = view_pitch_max.saturating_sub(pitch.as_midi());
                 grid_y + row as f32 * NOTE_ROW_HEIGHT
             };
 
             // Inverse: x to tick
-            let x_to_tick = |x: f32| -> u32 {
+            let x_to_tick = |x: f32| -> PatternTick {
                 #[allow(clippy::cast_possible_truncation)]
                 let tick = ((x - grid_x) / PR_PIXELS_PER_BEAT * ticks_per_beat as f32).max(0.0);
-                tick as u32
+                PatternTick(tick as u32)
             };
 
             // Inverse: y to pitch (clamped to visible range)
-            let y_to_pitch = |y: f32| -> u8 {
+            let y_to_pitch = |y: f32| -> Pitch {
                 #[allow(clippy::cast_possible_truncation)]
                 let row = ((y - grid_y) / NOTE_ROW_HEIGHT).floor().max(0.0) as u8;
-                view_pitch_max
+                let midi = view_pitch_max
                     .saturating_sub(row)
-                    .clamp(view_pitch_min, view_pitch_max)
+                    .clamp(view_pitch_min, view_pitch_max);
+                Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C)
             };
 
             // Grid rect for checking if pointer is in the note grid area
@@ -2393,7 +2391,8 @@ fn draw_piano_roll(
             );
 
             for p in view_pitch_min..=view_pitch_max {
-                let y = pitch_to_y(p);
+                let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
+                let y = pitch_to_y(pitch);
                 let note_name = NoteName::from_midi(p % 12);
                 let is_black = note_name.is_black_key();
 
@@ -2436,7 +2435,8 @@ fn draw_piano_roll(
 
             // ── Note grid background ──
             for p in view_pitch_min..=view_pitch_max {
-                let y = pitch_to_y(p);
+                let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
+                let y = pitch_to_y(pitch);
                 let note_name = NoteName::from_midi(p % 12);
                 let is_black = note_name.is_black_key();
                 let is_c = p % 12 == 0;
@@ -2476,7 +2476,7 @@ fn draw_piano_roll(
             let beats_per_bar_val = 4_u32; // Default 4/4, could be derived from time sig
             for beat_idx in 0..=beats_total {
                 let beat_tick = beat_idx * ticks_per_beat;
-                let x = tick_to_x(beat_tick);
+                let x = tick_to_x(PatternTick(beat_tick));
                 let is_bar_line = beat_idx % beats_per_bar_val == 0;
 
                 painter.line_segment(
@@ -2497,14 +2497,14 @@ fn draw_piano_roll(
 
             // Sub-beat grid lines based on row resolution
             if data.ticks_per_row > 0 {
-                let total_rows = data.length_ticks / data.ticks_per_row as u32;
+                let total_rows = data.length_ticks.0 / data.ticks_per_row as u32;
                 for row in 0..total_rows {
                     let row_tick = row * data.ticks_per_row as u32;
                     // Skip if this aligns with a beat line (already drawn)
                     if row_tick.is_multiple_of(ticks_per_beat) {
                         continue;
                     }
-                    let x = tick_to_x(row_tick);
+                    let x = tick_to_x(PatternTick(row_tick));
                     painter.line_segment(
                         [Pos2::new(x, grid_y), Pos2::new(x, grid_y + grid_height)],
                         Stroke::new(0.3, t.colors.border.gamma_multiply(0.15)),
@@ -2517,7 +2517,7 @@ fn draw_piano_roll(
             let selected_color = Color32::from_rgb(140, 210, 255);
 
             for note in &data.notes {
-                if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
+                if note.pitch.as_midi() < view_pitch_min || note.pitch.as_midi() > view_pitch_max {
                     continue;
                 }
 
@@ -2537,7 +2537,7 @@ fn draw_piano_roll(
                     Some(end) => tick_to_x(end),
                     None => {
                         // Open-ended: draw to pattern end or at least a visible width
-                        tick_to_x(data.length_ticks).min(x_start + grid_width)
+                        tick_to_x(PatternTick(data.length_ticks.0)).min(x_start + grid_width)
                     }
                 };
 
@@ -2552,7 +2552,7 @@ fn draw_piano_roll(
                 };
 
                 let note_width = (x_end - x_start).max(3.0);
-                let alpha = (note.velocity * 200.0 + 55.0).min(255.0) as u8;
+                let alpha = (note.velocity.as_f32() * 200.0 + 55.0).min(255.0) as u8;
 
                 let is_selected = view_state.selected_notes.contains(&note.note_id);
                 let base_color = if is_selected {
@@ -2612,9 +2612,9 @@ fn draw_piano_roll(
                     if midi < view_pitch_min || midi > view_pitch_max {
                         continue;
                     }
-                    let y = pitch_to_y(midi);
-                    let x_start = tick_to_x(note.start.0);
-                    let x_end = tick_to_x(note.start.0 + note.duration.0);
+                    let y = pitch_to_y(Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C));
+                    let x_start = tick_to_x(note.start);
+                    let x_end = tick_to_x(PatternTick(note.start.0 + note.duration.0));
                     let note_width = (x_end - x_start).max(3.0);
                     let alpha = 180_u8;
 
@@ -2658,13 +2658,13 @@ fn draw_piano_roll(
                         if midi < view_pitch_min || midi > view_pitch_max {
                             continue;
                         }
-                        let y = pitch_to_y(midi);
-                        let x_start = tick_to_x(start_tick.0);
+                        let y = pitch_to_y(*pitch);
+                        let x_start = tick_to_x(*start_tick);
                         let end = if playhead_in_pattern >= start_tick.0 {
-                            playhead_in_pattern
+                            PatternTick(playhead_in_pattern)
                         } else {
                             // Note wraps around pattern — draw to end
-                            data.length_ticks
+                            PatternTick(data.length_ticks.0)
                         };
                         let x_end = tick_to_x(end);
                         let note_width = (x_end - x_start).max(3.0);
@@ -2701,14 +2701,13 @@ fn draw_piano_roll(
             {
                 // Find the original note data for velocity/duration
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == *note_id) {
-                    let duration_ticks = note
-                        .end_tick
-                        .map_or(data.length_ticks.saturating_sub(note.start_tick), |end| {
-                            end.saturating_sub(note.start_tick)
-                        });
+                    let duration_ticks = note.end_tick.map_or(
+                        SeqDuration(data.length_ticks.0.saturating_sub(note.start_tick.0)),
+                        |end| SeqDuration(end.0.saturating_sub(note.start_tick.0)),
+                    );
                     let y = pitch_to_y(*drag_pitch);
                     let x_start = tick_to_x(*drag_tick);
-                    let x_end = tick_to_x(drag_tick + duration_ticks);
+                    let x_end = tick_to_x(*drag_tick + duration_ticks);
                     let note_width = (x_end - x_start).max(3.0);
 
                     let ghost_rect = Rect::from_min_size(
@@ -2813,14 +2812,14 @@ fn draw_piano_roll(
             // Velocity bars
             for note in &data.notes {
                 let x = tick_to_x(note.start_tick);
-                let bar_height = note.velocity * (VELOCITY_ZONE_HEIGHT - 4.0);
+                let bar_height = note.velocity.as_f32() * (VELOCITY_ZONE_HEIGHT - 4.0);
                 let bar_y = vel_y + VELOCITY_ZONE_HEIGHT - bar_height - 2.0;
 
                 let is_selected = view_state.selected_notes.contains(&note.note_id);
                 let vel_color = if is_selected {
                     Color32::from_rgb(140, 210, 255)
                 } else {
-                    velocity_color(note.velocity)
+                    velocity_color(note.velocity.as_f32())
                 };
                 painter.rect_filled(
                     Rect::from_min_size(Pos2::new(x - 1.5, bar_y), Vec2::new(3.0, bar_height)),
@@ -2847,11 +2846,11 @@ fn draw_piano_roll(
 
             // ── Playhead ──
             // Convert song tick to pattern-relative tick if applicable
-            if current_tick > 0 && data.length_ticks > 0 {
+            if current_tick > 0 && data.length_ticks.0 > 0 {
                 // Show playhead if it's within pattern range
                 // (simplified: just show the raw position modulo pattern length)
                 #[allow(clippy::cast_possible_truncation)]
-                let pattern_tick = (current_tick % data.length_ticks as u64) as u32;
+                let pattern_tick = PatternTick((current_tick % data.length_ticks.0 as u64) as u32);
                 let playhead_x = tick_to_x(pattern_tick);
 
                 if playhead_x >= grid_x && playhead_x <= grid_x + grid_width {
@@ -2904,14 +2903,16 @@ fn draw_piano_roll(
                 if auto_rect.is_some_and(|r| r.contains(pos)) {
                     ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
                 } else if grid_rect.contains(pos) {
+                    let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
+                    let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
                     let hit = note_at_pos(
                         &data.notes,
                         pos,
                         &tick_to_x,
                         &pitch_to_y,
                         data.length_ticks,
-                        view_pitch_min,
-                        view_pitch_max,
+                        vp_min,
+                        vp_max,
                     );
 
                     match hit {
@@ -2927,7 +2928,7 @@ fn draw_piano_roll(
                                 let x_start = tick_to_x(note.start_tick);
                                 let x_end = match note.end_tick {
                                     Some(end) => tick_to_x(end),
-                                    None => tick_to_x(data.length_ticks),
+                                    None => tick_to_x(PatternTick(data.length_ticks.0)),
                                 };
                                 let hover_rect = Rect::from_min_size(
                                     Pos2::new(x_start, y + 1.0),
@@ -3011,11 +3012,11 @@ fn draw_piano_roll(
         && !view_state.clipboard.notes.is_empty()
     {
         #[allow(clippy::cast_possible_truncation)]
-        let paste_tick = if current_tick > 0 && data.length_ticks > 0 {
-            (current_tick % data.length_ticks as u64) as u32
+        let paste_tick = PatternTick(if current_tick > 0 && data.length_ticks.0 > 0 {
+            (current_tick % data.length_ticks.0 as u64) as u32
         } else {
             0
-        };
+        });
         paste_clipboard_notes(
             song,
             data.pattern_id,
@@ -3037,7 +3038,7 @@ fn draw_piano_roll(
             .filter(|n| view_state.selected_notes.contains(&n.note_id))
             .map(|n| n.start_tick)
             .min()
-            .unwrap_or(0);
+            .unwrap_or(PatternTick::ZERO);
         let paste_tick = min_tick + view_state.clipboard.selection_width;
         paste_clipboard_notes(
             song,
@@ -3105,22 +3106,22 @@ fn draw_piano_roll(
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             let note_id = pattern.add_note(
-                PatternTick(view_state.step_cursor_tick),
+                view_state.step_cursor_tick,
                 pitch,
-                Velocity::new(view_state.default_velocity),
+                view_state.default_velocity,
                 SeqInstrumentId::new(0),
             );
             pattern.resize_note(note_id, step_size);
             view_state.selected_notes.clear();
             view_state.selected_notes.insert(note_id);
-            preview_note(handle, pitch, Velocity::new(view_state.default_velocity));
+            preview_note(handle, pitch, view_state.default_velocity);
             inserted = true;
         }
         if inserted {
-            view_state.step_cursor_tick += step_size.0;
+            view_state.step_cursor_tick = view_state.step_cursor_tick + step_size;
             // Wrap around at pattern end
-            if view_state.step_cursor_tick >= data.length_ticks {
-                view_state.step_cursor_tick = 0;
+            if view_state.step_cursor_tick.0 >= data.length_ticks.0 {
+                view_state.step_cursor_tick = PatternTick::ZERO;
             }
         }
     }
@@ -3140,10 +3141,10 @@ fn handle_piano_roll_interaction(
     grid_rect: Rect,
     auto_rect: Option<Rect>,
     auto_y: f32,
-    x_to_tick: &dyn Fn(f32) -> u32,
-    y_to_pitch: &dyn Fn(f32) -> u8,
-    tick_to_x: &dyn Fn(u32) -> f32,
-    pitch_to_y: &dyn Fn(u8) -> f32,
+    x_to_tick: &dyn Fn(f32) -> PatternTick,
+    y_to_pitch: &dyn Fn(f32) -> Pitch,
+    tick_to_x: &dyn Fn(PatternTick) -> f32,
+    pitch_to_y: &dyn Fn(Pitch) -> f32,
     view_pitch_min: u8,
     view_pitch_max: u8,
 ) {
@@ -3165,10 +3166,7 @@ fn handle_piano_roll_interaction(
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             let lane = pattern.get_or_create_automation(target);
-            lane.add_point(AutomationPoint::new(
-                PatternTick(tick),
-                NormalizedValue::new(value),
-            ));
+            lane.add_point(AutomationPoint::new(tick, NormalizedValue::new(value)));
         }
     }
 
@@ -3189,7 +3187,7 @@ fn handle_piano_roll_interaction(
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 && let Some(auto_lane) = pattern.automation.iter_mut().find(|l| l.target == target)
             {
-                auto_lane.remove_point(PatternTick(point_tick));
+                auto_lane.remove_point(point_tick);
             }
         }
     }
@@ -3199,23 +3197,23 @@ fn handle_piano_roll_interaction(
         && let Some(pos) = response.interact_pointer_pos()
         && grid_rect.contains(pos)
     {
+        let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
+        let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
         let hit = note_at_pos(
             &data.notes,
             pos,
             tick_to_x,
             pitch_to_y,
             data.length_ticks,
-            view_pitch_min,
-            view_pitch_max,
+            vp_min,
+            vp_max,
         );
 
         match hit {
             Some((note_id, _)) => {
                 // Clicked on a note — select it and preview its sound
-                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
-                    && let Some(p) = Pitch::new(note.pitch)
-                {
-                    preview_note(handle, p, Velocity::new(note.velocity));
+                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                    preview_note(handle, note.pitch, note.velocity);
                 }
                 if shift_held {
                     // Toggle in selection
@@ -3236,7 +3234,6 @@ fn handle_piano_roll_interaction(
                     let pitch_val = y_to_pitch(pos.y);
 
                     if !has_note_at(&data.notes, tick, pitch_val)
-                        && let Some(pitch) = Pitch::new(pitch_val)
                         && let Ok(mut song_w) = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
@@ -3246,15 +3243,15 @@ fn handle_piano_roll_interaction(
                             SeqDuration((data.ticks_per_row as u32).max(1))
                         };
                         let note_id = pattern.add_note(
-                            PatternTick(tick),
-                            pitch,
-                            Velocity::new(view_state.default_velocity),
+                            tick,
+                            pitch_val,
+                            view_state.default_velocity,
                             SeqInstrumentId::new(0),
                         );
                         pattern.resize_note(note_id, duration);
                         view_state.selected_notes.clear();
                         view_state.selected_notes.insert(note_id);
-                        preview_note(handle, pitch, Velocity::new(view_state.default_velocity));
+                        preview_note(handle, pitch_val, view_state.default_velocity);
                     }
                 } else if !shift_held {
                     // Select tool on empty space — clear selection
@@ -3308,14 +3305,16 @@ fn handle_piano_roll_interaction(
         && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
         && grid_rect.contains(pos)
     {
+        let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
+        let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
         let hit = note_at_pos(
             &data.notes,
             pos,
             tick_to_x,
             pitch_to_y,
             data.length_ticks,
-            view_pitch_min,
-            view_pitch_max,
+            vp_min,
+            vp_max,
         );
 
         match hit {
@@ -3325,16 +3324,18 @@ fn handle_piano_roll_interaction(
                     // If note has no explicit duration, lock it before move
                     // so the visual length is preserved
                     if note.end_tick.is_none() {
-                        let implied_dur = data.length_ticks.saturating_sub(note.start_tick).max(1);
+                        let implied_dur = SeqDuration(
+                            data.length_ticks.0.saturating_sub(note.start_tick.0).max(1),
+                        );
                         if let Ok(mut song_w) = song.write()
                             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                         {
-                            pattern.resize_note(note_id, SeqDuration(implied_dur));
+                            pattern.resize_note(note_id, implied_dur);
                         }
                     }
                     // Calculate where on the note the user grabbed
                     let grab_tick = x_to_tick(pos.x);
-                    let grab_offset = grab_tick.saturating_sub(note.start_tick);
+                    let grab_offset = SeqDuration(grab_tick.0.saturating_sub(note.start_tick.0));
                     view_state.drag = Some(DragState::MoveNote {
                         note_id,
                         original_tick: note.start_tick,
@@ -3353,7 +3354,7 @@ fn handle_piano_roll_interaction(
             Some((note_id, HitZone::RightEdge)) => {
                 // Start resizing the note
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                    let end_tick = note.end_tick.unwrap_or(data.length_ticks);
+                    let end_tick = note.end_tick.unwrap_or(PatternTick(data.length_ticks.0));
                     view_state.drag = Some(DragState::ResizeNote {
                         note_id,
                         original_end_tick: end_tick,
@@ -3378,7 +3379,8 @@ fn handle_piano_roll_interaction(
                     let start_tick = quantize_tick(raw_tick, data.ticks_per_row);
                     let pitch = y_to_pitch(pos.y);
                     if !has_note_at(&data.notes, start_tick, pitch) {
-                        let end_tick = start_tick + (data.ticks_per_row as u32).max(1);
+                        let end_tick =
+                            PatternTick(start_tick.0 + (data.ticks_per_row as u32).max(1));
                         view_state.drag = Some(DragState::DrawNote {
                             start_tick,
                             pitch,
@@ -3402,15 +3404,16 @@ fn handle_piano_roll_interaction(
                 grab_offset_ticks,
                 ..
             }) => {
-                let raw_tick = x_to_tick(pos.x).saturating_sub(*grab_offset_ticks);
+                let raw_tick = PatternTick(x_to_tick(pos.x).0.saturating_sub(grab_offset_ticks.0));
                 *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
-                *current_pitch = y_to_pitch(pos.y).clamp(0, 127);
+                *current_pitch = y_to_pitch(pos.y);
             }
             Some(DragState::ResizeNote {
                 current_end_tick, ..
             }) => {
                 let raw_tick = x_to_tick(pos.x);
-                *current_end_tick = quantize_tick(raw_tick, data.ticks_per_row).max(1);
+                let quantized = quantize_tick(raw_tick, data.ticks_per_row);
+                *current_end_tick = PatternTick(quantized.0.max(1));
             }
             Some(DragState::DrawNote {
                 start_tick,
@@ -3420,7 +3423,11 @@ fn handle_piano_roll_interaction(
                 let raw_tick = x_to_tick(pos.x);
                 let quantized = quantize_tick(raw_tick, data.ticks_per_row);
                 // End tick must be at least one row past start
-                *current_end_tick = quantized.max(*start_tick + (data.ticks_per_row as u32).max(1));
+                *current_end_tick = PatternTick(
+                    quantized
+                        .0
+                        .max(start_tick.0 + (data.ticks_per_row as u32).max(1)),
+                );
             }
             Some(DragState::SelectRect { current_pos, .. }) => {
                 *current_pos = pos;
@@ -3432,7 +3439,9 @@ fn handle_piano_roll_interaction(
             }) => {
                 let raw_tick = x_to_tick(pos.x);
                 *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
-                *current_value = (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0);
+                *current_value = NormalizedValue::new(
+                    (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0),
+                );
             }
             Some(DragState::DragVelocity { .. }) => {
                 // Velocity painting handled in real-time below
@@ -3451,8 +3460,8 @@ fn handle_piano_roll_interaction(
         // Find note at this x position
         let click_tick = x_to_tick(pos.x);
         let nearest_note = data.notes.iter().min_by_key(|n| {
-            let mid = n.start_tick + n.end_tick.map_or(0, |e| (e - n.start_tick) / 2);
-            (mid as i64 - click_tick as i64).unsigned_abs()
+            let mid = n.start_tick.0 + n.end_tick.map_or(0, |e| (e.0 - n.start_tick.0) / 2);
+            (mid as i64 - click_tick.0 as i64).unsigned_abs()
         });
         if let Some(note) = nearest_note {
             let note_x = tick_to_x(note.start_tick);
@@ -3486,11 +3495,12 @@ fn handle_piano_roll_interaction(
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     if current_tick != original_tick {
-                        pattern.move_note(note_id, PatternTick(current_tick));
+                        pattern.move_note(note_id, current_tick);
                     }
                     if current_pitch != original_pitch {
                         #[allow(clippy::cast_precision_loss)]
-                        let delta = current_pitch as f32 - original_pitch as f32;
+                        let delta =
+                            current_pitch.as_midi() as f32 - original_pitch.as_midi() as f32;
                         pattern.transpose_note(note_id, Semitones::new(delta));
                     }
                 }
@@ -3505,11 +3515,12 @@ fn handle_piano_roll_interaction(
                 if current_end_tick != original_end_tick
                     && let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
                 {
-                    let new_duration = current_end_tick.saturating_sub(note.start_tick).max(1);
+                    let new_duration =
+                        SeqDuration(current_end_tick.0.saturating_sub(note.start_tick.0).max(1));
                     if let Ok(mut song_w) = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
-                        pattern.resize_note(note_id, SeqDuration(new_duration));
+                        pattern.resize_note(note_id, new_duration);
                     }
                 }
             }
@@ -3519,19 +3530,18 @@ fn handle_piano_roll_interaction(
                 current_end_tick,
             } => {
                 // Create the note with the dragged duration (only if no duplicate)
-                let duration = current_end_tick.saturating_sub(start_tick).max(1);
+                let duration = SeqDuration(current_end_tick.0.saturating_sub(start_tick.0).max(1));
                 if !has_note_at(&data.notes, start_tick, pitch)
-                    && let Some(p) = Pitch::new(pitch)
                     && let Ok(mut song_w) = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     let note_id = pattern.add_note(
-                        PatternTick(start_tick),
-                        p,
-                        Velocity::new(view_state.default_velocity),
+                        start_tick,
+                        pitch,
+                        view_state.default_velocity,
                         SeqInstrumentId::new(0),
                     );
-                    pattern.resize_note(note_id, SeqDuration(duration));
+                    pattern.resize_note(note_id, duration);
                     view_state.selected_notes.clear();
                     view_state.selected_notes.insert(note_id);
                 }
@@ -3551,7 +3561,7 @@ fn handle_piano_roll_interaction(
                 let p_max = pitch_bottom.max(pitch_top);
 
                 for note in &data.notes {
-                    let note_end = note.end_tick.unwrap_or(data.length_ticks);
+                    let note_end = note.end_tick.unwrap_or(PatternTick(data.length_ticks.0));
                     if note.start_tick < tick_end
                         && note_end > tick_start
                         && note.pitch >= p_min
@@ -3570,16 +3580,13 @@ fn handle_piano_roll_interaction(
             } => {
                 // Apply automation point move
                 if (current_tick != original_tick
-                    || (current_value - original_value).abs() > f32::EPSILON)
+                    || (current_value.as_f32() - original_value.as_f32()).abs() > f32::EPSILON)
                     && let Ok(mut song_w) = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     let lane = pattern.get_or_create_automation(target);
-                    lane.remove_point(PatternTick(original_tick));
-                    lane.add_point(AutomationPoint::new(
-                        PatternTick(current_tick),
-                        NormalizedValue::new(current_value),
-                    ));
+                    lane.remove_point(original_tick);
+                    lane.add_point(AutomationPoint::new(current_tick, current_value));
                 }
             }
             // DragVelocity — already applied in real-time, nothing to finalize
@@ -3594,7 +3601,7 @@ fn handle_piano_roll_interaction(
 fn automation_point_at_pos(
     lane: &AutomationLaneSnapshot,
     pos: Pos2,
-    tick_to_x: &dyn Fn(u32) -> f32,
+    tick_to_x: &dyn Fn(PatternTick) -> f32,
     auto_y: f32,
 ) -> Option<usize> {
     let value_to_y =
@@ -3602,7 +3609,7 @@ fn automation_point_at_pos(
 
     for (i, pt) in lane.points.iter().enumerate() {
         let px = tick_to_x(pt.tick);
-        let py = value_to_y(pt.value);
+        let py = value_to_y(pt.value.as_f32());
         let dist = ((pos.x - px).powi(2) + (pos.y - py).powi(2)).sqrt();
         if dist <= AUTOMATION_HIT_RADIUS {
             return Some(i);
@@ -3621,7 +3628,7 @@ fn draw_automation_zone(
     grid_x: f32,
     auto_y: f32,
     grid_width: f32,
-    tick_to_x: &dyn Fn(u32) -> f32,
+    tick_to_x: &dyn Fn(PatternTick) -> f32,
     t: &crate::gui::theme::Theme,
 ) {
     let auto_color = Color32::from_rgb(255, 160, 50); // Orange
@@ -3681,7 +3688,7 @@ fn draw_automation_zone(
             if let Some(first) = points.first() {
                 let first_x = tick_to_x(first.tick);
                 if first_x > grid_x {
-                    let y = value_to_y(first.value);
+                    let y = value_to_y(first.value.as_f32());
                     painter.line_segment(
                         [Pos2::new(grid_x, y), Pos2::new(first_x, y)],
                         Stroke::new(1.0, auto_color.gamma_multiply(0.5)),
@@ -3699,17 +3706,15 @@ fn draw_automation_zone(
 
                 // Sample the curve pixel by pixel
                 let steps = (pixel_width as u32).max(2);
-                let mut prev_pos = Pos2::new(x_start, value_to_y(from.value));
+                let mut prev_pos = Pos2::new(x_start, value_to_y(from.value.as_f32()));
 
                 for step in 1..=steps {
                     #[allow(clippy::cast_precision_loss)]
                     let frac = step as f32 / steps as f32;
                     let x = x_start + frac * (x_end - x_start);
-                    let val = from.curve.interpolate(
-                        NormalizedValue::new(from.value),
-                        NormalizedValue::new(to.value),
-                        NormalizedValue::new(frac),
-                    );
+                    let val =
+                        from.curve
+                            .interpolate(from.value, to.value, NormalizedValue::new(frac));
                     let y = value_to_y(val.as_f32());
                     let cur_pos = Pos2::new(x, y);
 
@@ -3723,7 +3728,7 @@ fn draw_automation_zone(
                 let last_x = tick_to_x(last.tick);
                 let grid_end_x = grid_x + grid_width;
                 if last_x < grid_end_x {
-                    let y = value_to_y(last.value);
+                    let y = value_to_y(last.value.as_f32());
                     painter.line_segment(
                         [Pos2::new(last_x, y), Pos2::new(grid_end_x, y)],
                         Stroke::new(1.0, auto_color.gamma_multiply(0.5)),
@@ -3734,7 +3739,7 @@ fn draw_automation_zone(
             // Draw points
             for pt in points {
                 let px = tick_to_x(pt.tick);
-                let py = value_to_y(pt.value);
+                let py = value_to_y(pt.value.as_f32());
                 painter.circle_filled(Pos2::new(px, py), AUTOMATION_POINT_RADIUS, auto_color);
                 painter.circle_stroke(
                     Pos2::new(px, py),
@@ -3755,7 +3760,7 @@ fn draw_automation_zone(
         && target == selected_target
     {
         let px = tick_to_x(*current_tick);
-        let py = value_to_y(*current_value);
+        let py = value_to_y(current_value.as_f32());
         painter.circle_filled(
             Pos2::new(px, py),
             AUTOMATION_POINT_RADIUS + 1.0,
@@ -3801,7 +3806,7 @@ fn copy_selected_notes(
     clipboard: &mut Clipboard,
 ) {
     clipboard.notes.clear();
-    clipboard.selection_width = 0;
+    clipboard.selection_width = SeqDuration(0);
 
     let selected_notes: Vec<&PianoRollNote> = data
         .notes
@@ -3817,29 +3822,29 @@ fn copy_selected_notes(
         .iter()
         .map(|n| n.start_tick)
         .min()
-        .unwrap_or(0);
+        .unwrap_or(PatternTick::ZERO);
 
     let max_end = selected_notes
         .iter()
         .map(|n| {
             n.end_tick
-                .unwrap_or(n.start_tick + data.ticks_per_row as u32)
+                .unwrap_or(PatternTick(n.start_tick.0 + data.ticks_per_row as u32))
         })
         .max()
         .unwrap_or(min_tick);
 
-    clipboard.selection_width = max_end.saturating_sub(min_tick);
+    clipboard.selection_width = SeqDuration(max_end.0.saturating_sub(min_tick.0));
 
     for note in &selected_notes {
-        if let Some(pitch) = Pitch::new(note.pitch) {
-            clipboard.notes.push(ClipboardNote {
-                tick_offset: note.start_tick.saturating_sub(min_tick),
-                pitch,
-                velocity: Velocity::new(note.velocity),
-                duration: note.end_tick.map(|e| e.saturating_sub(note.start_tick)),
-                instrument: SeqInstrumentId::new(0),
-            });
-        }
+        clipboard.notes.push(ClipboardNote {
+            tick_offset: SeqDuration(note.start_tick.0.saturating_sub(min_tick.0)),
+            pitch: note.pitch,
+            velocity: note.velocity,
+            duration: note
+                .end_tick
+                .map(|e| SeqDuration(e.0.saturating_sub(note.start_tick.0))),
+            instrument: SeqInstrumentId::new(0),
+        });
     }
 }
 
@@ -3848,7 +3853,7 @@ fn paste_clipboard_notes(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
     clipboard: &Clipboard,
-    paste_tick: u32,
+    paste_tick: PatternTick,
     selected: &mut HashSet<NoteId>,
 ) {
     if clipboard.notes.is_empty() {
@@ -3861,10 +3866,10 @@ fn paste_clipboard_notes(
         && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
         for cn in &clipboard.notes {
-            let tick = PatternTick(paste_tick + cn.tick_offset);
+            let tick = PatternTick(paste_tick.0 + cn.tick_offset.0);
             let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
             if let Some(dur) = cn.duration {
-                pattern.resize_note(note_id, SeqDuration(dur));
+                pattern.resize_note(note_id, dur);
             }
             selected.insert(note_id);
         }
