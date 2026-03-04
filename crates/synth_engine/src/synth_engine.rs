@@ -384,8 +384,6 @@ pub struct SynthEngine {
     click_generator: crate::click_generator::ClickGenerator,
     /// Saved loop state before recording started (start, end, enabled).
     pre_record_loop: Option<(synth_sequencer::Tick, synth_sequencer::Tick, bool)>,
-    /// Whether the first loop-boundary flush has been done (for replace mode).
-    recording_first_flush_done: bool,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -459,7 +457,6 @@ impl SynthEngine {
             recording: crate::recording::RecordingBuffer::new(),
             click_generator: crate::click_generator::ClickGenerator::new(48000.0),
             pre_record_loop: None,
-            recording_first_flush_done: false,
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -868,9 +865,7 @@ impl SynthEngine {
                     || self.recording.state() == crate::recording::RecordingState::CountIn
                 {
                     let pattern_id = self.recording.target_pattern();
-                    // If we already flushed at a loop boundary, always overdub
-                    // to avoid clearing notes from previous passes
-                    let overdub = self.recording_first_flush_done || self.recording.is_overdub();
+                    let overdub = self.recording.is_overdub();
                     let notes = self.recording.disarm();
                     if let Some(pid) = pattern_id
                         && !notes.is_empty()
@@ -983,14 +978,13 @@ impl SynthEngine {
                     overdub,
                 );
                 self.recording.set_quantize_grid(quantize_grid);
-                self.recording_first_flush_done = false;
                 self.state
                     .transport
                     .set_recording_state(self.recording.state().as_u32());
             }
             EngineCommand::DisarmRecord => {
                 let pattern_id = self.recording.target_pattern();
-                let overdub = self.recording_first_flush_done || self.recording.is_overdub();
+                let overdub = self.recording.is_overdub();
                 let notes = self.recording.disarm();
                 if let Some(pid) = pattern_id
                     && !notes.is_empty()
@@ -2058,29 +2052,27 @@ impl AudioProcessor for SynthEngine {
             self.state.transport.set_recording_state(rec_state);
         }
 
+        // Cache recording state for the checks below
+        let rec_state_enum = self.recording.state();
+
         // Flush recorded notes at loop boundary so they play on next pass.
         // First flush uses the user's overdub setting (may clear pattern);
-        // subsequent flushes always overdub to preserve earlier passes.
-        if self.recording.state() == crate::recording::RecordingState::Capturing
+        // take_released_notes() sets loop_flushed so subsequent flushes always overdub.
+        if rec_state_enum == crate::recording::RecordingState::Capturing
             && curr_tick.0 < prev_tick.0
         {
             let pattern_id = self.recording.target_pattern();
-            let notes = self.recording.drain_completed();
+            let overdub = self.recording.is_overdub();
+            let notes = self.recording.take_released_notes();
             if let Some(pid) = pattern_id
                 && !notes.is_empty()
             {
-                let overdub = if self.recording_first_flush_done {
-                    true
-                } else {
-                    self.recording_first_flush_done = true;
-                    self.recording.is_overdub()
-                };
                 self.flush_recorded_notes(pid, notes, overdub);
             }
         }
 
         // Emit live recording preview (once per buffer callback, ~86Hz)
-        if self.recording.state() == crate::recording::RecordingState::Capturing
+        if rec_state_enum == crate::recording::RecordingState::Capturing
             && let Some((_region_start, pattern_length)) = self.recording.target_info()
         {
             let (completed, held) = self.recording.preview_snapshot();
