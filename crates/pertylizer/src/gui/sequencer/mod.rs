@@ -243,7 +243,7 @@ const MAX_MINIATURE_NOTES: usize = 200;
 
 // Piano roll constants
 /// Height of the piano roll bottom panel.
-const PIANO_ROLL_HEIGHT: f32 = 300.0;
+const PIANO_ROLL_HEIGHT: f32 = 400.0;
 /// Width of the keyboard column.
 const KEY_WIDTH: f32 = 40.0;
 /// Pixels per semitone (row height).
@@ -3343,11 +3343,15 @@ pub fn draw_sequencer_view(
                 })
         });
 
+        // Use ~50% of available height for piano roll, with generous max
+        let available_height = ctx.available_rect().height();
+        let default_height = (available_height * 0.5).max(PIANO_ROLL_HEIGHT);
+
         egui::TopBottomPanel::bottom("piano_roll")
             .resizable(true)
-            .default_height(PIANO_ROLL_HEIGHT)
+            .default_height(default_height)
             .min_height(150.0)
-            .max_height(600.0)
+            .max_height(available_height - 100.0)
             .show(ctx, |ui| {
                 if let Some(data) = &piano_roll_data {
                     if !draw_piano_roll(
