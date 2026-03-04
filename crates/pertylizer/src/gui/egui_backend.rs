@@ -431,17 +431,14 @@ impl eframe::App for SynthApp {
                             pattern.clear_notes();
                         }
                         for note in &notes {
-                            if let Some(pitch) = synth_sequencer::Pitch::new(note.pitch) {
-                                let velocity = synth_sequencer::Velocity::from_midi(note.velocity);
-                                let nid = pattern.add_note(
-                                    note.start,
-                                    pitch,
-                                    velocity,
-                                    synth_sequencer::SeqInstrumentId(0),
-                                );
-                                if let Some(n) = pattern.note_mut(nid) {
-                                    n.duration = Some(note.duration);
-                                }
+                            let nid = pattern.add_note(
+                                note.start,
+                                note.pitch,
+                                note.velocity,
+                                synth_sequencer::SeqInstrumentId(0),
+                            );
+                            if let Some(n) = pattern.note_mut(nid) {
+                                n.duration = Some(note.duration);
                             }
                         }
                     }
