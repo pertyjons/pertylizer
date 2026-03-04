@@ -1,5 +1,11 @@
 # Version History
 
+## [0.209.0] - 2026-03-04
+### Piano roll: swing, scale velocities, step entry
+- **Swing/shuffle control** — adjustable swing amount (0-100%) with Apply button; offsets even subdivisions relative to the selected grid resolution
+- **Scale velocities** — toolbar control with percentage factor (1-200%) and Scale button to multiply velocities of selected notes
+- **Step entry mode** — keyboard piano keys (Z-M, Q-U) insert notes at cursor position and advance by grid step; note preview on insert; wraps at pattern end
+
 ## [0.208.0] - 2026-03-04
 ### Piano roll: copy/paste, shortcuts, quantize, velocity editing, improvements
 - **Copy/paste/duplicate** — Ctrl+C/X/V/D for note clipboard operations; clipboard stores relative offsets for flexible pasting; Ctrl+D duplicates selection to the right
@@ -10,8 +16,8 @@
 - **Note length presets** — toolbar selector for draw-mode note length (Drag/1/4/1/8/1/16)
 - **Note preview on click** — plays a short preview of the note sound when clicking or drawing notes in the piano roll
 - **Humanize** — toolbar button applies random timing (±15 ticks) and velocity (±5%) offsets to selected notes
-- **Step entry mode** — toggle in toolbar shows a magenta cursor line; planned for keyboard-driven note-by-note entry
-- **Swing control** — state field added (UI placeholder for future implementation)
+- **Step entry mode** — toggle in toolbar shows a magenta cursor line
+- **Swing control** — state field added (UI placeholder)
 
 ## [0.207.0] - 2026-03-04
 ### Live note preview and loop during recording

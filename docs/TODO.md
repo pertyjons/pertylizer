@@ -46,19 +46,19 @@
 - [x] Quantize menu/button — apply quantization to selected notes
 - [x] Quantize strength slider (0–100%) — blend between original and quantized timing
 - [x] Grid resolution selector in piano roll toolbar (1/4, 1/8, 1/16, 1/32)
-- [ ] Swing/shuffle control — offset even subdivisions
+- [x] Swing/shuffle control — offset even subdivisions
 
 ### 0.6 Velocity editing
 - [x] Velocity lane in piano roll — bar graph below notes showing per-note velocity
 - [x] Drag velocity bars to edit
-- [ ] Scale velocities for selection (percentage or curve)
+- [x] Scale velocities for selection (percentage or curve)
 - [x] Adjustable default velocity for drawing/recording (currently fixed 0.8)
 
 ### 0.7 Piano roll improvements
 - [x] Note preview on click — play the note sound when clicking/drawing
 - [x] Note length presets in toolbar (1/4, 1/8, 1/16) for draw mode
 - [x] Humanize — slight random timing/velocity offset for selected notes (backend exists)
-- [ ] Step entry mode — advance cursor by grid step after each note input
+- [x] Step entry mode — advance cursor by grid step after each note input
 
 ---
 

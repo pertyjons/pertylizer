@@ -16,6 +16,7 @@ use synth_sequencer::{
     Song, Tick, TimeSignature, TrackId, Velocity,
 };
 
+use crate::gui::input::KEY_MAP;
 use crate::gui::theme::theme;
 
 // ============================================================================
@@ -176,9 +177,10 @@ pub struct SequencerViewState {
     pub default_velocity: f32,
     /// Quantization strength for the quantize button (0.0-1.0).
     quantize_strength: f32,
-    /// Swing amount (0.0-1.0, 0.0 = no swing). TODO: implement swing UI.
-    #[allow(dead_code)]
+    /// Swing amount (0.0-1.0, 0.0 = no swing).
     swing_amount: f32,
+    /// Velocity scale factor for scale-velocities operation (percentage).
+    velocity_scale_pct: f32,
     /// Draw-mode grid resolution in ticks (0 = use pattern default).
     draw_grid_resolution: u32,
     /// Draw-mode note length preset in ticks (0 = drag-to-length).
@@ -236,6 +238,7 @@ impl SequencerViewState {
             default_velocity: 0.8,
             quantize_strength: 1.0,
             swing_amount: 0.0,
+            velocity_scale_pct: 100.0,
             draw_grid_resolution: 0,
             draw_note_length: 0,
             step_entry_mode: false,
@@ -2167,6 +2170,75 @@ fn draw_piano_roll(
             pattern.humanize_notes(&view_state.selected_notes, 15, 0.05);
         }
 
+        ui.separator();
+
+        // ── Swing control ──
+        ui.label(RichText::new("Sw:").color(t.colors.text_dim).size(10.0));
+        let mut sw_pct = (view_state.swing_amount * 100.0).round();
+        if ui
+            .add(
+                egui::DragValue::new(&mut sw_pct)
+                    .range(0.0..=100.0)
+                    .speed(1.0)
+                    .suffix("%"),
+            )
+            .on_hover_text("Swing amount (offset even subdivisions)")
+            .changed()
+        {
+            view_state.swing_amount = (sw_pct / 100.0).clamp(0.0, 1.0);
+        }
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty() && view_state.swing_amount > 0.0,
+                egui::Button::new(RichText::new("Apply").color(t.colors.text_secondary)),
+            )
+            .on_hover_text("Apply swing to selected notes")
+            .clicked()
+        {
+            let grid = if view_state.draw_grid_resolution > 0 {
+                view_state.draw_grid_resolution
+            } else {
+                data.ticks_per_row as u32
+            };
+            if let Ok(mut song_w) = song.write()
+                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+            {
+                pattern.apply_swing(&view_state.selected_notes, grid, view_state.swing_amount);
+            }
+        }
+
+        // ── Scale velocities ──
+        if ui
+            .add(
+                egui::DragValue::new(&mut view_state.velocity_scale_pct)
+                    .range(1.0..=200.0)
+                    .speed(1.0)
+                    .suffix("%")
+                    .prefix("Vel×"),
+            )
+            .on_hover_text("Velocity scale factor")
+            .changed()
+        {
+            // Just store the value, apply on button click
+        }
+        #[allow(clippy::float_cmp)]
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty() && view_state.velocity_scale_pct != 100.0,
+                egui::Button::new(RichText::new("Scale").color(t.colors.text_secondary)),
+            )
+            .on_hover_text("Scale velocities of selected notes")
+            .clicked()
+            && let Ok(mut song_w) = song.write()
+            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+        {
+            pattern.scale_velocities(
+                &view_state.selected_notes,
+                view_state.velocity_scale_pct / 100.0,
+            );
+            view_state.velocity_scale_pct = 100.0;
+        }
+
         // ── Step entry toggle ──
         let step_color = if view_state.step_entry_mode {
             t.colors.accent_primary
@@ -2993,6 +3065,53 @@ fn draw_piano_roll(
         } else {
             handle.send(EngineCommand::Play);
             view_state.auto_follow_playhead = true;
+        }
+    }
+
+    // ── Step entry mode — keyboard piano inserts notes at cursor ──
+    if view_state.step_entry_mode {
+        let step_size = if view_state.draw_note_length > 0 {
+            view_state.draw_note_length
+        } else if view_state.draw_grid_resolution > 0 {
+            view_state.draw_grid_resolution
+        } else {
+            data.ticks_per_row as u32
+        };
+
+        let mut inserted = false;
+        for &(key, base_note) in KEY_MAP {
+            if ctx.input(|i| i.key_pressed(key) && !i.modifiers.command && !i.modifiers.ctrl) {
+                let pitch_val = base_note;
+                if let Some(pitch) = Pitch::new(pitch_val)
+                    && let Ok(mut song_w) = song.write()
+                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                {
+                    let note_id = pattern.add_note(
+                        PatternTick(view_state.step_cursor_tick),
+                        pitch,
+                        Velocity::new(view_state.default_velocity),
+                        SeqInstrumentId::new(0),
+                    );
+                    pattern.resize_note(note_id, SeqDuration(step_size));
+                    view_state.selected_notes.clear();
+                    view_state.selected_notes.insert(note_id);
+                    // Preview the note
+                    handle.note_on(
+                        MidiNote::new(pitch_val),
+                        Velocity::new(view_state.default_velocity),
+                    );
+                    handle.note_off(MidiNote::new(pitch_val));
+                    inserted = true;
+                }
+                break; // Only process one key per frame
+            }
+        }
+        if inserted {
+            view_state.step_cursor_tick += step_size;
+            // Wrap around at pattern end
+            if view_state.step_cursor_tick >= data.length_ticks {
+                view_state.step_cursor_tick = 0;
+            }
         }
     }
 

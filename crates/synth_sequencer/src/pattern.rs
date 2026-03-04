@@ -348,6 +348,32 @@ impl Pattern {
         }
     }
 
+    /// Apply swing to selected notes by shifting even subdivisions.
+    ///
+    /// `grid_ticks` defines the base subdivision (e.g. 480 for 1/8 notes).
+    /// `swing` ranges from 0.0 (no swing) to 1.0 (full shuffle).
+    /// Even-numbered beats within each pair are delayed by `swing * grid_ticks / 2`.
+    pub fn apply_swing(&mut self, note_ids: &HashSet<NoteId>, grid_ticks: u32, swing: f32) {
+        if grid_ticks == 0 {
+            return;
+        }
+        let swing = swing.clamp(0.0, 1.0);
+        let max_shift = grid_ticks as f32 / 2.0;
+        for note in &mut self.notes {
+            if !note_ids.contains(&note.id) {
+                continue;
+            }
+            // Determine which grid position this note is on
+            let grid_pos = note.start.0 / grid_ticks;
+            // Odd grid positions (the "even" subdivisions in musical terms) get shifted
+            if grid_pos % 2 == 1 {
+                let shift = (max_shift * swing) as u32;
+                note.start = PatternTick(note.start.0 + shift);
+            }
+        }
+        self.notes.sort_by_key(|n| n.start);
+    }
+
     /// Transpose all notes that can be transposed within valid range.
     pub fn transpose_all(&mut self, semitones: Semitones) {
         for note in &mut self.notes {
