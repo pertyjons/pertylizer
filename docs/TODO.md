@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.204.0)
+# TODO - Pertylizer (v0.205.0)
 
 ## Priority 0 — Sequencer & Music Creation
 
@@ -12,15 +12,20 @@
 - [x] Fix right-click "Add pattern" uses mouse position at menu open, not current mouse position
 - [x] Highlight/focus the target track row on right-click so it's clear which track gets the pattern
 - [x] Drag-to-move placements — reposition pattern placements by dragging
-- [ ] Playhead click-to-seek in ruler — clicking the ruler should seek playback position
+- [x] Playhead click-to-seek in ruler — clicking the ruler should seek playback position
+- [x] Auto-scroll follow playhead — arrangement view scrolls horizontally to keep the playhead visible during playback; disable auto-follow while user is scrolling, re-enable when scroll interaction ends
+- [x] Piano roll mini-transport controls — play/pause/stop pattern from piano roll toolbar
 
 ### 0.2 Recording (MIDI & keyboard)
-- [ ] Record button in transport bar — arm recording, capture notes on play
-- [ ] MIDI recording to pattern — incoming MIDI note on/off → pattern notes
-- [ ] Computer keyboard recording — capture keyboard piano input to pattern
+- [x] Record button in transport bar — arm recording, capture notes on play
+- [x] MIDI recording to pattern — incoming MIDI note on/off → pattern notes
+- [x] Computer keyboard recording — capture keyboard piano input to pattern
+- [x] Metronome/click track — audible click during recording and playback
+- [x] Count-in (pre-roll) — 1 bar metronome before recording starts
+- [x] Recording target = opened piano roll pattern (button disabled if none open)
+- [x] Visual recording indicator — red blinking REC/ARM/COUNT-IN in transport
 - [ ] Recording quantization — snap recorded notes to grid on input
 - [ ] Overdub mode — layer new notes on top of existing pattern
-- [ ] Metronome/click track — audible click during recording and playback
 
 ### 0.3 Copy/paste/duplicate in piano roll
 - [ ] Ctrl+C — copy selected notes
@@ -86,6 +91,27 @@
 - [ ] Add patch template directory and `Save Patch as Template` action
 - [ ] Add Patch Template browser to load patch templates
 - [ ] Support optional `license` and `min_app_version` metadata in group templates
+
+---
+
+## Priority 1.A — OSC Telemetry & Bevy Visualizer
+
+> Full plan: [osc-telemetry-plan.md](osc-telemetry-plan.md)
+
+### Phase 1: Synth OSC sender (`synth_osc` crate)
+- [ ] Create `crates/synth_osc/` crate skeleton (config, address constants, sender)
+- [ ] Add second event ring buffer to `SynthEngine` for OSC event stream
+- [ ] Implement OSC sender thread (poll shared state + drain events → rosc → UDP)
+- [ ] Expose master `VisualizationBuffer` (spectrum FFT data) for OSC access
+- [ ] Wire into `pertylizer` app with `--osc` CLI flag
+- [ ] Test with external OSC monitor tool
+
+### Phase 2: Bevy visualizer (separate project `pertylizer-visualizer`)
+- [ ] Scaffold Bevy 0.16 project with camera and ground plane
+- [ ] Implement `SynthTelemetry` resource and non-blocking OSC receiver system
+- [ ] Build FFT bar visualization (128 cubes driven by frequency bands)
+- [ ] Add RMS-driven point light and note-flash emissive sphere
+- [ ] Add bloom post-processing, orbital camera, beat-synced pulse
 
 ---
 

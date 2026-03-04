@@ -371,6 +371,12 @@ impl EngineHub {
             EngineCommand::SetAweParameter { .. }
             | EngineCommand::SetAweEnabled { .. }
             | EngineCommand::SetAweState { .. } => perms.can_modify_params,
+
+            // Recording commands
+            EngineCommand::ArmRecord { .. }
+            | EngineCommand::DisarmRecord
+            | EngineCommand::SetMetronome(_)
+            | EngineCommand::SetMetronomeVolume(_) => perms.can_control_transport,
         }
     }
 

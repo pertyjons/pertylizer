@@ -573,6 +573,24 @@ impl Clone for EngineCommand {
             Self::SetAweState { snapshot } => Self::SetAweState {
                 snapshot: *snapshot,
             },
+
+            // Recording commands
+            Self::ArmRecord {
+                pattern_id,
+                track_id,
+                region_start,
+                pattern_length_ticks,
+                ticks_per_bar,
+            } => Self::ArmRecord {
+                pattern_id: *pattern_id,
+                track_id: *track_id,
+                region_start: *region_start,
+                pattern_length_ticks: *pattern_length_ticks,
+                ticks_per_bar: *ticks_per_bar,
+            },
+            Self::DisarmRecord => Self::DisarmRecord,
+            Self::SetMetronome(enabled) => Self::SetMetronome(*enabled),
+            Self::SetMetronomeVolume(vol) => Self::SetMetronomeVolume(*vol),
         }
     }
 }
