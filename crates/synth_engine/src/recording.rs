@@ -3,7 +3,7 @@
 //! Captures NoteOn/Off events with timing, converts song ticks to pattern ticks.
 //! Designed for real-time safety — no heap allocations during capture.
 
-use synth_sequencer::{Duration, PatternId, PatternTick, Tick, TrackId};
+use synth_sequencer::{Duration, PatternId, PatternTick, Pitch, Tick, TrackId, Velocity};
 
 /// Maximum number of simultaneously held notes during recording.
 const MAX_HELD_NOTES: usize = 32;
@@ -14,16 +14,16 @@ const MAX_RECORDED_NOTES: usize = 4096;
 /// A note currently being held during recording.
 #[derive(Debug, Clone, Copy)]
 struct HeldNote {
-    pitch: u8,
-    velocity: u8,
+    pitch: Pitch,
+    velocity: Velocity,
     start_tick: PatternTick,
 }
 
 /// A completed recorded note ready to be written to a pattern.
 #[derive(Debug, Clone, Copy)]
 pub struct RecordedNote {
-    pub pitch: u8,
-    pub velocity: u8,
+    pub pitch: Pitch,
+    pub velocity: Velocity,
     pub start: PatternTick,
     pub duration: Duration,
 }
@@ -184,7 +184,7 @@ impl RecordingBuffer {
     }
 
     /// Record a note-on event (only captures if in Capturing state).
-    pub(crate) fn note_on(&mut self, pitch: u8, velocity: u8, song_tick: Tick) {
+    pub(crate) fn note_on(&mut self, pitch: Pitch, velocity: Velocity, song_tick: Tick) {
         if self.state != RecordingState::Capturing {
             return;
         }
@@ -205,7 +205,7 @@ impl RecordingBuffer {
     }
 
     /// Record a note-off event (completes a held note).
-    pub(crate) fn note_off(&mut self, pitch: u8, song_tick: Tick) {
+    pub(crate) fn note_off(&mut self, pitch: Pitch, song_tick: Tick) {
         if self.state != RecordingState::Capturing {
             return;
         }
@@ -288,6 +288,14 @@ impl RecordingBuffer {
 mod tests {
     use super::*;
 
+    fn p(midi: u8) -> Pitch {
+        Pitch::new(midi).unwrap()
+    }
+
+    fn vel(midi: u8) -> Velocity {
+        Velocity::from_midi(midi)
+    }
+
     #[test]
     fn test_arm_and_state() {
         let mut buf = RecordingBuffer::new();
@@ -343,18 +351,18 @@ mod tests {
         );
         buf.state = RecordingState::Capturing;
 
-        buf.note_on(60, 100, Tick(0));
-        buf.note_off(60, Tick(960));
+        buf.note_on(p(60), vel(100), Tick(0));
+        buf.note_off(p(60), Tick(960));
 
-        buf.note_on(64, 80, Tick(960));
-        buf.note_off(64, Tick(1920));
+        buf.note_on(p(64), vel(80), Tick(960));
+        buf.note_off(p(64), Tick(1920));
 
         let notes = buf.flush();
         assert_eq!(notes.len(), 2);
-        assert_eq!(notes[0].pitch, 60);
+        assert_eq!(notes[0].pitch, p(60));
         assert_eq!(notes[0].start, PatternTick(0));
         assert_eq!(notes[0].duration, Duration(960));
-        assert_eq!(notes[1].pitch, 64);
+        assert_eq!(notes[1].pitch, p(64));
         assert_eq!(notes[1].start, PatternTick(960));
     }
 
@@ -373,8 +381,8 @@ mod tests {
         buf.state = RecordingState::Capturing;
 
         // Note at song tick 7680 = region_start + 3840 = wraps to pattern tick 0
-        buf.note_on(60, 100, Tick(7680));
-        buf.note_off(60, Tick(8640));
+        buf.note_on(p(60), vel(100), Tick(7680));
+        buf.note_off(p(60), Tick(8640));
 
         let notes = buf.flush();
         assert_eq!(notes.len(), 1);
@@ -395,8 +403,8 @@ mod tests {
         );
         buf.state = RecordingState::Capturing;
 
-        buf.note_on(60, 100, Tick(0));
-        buf.note_off(60, Tick(480));
+        buf.note_on(p(60), vel(100), Tick(0));
+        buf.note_off(p(60), Tick(480));
 
         let notes = buf.disarm();
         assert_eq!(notes.len(), 1);
@@ -417,8 +425,8 @@ mod tests {
         let _ = buf.start_playback();
 
         // Note during count-in should be ignored
-        buf.note_on(60, 100, Tick(1920));
-        buf.note_off(60, Tick(2880));
+        buf.note_on(p(60), vel(100), Tick(1920));
+        buf.note_off(p(60), Tick(2880));
 
         let notes = buf.flush();
         assert!(notes.is_empty());
@@ -438,7 +446,7 @@ mod tests {
         buf.state = RecordingState::Capturing;
 
         // Start a note but never release it
-        buf.note_on(60, 100, Tick(0));
+        buf.note_on(p(60), vel(100), Tick(0));
 
         let notes = buf.flush();
         assert_eq!(notes.len(), 1);

@@ -1179,12 +1179,11 @@ impl SynthEngine {
         }
 
         // Capture note for recording (after instrument routing so sound plays immediately)
-        if self.recording.state() == crate::recording::RecordingState::Capturing {
-            self.recording.note_on(
-                note.as_u8(),
-                velocity.to_midi(),
-                self.sequencer.current_tick(),
-            );
+        if self.recording.state() == crate::recording::RecordingState::Capturing
+            && let Some(pitch) = synth_sequencer::Pitch::new(note.as_u8())
+        {
+            self.recording
+                .note_on(pitch, velocity, self.sequencer.current_tick());
         }
 
         if note_triggered {
@@ -1220,9 +1219,11 @@ impl SynthEngine {
         }
 
         // Capture note-off for recording
-        if self.recording.state() == crate::recording::RecordingState::Capturing {
+        if self.recording.state() == crate::recording::RecordingState::Capturing
+            && let Some(pitch) = synth_sequencer::Pitch::new(note.as_u8())
+        {
             self.recording
-                .note_off(note.as_u8(), self.sequencer.current_tick());
+                .note_off(pitch, self.sequencer.current_tick());
         }
 
         let _ = self
