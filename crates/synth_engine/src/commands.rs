@@ -534,11 +534,11 @@ pub enum EngineCommand {
         pattern_id: PatternId,
         track_id: TrackId,
         region_start: Tick,
-        pattern_length_ticks: u32,
+        pattern_length: synth_sequencer::Duration,
         /// Ticks per bar for count-in calculation (avoids song lock on audio thread).
-        ticks_per_bar: u32,
-        /// Quantization grid in ticks (0 = off, 480 = 1/8, etc.).
-        quantize_grid: u32,
+        ticks_per_bar: synth_sequencer::Duration,
+        /// Quantization grid (Duration(0) = off, Duration(480) = 1/8, etc.).
+        quantize_grid: synth_sequencer::Duration,
         /// Overdub mode: true = layer on existing notes, false = replace.
         overdub: bool,
     },
@@ -1025,7 +1025,7 @@ impl std::fmt::Debug for EngineCommand {
                 pattern_id,
                 track_id,
                 region_start,
-                pattern_length_ticks,
+                pattern_length,
                 ticks_per_bar,
                 quantize_grid,
                 overdub,
@@ -1034,7 +1034,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("pattern_id", pattern_id)
                 .field("track_id", track_id)
                 .field("region_start", region_start)
-                .field("pattern_length_ticks", pattern_length_ticks)
+                .field("pattern_length", pattern_length)
                 .field("ticks_per_bar", ticks_per_bar)
                 .field("quantize_grid", quantize_grid)
                 .field("overdub", overdub)

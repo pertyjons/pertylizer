@@ -945,7 +945,7 @@ impl SynthEngine {
                 pattern_id,
                 track_id,
                 region_start,
-                pattern_length_ticks,
+                pattern_length,
                 ticks_per_bar,
                 quantize_grid,
                 overdub,
@@ -954,7 +954,7 @@ impl SynthEngine {
                     pattern_id,
                     track_id,
                     region_start,
-                    pattern_length_ticks,
+                    pattern_length,
                     ticks_per_bar,
                     overdub,
                 );
@@ -2029,7 +2029,7 @@ impl AudioProcessor for SynthEngine {
             let tpq = synth_sequencer::TICKS_PER_QUARTER as u64;
             if curr_tick.0 / tpq != prev_tick.0 / tpq {
                 // Crossed a beat boundary — use cached ticks_per_bar for accent
-                let ticks_per_bar = self.recording.ticks_per_bar() as u64;
+                let ticks_per_bar = self.recording.ticks_per_bar().0 as u64;
                 let accented = curr_tick.0 % ticks_per_bar < tpq;
                 self.click_generator.trigger_click(accented);
             }
