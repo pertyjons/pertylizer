@@ -1,5 +1,11 @@
 # Version History
 
+## [0.207.0] - 2026-03-04
+### Live note preview and loop during recording
+- **Live note preview** — notes appear as orange rectangles in the piano roll immediately during recording, before being committed; held notes extend in real-time from start tick to playhead
+- **Loop during recording** — playback automatically loops around the target pattern region when recording starts, enabling multiple overdub passes without stopping; loop state is saved and restored when recording ends
+- **Recording preview events** — new `RecordingPreview` engine event sends completed and held notes to the GUI at buffer rate (~86Hz) via the existing lock-free ringbuffer
+
 ## [0.206.0] - 2026-03-04
 ### Recording quantization and overdub mode
 - **Recording quantization** — "Q" button in transport bar cycles through Off → 1/4 → 1/8 → 1/16 → 1/32 note grid; recorded notes are snapped to the selected grid on input

@@ -382,6 +382,8 @@ pub struct SynthEngine {
     // === Recording ===
     recording: crate::recording::RecordingBuffer,
     click_generator: crate::click_generator::ClickGenerator,
+    /// Saved loop state before recording started (start, end, enabled).
+    pre_record_loop: Option<(synth_sequencer::Tick, synth_sequencer::Tick, bool)>,
 
     // === Performance monitoring ===
     callback_duration_sum: f32,
@@ -454,6 +456,7 @@ impl SynthEngine {
             instrument_mapping,
             recording: crate::recording::RecordingBuffer::new(),
             click_generator: crate::click_generator::ClickGenerator::new(48000.0),
+            pre_record_loop: None,
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -827,6 +830,20 @@ impl SynthEngine {
                 // If recording is armed, start count-in
                 if self.recording.state() == crate::recording::RecordingState::Armed {
                     if let Some(seek_to) = self.recording.start_playback() {
+                        // Save current loop state before overriding
+                        self.pre_record_loop = Some((
+                            self.sequencer.loop_start(),
+                            self.sequencer.loop_end(),
+                            self.sequencer.is_looping(),
+                        ));
+
+                        // Set loop around the pattern region
+                        if let Some((region_start, pattern_length)) = self.recording.target_info() {
+                            let loop_end =
+                                synth_sequencer::Tick(region_start.0 + pattern_length.0 as u64);
+                            self.sequencer.set_loop(region_start, loop_end, true);
+                        }
+
                         // Enable metronome during count-in
                         self.click_generator.set_enabled(true);
                         self.sequencer.play();
@@ -859,6 +876,8 @@ impl SynthEngine {
                     // Restore metronome to shared state
                     self.click_generator
                         .set_enabled(self.state.transport.is_metronome_on());
+                    // Restore loop state from before recording
+                    self.restore_pre_record_loop();
                 }
 
                 let _ = self.sequencer.stop();
@@ -973,6 +992,8 @@ impl SynthEngine {
                     self.flush_recorded_notes(pid, notes, overdub);
                 }
                 self.state.transport.set_recording_state(0);
+                // Restore loop state from before recording
+                self.restore_pre_record_loop();
             }
             EngineCommand::SetMetronome(enabled) => {
                 self.click_generator.set_enabled(enabled);
@@ -1264,6 +1285,13 @@ impl SynthEngine {
                 notes,
                 overdub,
             });
+    }
+
+    /// Restore loop state saved before recording started.
+    fn restore_pre_record_loop(&mut self) {
+        if let Some((start, end, enabled)) = self.pre_record_loop.take() {
+            self.sequencer.set_loop(start, end, enabled);
+        }
     }
 
     // ========================================================================
@@ -2022,6 +2050,18 @@ impl AudioProcessor for SynthEngine {
         let rec_state = self.recording.state().as_u32();
         if self.state.transport.recording_state() != rec_state {
             self.state.transport.set_recording_state(rec_state);
+        }
+
+        // Emit live recording preview (once per buffer callback, ~86Hz)
+        if self.recording.state() == crate::recording::RecordingState::Capturing
+            && let Some((_region_start, pattern_length)) = self.recording.target_info()
+        {
+            let (completed, held) = self.recording.preview_snapshot();
+            let _ = self.event_producer.try_push(EngineEvent::RecordingPreview {
+                completed,
+                held,
+                pattern_length,
+            });
         }
 
         // Trigger metronome click on beat boundaries

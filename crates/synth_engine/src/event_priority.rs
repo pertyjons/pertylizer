@@ -185,6 +185,7 @@ impl PrioritizedEventProducer {
             EngineEvent::PeakMeter { .. } => EventPriority::Low,
             EngineEvent::RmsMeter { .. } => EventPriority::Low,
             EngineEvent::WaveformData { .. } => EventPriority::Low,
+            EngineEvent::RecordingPreview { .. } => EventPriority::Low,
         }
     }
 

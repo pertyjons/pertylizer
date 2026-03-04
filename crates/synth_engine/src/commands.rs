@@ -770,6 +770,19 @@ pub enum EngineEvent {
         learn_state: LearnState,
     },
 
+    /// Live preview of recording in progress.
+    ///
+    /// Sent each audio buffer callback during Capturing state.
+    /// The UI renders these as orange preview notes in the piano roll.
+    RecordingPreview {
+        /// Completed notes recorded so far.
+        completed: Vec<crate::recording::RecordedNote>,
+        /// Currently held notes (pitch, start tick).
+        held: Vec<(synth_sequencer::Pitch, synth_sequencer::PatternTick)>,
+        /// Pattern length for wrapping calculations.
+        pattern_length: synth_sequencer::Duration,
+    },
+
     /// Recorded notes flushed from the audio thread.
     ///
     /// The UI thread should write these notes into the target pattern.
