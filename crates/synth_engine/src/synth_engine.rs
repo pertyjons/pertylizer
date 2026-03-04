@@ -379,6 +379,10 @@ pub struct SynthEngine {
     /// Convention: `SeqInstrumentId(X)` ↔ `InstrumentId(X)`.
     instrument_mapping: InstrumentMapping,
 
+    // === Recording ===
+    recording: crate::recording::RecordingBuffer,
+    click_generator: crate::click_generator::ClickGenerator,
+
     // === Performance monitoring ===
     callback_duration_sum: f32,
     callback_count: u32,
@@ -448,6 +452,8 @@ impl SynthEngine {
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
             instrument_mapping,
+            recording: crate::recording::RecordingBuffer::new(),
+            click_generator: crate::click_generator::ClickGenerator::new(48000.0),
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -818,17 +824,43 @@ impl SynthEngine {
 
             // Transport control
             EngineCommand::Play => {
-                self.sequencer.play();
-                self.state.transport.set_playing(true);
+                // If recording is armed, start count-in
+                if self.recording.state() == crate::recording::RecordingState::Armed {
+                    if let Some(seek_to) = self.recording.start_playback() {
+                        // Enable metronome during count-in
+                        self.click_generator.set_enabled(true);
+                        self.sequencer.play();
+                        let _ = self.sequencer.seek(seek_to);
+                        self.state.transport.set_playing(true);
+                        self.state.transport.set_ticks(seek_to.0);
+                        self.state
+                            .transport
+                            .set_recording_state(self.recording.state().as_u32());
+                    }
+                } else {
+                    self.sequencer.play();
+                    self.state.transport.set_playing(true);
+                }
             }
             EngineCommand::Stop => {
+                // Flush recording if capturing
+                if self.recording.state() == crate::recording::RecordingState::Capturing
+                    || self.recording.state() == crate::recording::RecordingState::CountIn
+                {
+                    let notes = self.recording.disarm();
+                    if !notes.is_empty() {
+                        self.flush_recorded_notes(notes);
+                    }
+                    self.state.transport.set_recording_state(0);
+                    // Restore metronome to shared state
+                    self.click_generator
+                        .set_enabled(self.state.transport.is_metronome_on());
+                }
+
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
 
                 // Release all voices on all instruments
-                // This is necessary because sequencer.stop() returns events that
-                // would need to be processed, but we're not in the audio callback.
-                // Direct voice release is more reliable.
                 for instrument in &mut self.instruments {
                     instrument.all_notes_off();
                 }
@@ -903,6 +935,41 @@ impl SynthEngine {
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
             }
+
+            // Recording commands
+            EngineCommand::ArmRecord {
+                pattern_id,
+                track_id,
+                region_start,
+                pattern_length_ticks,
+                ticks_per_bar,
+            } => {
+                self.recording.arm(
+                    pattern_id,
+                    track_id,
+                    region_start,
+                    pattern_length_ticks,
+                    ticks_per_bar,
+                );
+                self.state
+                    .transport
+                    .set_recording_state(self.recording.state().as_u32());
+            }
+            EngineCommand::DisarmRecord => {
+                let notes = self.recording.disarm();
+                if !notes.is_empty() {
+                    self.flush_recorded_notes(notes);
+                }
+                self.state.transport.set_recording_state(0);
+            }
+            EngineCommand::SetMetronome(enabled) => {
+                self.click_generator.set_enabled(enabled);
+                self.state.transport.set_metronome(enabled);
+            }
+            EngineCommand::SetMetronomeVolume(vol) => {
+                self.click_generator.set_volume(vol.as_f32());
+            }
+
             EngineCommand::SetTempo(bpm) => {
                 self.state.transport.set_tempo(bpm.as_f32());
             }
@@ -1099,6 +1166,15 @@ impl SynthEngine {
             note_triggered = true;
         }
 
+        // Capture note for recording (after instrument routing so sound plays immediately)
+        if self.recording.state() == crate::recording::RecordingState::Capturing {
+            self.recording.note_on(
+                note.as_u8(),
+                velocity.to_midi(),
+                self.sequencer.current_tick(),
+            );
+        }
+
         if note_triggered {
             let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
                 note,
@@ -1131,6 +1207,12 @@ impl SynthEngine {
             self.module_graph.note_off();
         }
 
+        // Capture note-off for recording
+        if self.recording.state() == crate::recording::RecordingState::Capturing {
+            self.recording
+                .note_off(note.as_u8(), self.sequencer.current_tick());
+        }
+
         let _ = self
             .event_producer
             .try_push(EngineEvent::NoteReleased { note, channel });
@@ -1146,6 +1228,23 @@ impl SynthEngine {
         }
 
         let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+    }
+
+    // ========================================================================
+    // Recording helpers
+    // ========================================================================
+
+    /// Send recorded notes to the UI thread for writing into the target pattern.
+    ///
+    /// This avoids taking RwLock::write() on the audio thread.
+    fn flush_recorded_notes(&mut self, notes: Vec<crate::recording::RecordedNote>) {
+        let Some(pattern_id) = self.recording.target_pattern() else {
+            return;
+        };
+
+        let _ = self
+            .event_producer
+            .try_push(EngineEvent::RecordedNotesFlushed { pattern_id, notes });
     }
 
     // ========================================================================
@@ -1886,14 +1985,36 @@ impl AudioProcessor for SynthEngine {
             voice_start_time: synth_core::SamplePosition::ZERO,
         };
 
+        // Save tick before sequencer advances (for beat boundary detection)
+        let prev_tick = self.sequencer.current_tick();
+
         // Process sequencer events
         self.sequencer_event_buffer.clear();
         self.sequencer
             .process(sample_count, &mut self.sequencer_event_buffer);
 
-        self.state
-            .transport
-            .set_ticks(self.sequencer.current_tick().0);
+        let curr_tick = self.sequencer.current_tick();
+
+        self.state.transport.set_ticks(curr_tick.0);
+
+        // Tick the recording state machine
+        self.recording.tick(curr_tick);
+        // Update shared recording state if it changed
+        let rec_state = self.recording.state().as_u32();
+        if self.state.transport.recording_state() != rec_state {
+            self.state.transport.set_recording_state(rec_state);
+        }
+
+        // Trigger metronome click on beat boundaries
+        if self.click_generator.is_enabled() && curr_tick.0 > prev_tick.0 {
+            let tpq = synth_sequencer::TICKS_PER_QUARTER as u64;
+            if curr_tick.0 / tpq != prev_tick.0 / tpq {
+                // Crossed a beat boundary — use cached ticks_per_bar for accent
+                let ticks_per_bar = self.recording.ticks_per_bar() as u64;
+                let accented = curr_tick.0 % ticks_per_bar < tpq;
+                self.click_generator.trigger_click(accented);
+            }
+        }
 
         route_sequencer_events(
             &self.sequencer_event_buffer,
@@ -1922,6 +2043,10 @@ impl AudioProcessor for SynthEngine {
                 self.awe_engine.process(self.mix_buffer.as_mut_slice(), sr);
             }
         }
+
+        // Mix metronome click into output
+        self.click_generator
+            .process(self.mix_buffer.as_mut_slice(), context.frames);
 
         // Process master-level visualizers after AWE (so they show final signal)
         self.master_effects.process_visualizers(&self.mix_buffer);
@@ -1982,6 +2107,7 @@ impl AudioProcessor for SynthEngine {
         self.metering.set_sample_rate(self.sample_rate);
         self.sequencer
             .set_sample_rate(synth_core::SampleRate::new(self.sample_rate));
+        self.click_generator.set_sample_rate(self.sample_rate);
         // AWE delay lines depend on sample rate — recalculate on next process()
         self.awe_engine.mark_geometry_dirty();
     }

@@ -14,6 +14,7 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::similar_names)]
 
+pub mod click_generator;
 pub mod commands;
 pub mod connectivity;
 pub mod cpu_tracker;
@@ -24,6 +25,7 @@ pub mod hub;
 pub mod instrument;
 pub mod instrument_mapping;
 pub mod metering;
+pub mod recording;
 pub mod sequencer_engine;
 pub mod shared_state;
 pub mod state;
@@ -53,6 +55,7 @@ pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, 
 pub use instrument::{Instrument, InstrumentId, MidiChannel};
 pub use instrument_mapping::InstrumentMapping;
 pub use metering::*;
+pub use recording::RecordingState;
 pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use shared_state::{
     AtomicF32, ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, SharedEngineState,

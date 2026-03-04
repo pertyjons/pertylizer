@@ -1,5 +1,16 @@
 # Version History
 
+## [0.205.0] - 2026-03-04
+### Recording (MIDI & keyboard), metronome, count-in
+- **Real-time recording** — arm recording for the opened piano roll pattern, play to start capturing keyboard/MIDI notes into the pattern with correct timing
+- **Metronome click track** — audible sine wave clicks on beat boundaries (accented on beat 1), toggle with "M" button in transport bar
+- **Count-in (pre-roll)** — 1 bar metronome count-in before recording begins, allowing the player to hear the tempo before notes are captured
+- **Recording buffer** (`recording.rs`) — real-time safe state machine (Idle → Armed → CountIn → Capturing) with pre-allocated note storage, song-to-pattern tick conversion, and held note tracking
+- **Click generator** (`click_generator.rs`) — generates short sine wave bursts (1200 Hz accented, 800 Hz normal) with exponential decay envelope, fully real-time safe
+- **Transport bar recording controls** — record button (disabled when no pattern open, blinking when armed/count-in, solid red when capturing), metronome toggle, status indicator (ARM/COUNT-IN/REC)
+- **Engine commands** — `ArmRecord`, `DisarmRecord`, `SetMetronome`, `SetMetronomeVolume` with transport state atomics for GUI access
+- **Flush on stop** — recorded notes are written to the pattern with correct durations when playback stops; held notes get a 16th-note fallback duration
+
 ## [0.204.0] - 2026-03-02
 ### Voice leak fix, arrangement view improvements, example project
 - **Fixed voice leak bug** — voices in `Releasing` state never transitioned back to `Idle`, causing CPU to spike to 100% as voices accumulated indefinitely. Added `is_release_done()` trait method on `PolyModule`, implemented in `Envelope` and `Mseg`, with `all_releases_done()` check on `ModuleGraph` to reclaim finished voices

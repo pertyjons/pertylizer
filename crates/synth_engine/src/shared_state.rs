@@ -127,6 +127,10 @@ pub struct SharedTransportState {
     pub loop_start: AtomicU64,
     /// Loop end position in samples.
     pub loop_end: AtomicU64,
+    /// Recording state: 0=off, 1=armed, 2=count_in, 3=capturing.
+    pub recording: AtomicU32,
+    /// Metronome state: 0=off, 1=on.
+    pub metronome: AtomicU32,
 }
 
 impl SharedTransportState {
@@ -139,6 +143,8 @@ impl SharedTransportState {
             loop_enabled: AtomicU32::new(0),
             loop_start: AtomicU64::new(0),
             loop_end: AtomicU64::new(0),
+            recording: AtomicU32::new(0),
+            metronome: AtomicU32::new(0),
         }
     }
 
@@ -160,6 +166,41 @@ impl SharedTransportState {
     /// Get current position in samples.
     pub fn position(&self) -> u64 {
         self.position_samples.load(Ordering::Relaxed)
+    }
+
+    /// Get the recording state (0=off, 1=armed, 2=count_in, 3=capturing).
+    pub fn recording_state(&self) -> u32 {
+        self.recording.load(Ordering::Relaxed)
+    }
+
+    /// Set the recording state.
+    pub fn set_recording_state(&self, state: u32) {
+        self.recording.store(state, Ordering::Relaxed);
+    }
+
+    /// Check if recording is armed (waiting for play).
+    pub fn is_armed(&self) -> bool {
+        self.recording_state() == 1
+    }
+
+    /// Check if actively capturing.
+    pub fn is_recording(&self) -> bool {
+        self.recording_state() == 3
+    }
+
+    /// Check if in count-in phase.
+    pub fn is_count_in(&self) -> bool {
+        self.recording_state() == 2
+    }
+
+    /// Check if metronome is on.
+    pub fn is_metronome_on(&self) -> bool {
+        self.metronome.load(Ordering::Relaxed) == 1
+    }
+
+    /// Set metronome state.
+    pub fn set_metronome(&self, enabled: bool) {
+        self.metronome.store(u32::from(enabled), Ordering::Relaxed);
     }
 }
 

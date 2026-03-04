@@ -366,6 +366,16 @@ impl Default for SampleRate {
     }
 }
 
+impl std::fmt::Display for SampleRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= 1000.0 {
+            write!(f, "{:.1} kHz", self.0 / 1000.0)
+        } else {
+            write!(f, "{:.0} Hz", self.0)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

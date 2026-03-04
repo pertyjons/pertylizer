@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use synth_core::{Bpm, Semitones};
-use synth_engine::{EngineCommand, EngineHandle};
+use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     InputCommand, InputSource, NoteId, NoteName, PatternId, PatternTick, Pitch, SeqInstrumentId,
@@ -169,6 +169,10 @@ pub struct SequencerViewState {
     highlighted_track: Option<TrackId>,
     /// Arrangement timeline zoom level (1.0 = default).
     zoom_level: f32,
+    /// Auto-scroll to follow playhead during playback.
+    auto_follow_playhead: bool,
+    /// Last scroll offset set by auto-follow (to detect manual scrolling).
+    last_auto_scroll_offset: Option<f32>,
 }
 
 impl SequencerViewState {
@@ -187,6 +191,8 @@ impl SequencerViewState {
             context_menu_pos: None,
             highlighted_track: None,
             zoom_level: 1.0,
+            auto_follow_playhead: true,
+            last_auto_scroll_offset: None,
         }
     }
 }
@@ -256,11 +262,12 @@ fn draw_transport_bar(
 ) -> bool {
     use egui_remixicon::icons as ri;
     let t = theme();
-    let state = &handle.state;
-    let is_playing = state.transport.is_playing();
-    let current_ticks = state.transport.get_ticks();
+    let is_playing = handle.state.transport.is_playing();
+    let current_ticks = handle.state.transport.get_ticks();
     let current_tick = Tick(current_ticks);
-    let tempo_f32 = state.transport.get_tempo();
+    let tempo_f32 = handle.state.transport.get_tempo();
+    let rec_state = RecordingState::from_u32(handle.state.transport.recording_state());
+    let metro_on = handle.state.transport.is_metronome_on();
 
     // Read time signature and song name from song (non-blocking)
     let (time_sig, song_name) = song
@@ -303,6 +310,7 @@ fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::Play);
+            view_state.auto_follow_playhead = true;
         }
 
         // Stop
@@ -316,6 +324,92 @@ fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::Stop);
+        }
+
+        // Record button
+        let has_pattern = view_state.opened_pattern.is_some();
+        let dim_red = Color32::from_rgb(120, 40, 40);
+        let rec_color = match rec_state {
+            RecordingState::Capturing => t.colors.accent_red,
+            RecordingState::CountIn => {
+                let blink = ((ui.input(|i| i.time) * 4.0) as u64).is_multiple_of(2);
+                if blink {
+                    t.colors.accent_red
+                } else {
+                    t.colors.text_dim
+                }
+            }
+            RecordingState::Armed => {
+                let blink = ((ui.input(|i| i.time) * 2.0) as u64).is_multiple_of(2);
+                if blink { t.colors.accent_red } else { dim_red }
+            }
+            RecordingState::Idle => {
+                if has_pattern {
+                    dim_red
+                } else {
+                    t.colors.text_dim
+                }
+            }
+        };
+        let rec_btn = ui.add_enabled(
+            has_pattern,
+            egui::Button::new(RichText::new(ri::RECORD_CIRCLE_FILL).color(rec_color)),
+        );
+        if rec_btn
+            .on_hover_text(match rec_state {
+                RecordingState::Idle => "Arm recording",
+                _ => "Disarm recording",
+            })
+            .clicked()
+        {
+            if rec_state != RecordingState::Idle {
+                handle.send(EngineCommand::DisarmRecord);
+            } else if let Some(pattern_id) = view_state.opened_pattern {
+                // Arm — look up placement bounds and time signature
+                let bounds = song.try_read().ok().and_then(|s| {
+                    let mut best: Option<(Tick, u32, u32)> = None;
+                    for p in s.arrangement() {
+                        if p.pattern_id == pattern_id {
+                            let pat = s.pattern(pattern_id)?;
+                            let tpb = s.time_signature_at(p.start).ticks_per_bar();
+                            best = Some((p.start, pat.length.0, tpb));
+                            break;
+                        }
+                    }
+                    best
+                });
+                if let Some((region_start, pattern_length, ticks_per_bar)) = bounds {
+                    handle.send(EngineCommand::ArmRecord {
+                        pattern_id,
+                        track_id: TrackId::new(0),
+                        region_start,
+                        pattern_length_ticks: pattern_length,
+                        ticks_per_bar,
+                    });
+                }
+            }
+        }
+        // Request repaint during blinking states
+        if matches!(rec_state, RecordingState::Armed | RecordingState::CountIn) {
+            ui.ctx().request_repaint();
+        }
+
+        // Metronome toggle
+        let metro_color = if metro_on {
+            t.colors.accent_primary
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .button(RichText::new("M").strong().color(metro_color))
+            .on_hover_text(if metro_on {
+                "Metronome off"
+            } else {
+                "Metronome on"
+            })
+            .clicked()
+        {
+            handle.send(EngineCommand::SetMetronome(!metro_on));
         }
 
         ui.separator();
@@ -384,12 +478,29 @@ fn draw_transport_bar(
         ui.separator();
 
         // Status indicator
-        if is_playing {
-            ui.label(RichText::new("PLAYING").color(t.colors.meter_green));
-        } else if current_ticks > 0 {
-            ui.label(RichText::new("PAUSED").color(t.colors.accent_yellow));
-        } else {
-            ui.label(RichText::new("STOPPED").color(t.colors.text_dim));
+        match rec_state {
+            RecordingState::Capturing => {
+                ui.label(RichText::new("REC").color(t.colors.accent_red).strong());
+            }
+            RecordingState::CountIn => {
+                ui.label(
+                    RichText::new("COUNT-IN")
+                        .color(t.colors.accent_red)
+                        .strong(),
+                );
+            }
+            RecordingState::Armed => {
+                ui.label(RichText::new("ARM").color(Color32::from_rgb(180, 60, 60)));
+            }
+            RecordingState::Idle => {
+                if is_playing {
+                    ui.label(RichText::new("PLAYING").color(t.colors.meter_green));
+                } else if current_ticks > 0 {
+                    ui.label(RichText::new("PAUSED").color(t.colors.accent_yellow));
+                } else {
+                    ui.label(RichText::new("STOPPED").color(t.colors.text_dim));
+                }
+            }
         }
     });
 
@@ -548,11 +659,13 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
 
 /// Draw the arrangement view with track headers and timeline.
 /// Returns `Some(PatternId)` if a placement was double-clicked.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn draw_arrangement(
     ui: &mut egui::Ui,
     data: &ArrangementData,
     current_tick: u64,
+    is_playing: bool,
+    handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
@@ -797,7 +910,23 @@ fn draw_arrangement(
 
     // ── Timeline area (right side, uses painter for performance) ──
     let scroll_id = ui.id().with("seq_scroll");
-    egui::ScrollArea::horizontal()
+
+    // Pre-set scroll offset for auto-follow before showing the scroll area
+    if is_playing && view_state.auto_follow_playhead && ticks_per_beat > 0 {
+        let playhead_beats = current_tick as f32 / ticks_per_beat as f32;
+        let playhead_x_offset = playhead_beats * pixels_per_beat;
+        let visible_width = ui.available_width();
+        // Keep playhead at ~30% from the right edge
+        let target_offset = (playhead_x_offset - visible_width * 0.7).max(0.0);
+        // Write scroll state directly
+        let mut scroll_state =
+            egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        scroll_state.offset.x = target_offset;
+        scroll_state.store(ui.ctx(), scroll_id);
+        view_state.last_auto_scroll_offset = Some(target_offset);
+    }
+
+    let scroll_output = egui::ScrollArea::horizontal()
         .id_salt(scroll_id)
         .show(ui, |ui| {
             let total_size = Vec2::new(
@@ -1071,9 +1200,37 @@ fn draw_arrangement(
                 }
             }
 
-            // ── Primary click clears highlight ──
-            if response.clicked() {
-                view_state.highlighted_track = None;
+            // ── Primary click: ruler seek or clear highlight ──
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                if ruler_rect.contains(pos) {
+                    // Click in ruler → seek to that position
+                    let seek_tick = x_to_tick(pos.x);
+                    handle.send(EngineCommand::Seek {
+                        tick: Tick(seek_tick),
+                    });
+                    // Re-enable auto-follow on ruler click
+                    view_state.auto_follow_playhead = true;
+                } else {
+                    view_state.highlighted_track = None;
+                }
+            }
+
+            // ── Ruler hover: pointing hand cursor + indicator line ──
+            if response.hovered()
+                && let Some(pos) = ui.ctx().pointer_hover_pos()
+                && ruler_rect.contains(pos)
+            {
+                ui.ctx().output_mut(|o| {
+                    o.cursor_icon = CursorIcon::PointingHand;
+                });
+                // Draw subtle hover indicator line
+                let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
+                painter.line_segment(
+                    [Pos2::new(pos.x, tl_y), Pos2::new(pos.x, line_bottom)],
+                    Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.4)),
+                );
             }
 
             // ── Capture right-click position + set highlighted track ──
@@ -1368,6 +1525,23 @@ fn draw_arrangement(
             );
         });
 
+    // Detect manual scrolling to disable auto-follow
+    if is_playing {
+        let actual_offset = scroll_output.state.offset.x;
+        if let Some(expected) = view_state.last_auto_scroll_offset {
+            // If user scrolled manually (offset differs significantly from what we set)
+            if (actual_offset - expected).abs() > 2.0 {
+                view_state.auto_follow_playhead = false;
+                view_state.last_auto_scroll_offset = None;
+            }
+        }
+    }
+
+    // Re-enable auto-follow when playback starts from stopped
+    if !is_playing {
+        view_state.last_auto_scroll_offset = None;
+    }
+
     double_clicked_pattern
 }
 
@@ -1548,11 +1722,13 @@ fn quantize_tick(tick: u32, ticks_per_row: u16) -> u32 {
 
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn draw_piano_roll(
     ui: &mut egui::Ui,
     data: &PianoRollData,
     current_tick: u64,
+    is_playing: bool,
+    handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instrument_name: Option<&str>,
@@ -1607,6 +1783,62 @@ fn draw_piano_roll(
                     .size(12.0)
                     .color(t.colors.text_secondary),
             );
+        }
+        ui.separator();
+
+        // Mini-transport controls
+        {
+            use egui_remixicon::icons as ri;
+            ui.spacing_mut().item_spacing.x = 2.0;
+
+            if is_playing {
+                // Pause button
+                if ui
+                    .button(
+                        RichText::new(ri::PAUSE_FILL)
+                            .size(12.0)
+                            .color(t.colors.accent_yellow),
+                    )
+                    .on_hover_text("Pause")
+                    .clicked()
+                {
+                    handle.send(EngineCommand::Pause);
+                }
+            } else {
+                // Play pattern button
+                if ui
+                    .button(
+                        RichText::new(ri::PLAY_FILL)
+                            .size(12.0)
+                            .color(t.colors.accent_green),
+                    )
+                    .on_hover_text("Play pattern")
+                    .clicked()
+                {
+                    handle.send(EngineCommand::PlayPattern {
+                        pattern_id: data.pattern_id,
+                    });
+                }
+            }
+
+            // Stop button
+            if ui
+                .button(
+                    RichText::new(ri::STOP_FILL)
+                        .size(12.0)
+                        .color(if is_playing {
+                            t.colors.accent_red
+                        } else {
+                            t.colors.text_dim
+                        }),
+                )
+                .on_hover_text("Stop")
+                .clicked()
+            {
+                handle.send(EngineCommand::Stop);
+            }
+
+            ui.spacing_mut().item_spacing.x = 8.0;
         }
         ui.separator();
 
@@ -2963,6 +3195,8 @@ pub fn draw_sequencer_view(
                         ui,
                         data,
                         current_tick,
+                        is_playing,
+                        handle,
                         song,
                         view_state,
                         track_instrument_name.as_deref(),
@@ -2982,9 +3216,16 @@ pub fn draw_sequencer_view(
     // Main content: arrangement view
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(data) = &arrangement_data {
-            if let Some(pattern_id) =
-                draw_arrangement(ui, data, current_tick, song, view_state, instruments)
-            {
+            if let Some(pattern_id) = draw_arrangement(
+                ui,
+                data,
+                current_tick,
+                is_playing,
+                handle,
+                song,
+                view_state,
+                instruments,
+            ) {
                 // Clear selection when switching patterns
                 if view_state.opened_pattern != Some(pattern_id) {
                     view_state.selected_notes.clear();

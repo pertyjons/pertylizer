@@ -15,7 +15,7 @@ use synth_core::{
     BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, PortName, Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
-use synth_sequencer::{PatternId, Tick};
+use synth_sequencer::{PatternId, Tick, TrackId};
 
 /// Unique identifier for a module instance.
 ///
@@ -528,6 +528,26 @@ pub enum EngineCommand {
         song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
     },
 
+    // === Recording ===
+    /// Arm recording for a specific pattern.
+    ArmRecord {
+        pattern_id: PatternId,
+        track_id: TrackId,
+        region_start: Tick,
+        pattern_length_ticks: u32,
+        /// Ticks per bar for count-in calculation (avoids song lock on audio thread).
+        ticks_per_bar: u32,
+    },
+
+    /// Disarm recording (flushes any captured notes first).
+    DisarmRecord,
+
+    /// Enable or disable the metronome.
+    SetMetronome(bool),
+
+    /// Set metronome volume.
+    SetMetronomeVolume(NormalizedValue),
+
     // === AWE (Acoustic World Engine) ===
     /// Set a single AWE parameter.
     SetAweParameter { param: synth_awe::AweParam },
@@ -744,6 +764,17 @@ pub enum EngineEvent {
         key_range: KeyRange,
         /// The new learn state (usually Idle or WaitingForHighNote).
         learn_state: LearnState,
+    },
+
+    /// Recorded notes flushed from the audio thread.
+    ///
+    /// The UI thread should write these notes into the target pattern.
+    /// This avoids taking RwLock::write() on the audio thread.
+    RecordedNotesFlushed {
+        /// Target pattern to write notes into.
+        pattern_id: PatternId,
+        /// The recorded notes.
+        notes: Vec<crate::recording::RecordedNote>,
     },
 }
 
@@ -984,6 +1015,23 @@ impl std::fmt::Debug for EngineCommand {
                 .field("effect_type", effect_type)
                 .field("enabled", enabled)
                 .finish(),
+            Self::ArmRecord {
+                pattern_id,
+                track_id,
+                region_start,
+                pattern_length_ticks,
+                ticks_per_bar,
+            } => f
+                .debug_struct("ArmRecord")
+                .field("pattern_id", pattern_id)
+                .field("track_id", track_id)
+                .field("region_start", region_start)
+                .field("pattern_length_ticks", pattern_length_ticks)
+                .field("ticks_per_bar", ticks_per_bar)
+                .finish(),
+            Self::DisarmRecord => write!(f, "DisarmRecord"),
+            Self::SetMetronome(enabled) => write!(f, "SetMetronome({enabled})"),
+            Self::SetMetronomeVolume(vol) => write!(f, "SetMetronomeVolume({vol})"),
             Self::SetSong { .. } => write!(f, "SetSong"),
             Self::SetAweParameter { param } => f
                 .debug_struct("SetAweParameter")
