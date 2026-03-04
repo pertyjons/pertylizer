@@ -28,36 +28,36 @@
 - [x] Overdub mode — layer new notes on top of existing pattern
 
 ### 0.3 Copy/paste/duplicate in piano roll
-- [ ] Ctrl+C — copy selected notes
-- [ ] Ctrl+V — paste at cursor position
-- [ ] Ctrl+X — cut selected notes
-- [ ] Ctrl+D — duplicate selected notes (offset right)
-- [ ] Duplicate pattern — expose in arrangement right-click menu (backend exists)
+- [x] Ctrl+C — copy selected notes
+- [x] Ctrl+V — paste at cursor position
+- [x] Ctrl+X — cut selected notes
+- [x] Ctrl+D — duplicate selected notes (offset right)
+- [x] Duplicate pattern — expose in arrangement right-click menu (backend exists)
 
 ### 0.4 Keyboard shortcuts for piano roll
-- [ ] Ctrl+A — select all notes
-- [ ] Escape — clear selection (already works)
-- [ ] Delete/Backspace — delete selected notes (already works)
-- [ ] Arrow up/down — transpose selection by semitone
-- [ ] Shift+arrow up/down — transpose selection by octave
-- [ ] Space — toggle play/pause
+- [x] Ctrl+A — select all notes
+- [x] Escape — clear selection (already works)
+- [x] Delete/Backspace — delete selected notes (already works)
+- [x] Arrow up/down — transpose selection by semitone
+- [x] Shift+arrow up/down — transpose selection by octave
+- [x] Space — toggle play/pause
 
 ### 0.5 Quantization UI
-- [ ] Quantize menu/button — apply quantization to selected notes
-- [ ] Quantize strength slider (0–100%) — blend between original and quantized timing
-- [ ] Grid resolution selector in piano roll toolbar (1/4, 1/8, 1/16, 1/32)
+- [x] Quantize menu/button — apply quantization to selected notes
+- [x] Quantize strength slider (0–100%) — blend between original and quantized timing
+- [x] Grid resolution selector in piano roll toolbar (1/4, 1/8, 1/16, 1/32)
 - [ ] Swing/shuffle control — offset even subdivisions
 
 ### 0.6 Velocity editing
-- [ ] Velocity lane in piano roll — bar graph below notes showing per-note velocity
-- [ ] Drag velocity bars to edit
+- [x] Velocity lane in piano roll — bar graph below notes showing per-note velocity
+- [x] Drag velocity bars to edit
 - [ ] Scale velocities for selection (percentage or curve)
-- [ ] Adjustable default velocity for drawing/recording (currently fixed 0.8)
+- [x] Adjustable default velocity for drawing/recording (currently fixed 0.8)
 
 ### 0.7 Piano roll improvements
-- [ ] Note preview on click — play the note sound when clicking/drawing
-- [ ] Note length presets in toolbar (1/4, 1/8, 1/16) for draw mode
-- [ ] Humanize — slight random timing/velocity offset for selected notes (backend exists)
+- [x] Note preview on click — play the note sound when clicking/drawing
+- [x] Note length presets in toolbar (1/4, 1/8, 1/16) for draw mode
+- [x] Humanize — slight random timing/velocity offset for selected notes (backend exists)
 - [ ] Step entry mode — advance cursor by grid step after each note input
 
 ---

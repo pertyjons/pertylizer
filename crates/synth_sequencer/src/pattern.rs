@@ -1,5 +1,7 @@
 //! Pattern storage and manipulation.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
@@ -274,6 +276,76 @@ impl Pattern {
                 .quantize_with_strength(note.start, strength);
         }
         self.notes.sort_by_key(|n| n.start);
+    }
+
+    /// Set the velocity of a note.
+    pub fn set_note_velocity(&mut self, id: NoteId, velocity: Velocity) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.velocity = velocity;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Quantize only the selected notes to a custom grid with strength.
+    pub fn quantize_selected(
+        &mut self,
+        note_ids: &HashSet<NoteId>,
+        grid_ticks: u32,
+        strength: f32,
+    ) {
+        if grid_ticks == 0 {
+            return;
+        }
+        let strength = strength.clamp(0.0, 1.0);
+        for note in &mut self.notes {
+            if !note_ids.contains(&note.id) {
+                continue;
+            }
+            let quantized = ((note.start.0 + grid_ticks / 2) / grid_ticks) * grid_ticks;
+            let diff = quantized as f32 - note.start.0 as f32;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let new_tick = (note.start.0 as f32 + diff * strength) as u32;
+            note.start = PatternTick(new_tick);
+        }
+        self.notes.sort_by_key(|n| n.start);
+    }
+
+    /// Apply humanization (random timing/velocity offsets) to selected notes.
+    pub fn humanize_notes(
+        &mut self,
+        note_ids: &HashSet<NoteId>,
+        timing_range: u32,
+        velocity_range: f32,
+    ) {
+        for note in &mut self.notes {
+            if !note_ids.contains(&note.id) {
+                continue;
+            }
+            // Random timing offset: ±timing_range ticks
+            let timing_offset = fastrand::i32(-(timing_range as i32)..=(timing_range as i32));
+            #[allow(clippy::cast_sign_loss)]
+            let new_tick = (note.start.0 as i64 + timing_offset as i64).max(0) as u32;
+            note.start = PatternTick(new_tick);
+
+            // Random velocity offset: ±velocity_range
+            let vel_offset = fastrand::f32() * 2.0 * velocity_range - velocity_range;
+            let new_vel = (note.velocity.as_f32() + vel_offset).clamp(0.01, 1.0);
+            note.velocity = Velocity::new(new_vel);
+        }
+        self.notes.sort_by_key(|n| n.start);
+    }
+
+    /// Scale velocities of selected notes by a factor.
+    pub fn scale_velocities(&mut self, note_ids: &HashSet<NoteId>, factor: f32) {
+        for note in &mut self.notes {
+            if !note_ids.contains(&note.id) {
+                continue;
+            }
+            let new_vel = (note.velocity.as_f32() * factor).clamp(0.01, 1.0);
+            note.velocity = Velocity::new(new_vel);
+        }
     }
 
     /// Transpose all notes that can be transposed within valid range.

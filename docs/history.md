@@ -1,5 +1,18 @@
 # Version History
 
+## [0.208.0] - 2026-03-04
+### Piano roll: copy/paste, shortcuts, quantize, velocity editing, improvements
+- **Copy/paste/duplicate** — Ctrl+C/X/V/D for note clipboard operations; clipboard stores relative offsets for flexible pasting; Ctrl+D duplicates selection to the right
+- **Duplicate pattern** — right-click a pattern placement in arrangement view to duplicate it with a copy placed immediately after
+- **Keyboard shortcuts** — Ctrl+A select all, Arrow Up/Down transpose by semitone, Shift+Arrow transpose by octave, Space toggle play/pause
+- **Quantization UI** — grid resolution selector (Auto/1/4/1/8/1/16/1/32) in toolbar, quantize button with adjustable strength, applies to selected notes
+- **Velocity editing** — drag velocity bars in the velocity lane to edit note velocities in real-time; configurable default velocity for new notes via toolbar slider
+- **Note length presets** — toolbar selector for draw-mode note length (Drag/1/4/1/8/1/16)
+- **Note preview on click** — plays a short preview of the note sound when clicking or drawing notes in the piano roll
+- **Humanize** — toolbar button applies random timing (±15 ticks) and velocity (±5%) offsets to selected notes
+- **Step entry mode** — toggle in toolbar shows a magenta cursor line; planned for keyboard-driven note-by-note entry
+- **Swing control** — state field added (UI placeholder for future implementation)
+
 ## [0.207.0] - 2026-03-04
 ### Live note preview and loop during recording
 - **Live note preview** — notes appear as orange rectangles in the piano roll immediately during recording, before being committed; held notes extend in real-time from start tick to playhead
