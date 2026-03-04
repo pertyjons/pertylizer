@@ -26,28 +26,54 @@ git commit -m "<short description of changes>"
 
 ## Code Style & Patterns
 
-### Newtype Pattern (mandatory)
+### Newtype Pattern (CRITICAL — strictly enforced)
 
-ALWAYS use typed domain values — **never raw primitives** like `f32`, `u8`, `usize` for domain concepts.
+**NEVER use raw primitives** (`f32`, `u8`, `u16`, `u32`, `u64`, `usize`, `i32`) for domain concepts. ALWAYS use or create a newtype wrapper. This applies everywhere: function parameters, return types, struct fields, local variables that represent a domain concept.
+
+**Before writing `f32` or `u8` etc. in a struct field or function signature, STOP and check if a newtype already exists below.** If one exists, use it. If none fits, create a new newtype.
 
 ```rust
-// WRONG:
+// WRONG — raw primitives for domain values:
 fn set_frequency(hz: f32) { ... }
-fn set_cutoff(hz: f32) { ... }  // Easy to mix up!
+struct ClipboardNote { pitch: u8, velocity: f32 }
+fn quantize(tick: u32, grid: u32) { ... }
 
-// RIGHT:
+// RIGHT — newtypes:
 fn set_frequency(freq: Hertz) { ... }
-fn set_cutoff(cutoff: Hertz) { ... }  // Type-safe
+struct ClipboardNote { pitch: Pitch, velocity: Velocity }
+fn quantize(tick: PatternTick, grid: Duration) { ... }
 ```
 
-Existing domain types:
-- **Frequency:** `Hertz`
-- **Amplitude:** `Gain`, `Decibels`
-- **Time:** `Seconds`, `Milliseconds`, `Bpm`, `BeatDivision`
-- **Normalized:** `NormalizedValue` (0.0–1.0), `BipolarValue` (-1.0 to 1.0), `Phase`
-- **MIDI:** `MidiNote`, `MidiChannel`
-- **Samples:** `SampleCount`, `SamplePosition`, `SampleRate`, `BufferIndex`
-- **DSP:** `FilterState`, `NoiseState`
+**The only acceptable uses of raw primitives are:**
+- Loop counters and array indices (not representing domain concepts)
+- Intermediate arithmetic inside a function that returns a newtype
+- FFI boundaries and serialization internals
+
+#### Domain types by crate
+
+**`synth_core`** (30 types):
+- **Frequency:** `Hertz`, `SampleRate` (f32, for DSP)
+- **Pitch:** `Cents`, `Semitones`, `Octaves`, `MidiNote`, `Velocity`, `MidiChannel`
+- **Amplitude:** `Gain`, `Decibels`, `Ratio`, `Amplitude`
+- **Time:** `Seconds`, `Milliseconds`, `Bpm`, `BeatDivision`, `BeatPosition`
+- **Normalized:** `NormalizedValue` (0.0–1.0), `BipolarValue` (-1.0–1.0), `Phase` (0.0–1.0)
+- **Samples:** `SampleCount`, `SamplePosition`, `BlockSize`
+- **Audio:** `BufferIndex`, `FrameCount`, `NoiseState`, `FilterState`, `VoiceCount`, `CpuUsage`, `PatternIndex`
+- **Interned:** `PortName`
+- **Audio backend:** `SampleRate` (u32), `BufferSize`
+
+**`synth_sequencer`** (13 types):
+- **IDs:** `PatternId`, `TrackId`, `SeqInstrumentId`, `NoteId`
+- **Indices:** `TrackIndex`, `RowIndex`, `TrackCount`, `RowCount`, `TicksPerRow`
+- **Time:** `Tick` (absolute), `PatternTick` (pattern-local), `Duration` (in ticks)
+- **Pitch:** `Pitch` (0–127)
+
+**`synth_engine`** (5 types):
+- `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`
+
+**`synth_awe`** (6 types):
+- **Physical:** `Meters`, `SquareMeters`, `CubicMeters`, `MetersPerSecond`
+- **Audio:** `SampleOffset`, `StretchFactor`
 
 ### Naming Conventions
 
