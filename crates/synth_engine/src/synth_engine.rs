@@ -847,9 +847,12 @@ impl SynthEngine {
                 if self.recording.state() == crate::recording::RecordingState::Capturing
                     || self.recording.state() == crate::recording::RecordingState::CountIn
                 {
+                    let pattern_id = self.recording.target_pattern();
                     let notes = self.recording.disarm();
-                    if !notes.is_empty() {
-                        self.flush_recorded_notes(notes);
+                    if let Some(pid) = pattern_id
+                        && !notes.is_empty()
+                    {
+                        self.flush_recorded_notes(pid, notes);
                     }
                     self.state.transport.set_recording_state(0);
                     // Restore metronome to shared state
@@ -956,9 +959,12 @@ impl SynthEngine {
                     .set_recording_state(self.recording.state().as_u32());
             }
             EngineCommand::DisarmRecord => {
+                let pattern_id = self.recording.target_pattern();
                 let notes = self.recording.disarm();
-                if !notes.is_empty() {
-                    self.flush_recorded_notes(notes);
+                if let Some(pid) = pattern_id
+                    && !notes.is_empty()
+                {
+                    self.flush_recorded_notes(pid, notes);
                 }
                 self.state.transport.set_recording_state(0);
             }
@@ -1237,11 +1243,12 @@ impl SynthEngine {
     /// Send recorded notes to the UI thread for writing into the target pattern.
     ///
     /// This avoids taking RwLock::write() on the audio thread.
-    fn flush_recorded_notes(&mut self, notes: Vec<crate::recording::RecordedNote>) {
-        let Some(pattern_id) = self.recording.target_pattern() else {
-            return;
-        };
-
+    /// The `pattern_id` must be captured **before** calling `disarm()`, which clears the target.
+    fn flush_recorded_notes(
+        &mut self,
+        pattern_id: synth_sequencer::PatternId,
+        notes: Vec<crate::recording::RecordedNote>,
+    ) {
         let _ = self
             .event_producer
             .try_push(EngineEvent::RecordedNotesFlushed { pattern_id, notes });
