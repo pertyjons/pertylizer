@@ -151,8 +151,8 @@ enum DragState {
 #[derive(Debug, Clone)]
 struct ClipboardNote {
     tick_offset: u32,
-    pitch: u8,
-    velocity: f32,
+    pitch: Pitch,
+    velocity: Velocity,
     duration: Option<u32>,
     instrument: SeqInstrumentId,
 }
@@ -179,8 +179,8 @@ pub struct SequencerViewState {
     quantize_strength: f32,
     /// Swing amount (0.0-1.0, 0.0 = no swing).
     swing_amount: f32,
-    /// Velocity scale factor for scale-velocities operation (percentage).
-    velocity_scale_pct: f32,
+    /// Velocity scale factor for scale-velocities operation (1–200%).
+    velocity_scale_pct: u32,
     /// Draw-mode grid resolution in ticks (0 = use pattern default).
     draw_grid_resolution: u32,
     /// Draw-mode note length preset in ticks (0 = drag-to-length).
@@ -238,7 +238,7 @@ impl SequencerViewState {
             default_velocity: 0.8,
             quantize_strength: 1.0,
             swing_amount: 0.0,
-            velocity_scale_pct: 100.0,
+            velocity_scale_pct: 100,
             draw_grid_resolution: 0,
             draw_note_length: 0,
             step_entry_mode: false,
@@ -263,6 +263,17 @@ impl SequencerViewState {
             recording_preview_completed: Vec::new(),
             recording_preview_held: Vec::new(),
             recording_preview_pattern_length: SeqDuration(0),
+        }
+    }
+}
+
+impl SequencerViewState {
+    /// Get the effective grid resolution in ticks, falling back to pattern default.
+    fn effective_grid(&self, fallback_ticks_per_row: u16) -> u32 {
+        if self.draw_grid_resolution > 0 {
+            self.draw_grid_resolution
+        } else {
+            fallback_ticks_per_row as u32
         }
     }
 }
@@ -313,6 +324,15 @@ const RESIZE_GRAB_ZONE: f32 = 10.0;
 const AUTOMATION_ZONE_HEIGHT: f32 = 80.0;
 /// Radius for automation point circles.
 const AUTOMATION_POINT_RADIUS: f32 = 4.0;
+
+/// Grid resolution options: (display label, ticks). Uses `Duration` constants.
+const GRID_RESOLUTIONS: &[(&str, u32)] = &[
+    ("Auto", 0),
+    ("1/4", SeqDuration::QUARTER.0),
+    ("1/8", SeqDuration::EIGHTH.0),
+    ("1/16", SeqDuration::SIXTEENTH.0),
+    ("1/32", SeqDuration::THIRTY_SECOND.0),
+];
 /// Hit radius for automation point click detection.
 const AUTOMATION_HIT_RADIUS: f32 = 8.0;
 
@@ -2048,24 +2068,15 @@ fn draw_piano_roll(
         ui.separator();
 
         // ── Grid resolution selector ──
-        let grid_label = match view_state.draw_grid_resolution {
-            960 => "1/4",
-            480 => "1/8",
-            240 => "1/16",
-            120 => "1/32",
-            _ => "Grid",
-        };
+        let grid_label = GRID_RESOLUTIONS
+            .iter()
+            .find(|(_, t)| *t == view_state.draw_grid_resolution)
+            .map_or("Grid", |(l, _)| l);
         egui::ComboBox::from_id_salt("grid_res")
             .selected_text(grid_label)
             .width(50.0)
             .show_ui(ui, |ui| {
-                for &(label, ticks) in &[
-                    ("Auto", 0_u32),
-                    ("1/4", 960),
-                    ("1/8", 480),
-                    ("1/16", 240),
-                    ("1/32", 120),
-                ] {
+                for &(label, ticks) in GRID_RESOLUTIONS {
                     if ui
                         .selectable_label(view_state.draw_grid_resolution == ticks, label)
                         .clicked()
@@ -2076,18 +2087,25 @@ fn draw_piano_roll(
             });
 
         // ── Note length preset selector ──
-        let len_label = match view_state.draw_note_length {
-            960 => "L:1/4",
-            480 => "L:1/8",
-            240 => "L:1/16",
-            _ => "L:Drag",
-        };
+        let len_label = GRID_RESOLUTIONS
+            .iter()
+            .find(|(_, t)| *t == view_state.draw_note_length)
+            .map_or("L:Drag", |(l, _)| l);
         egui::ComboBox::from_id_salt("note_len")
-            .selected_text(len_label)
+            .selected_text(if view_state.draw_note_length == 0 {
+                "L:Drag"
+            } else {
+                len_label
+            })
             .width(55.0)
             .show_ui(ui, |ui| {
-                for &(label, ticks) in &[("Drag", 0_u32), ("1/4", 960), ("1/8", 480), ("1/16", 240)]
+                if ui
+                    .selectable_label(view_state.draw_note_length == 0, "Drag")
+                    .clicked()
                 {
+                    view_state.draw_note_length = 0;
+                }
+                for &(label, ticks) in &GRID_RESOLUTIONS[1..] {
                     if ui
                         .selectable_label(view_state.draw_note_length == ticks, label)
                         .clicked()
@@ -2124,11 +2142,7 @@ fn draw_piano_roll(
             ))
             .clicked()
         {
-            let grid = if view_state.draw_grid_resolution > 0 {
-                view_state.draw_grid_resolution
-            } else {
-                data.ticks_per_row as u32
-            };
+            let grid = view_state.effective_grid(data.ticks_per_row);
             if let Ok(mut song_w) = song.write()
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
@@ -2195,11 +2209,7 @@ fn draw_piano_roll(
             .on_hover_text("Apply swing to selected notes")
             .clicked()
         {
-            let grid = if view_state.draw_grid_resolution > 0 {
-                view_state.draw_grid_resolution
-            } else {
-                data.ticks_per_row as u32
-            };
+            let grid = view_state.effective_grid(data.ticks_per_row);
             if let Ok(mut song_w) = song.write()
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
@@ -2208,23 +2218,17 @@ fn draw_piano_roll(
         }
 
         // ── Scale velocities ──
-        if ui
-            .add(
-                egui::DragValue::new(&mut view_state.velocity_scale_pct)
-                    .range(1.0..=200.0)
-                    .speed(1.0)
-                    .suffix("%")
-                    .prefix("Vel×"),
-            )
-            .on_hover_text("Velocity scale factor")
-            .changed()
-        {
-            // Just store the value, apply on button click
-        }
-        #[allow(clippy::float_cmp)]
+        ui.add(
+            egui::DragValue::new(&mut view_state.velocity_scale_pct)
+                .range(1..=200_u32)
+                .speed(1.0)
+                .suffix("%")
+                .prefix("Vel×"),
+        )
+        .on_hover_text("Velocity scale factor");
         if ui
             .add_enabled(
-                !view_state.selected_notes.is_empty() && view_state.velocity_scale_pct != 100.0,
+                !view_state.selected_notes.is_empty() && view_state.velocity_scale_pct != 100,
                 egui::Button::new(RichText::new("Scale").color(t.colors.text_secondary)),
             )
             .on_hover_text("Scale velocities of selected notes")
@@ -2234,9 +2238,9 @@ fn draw_piano_roll(
         {
             pattern.scale_velocities(
                 &view_state.selected_notes,
-                view_state.velocity_scale_pct / 100.0,
+                view_state.velocity_scale_pct as f32 / 100.0,
             );
-            view_state.velocity_scale_pct = 100.0;
+            view_state.velocity_scale_pct = 100;
         }
 
         // ── Step entry toggle ──
@@ -3072,39 +3076,37 @@ fn draw_piano_roll(
     if view_state.step_entry_mode {
         let step_size = if view_state.draw_note_length > 0 {
             view_state.draw_note_length
-        } else if view_state.draw_grid_resolution > 0 {
-            view_state.draw_grid_resolution
         } else {
-            data.ticks_per_row as u32
+            view_state.effective_grid(data.ticks_per_row)
         };
 
-        let mut inserted = false;
-        for &(key, base_note) in KEY_MAP {
-            if ctx.input(|i| i.key_pressed(key) && !i.modifiers.command && !i.modifiers.ctrl) {
-                let pitch_val = base_note;
-                if let Some(pitch) = Pitch::new(pitch_val)
-                    && let Ok(mut song_w) = song.write()
-                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
-                {
-                    let note_id = pattern.add_note(
-                        PatternTick(view_state.step_cursor_tick),
-                        pitch,
-                        Velocity::new(view_state.default_velocity),
-                        SeqInstrumentId::new(0),
-                    );
-                    pattern.resize_note(note_id, SeqDuration(step_size));
-                    view_state.selected_notes.clear();
-                    view_state.selected_notes.insert(note_id);
-                    // Preview the note
-                    handle.note_on(
-                        MidiNote::new(pitch_val),
-                        Velocity::new(view_state.default_velocity),
-                    );
-                    handle.note_off(MidiNote::new(pitch_val));
-                    inserted = true;
-                }
-                break; // Only process one key per frame
+        // Collect pressed key in a single input lock acquisition
+        let pressed_note = ctx.input(|i| {
+            if i.modifiers.command || i.modifiers.ctrl {
+                return None;
             }
+            KEY_MAP
+                .iter()
+                .find(|(key, _)| i.key_pressed(*key))
+                .map(|(_, note)| *note)
+        });
+        let mut inserted = false;
+        if let Some(pitch_val) = pressed_note
+            && let Some(pitch) = Pitch::new(pitch_val)
+            && let Ok(mut song_w) = song.write()
+            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+        {
+            let note_id = pattern.add_note(
+                PatternTick(view_state.step_cursor_tick),
+                pitch,
+                Velocity::new(view_state.default_velocity),
+                SeqInstrumentId::new(0),
+            );
+            pattern.resize_note(note_id, SeqDuration(step_size));
+            view_state.selected_notes.clear();
+            view_state.selected_notes.insert(note_id);
+            preview_note(handle, pitch_val, view_state.default_velocity);
+            inserted = true;
         }
         if inserted {
             view_state.step_cursor_tick += step_size;
@@ -3200,9 +3202,7 @@ fn handle_piano_roll_interaction(
             Some((note_id, _)) => {
                 // Clicked on a note — select it and preview its sound
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                    handle.note_on(MidiNote::new(note.pitch), Velocity::new(note.velocity));
-                    // Schedule note-off after a short preview
-                    handle.note_off(MidiNote::new(note.pitch));
+                    preview_note(handle, note.pitch, note.velocity);
                 }
                 if shift_held {
                     // Toggle in selection
@@ -3241,12 +3241,7 @@ fn handle_piano_roll_interaction(
                         pattern.resize_note(note_id, duration);
                         view_state.selected_notes.clear();
                         view_state.selected_notes.insert(note_id);
-                        // Note preview
-                        handle.note_on(
-                            MidiNote::new(pitch_val),
-                            Velocity::new(view_state.default_velocity),
-                        );
-                        handle.note_off(MidiNote::new(pitch_val));
+                        preview_note(handle, pitch_val, view_state.default_velocity);
                     }
                 } else if !shift_held {
                     // Select tool on empty space — clear selection
@@ -3758,6 +3753,12 @@ fn draw_automation_zone(
 }
 
 /// Delete all selected notes from the pattern.
+/// Play a short note preview (instant note-on + note-off).
+fn preview_note(handle: &mut EngineHandle, pitch: u8, velocity: f32) {
+    handle.note_on(MidiNote::new(pitch), Velocity::new(velocity));
+    handle.note_off(MidiNote::new(pitch));
+}
+
 fn delete_selected_notes(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
@@ -3813,13 +3814,15 @@ fn copy_selected_notes(
     clipboard.selection_width = max_end.saturating_sub(min_tick);
 
     for note in &selected_notes {
-        clipboard.notes.push(ClipboardNote {
-            tick_offset: note.start_tick.saturating_sub(min_tick),
-            pitch: note.pitch,
-            velocity: note.velocity,
-            duration: note.end_tick.map(|e| e.saturating_sub(note.start_tick)),
-            instrument: SeqInstrumentId::new(0),
-        });
+        if let Some(pitch) = Pitch::new(note.pitch) {
+            clipboard.notes.push(ClipboardNote {
+                tick_offset: note.start_tick.saturating_sub(min_tick),
+                pitch,
+                velocity: Velocity::new(note.velocity),
+                duration: note.end_tick.map(|e| e.saturating_sub(note.start_tick)),
+                instrument: SeqInstrumentId::new(0),
+            });
+        }
     }
 }
 
@@ -3842,14 +3845,11 @@ fn paste_clipboard_notes(
     {
         for cn in &clipboard.notes {
             let tick = PatternTick(paste_tick + cn.tick_offset);
-            if let Some(pitch) = Pitch::new(cn.pitch) {
-                let note_id =
-                    pattern.add_note(tick, pitch, Velocity::new(cn.velocity), cn.instrument);
-                if let Some(dur) = cn.duration {
-                    pattern.resize_note(note_id, SeqDuration(dur));
-                }
-                selected.insert(note_id);
+            let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
+            if let Some(dur) = cn.duration {
+                pattern.resize_note(note_id, SeqDuration(dur));
             }
+            selected.insert(note_id);
         }
     }
 }
