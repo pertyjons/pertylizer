@@ -1,5 +1,11 @@
 # Version History
 
+## [0.206.0] - 2026-03-04
+### Recording quantization and overdub mode
+- **Recording quantization** — "Q" button in transport bar cycles through Off → 1/4 → 1/8 → 1/16 → 1/32 note grid; recorded notes are snapped to the selected grid on input
+- **Overdub mode** — "OVR" toggle in transport bar; when on (default), new recordings layer on top of existing pattern notes; when off, existing notes are cleared before writing
+- Both settings are sent with the `ArmRecord` command and applied during capture/flush
+
 ## [0.205.0] - 2026-03-04
 ### Recording (MIDI & keyboard), metronome, count-in
 - **Real-time recording** — arm recording for the opened piano roll pattern, play to start capturing keyboard/MIDI notes into the pattern with correct timing

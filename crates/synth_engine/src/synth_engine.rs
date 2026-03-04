@@ -848,11 +848,12 @@ impl SynthEngine {
                     || self.recording.state() == crate::recording::RecordingState::CountIn
                 {
                     let pattern_id = self.recording.target_pattern();
+                    let overdub = self.recording.is_overdub();
                     let notes = self.recording.disarm();
                     if let Some(pid) = pattern_id
                         && !notes.is_empty()
                     {
-                        self.flush_recorded_notes(pid, notes);
+                        self.flush_recorded_notes(pid, notes, overdub);
                     }
                     self.state.transport.set_recording_state(0);
                     // Restore metronome to shared state
@@ -946,6 +947,8 @@ impl SynthEngine {
                 region_start,
                 pattern_length_ticks,
                 ticks_per_bar,
+                quantize_grid,
+                overdub,
             } => {
                 self.recording.arm(
                     pattern_id,
@@ -953,18 +956,21 @@ impl SynthEngine {
                     region_start,
                     pattern_length_ticks,
                     ticks_per_bar,
+                    overdub,
                 );
+                self.recording.set_quantize_grid(quantize_grid);
                 self.state
                     .transport
                     .set_recording_state(self.recording.state().as_u32());
             }
             EngineCommand::DisarmRecord => {
                 let pattern_id = self.recording.target_pattern();
+                let overdub = self.recording.is_overdub();
                 let notes = self.recording.disarm();
                 if let Some(pid) = pattern_id
                     && !notes.is_empty()
                 {
-                    self.flush_recorded_notes(pid, notes);
+                    self.flush_recorded_notes(pid, notes, overdub);
                 }
                 self.state.transport.set_recording_state(0);
             }
@@ -1248,10 +1254,15 @@ impl SynthEngine {
         &mut self,
         pattern_id: synth_sequencer::PatternId,
         notes: Vec<crate::recording::RecordedNote>,
+        overdub: bool,
     ) {
         let _ = self
             .event_producer
-            .try_push(EngineEvent::RecordedNotesFlushed { pattern_id, notes });
+            .try_push(EngineEvent::RecordedNotesFlushed {
+                pattern_id,
+                notes,
+                overdub,
+            });
     }
 
     // ========================================================================
