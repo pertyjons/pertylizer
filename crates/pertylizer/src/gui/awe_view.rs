@@ -912,7 +912,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
 
     // Audio level from engine (drives animations)
     let (peak_l, peak_r) = handle.peak_meters();
-    let audio_level = peak_l.max(peak_r).clamp(0.0, 1.0);
+    let audio_level = peak_l.as_f32().max(peak_r.as_f32()).clamp(0.0, 1.0);
     let has_audio = audio_level > 0.005;
 
     // Animated time for rings and marching ants

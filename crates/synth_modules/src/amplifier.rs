@@ -23,9 +23,9 @@ pub struct Amplifier {
     sample_rate: SampleRate,
     // Mod matrix offsets
     /// Level offset (multiplicative factor, from mod matrix).
-    mod_offset_level: f32,
+    mod_offset_level: BipolarValue,
     /// Pan offset (additive, from mod matrix).
-    mod_offset_pan: f32,
+    mod_offset_pan: BipolarValue,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
 }
@@ -38,8 +38,8 @@ impl Amplifier {
             clip_mode: ClipMode::Off,
             cv_bipolar: false,
             sample_rate: SampleRate::DVD_QUALITY,
-            mod_offset_level: 0.0,
-            mod_offset_pan: 0.0,
+            mod_offset_level: BipolarValue::CENTER,
+            mod_offset_pan: BipolarValue::CENTER,
             output_left: AudioBuffer::new(1024),
             output_right: AudioBuffer::new(1024),
         }
@@ -165,13 +165,15 @@ impl PolyModule for Amplifier {
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
             // Apply mod matrix level offset (additive to base level)
-            let base_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
+            let base_level = (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
             let effective_level = base_level * cv_scaled;
 
             let effective_pan = if let Some(pan_mod) = pan_cv {
-                BipolarValue::new(self.pan.as_f32() + pan_mod[i] + self.mod_offset_pan)
+                BipolarValue::new(self.pan.as_f32() + pan_mod[i] + self.mod_offset_pan.as_f32())
             } else {
-                BipolarValue::new((self.pan.as_f32() + self.mod_offset_pan).clamp(-1.0, 1.0))
+                BipolarValue::new(
+                    (self.pan.as_f32() + self.mod_offset_pan.as_f32()).clamp(-1.0, 1.0),
+                )
             };
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
@@ -246,15 +248,15 @@ impl PolyModule for Amplifier {
 
     fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
         match dest_index {
-            0 => self.mod_offset_level += value,
-            1 => self.mod_offset_pan += value,
+            0 => self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value),
+            1 => self.mod_offset_pan = BipolarValue::new(self.mod_offset_pan.as_f32() + value),
             _ => {}
         }
     }
 
     fn clear_mod_offsets(&mut self) {
-        self.mod_offset_level = 0.0;
-        self.mod_offset_pan = 0.0;
+        self.mod_offset_level = BipolarValue::CENTER;
+        self.mod_offset_pan = BipolarValue::CENTER;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

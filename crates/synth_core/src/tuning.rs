@@ -194,8 +194,8 @@ impl TuningTable {
         };
 
         let mut frequencies = [Hertz::new(0.0); 128];
-        let reference_freq = mapping.reference_frequency;
-        let reference_note = mapping.reference_note as i32;
+        let reference_freq = mapping.reference_frequency.as_f32();
+        let reference_note = i32::from(mapping.reference_note.as_u8());
         let scale_size = pitches.len();
 
         if scale_size == 0 {
@@ -390,15 +390,15 @@ impl TuningPreset {
 
 /// Internal keyboard mapping representation.
 struct KeyboardMapping {
-    reference_note: u8,
-    reference_frequency: f32,
+    reference_note: MidiNote,
+    reference_frequency: Hertz,
 }
 
 impl Default for KeyboardMapping {
     fn default() -> Self {
         Self {
-            reference_note: 69, // A4
-            reference_frequency: 440.0,
+            reference_note: MidiNote::A4,
+            reference_frequency: Hertz::A4,
         }
     }
 }
@@ -529,8 +529,8 @@ fn parse_kbm(kbm_data: &str) -> Result<KeyboardMapping, TuningError> {
     })?;
 
     Ok(KeyboardMapping {
-        reference_note,
-        reference_frequency,
+        reference_note: MidiNote::new(reference_note),
+        reference_frequency: Hertz::new(reference_frequency),
     })
 }
 

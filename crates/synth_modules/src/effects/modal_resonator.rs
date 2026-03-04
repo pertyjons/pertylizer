@@ -6,6 +6,7 @@
 //! - Inharmonicity spread for metallic/bell tones
 //! - Brightness controls high mode rolloff and Q
 
+use synth_core::FilterState;
 use synth_core::{
     AudioEffect, Describable, Hertz, MidiNote, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ProcessContext, SampleRate, StereoSample,
@@ -19,16 +20,16 @@ const MAX_MODES: usize = 16;
 /// Per-mode biquad state.
 struct ModeState {
     coeffs: BiquadCoeffs,
-    z1: f32,
-    z2: f32,
+    z1: FilterState,
+    z2: FilterState,
 }
 
 impl Default for ModeState {
     fn default() -> Self {
         Self {
             coeffs: BiquadCoeffs::default(),
-            z1: 0.0,
-            z2: 0.0,
+            z1: FilterState::ZERO,
+            z2: FilterState::ZERO,
         }
     }
 }
@@ -246,8 +247,8 @@ impl AudioEffect for ModalResonator {
 
     fn reset(&mut self) {
         for state in &mut self.mode_states {
-            state.z1 = 0.0;
-            state.z2 = 0.0;
+            state.z1 = FilterState::ZERO;
+            state.z2 = FilterState::ZERO;
         }
         self.randomize_inharmonicity();
         self.params_dirty = true;

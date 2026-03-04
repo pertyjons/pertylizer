@@ -39,7 +39,7 @@ pub fn load_patch(
     session: &SynthSession,
     handle: &mut EngineHandle,
     keyboard: &mut PianoKeyboard,
-    glide_time: &mut f32,
+    glide_time: &mut synth_core::Seconds,
     instrument_id: InstrumentId,
 ) {
     // Remove visualizers directly (session doesn't track them)
@@ -92,12 +92,8 @@ pub fn load_patch(
     // Apply settings
     keyboard.set_octave_offset(patch.settings.octave_offset);
     *glide_time = patch.settings.glide_time;
-    handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
-        patch.settings.master_volume,
-    )));
-    handle.send_blocking(EngineCommand::SetGlideTime(synth_core::Seconds::new(
-        patch.settings.glide_time,
-    )));
+    handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
+    handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
 
     // Load full AWE state if present
     if let Some(awe) = &patch.settings.awe {
@@ -387,7 +383,7 @@ pub fn create_patch_from_rack(
     patch_editor: &PatchEditor,
     keyboard: &PianoKeyboard,
     handle: &EngineHandle,
-    glide_time: f32,
+    glide_time: synth_core::Seconds,
     awe_enabled: bool,
     awe_ui: &crate::gui::awe_view::AweUiState,
     engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
@@ -395,7 +391,7 @@ pub fn create_patch_from_rack(
     let mut patch = create_patch_from_editor(patch_name, patch_editor, engine_state);
     patch.author = Some("User".to_string());
     patch.settings.octave_offset = keyboard.octave_offset();
-    patch.settings.master_volume = handle.master_volume();
+    patch.settings.master_volume = synth_core::Gain::new(handle.master_volume());
     patch.settings.glide_time = glide_time;
     if awe_enabled {
         patch.settings.awe = Some(awe_ui.to_awe_state(true));

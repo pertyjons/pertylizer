@@ -26,9 +26,9 @@ use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue,
-    Bpm, EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType,
-    NormalizedValue, OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext,
-    SampleCount, SampleRate, Seconds, StreamInfo, Velocity, Waveform,
+    EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType, NormalizedValue,
+    OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate,
+    Seconds, StreamInfo, Velocity, Waveform,
 };
 use synth_modules::{Amplifier, Envelope, Filter, Lfo, Oscillator};
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
@@ -254,12 +254,12 @@ impl EngineHandle {
     }
 
     /// Get the current peak meter values.
-    pub fn peak_meters(&self) -> (f32, f32) {
+    pub fn peak_meters(&self) -> (synth_core::Amplitude, synth_core::Amplitude) {
         self.state.meters.get_peak()
     }
 
     /// Get the current RMS meter values.
-    pub fn rms_meters(&self) -> (f32, f32) {
+    pub fn rms_meters(&self) -> (synth_core::Amplitude, synth_core::Amplitude) {
         self.state.meters.get_rms()
     }
 
@@ -1004,7 +1004,7 @@ impl SynthEngine {
             }
 
             EngineCommand::SetTempo(bpm) => {
-                self.state.transport.set_tempo(bpm.as_f32());
+                self.state.transport.set_tempo(bpm);
             }
 
             // AWE commands
@@ -1804,9 +1804,11 @@ impl SynthEngine {
                     id: inst.id(),
                     seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
-                    midi_channel: inst.midi_channel().as_one_indexed(),
-                    volume: inst.volume().as_f32(),
-                    pan: inst.pan().as_f32(),
+                    midi_channel: synth_core::MidiChannel::new(
+                        inst.midi_channel().as_zero_indexed() + 1,
+                    ),
+                    volume: inst.volume(),
+                    pan: inst.pan(),
                     enabled: inst.is_enabled(),
                     muted: !inst.is_enabled(),
                     solo: inst.is_solo(),
@@ -2000,11 +2002,11 @@ fn route_sequencer_events(
                 {
                     match param {
                         AutoInstrumentParam::Volume => {
-                            inst.set_volume(Gain::new(*value));
+                            inst.set_volume(Gain::new(value.as_f32()));
                         }
                         AutoInstrumentParam::Pan => {
                             // Map 0.0-1.0 to -1.0..1.0
-                            inst.set_pan(BipolarValue::new(*value * 2.0 - 1.0));
+                            inst.set_pan(BipolarValue::new(value.as_f32() * 2.0 - 1.0));
                         }
                         _ => {} // FilterCutoff etc. requires module routing (future)
                     }
@@ -2026,7 +2028,7 @@ impl AudioProcessor for SynthEngine {
         let process_context = ProcessContext {
             sample_rate: synth_core::SampleRate::new(context.sample_rate.as_f32()),
             samples: sample_count,
-            tempo: Bpm::new(self.state.transport.get_tempo()),
+            tempo: self.state.transport.get_tempo(),
             is_playing: self.state.transport.is_playing(),
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
             voice_start_time: synth_core::SamplePosition::ZERO,
@@ -2160,9 +2162,10 @@ impl AudioProcessor for SynthEngine {
         self.update_meters(output);
 
         // Update transport
-        self.state
-            .transport
-            .advance(context.frames as u64, self.sample_rate);
+        self.state.transport.advance(
+            context.frames as u64,
+            synth_core::SampleRate::new(self.sample_rate),
+        );
 
         // Calculate CPU usage
         let elapsed = start_time.elapsed().as_secs_f32();

@@ -158,20 +158,25 @@ impl AweEngine {
 
         // HF damping: driven by high-frequency absorption
         // Metal (0.05): lp~0.33 → bright tail. Carpet (0.90): lp~0.91 → very dark tail.
-        let lp_coeff =
-            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
+        let lp_coeff = NormalizedValue::new(
+            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999),
+        );
 
         // LF damping: driven by low-frequency absorption
         // Metal (0.02): hp~0.93 → full bass. Glass (0.35): hp~0.73 → thinner bass.
-        let hp_coeff = ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
+        let hp_coeff = NormalizedValue::new(
+            ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999),
+        );
 
         // Resonance boost: adds energy to feedback (with safety clamp)
         let resonance_boost = self.snapshot.resonance_boost;
-        let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
-            + resonance_boost.as_f32() * 0.15)
-            .min(0.97);
-        let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
-        let width = 1.0;
+        let feedback_gain = Gain::new(
+            (self.rt60_to_feedback(rt60, sample_rate).as_f32() + resonance_boost.as_f32() * 0.15)
+                .min(0.97),
+        );
+        let diffusion =
+            NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
+        let width = NormalizedValue::new(1.0);
         let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
         let target_dry_wet = self.snapshot.dry_wet.as_f32();
@@ -566,16 +571,21 @@ impl AweEngine {
         let abs_low_eff = abs_low.sqrt();
         let rt60 = self.calculate_rt60();
         let freq_warp = self.snapshot.freq_warp;
-        let lp_coeff =
-            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999);
-        let hp_coeff = ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999);
+        let lp_coeff = NormalizedValue::new(
+            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999),
+        );
+        let hp_coeff = NormalizedValue::new(
+            ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999),
+        );
         let resonance_boost = self.snapshot.resonance_boost;
-        let feedback_gain = (self.rt60_to_feedback(rt60, sample_rate).as_f32()
-            + resonance_boost.as_f32() * 0.15)
-            .min(0.97);
+        let feedback_gain = Gain::new(
+            (self.rt60_to_feedback(rt60, sample_rate).as_f32() + resonance_boost.as_f32() * 0.15)
+                .min(0.97),
+        );
         let material_diffusion = self.material.diffusion;
-        let diffusion = (0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0);
-        let width = 1.0;
+        let diffusion =
+            NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
+        let width = NormalizedValue::new(1.0);
         let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
         let target_dry_wet = self.snapshot.dry_wet.as_f32();

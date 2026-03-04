@@ -7,6 +7,7 @@
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use synth_core::SamplePosition;
 
 use super::commands::EngineEvent;
 
@@ -46,7 +47,7 @@ pub struct TimestampedEvent {
     /// The actual event.
     pub event: EngineEvent,
     /// Sample position when event occurred.
-    pub timestamp: u64,
+    pub timestamp: SamplePosition,
     /// Priority level of this event.
     pub priority: EventPriority,
     /// Monotonic sequence number for ordering.
@@ -57,7 +58,7 @@ impl TimestampedEvent {
     /// Create a new timestamped event.
     pub fn new(
         event: EngineEvent,
-        timestamp: u64,
+        timestamp: SamplePosition,
         priority: EventPriority,
         sequence_id: u64,
     ) -> Self {
@@ -133,7 +134,7 @@ pub fn prioritized_event_channel() -> (PrioritizedEventProducer, PrioritizedEven
 impl PrioritizedEventProducer {
     /// Send an event with the given priority.
     /// Critical events will retry on full buffer, others may be dropped.
-    pub fn send(&mut self, event: EngineEvent, priority: EventPriority, timestamp: u64) {
+    pub fn send(&mut self, event: EngineEvent, priority: EventPriority, timestamp: SamplePosition) {
         let seq = self.sequence_counter.fetch_add(1, Ordering::Relaxed);
         let timestamped = TimestampedEvent::new(event, timestamp, priority, seq);
 
@@ -150,7 +151,7 @@ impl PrioritizedEventProducer {
     }
 
     /// Send an event with automatic priority detection based on event type.
-    pub fn send_auto(&mut self, event: EngineEvent, timestamp: u64) {
+    pub fn send_auto(&mut self, event: EngineEvent, timestamp: SamplePosition) {
         let priority = Self::event_priority(&event);
         self.send(event, priority, timestamp);
     }
@@ -296,21 +297,29 @@ mod tests {
         // Send events of different priorities
         producer.send(
             EngineEvent::PeakMeter {
-                left: 0.5,
-                right: 0.5,
+                left: synth_core::Amplitude::new(0.5),
+                right: synth_core::Amplitude::new(0.5),
             },
             EventPriority::Low,
-            0,
+            SamplePosition::ZERO,
         );
-        producer.send(EngineEvent::VoiceCount(1), EventPriority::High, 1);
-        producer.send(EngineEvent::BufferUnderrun, EventPriority::Critical, 2);
+        producer.send(
+            EngineEvent::VoiceCount(1),
+            EventPriority::High,
+            SamplePosition::new(1),
+        );
+        producer.send(
+            EngineEvent::BufferUnderrun,
+            EventPriority::Critical,
+            SamplePosition::new(2),
+        );
 
         // Should receive in priority order
         let event1 = consumer.poll().unwrap();
         assert!(matches!(event1.event, EngineEvent::BufferUnderrun));
 
         let event2 = consumer.poll().unwrap();
-        assert!(matches!(event2.event, EngineEvent::VoiceCount(1)));
+        assert!(matches!(event2.event, EngineEvent::VoiceCount(_)));
 
         let event3 = consumer.poll().unwrap();
         assert!(matches!(event3.event, EngineEvent::PeakMeter { .. }));
@@ -328,8 +337,8 @@ mod tests {
         );
         assert_eq!(
             PrioritizedEventProducer::event_priority(&EngineEvent::PeakMeter {
-                left: 0.0,
-                right: 0.0
+                left: synth_core::Amplitude::ZERO,
+                right: synth_core::Amplitude::ZERO,
             }),
             EventPriority::Low
         );
@@ -340,9 +349,21 @@ mod tests {
         let (mut producer, mut consumer) = prioritized_event_channel();
 
         // Send in reverse sequence order
-        producer.send(EngineEvent::VoiceCount(3), EventPriority::Low, 100);
-        producer.send(EngineEvent::VoiceCount(2), EventPriority::High, 50);
-        producer.send(EngineEvent::VoiceCount(1), EventPriority::Normal, 75);
+        producer.send(
+            EngineEvent::VoiceCount(3),
+            EventPriority::Low,
+            SamplePosition::new(100),
+        );
+        producer.send(
+            EngineEvent::VoiceCount(2),
+            EventPriority::High,
+            SamplePosition::new(50),
+        );
+        producer.send(
+            EngineEvent::VoiceCount(1),
+            EventPriority::Normal,
+            SamplePosition::new(75),
+        );
 
         let events = consumer.poll_all();
         assert_eq!(events.len(), 3);

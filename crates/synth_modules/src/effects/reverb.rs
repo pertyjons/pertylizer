@@ -9,9 +9,9 @@
 //! - Stereo output with width control
 
 use synth_core::{
-    AudioEffect, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue,
-    Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverbParam, SampleCount,
-    SampleRate, Seconds, StereoSample, WidgetHint,
+    AudioEffect, Describable, Gain, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,
+    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverbParam,
+    SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
 };
 use synth_dsp::FdnCore;
 
@@ -102,8 +102,8 @@ impl Reverb {
     /// Decay 0.0 -> short reverb (low feedback), Decay 1.0 -> long reverb (high feedback).
     /// Maps to approximately 0.3 .. 0.97 feedback range.
     #[inline]
-    fn feedback_gain(&self) -> f32 {
-        0.3 + self.decay.as_f32() * 0.67
+    fn feedback_gain(&self) -> Gain {
+        Gain::new(0.3 + self.decay.as_f32() * 0.67)
     }
 
     /// Compute the lowpass coefficient from the damping parameter.
@@ -111,20 +111,20 @@ impl Reverb {
     /// Higher damping = more high-frequency absorption.
     /// coeff near 1.0 = heavy filtering, coeff near 0.0 = no filtering.
     #[inline]
-    fn lowpass_coeff(&self) -> f32 {
-        self.damping.as_f32() * 0.9
+    fn lowpass_coeff(&self) -> NormalizedValue {
+        NormalizedValue::new(self.damping.as_f32() * 0.9)
     }
 
     /// Compute the highpass coefficient from the low-cut frequency.
     ///
     /// Simple one-pole highpass: coeff = 1 - (2*pi*fc / sr)
     #[inline]
-    fn highpass_coeff(&self) -> f32 {
+    fn highpass_coeff(&self) -> NormalizedValue {
         let fc = self.low_cut.as_f32();
         let sr = self.sample_rate.as_f32();
         // One-pole highpass coefficient
         // coeff close to 1.0 = low cutoff, coeff close to 0.0 = high cutoff
-        (1.0 - (std::f32::consts::TAU * fc / sr)).clamp(0.0, 0.9999)
+        NormalizedValue::new((1.0 - (std::f32::consts::TAU * fc / sr)).clamp(0.0, 0.9999))
     }
 }
 
@@ -241,9 +241,9 @@ impl AudioEffect for Reverb {
         let feedback_gain = self.feedback_gain();
         let lp_coeff = self.lowpass_coeff();
         let hp_coeff = self.highpass_coeff();
-        let diffusion = self.diffusion.as_f32();
+        let diffusion = self.diffusion;
         let mix = self.mix.as_f32();
-        let width = self.width.as_f32();
+        let width = self.width;
         let sample_rate_recip = 1.0 / self.sample_rate.as_f32();
 
         #[allow(clippy::cast_possible_truncation)]

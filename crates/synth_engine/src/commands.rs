@@ -12,7 +12,8 @@ use std::str::FromStr;
 
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use synth_core::{
-    BipolarValue, Bpm, Gain, MidiNote, NormalizedValue, PortName, Seconds, Semitones, Velocity,
+    Amplitude, BipolarValue, Bpm, CpuUsage, Gain, MidiNote, NormalizedValue, PortName, Seconds,
+    Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, Tick, TrackId};
@@ -695,12 +696,12 @@ pub enum InstrumentParam {
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
     /// Peak meter update.
-    PeakMeter { left: f32, right: f32 },
+    PeakMeter { left: Amplitude, right: Amplitude },
 
     /// RMS meter update.
-    RmsMeter { left: f32, right: f32 },
+    RmsMeter { left: Amplitude, right: Amplitude },
 
-    /// Voice activity.
+    /// Voice activity (current active voice count, can be 0).
     VoiceCount(u32),
 
     /// Module parameter changed (echo back).
@@ -708,7 +709,7 @@ pub enum EngineEvent {
     ParameterChanged { module: ModuleId, param: Param },
 
     /// CPU usage.
-    CpuUsage(f32),
+    CpuUsage(CpuUsage),
 
     /// Buffer underrun occurred.
     BufferUnderrun,

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::commands::ModuleId;
-use synth_core::Param;
+use synth_core::{Amplitude, CpuUsage, Param};
 
 // ============================================================================
 // Port State Enums - Descriptive types instead of booleans
@@ -205,13 +205,13 @@ pub enum ModuleErrorKind {
         max: f32,
     },
     /// Module is overloading CPU.
-    ProcessingOverload { cpu_percent: f32 },
+    ProcessingOverload { cpu_percent: CpuUsage },
     /// Invalid connection attempt.
     InvalidConnection { reason: String },
     /// Internal module error.
     InternalError(String),
     /// Module output is clipping.
-    OutputClipping { peak_level: f32 },
+    OutputClipping { peak_level: Amplitude },
     /// Module produced NaN or infinity values.
     InvalidOutput,
     /// Module initialization failed.
@@ -241,7 +241,7 @@ impl ModuleErrorKind {
                 format!("Parameter out of range: {:?}", param)
             }
             Self::ProcessingOverload { cpu_percent } => {
-                format!("CPU overload: {:.1}%", cpu_percent)
+                format!("CPU overload: {:.1}%", cpu_percent.as_f32())
             }
             Self::InvalidConnection { reason } => {
                 format!("Invalid connection: {}", reason)
@@ -250,7 +250,7 @@ impl ModuleErrorKind {
                 format!("Error: {}", msg)
             }
             Self::OutputClipping { peak_level } => {
-                format!("Clipping: {:.1} dB", 20.0 * peak_level.log10())
+                format!("Clipping: {:.1} dB", 20.0 * peak_level.as_f32().log10())
             }
             Self::InvalidOutput => "Invalid output (NaN/Inf)".to_string(),
             Self::InitializationFailed(msg) => {
@@ -351,8 +351,8 @@ impl ModuleError {
 pub struct PortVisualState {
     /// Whether this port is connected.
     pub connection: ConnectionState,
-    /// Current signal level through this port (0.0 - 1.0+).
-    pub signal_level: f32,
+    /// Current signal level through this port.
+    pub signal_level: Amplitude,
     /// Whether signal is actively flowing.
     pub activity: SignalActivity,
     /// Number of connections to/from this port.
@@ -365,7 +365,7 @@ impl PortVisualState {
     pub fn connected(count: ConnectionCount) -> Self {
         Self {
             connection: ConnectionState::Connected,
-            signal_level: 0.0,
+            signal_level: Amplitude::ZERO,
             activity: SignalActivity::Inactive,
             connection_count: count,
         }
@@ -385,7 +385,8 @@ impl PortVisualState {
 
     /// Update the signal level with smoothing.
     pub fn update_level(&mut self, new_level: f32, smoothing: f32) {
-        self.signal_level = self.signal_level * smoothing + new_level * (1.0 - smoothing);
+        self.signal_level =
+            Amplitude::new(self.signal_level.as_f32() * smoothing + new_level * (1.0 - smoothing));
         self.activity = SignalActivity::from(new_level > 0.001);
     }
 }

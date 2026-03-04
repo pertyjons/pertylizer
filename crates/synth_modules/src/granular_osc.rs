@@ -14,8 +14,8 @@ use std::f32::consts::TAU;
 
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
-    AudioBuffer, Describable, Gain, GrainSource, GrainWindow, GranularParam, InputPorts,
-    Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
+    AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam,
+    InputPorts, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     SampleRate, WidgetHint,
 };
@@ -44,7 +44,7 @@ struct Grain {
     /// Playback rate (1.0 = normal pitch).
     rate: f32,
     /// Stereo pan (-1 left, +1 right).
-    pan: f32,
+    pan: BipolarValue,
 }
 
 impl Default for Grain {
@@ -55,7 +55,7 @@ impl Default for Grain {
             pos: 0.0,
             length: 0,
             rate: 1.0,
-            pan: 0.0,
+            pan: BipolarValue::CENTER,
         }
     }
 }
@@ -237,7 +237,7 @@ impl GranularOsc {
         let rate = (self.note_freq / 440.0) * 2.0f32.powf(pitch_offset / 12.0);
 
         // Pan
-        let pan = self.rng.next_bipolar() * self.pan_spread.as_f32();
+        let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());
 
         self.grains[idx] = Grain {
             active: true,
@@ -245,7 +245,7 @@ impl GranularOsc {
             pos: 0.0,
             length: grain_samples,
             rate,
-            pan: pan.clamp(-1.0, 1.0),
+            pan,
         };
     }
 }

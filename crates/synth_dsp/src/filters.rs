@@ -3,7 +3,7 @@
 //! This module provides filter coefficient calculations and
 //! filter algorithm implementations for use by filter modules.
 
-use synth_core::{Hertz, SampleRate};
+use synth_core::{FilterState, Gain, Hertz, NormalizedValue, SampleRate};
 
 /// SVF filter type enumeration for coefficient calculation.
 ///
@@ -47,9 +47,9 @@ impl SvfCoeffs {
     /// * `resonance` - Resonance amount (0.0 to 1.0)
     /// * `sample_rate` - Sample rate in Hz
     #[must_use]
-    pub fn new(cutoff: Hertz, resonance: f32, sample_rate: SampleRate) -> Self {
+    pub fn new(cutoff: Hertz, resonance: NormalizedValue, sample_rate: SampleRate) -> Self {
         let g = cutoff.to_tan_coeff(sample_rate);
-        let k = 2.0 - 2.0 * resonance.clamp(0.0, 0.99);
+        let k = 2.0 - 2.0 * resonance.as_f32().clamp(0.0, 0.99);
 
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
@@ -75,16 +75,18 @@ impl SvfCoeffs {
     pub fn process(
         &self,
         input: f32,
-        ic1eq: &mut f32,
-        ic2eq: &mut f32,
+        ic1eq: &mut FilterState,
+        ic2eq: &mut FilterState,
         filter_type: SvfFilterType,
     ) -> f32 {
-        let v3 = input - *ic2eq;
-        let v1 = self.a1 * *ic1eq + self.a2 * v3;
-        let v2 = *ic2eq + self.a2 * *ic1eq + self.a3 * v3;
+        let ic1 = ic1eq.as_f32();
+        let ic2 = ic2eq.as_f32();
+        let v3 = input - ic2;
+        let v1 = self.a1 * ic1 + self.a2 * v3;
+        let v2 = ic2 + self.a2 * ic1 + self.a3 * v3;
 
-        *ic1eq = 2.0 * v1 - *ic1eq;
-        *ic2eq = 2.0 * v2 - *ic2eq;
+        *ic1eq = FilterState::new(2.0 * v1 - ic1);
+        *ic2eq = FilterState::new(2.0 * v2 - ic2);
 
         match filter_type {
             SvfFilterType::Lowpass => v2,
@@ -207,10 +209,10 @@ impl BiquadCoeffs {
     /// * `z2` - Delay state 2 (mutable)
     #[inline]
     #[must_use]
-    pub fn process(&self, input: f32, z1: &mut f32, z2: &mut f32) -> f32 {
-        let output = self.b0 * input + *z1;
-        *z1 = self.b1 * input - self.a1 * output + *z2;
-        *z2 = self.b2 * input - self.a2 * output;
+    pub fn process(&self, input: f32, z1: &mut FilterState, z2: &mut FilterState) -> f32 {
+        let output = self.b0 * input + z1.as_f32();
+        *z1 = FilterState::new(self.b1 * input - self.a1 * output + z2.as_f32());
+        *z2 = FilterState::new(self.b2 * input - self.a2 * output);
         output
     }
 }
@@ -225,8 +227,8 @@ impl BiquadCoeffs {
 /// between filter outputs controlled by the morph parameter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FluidFilter {
-    pub ic1eq: f32,
-    pub ic2eq: f32,
+    pub ic1eq: FilterState,
+    pub ic2eq: FilterState,
 }
 
 impl FluidFilter {
@@ -238,18 +240,26 @@ impl FluidFilter {
     /// * `drive` - Drive amount (1.0 = unity)
     /// * `morph` - Morph position (0.0 = LP, 0.33 = BP, 0.67 = HP, 1.0 = Notch)
     #[inline]
-    pub fn process(&mut self, input: f32, coeffs: &SvfCoeffs, drive: f32, morph: f32) -> f32 {
+    pub fn process(
+        &mut self,
+        input: f32,
+        coeffs: &SvfCoeffs,
+        drive: Gain,
+        morph: NormalizedValue,
+    ) -> f32 {
         // Pre-filter: normalized tanh saturation
-        let drive_clamped = drive.max(0.01);
-        let saturated = (input * drive_clamped).tanh() / drive_clamped;
+        let drive_val = drive.as_f32().max(0.01);
+        let saturated = (input * drive_val).tanh() / drive_val;
 
         // SVF computation
-        let v3 = saturated - self.ic2eq;
-        let v1 = coeffs.a1 * self.ic1eq + coeffs.a2 * v3;
-        let v2 = self.ic2eq + coeffs.a2 * self.ic1eq + coeffs.a3 * v3;
+        let ic1 = self.ic1eq.as_f32();
+        let ic2 = self.ic2eq.as_f32();
+        let v3 = saturated - ic2;
+        let v1 = coeffs.a1 * ic1 + coeffs.a2 * v3;
+        let v2 = ic2 + coeffs.a2 * ic1 + coeffs.a3 * v3;
 
-        self.ic1eq = 2.0 * v1 - self.ic1eq;
-        self.ic2eq = 2.0 * v2 - self.ic2eq;
+        self.ic1eq = FilterState::new(2.0 * v1 - ic1);
+        self.ic2eq = FilterState::new(2.0 * v2 - ic2);
 
         // All outputs simultaneously
         let lp = v2;
@@ -258,7 +268,7 @@ impl FluidFilter {
         let notch = saturated - coeffs.k * v1;
 
         // Morph: 3 zones (LP→BP, BP→HP, HP→Notch)
-        let morph_scaled = morph * 3.0;
+        let morph_scaled = morph.as_f32() * 3.0;
         let zone = morph_scaled as u32;
         let t = morph_scaled - zone as f32;
         let half_pi = std::f32::consts::FRAC_PI_2;
@@ -275,18 +285,14 @@ impl FluidFilter {
     /// Flush denormals to zero for consistent performance.
     #[inline]
     pub fn flush_denormals(&mut self) {
-        if self.ic1eq.abs() < 1e-15 {
-            self.ic1eq = 0.0;
-        }
-        if self.ic2eq.abs() < 1e-15 {
-            self.ic2eq = 0.0;
-        }
+        self.ic1eq.flush_denormals();
+        self.ic2eq.flush_denormals();
     }
 
     /// Reset filter state.
     pub fn reset(&mut self) {
-        self.ic1eq = 0.0;
-        self.ic2eq = 0.0;
+        self.ic1eq = FilterState::ZERO;
+        self.ic2eq = FilterState::ZERO;
     }
 }
 
@@ -300,10 +306,10 @@ impl FluidFilter {
 /// that creates the aggressive, screaming resonance character.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScreamerFilter {
-    pub hp_s1: f32,
-    pub hp_s2: f32,
-    pub lp_s1: f32,
-    pub lp_s2: f32,
+    pub hp_s1: FilterState,
+    pub hp_s2: FilterState,
+    pub lp_s1: FilterState,
+    pub lp_s2: FilterState,
 }
 
 impl ScreamerFilter {
@@ -328,28 +334,34 @@ impl ScreamerFilter {
     /// * `resonance` - Resonance amount (0.0 to 1.0)
     /// * `drive` - Drive amount (1.0 = unity)
     #[inline]
-    pub fn process(&mut self, input: f32, g: f32, resonance: f32, drive: f32) -> f32 {
+    pub fn process(&mut self, input: f32, g: f32, resonance: NormalizedValue, drive: Gain) -> f32 {
+        let res = resonance.as_f32();
+        let drv = drive.as_f32();
         // Diode-clipped feedback
-        let feedback = Self::diode_clip(self.lp_s2 * drive) * resonance * 4.0;
+        let feedback = Self::diode_clip(self.lp_s2.as_f32() * drv) * res * 4.0;
         let input_fb = input - feedback;
 
         // HP section: trapezoidal integrator
-        let hp_v = (input_fb - self.hp_s1) * g / (1.0 + g);
-        let hp_out = hp_v + self.hp_s1;
-        self.hp_s1 = hp_out + hp_v;
+        let hp_s1 = self.hp_s1.as_f32();
+        let hp_v = (input_fb - hp_s1) * g / (1.0 + g);
+        let hp_out = hp_v + hp_s1;
+        self.hp_s1 = FilterState::new(hp_out + hp_v);
 
-        let hp2_v = (hp_out - self.hp_s2) * g / (1.0 + g);
-        let hp2_out = hp2_v + self.hp_s2;
-        self.hp_s2 = hp2_out + hp2_v;
+        let hp_s2 = self.hp_s2.as_f32();
+        let hp2_v = (hp_out - hp_s2) * g / (1.0 + g);
+        let hp2_out = hp2_v + hp_s2;
+        self.hp_s2 = FilterState::new(hp2_out + hp2_v);
 
         // LP section: trapezoidal integrator
-        let lp_v = (hp2_out - self.lp_s1) * g / (1.0 + g);
-        let lp_out = lp_v + self.lp_s1;
-        self.lp_s1 = lp_out + lp_v;
+        let lp_s1 = self.lp_s1.as_f32();
+        let lp_v = (hp2_out - lp_s1) * g / (1.0 + g);
+        let lp_out = lp_v + lp_s1;
+        self.lp_s1 = FilterState::new(lp_out + lp_v);
 
-        let lp2_v = (lp_out - self.lp_s2) * g / (1.0 + g);
-        let lp2_out = lp2_v + self.lp_s2;
-        self.lp_s2 = lp2_out + lp2_v;
+        let lp_s2 = self.lp_s2.as_f32();
+        let lp2_v = (lp_out - lp_s2) * g / (1.0 + g);
+        let lp2_out = lp2_v + lp_s2;
+        self.lp_s2 = FilterState::new(lp2_out + lp2_v);
 
         lp2_out
     }
@@ -357,26 +369,18 @@ impl ScreamerFilter {
     /// Flush denormals to zero for consistent performance.
     #[inline]
     pub fn flush_denormals(&mut self) {
-        if self.hp_s1.abs() < 1e-15 {
-            self.hp_s1 = 0.0;
-        }
-        if self.hp_s2.abs() < 1e-15 {
-            self.hp_s2 = 0.0;
-        }
-        if self.lp_s1.abs() < 1e-15 {
-            self.lp_s1 = 0.0;
-        }
-        if self.lp_s2.abs() < 1e-15 {
-            self.lp_s2 = 0.0;
-        }
+        self.hp_s1.flush_denormals();
+        self.hp_s2.flush_denormals();
+        self.lp_s1.flush_denormals();
+        self.lp_s2.flush_denormals();
     }
 
     /// Reset filter state.
     pub fn reset(&mut self) {
-        self.hp_s1 = 0.0;
-        self.hp_s2 = 0.0;
-        self.lp_s1 = 0.0;
-        self.lp_s2 = 0.0;
+        self.hp_s1 = FilterState::ZERO;
+        self.hp_s2 = FilterState::ZERO;
+        self.lp_s1 = FilterState::ZERO;
+        self.lp_s2 = FilterState::ZERO;
     }
 }
 
@@ -391,8 +395,8 @@ impl ScreamerFilter {
 /// Supports LP, BP, and HP modes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AcidFilter {
-    pub s1: f32,
-    pub s2: f32,
+    pub s1: FilterState,
+    pub s2: FilterState,
 }
 
 impl AcidFilter {
@@ -418,10 +422,12 @@ impl AcidFilter {
         &mut self,
         input: f32,
         g: f32,
-        resonance: f32,
-        drive: f32,
+        resonance: NormalizedValue,
+        drive: Gain,
         filter_mode: SvfFilterType,
     ) -> f32 {
+        let res = resonance.as_f32();
+        let drv = drive.as_f32();
         // Mode-dependent Q scaling
         let q_scale = match filter_mode {
             SvfFilterType::Lowpass => 4.0,
@@ -431,15 +437,17 @@ impl AcidFilter {
         };
 
         // Variable-saturated feedback
-        let feedback = Self::variable_saturate(self.s2 * drive, resonance) * resonance * q_scale;
+        let s1 = self.s1.as_f32();
+        let s2 = self.s2.as_f32();
+        let feedback = Self::variable_saturate(s2 * drv, res) * res * q_scale;
         let v0 = input - feedback;
 
         // ZDF 2-pole
-        let v1 = (g * v0 + self.s1) / (1.0 + g);
-        let v2 = (g * v1 + self.s2) / (1.0 + g);
+        let v1 = (g * v0 + s1) / (1.0 + g);
+        let v2 = (g * v1 + s2) / (1.0 + g);
 
-        self.s1 = 2.0 * v1 - self.s1;
-        self.s2 = 2.0 * v2 - self.s2;
+        self.s1 = FilterState::new(2.0 * v1 - s1);
+        self.s2 = FilterState::new(2.0 * v2 - s2);
 
         // Mode output
         match filter_mode {
@@ -453,18 +461,14 @@ impl AcidFilter {
     /// Flush denormals to zero for consistent performance.
     #[inline]
     pub fn flush_denormals(&mut self) {
-        if self.s1.abs() < 1e-15 {
-            self.s1 = 0.0;
-        }
-        if self.s2.abs() < 1e-15 {
-            self.s2 = 0.0;
-        }
+        self.s1.flush_denormals();
+        self.s2.flush_denormals();
     }
 
     /// Reset filter state.
     pub fn reset(&mut self) {
-        self.s1 = 0.0;
-        self.s2 = 0.0;
+        self.s1 = FilterState::ZERO;
+        self.s2 = FilterState::ZERO;
     }
 }
 
@@ -474,16 +478,24 @@ mod tests {
 
     #[test]
     fn test_svf_coeffs() {
-        let coeffs = SvfCoeffs::new(Hertz::new(1000.0), 0.5, SampleRate::DVD_QUALITY);
+        let coeffs = SvfCoeffs::new(
+            Hertz::new(1000.0),
+            NormalizedValue::new(0.5),
+            SampleRate::DVD_QUALITY,
+        );
         assert!(coeffs.g > 0.0);
         assert!(coeffs.a1 > 0.0);
     }
 
     #[test]
     fn test_svf_process() {
-        let coeffs = SvfCoeffs::new(Hertz::new(1000.0), 0.5, SampleRate::DVD_QUALITY);
-        let mut ic1eq = 0.0;
-        let mut ic2eq = 0.0;
+        let coeffs = SvfCoeffs::new(
+            Hertz::new(1000.0),
+            NormalizedValue::new(0.5),
+            SampleRate::DVD_QUALITY,
+        );
+        let mut ic1eq = FilterState::ZERO;
+        let mut ic2eq = FilterState::ZERO;
 
         for _ in 0..100 {
             let output = coeffs.process(0.5, &mut ic1eq, &mut ic2eq, SvfFilterType::Lowpass);
@@ -494,8 +506,8 @@ mod tests {
     #[test]
     fn test_biquad_lowpass() {
         let coeffs = BiquadCoeffs::lowpass(Hertz::new(1000.0), 0.707, SampleRate::DVD_QUALITY);
-        let mut z1 = 0.0;
-        let mut z2 = 0.0;
+        let mut z1 = FilterState::ZERO;
+        let mut z2 = FilterState::ZERO;
 
         for _ in 0..100 {
             let output = coeffs.process(0.5, &mut z1, &mut z2);
@@ -506,8 +518,8 @@ mod tests {
     #[test]
     fn test_biquad_highpass() {
         let coeffs = BiquadCoeffs::highpass(Hertz::new(1000.0), 0.707, SampleRate::DVD_QUALITY);
-        let mut z1 = 0.0;
-        let mut z2 = 0.0;
+        let mut z1 = FilterState::ZERO;
+        let mut z2 = FilterState::ZERO;
 
         // Highpass should attenuate DC
         for _ in 0..1000 {

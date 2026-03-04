@@ -14,7 +14,7 @@ use synth_core::{
 };
 use synth_core::{
     BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate,
-    Velocity,
+    Semitones, Velocity,
 };
 use synth_core::{FilterMode, FilterModel, FilterParam, ModuleType, Param};
 use synth_dsp::{AcidFilter, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType};
@@ -48,9 +48,9 @@ pub struct Filter {
 
     // Mod matrix offsets (applied before processing, cleared after)
     /// Cutoff modulation offset in semitones.
-    mod_offset_cutoff: f32,
+    mod_offset_cutoff: Semitones,
     /// Resonance modulation offset (additive, 0-1 range).
-    mod_offset_resonance: f32,
+    mod_offset_resonance: NormalizedValue,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -75,8 +75,8 @@ impl Filter {
             fluid: FluidFilter::default(),
             screamer: ScreamerFilter::default(),
             acid: AcidFilter::default(),
-            mod_offset_cutoff: 0.0,
-            mod_offset_resonance: 0.0,
+            mod_offset_cutoff: Semitones::ZERO,
+            mod_offset_resonance: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -85,7 +85,7 @@ impl Filter {
         let tracking_offset =
             (self.base_note.as_u8() as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
         // Apply mod matrix offset (in semitones, converted to exponential scaling)
-        let total_offset = tracking_offset + self.mod_offset_cutoff * 100.0;
+        let total_offset = tracking_offset + self.mod_offset_cutoff.as_f32() * 100.0;
         let tracked = self.cutoff.as_f32() * (total_offset / 1200.0).exp2();
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
     }
@@ -114,13 +114,19 @@ impl Filter {
 
     #[inline]
     #[allow(clippy::too_many_lines)]
-    fn process_sample(&mut self, input: f32, cutoff_mod: f32, res_mod: f32) -> f32 {
-        let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod))
+    fn process_sample(
+        &mut self,
+        input: f32,
+        cutoff_mod: Semitones,
+        res_mod: NormalizedValue,
+    ) -> f32 {
+        let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod.as_f32()))
             .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
         // Clamp resonance to 0.99 max to prevent instability at self-oscillation
         let resonance =
-            (self.resonance.as_f32() + res_mod + self.mod_offset_resonance).clamp(0.0, 0.99);
+            (self.resonance.as_f32() + res_mod.as_f32() + self.mod_offset_resonance.as_f32())
+                .clamp(0.0, 0.99);
 
         match self.model {
             FilterModel::Standard => {
@@ -173,27 +179,30 @@ impl Filter {
                 }
             }
             FilterModel::Fluid => {
-                let coeffs = SvfCoeffs::new(cutoff, resonance, self.sample_rate);
-                let out =
-                    self.fluid
-                        .process(input, &coeffs, self.drive.as_f32(), self.morph.as_f32());
+                let coeffs =
+                    SvfCoeffs::new(cutoff, NormalizedValue::new(resonance), self.sample_rate);
+                let out = self.fluid.process(input, &coeffs, self.drive, self.morph);
                 self.fluid.flush_denormals();
                 out
             }
             FilterModel::Screamer => {
                 let g = cutoff.to_tan_coeff(self.sample_rate);
-                let out = self
-                    .screamer
-                    .process(input, g, resonance, self.drive.as_f32());
+                let out =
+                    self.screamer
+                        .process(input, g, NormalizedValue::new(resonance), self.drive);
                 self.screamer.flush_denormals();
                 out
             }
             FilterModel::Acid => {
                 let g = cutoff.to_tan_coeff(self.sample_rate);
                 let svf_type = self.filter_mode_to_svf_type();
-                let out = self
-                    .acid
-                    .process(input, g, resonance, self.drive.as_f32(), svf_type);
+                let out = self.acid.process(
+                    input,
+                    g,
+                    NormalizedValue::new(resonance),
+                    self.drive,
+                    svf_type,
+                );
                 self.acid.flush_denormals();
                 out
             }
@@ -324,10 +333,12 @@ impl PolyModule for Filter {
 
         for i in 0..context.samples.as_usize() {
             let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
-            let cutoff_mod = cutoff_cv
-                .map(|b| b[i] * self.cutoff_mod_amount.as_f32())
-                .unwrap_or(0.0);
-            let res_mod = res_cv.map(|b| b[i]).unwrap_or(0.0);
+            let cutoff_mod = Semitones::new(
+                cutoff_cv
+                    .map(|b| b[i] * self.cutoff_mod_amount.as_f32())
+                    .unwrap_or(0.0),
+            );
+            let res_mod = NormalizedValue::new(res_cv.map(|b| b[i]).unwrap_or(0.0));
 
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
         }
@@ -407,15 +418,18 @@ impl PolyModule for Filter {
 
     fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
         match dest_index {
-            0 => self.mod_offset_cutoff += value,
-            1 => self.mod_offset_resonance += value,
+            0 => self.mod_offset_cutoff = Semitones::new(self.mod_offset_cutoff.as_f32() + value),
+            1 => {
+                self.mod_offset_resonance =
+                    NormalizedValue::new(self.mod_offset_resonance.as_f32() + value)
+            }
             _ => {}
         }
     }
 
     fn clear_mod_offsets(&mut self) {
-        self.mod_offset_cutoff = 0.0;
-        self.mod_offset_resonance = 0.0;
+        self.mod_offset_cutoff = Semitones::ZERO;
+        self.mod_offset_resonance = NormalizedValue::MIN;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -664,7 +678,7 @@ mod tests {
         filter.resonance = NormalizedValue::new(0.99);
 
         for _ in 0..1000 {
-            let out = filter.process_sample(0.5, 0.0, 0.0);
+            let out = filter.process_sample(0.5, Semitones::ZERO, NormalizedValue::MIN);
             assert!(out.is_finite(), "Filter output is not finite");
             assert!(out.abs() < 100.0, "Filter output exploded");
         }

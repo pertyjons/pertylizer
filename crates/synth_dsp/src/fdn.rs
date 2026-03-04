@@ -6,7 +6,7 @@
 //! - Modulated delay times for diffusion
 //! - Stereo output with width control
 
-use synth_core::FilterState;
+use synth_core::{FilterState, Gain, Hertz, NormalizedValue, Phase};
 
 /// Number of channels in the FDN.
 pub const FDN_CHANNELS: usize = 8;
@@ -40,7 +40,16 @@ const HADAMARD_8: [[f32; FDN_CHANNELS]; FDN_CHANNELS] = {
 };
 
 /// Per-channel LFO rates in Hz for delay modulation (~0.3 Hz, slightly different per channel).
-pub const LFO_RATES: [f32; FDN_CHANNELS] = [0.27, 0.31, 0.29, 0.33, 0.26, 0.34, 0.28, 0.32];
+pub const LFO_RATES: [Hertz; FDN_CHANNELS] = [
+    Hertz::new(0.27),
+    Hertz::new(0.31),
+    Hertz::new(0.29),
+    Hertz::new(0.33),
+    Hertz::new(0.26),
+    Hertz::new(0.34),
+    Hertz::new(0.28),
+    Hertz::new(0.32),
+];
 
 /// Maximum delay modulation depth in samples.
 const MAX_MOD_DEPTH_SAMPLES: f32 = 3.0;
@@ -58,13 +67,13 @@ pub(crate) struct FdnChannel {
     /// One-pole highpass filter state for low-cut in feedback path.
     highpass_state: FilterState,
     /// LFO phase for delay modulation (0.0 to 1.0).
-    lfo_phase: f32,
+    lfo_phase: Phase,
     /// LFO rate in Hz for this channel.
-    lfo_rate: f32,
+    lfo_rate: Hertz,
 }
 
 impl FdnChannel {
-    fn new(base_delay: usize, lfo_rate: f32) -> Self {
+    fn new(base_delay: usize, lfo_rate: Hertz) -> Self {
         // Pre-allocate worst-case buffer to prevent heap allocation in resize()
         // on the audio thread. Factor 48 covers: sample_rate_scale ≈ 2.18 (96 kHz)
         // × effective room_scale up to ~22 (large rooms like 150m Tube with tail_stretch 3.5).
@@ -76,7 +85,7 @@ impl FdnChannel {
             delay_samples: base_delay,
             lowpass_state: FilterState::ZERO,
             highpass_state: FilterState::ZERO,
-            lfo_phase: 0.0,
+            lfo_phase: Phase::ZERO,
             lfo_rate,
         }
     }
@@ -116,18 +125,17 @@ impl FdnChannel {
     /// Advance the internal LFO phase.
     #[inline]
     fn advance_lfo(&mut self, sample_rate_recip: f32) {
-        self.lfo_phase += self.lfo_rate * sample_rate_recip;
-        if self.lfo_phase >= 1.0 {
-            self.lfo_phase -= 1.0;
-        }
+        self.lfo_phase = self
+            .lfo_phase
+            .advance(self.lfo_rate.as_f32() * sample_rate_recip);
     }
 
     /// Get the current modulated delay in fractional samples.
     #[inline]
-    fn modulated_delay(&self, diffusion: f32) -> f32 {
+    fn modulated_delay(&self, diffusion: NormalizedValue) -> f32 {
         // Sine LFO for smooth modulation
-        let lfo_value = (self.lfo_phase * std::f32::consts::TAU).sin();
-        let mod_depth = diffusion * MAX_MOD_DEPTH_SAMPLES;
+        let lfo_value = self.lfo_phase.sin();
+        let mod_depth = diffusion.as_f32() * MAX_MOD_DEPTH_SAMPLES;
         let delay = self.delay_samples as f32 + lfo_value * mod_depth;
         // Clamp to valid range
         delay.max(1.0).min((self.buffer.len() - 2) as f32)
@@ -139,7 +147,7 @@ impl FdnChannel {
         self.write_index = 0;
         self.lowpass_state = FilterState::ZERO;
         self.highpass_state = FilterState::ZERO;
-        self.lfo_phase = 0.0;
+        self.lfo_phase = Phase::ZERO;
     }
 }
 
@@ -196,11 +204,11 @@ impl FdnCore {
     pub fn process_sample(
         &mut self,
         input: f32,
-        feedback_gain: f32,
-        lp_coeff: f32,
-        hp_coeff: f32,
-        diffusion: f32,
-        width: f32,
+        feedback_gain: Gain,
+        lp_coeff: NormalizedValue,
+        hp_coeff: NormalizedValue,
+        diffusion: NormalizedValue,
+        width: NormalizedValue,
         sample_rate_recip: f32,
     ) -> FdnStereoOutput {
         // Step 1: Read from all delay lines (before writing new values)
@@ -223,15 +231,17 @@ impl FdnCore {
         // Step 3: Apply feedback gain, damping (lowpass), low-cut (highpass),
         //         add input, and write back into delay lines
         for i in 0..FDN_CHANNELS {
-            let fb = mixed[i] * feedback_gain;
+            let fb = mixed[i] * feedback_gain.as_f32();
 
             // One-pole lowpass for damping (high frequency absorption)
-            let lp_out = self.channels[i].lowpass_state.one_pole(fb, lp_coeff);
+            let lp_out = self.channels[i]
+                .lowpass_state
+                .one_pole(fb, lp_coeff.as_f32());
 
             // One-pole highpass for low-cut (remove low frequency buildup)
             let hp_out = self.channels[i]
                 .highpass_state
-                .one_pole_hp(lp_out, hp_coeff);
+                .one_pole_hp(lp_out, hp_coeff.as_f32());
 
             // Flush denormals periodically (cheap check)
             self.channels[i].lowpass_state.flush_denormals();
@@ -264,8 +274,9 @@ impl FdnCore {
         // Apply width (stereo crossfeed)
         // width=0 -> mono (L=R=(L+R)/2), width=1 -> full stereo
         let mono = (left_sum + right_sum) * 0.5;
-        let wet_left = mono + (left_sum - mono) * width;
-        let wet_right = mono + (right_sum - mono) * width;
+        let w = width.as_f32();
+        let wet_left = mono + (left_sum - mono) * w;
+        let wet_right = mono + (right_sum - mono) * w;
 
         FdnStereoOutput {
             left: wet_left,
@@ -331,7 +342,15 @@ mod tests {
     #[test]
     fn test_fdn_core_process_sample() {
         let mut fdn = FdnCore::new();
-        let output = fdn.process_sample(1.0, 0.5, 0.3, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+        let output = fdn.process_sample(
+            1.0,
+            Gain::new(0.5),
+            NormalizedValue::new(0.3),
+            NormalizedValue::new(0.9),
+            NormalizedValue::new(0.5),
+            NormalizedValue::new(1.0),
+            1.0 / 44100.0,
+        );
         assert!(output.left.is_finite());
         assert!(output.right.is_finite());
     }
@@ -340,9 +359,25 @@ mod tests {
     fn test_fdn_core_stability() {
         let mut fdn = FdnCore::new();
         // Feed an impulse and process many samples
-        fdn.process_sample(1.0, 0.9, 0.5, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+        fdn.process_sample(
+            1.0,
+            Gain::new(0.9),
+            NormalizedValue::new(0.5),
+            NormalizedValue::new(0.9),
+            NormalizedValue::new(0.5),
+            NormalizedValue::new(1.0),
+            1.0 / 44100.0,
+        );
         for _ in 0..10000 {
-            let out = fdn.process_sample(0.0, 0.9, 0.5, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+            let out = fdn.process_sample(
+                0.0,
+                Gain::new(0.9),
+                NormalizedValue::new(0.5),
+                NormalizedValue::new(0.9),
+                NormalizedValue::new(0.5),
+                NormalizedValue::new(1.0),
+                1.0 / 44100.0,
+            );
             assert!(out.left.is_finite(), "FDN output is not finite");
             assert!(out.right.is_finite(), "FDN output is not finite");
             assert!(out.left.abs() < 10.0, "FDN output exploded");
@@ -355,7 +390,15 @@ mod tests {
         let mut fdn = FdnCore::new();
         fdn.set_delay_times(1.0, 1.5);
         // Should not panic
-        let out = fdn.process_sample(1.0, 0.5, 0.3, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+        let out = fdn.process_sample(
+            1.0,
+            Gain::new(0.5),
+            NormalizedValue::new(0.3),
+            NormalizedValue::new(0.9),
+            NormalizedValue::new(0.5),
+            NormalizedValue::new(1.0),
+            1.0 / 44100.0,
+        );
         assert!(out.left.is_finite());
     }
 
@@ -364,11 +407,27 @@ mod tests {
         let mut fdn = FdnCore::new();
         // Feed some signal
         for _ in 0..100 {
-            fdn.process_sample(1.0, 0.5, 0.3, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+            fdn.process_sample(
+                1.0,
+                Gain::new(0.5),
+                NormalizedValue::new(0.3),
+                NormalizedValue::new(0.9),
+                NormalizedValue::new(0.5),
+                NormalizedValue::new(1.0),
+                1.0 / 44100.0,
+            );
         }
         fdn.clear();
         // After clearing, output should be zero
-        let out = fdn.process_sample(0.0, 0.5, 0.3, 0.9, 0.5, 1.0, 1.0 / 44100.0);
+        let out = fdn.process_sample(
+            0.0,
+            Gain::new(0.5),
+            NormalizedValue::new(0.3),
+            NormalizedValue::new(0.9),
+            NormalizedValue::new(0.5),
+            NormalizedValue::new(1.0),
+            1.0 / 44100.0,
+        );
         assert!((out.left).abs() < 0.0001);
         assert!((out.right).abs() < 0.0001);
     }

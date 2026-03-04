@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use synth_core::{Bpm, MidiNote, Semitones};
+use synth_core::{Bpm, MidiNote, NormalizedValue, Semitones};
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
@@ -269,12 +269,12 @@ impl SequencerViewState {
 
 impl SequencerViewState {
     /// Get the effective grid resolution in ticks, falling back to pattern default.
-    fn effective_grid(&self, fallback_ticks_per_row: u16) -> u32 {
-        if self.draw_grid_resolution > 0 {
+    fn effective_grid(&self, fallback_ticks_per_row: u16) -> SeqDuration {
+        SeqDuration(if self.draw_grid_resolution > 0 {
             self.draw_grid_resolution
         } else {
             fallback_ticks_per_row as u32
-        }
+        })
     }
 }
 
@@ -355,7 +355,7 @@ fn draw_transport_bar(
     let is_playing = handle.state.transport.is_playing();
     let current_ticks = handle.state.transport.get_ticks();
     let current_tick = Tick(current_ticks);
-    let tempo_f32 = handle.state.transport.get_tempo();
+    let tempo_f32 = handle.state.transport.get_tempo().as_f32();
     let rec_state = RecordingState::from_u32(handle.state.transport.recording_state());
     let metro_on = handle.state.transport.is_metronome_on();
 
@@ -1789,7 +1789,7 @@ fn collect_piano_roll_data(
                 .iter()
                 .map(|p| AutomationPointSnapshot {
                     tick: p.tick.0,
-                    value: p.value,
+                    value: p.value.as_f32(),
                     curve: p.curve,
                 })
                 .collect(),
@@ -1804,7 +1804,7 @@ fn collect_piano_roll_data(
         },
         pattern_id,
         length_ticks: pattern.length.0,
-        ticks_per_row: pattern.row_resolution.ticks_per_row,
+        ticks_per_row: pattern.row_resolution.ticks_per_row.as_u16(),
         notes,
         pitch_min,
         pitch_max,
@@ -2149,7 +2149,7 @@ fn draw_piano_roll(
                 pattern.quantize_selected(
                     &view_state.selected_notes,
                     grid,
-                    view_state.quantize_strength,
+                    NormalizedValue::new(view_state.quantize_strength),
                 );
             }
         }
@@ -2181,7 +2181,11 @@ fn draw_piano_roll(
             && let Ok(mut song_w) = song.write()
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
-            pattern.humanize_notes(&view_state.selected_notes, 15, 0.05);
+            pattern.humanize_notes(
+                &view_state.selected_notes,
+                SeqDuration(15),
+                NormalizedValue::new(0.05),
+            );
         }
 
         ui.separator();
@@ -2213,7 +2217,11 @@ fn draw_piano_roll(
             if let Ok(mut song_w) = song.write()
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
-                pattern.apply_swing(&view_state.selected_notes, grid, view_state.swing_amount);
+                pattern.apply_swing(
+                    &view_state.selected_notes,
+                    grid,
+                    NormalizedValue::new(view_state.swing_amount),
+                );
             }
         }
 
@@ -3075,7 +3083,7 @@ fn draw_piano_roll(
     // ── Step entry mode — keyboard piano inserts notes at cursor ──
     if view_state.step_entry_mode {
         let step_size = if view_state.draw_note_length > 0 {
-            view_state.draw_note_length
+            SeqDuration(view_state.draw_note_length)
         } else {
             view_state.effective_grid(data.ticks_per_row)
         };
@@ -3102,14 +3110,14 @@ fn draw_piano_roll(
                 Velocity::new(view_state.default_velocity),
                 SeqInstrumentId::new(0),
             );
-            pattern.resize_note(note_id, SeqDuration(step_size));
+            pattern.resize_note(note_id, step_size);
             view_state.selected_notes.clear();
             view_state.selected_notes.insert(note_id);
-            preview_note(handle, pitch_val, view_state.default_velocity);
+            preview_note(handle, pitch, Velocity::new(view_state.default_velocity));
             inserted = true;
         }
         if inserted {
-            view_state.step_cursor_tick += step_size;
+            view_state.step_cursor_tick += step_size.0;
             // Wrap around at pattern end
             if view_state.step_cursor_tick >= data.length_ticks {
                 view_state.step_cursor_tick = 0;
@@ -3157,7 +3165,10 @@ fn handle_piano_roll_interaction(
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             let lane = pattern.get_or_create_automation(target);
-            lane.add_point(AutomationPoint::new(PatternTick(tick), value));
+            lane.add_point(AutomationPoint::new(
+                PatternTick(tick),
+                NormalizedValue::new(value),
+            ));
         }
     }
 
@@ -3201,8 +3212,10 @@ fn handle_piano_roll_interaction(
         match hit {
             Some((note_id, _)) => {
                 // Clicked on a note — select it and preview its sound
-                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                    preview_note(handle, note.pitch, note.velocity);
+                if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
+                    && let Some(p) = Pitch::new(note.pitch)
+                {
+                    preview_note(handle, p, Velocity::new(note.velocity));
                 }
                 if shift_held {
                     // Toggle in selection
@@ -3241,7 +3254,7 @@ fn handle_piano_roll_interaction(
                         pattern.resize_note(note_id, duration);
                         view_state.selected_notes.clear();
                         view_state.selected_notes.insert(note_id);
-                        preview_note(handle, pitch_val, view_state.default_velocity);
+                        preview_note(handle, pitch, Velocity::new(view_state.default_velocity));
                     }
                 } else if !shift_held {
                     // Select tool on empty space — clear selection
@@ -3565,7 +3578,7 @@ fn handle_piano_roll_interaction(
                     lane.remove_point(PatternTick(original_tick));
                     lane.add_point(AutomationPoint::new(
                         PatternTick(current_tick),
-                        current_value,
+                        NormalizedValue::new(current_value),
                     ));
                 }
             }
@@ -3692,8 +3705,12 @@ fn draw_automation_zone(
                     #[allow(clippy::cast_precision_loss)]
                     let frac = step as f32 / steps as f32;
                     let x = x_start + frac * (x_end - x_start);
-                    let val = from.curve.interpolate(from.value, to.value, frac);
-                    let y = value_to_y(val);
+                    let val = from.curve.interpolate(
+                        NormalizedValue::new(from.value),
+                        NormalizedValue::new(to.value),
+                        NormalizedValue::new(frac),
+                    );
+                    let y = value_to_y(val.as_f32());
                     let cur_pos = Pos2::new(x, y);
 
                     painter.line_segment([prev_pos, cur_pos], Stroke::new(1.5, auto_color));
@@ -3754,9 +3771,9 @@ fn draw_automation_zone(
 
 /// Delete all selected notes from the pattern.
 /// Play a short note preview (instant note-on + note-off).
-fn preview_note(handle: &mut EngineHandle, pitch: u8, velocity: f32) {
-    handle.note_on(MidiNote::new(pitch), Velocity::new(velocity));
-    handle.note_off(MidiNote::new(pitch));
+fn preview_note(handle: &mut EngineHandle, pitch: Pitch, velocity: synth_core::Velocity) {
+    handle.note_on(MidiNote::new(pitch.as_midi()), velocity);
+    handle.note_off(MidiNote::new(pitch.as_midi()));
 }
 
 fn delete_selected_notes(

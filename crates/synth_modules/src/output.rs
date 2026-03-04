@@ -249,8 +249,8 @@ impl PolyModule for StereoOutput {
             } else {
                 // Apply master level with pan
                 let gained = input.apply_stereo_gain(
-                    self.master_level.as_f32() * pan_l.as_f32(),
-                    self.master_level.as_f32() * pan_r.as_f32(),
+                    Gain::new(self.master_level.as_f32() * pan_l.as_f32()),
+                    Gain::new(self.master_level.as_f32() * pan_r.as_f32()),
                 );
                 // Apply soft limiting
                 self.soft_limit_stereo(gained)

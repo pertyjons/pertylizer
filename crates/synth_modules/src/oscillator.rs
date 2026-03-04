@@ -17,7 +17,7 @@ use synth_core::{
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
-    Semitones, Velocity, Waveform,
+    Semitones, Velocity, VoiceCount, Waveform,
 };
 use synth_core::{FmMode, ModuleType, OscillatorParam, Param};
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
@@ -40,7 +40,7 @@ pub struct Oscillator {
     fm_amount: BipolarValue,
 
     // Unison parameters
-    unison_voice_count: u8,
+    unison_voice_count: VoiceCount,
     unison_detune: Cents,
     unison_spread: NormalizedValue,
     unison_phase_random: NormalizedValue,
@@ -53,7 +53,7 @@ pub struct Oscillator {
     unison_phases: [Phase; MAX_UNISON_VOICES],
     sample_rate: SampleRate,
     /// Previous sync signal value for edge detection (persists across buffers).
-    prev_sync: f32,
+    prev_sync: NormalizedValue,
 
     // Cross-modulation
     /// Cross-modulation amount (0.0 = off, 1.0 = full).
@@ -61,9 +61,9 @@ pub struct Oscillator {
 
     // Mod matrix offsets
     /// Pitch offset in semitones (from mod matrix).
-    mod_offset_pitch: f32,
+    mod_offset_pitch: Semitones,
     /// Level offset (additive, from mod matrix).
-    mod_offset_level: f32,
+    mod_offset_level: BipolarValue,
 
     // Outputs
     output_buffer: AudioBuffer,
@@ -83,7 +83,7 @@ impl Oscillator {
             phase_offset: Phase::ZERO,
             fm_mode: FmMode::Exponential,
             fm_amount: BipolarValue::MAX,
-            unison_voice_count: 1,
+            unison_voice_count: VoiceCount::new(1),
             unison_detune: Cents::new(10.0),
             unison_spread: NormalizedValue::CENTER,
             unison_phase_random: NormalizedValue::MAX,
@@ -92,9 +92,9 @@ impl Oscillator {
             unison_pans: [0.0; MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
             sample_rate: SampleRate::DVD_QUALITY,
-            prev_sync: 0.0,
-            mod_offset_pitch: 0.0,
-            mod_offset_level: 0.0,
+            prev_sync: NormalizedValue::MIN,
+            mod_offset_pitch: Semitones::ZERO,
+            mod_offset_level: BipolarValue::CENTER,
             output_buffer: AudioBuffer::new(1024),
             output_buffer_left: AudioBuffer::new(1024),
             output_buffer_right: AudioBuffer::new(1024),
@@ -106,14 +106,14 @@ impl Oscillator {
     fn actual_frequency(&self) -> Hertz {
         let octave_mult = 2.0f32.powf(self.octave.as_f32() / 12.0);
         // Apply mod matrix pitch offset (in semitones)
-        let mod_mult = (self.mod_offset_pitch / 12.0).exp2();
+        let mod_mult = (self.mod_offset_pitch.as_f32() / 12.0).exp2();
         Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
     }
 
     /// Recalculate unison detune ratios and pan positions.
     /// Called when unison parameters change.
     fn recalculate_unison_spread(&mut self) {
-        let n = self.unison_voice_count as usize;
+        let n = self.unison_voice_count.as_usize();
         if n <= 1 {
             self.unison_detune_ratios[0] = 1.0;
             self.unison_pans[0] = 0.0;
@@ -369,7 +369,7 @@ impl PolyModule for Oscillator {
         let sync_input = inputs.get(PortName::SYNC);
         let cross_mod_input = inputs.get(PortName::intern("cross_mod"));
 
-        let voice_count = self.unison_voice_count as usize;
+        let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
 
         for i in 0..n_samples {
@@ -402,16 +402,17 @@ impl PolyModule for Oscillator {
 
             if let Some(sync) = sync_input {
                 let sync_val = sync[i];
-                if sync_val > 0.5 && self.prev_sync <= 0.5 {
+                if sync_val > 0.5 && self.prev_sync.as_f32() <= 0.5 {
                     for phase in &mut self.unison_phases[..voice_count] {
                         *phase = Phase::ZERO;
                     }
                 }
-                self.prev_sync = sync_val;
+                self.prev_sync = NormalizedValue::new(sync_val);
             }
 
             let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
-            let effective_level = (self.level.as_f32() + self.mod_offset_level).clamp(0.0, 2.0);
+            let effective_level =
+                (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
 
             if voice_count == 1 {
                 // Single voice: no panning, write directly to all ports
@@ -475,7 +476,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::FmMode(m) => self.fm_mode = m,
                 OscillatorParam::FmAmount(a) => self.fm_amount = a,
                 OscillatorParam::UnisonVoices(n) => {
-                    self.unison_voice_count = n.clamp(1, 7);
+                    self.unison_voice_count = VoiceCount::new(n.clamp(1, 7));
                     self.recalculate_unison_spread();
                 }
                 OscillatorParam::UnisonDetune(c) => {
@@ -504,7 +505,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::Phase(_) => self.phase_offset.as_f32(),
                 OscillatorParam::FmMode(_) => self.fm_mode.index() as f32,
                 OscillatorParam::FmAmount(_) => self.fm_amount.as_f32(),
-                OscillatorParam::UnisonVoices(_) => f32::from(self.unison_voice_count),
+                OscillatorParam::UnisonVoices(_) => f32::from(self.unison_voice_count.as_u8()),
                 OscillatorParam::UnisonDetune(_) => self.unison_detune.as_f32(),
                 OscillatorParam::UnisonSpread(_) => self.unison_spread.as_f32(),
                 OscillatorParam::UnisonPhaseRandom(_) => self.unison_phase_random.as_f32(),
@@ -526,7 +527,9 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::Phase(self.phase_offset)),
             Param::Oscillator(OscillatorParam::FmMode(self.fm_mode)),
             Param::Oscillator(OscillatorParam::FmAmount(self.fm_amount)),
-            Param::Oscillator(OscillatorParam::UnisonVoices(self.unison_voice_count)),
+            Param::Oscillator(OscillatorParam::UnisonVoices(
+                self.unison_voice_count.as_u8(),
+            )),
             Param::Oscillator(OscillatorParam::UnisonDetune(self.unison_detune)),
             Param::Oscillator(OscillatorParam::UnisonSpread(self.unison_spread)),
             Param::Oscillator(OscillatorParam::UnisonPhaseRandom(self.unison_phase_random)),
@@ -540,12 +543,12 @@ impl PolyModule for Oscillator {
 
     fn reset(&mut self) {
         self.unison_phases = [Phase::ZERO; MAX_UNISON_VOICES];
-        self.prev_sync = 0.0;
+        self.prev_sync = NormalizedValue::MIN;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.set_note(note);
-        let n = self.unison_voice_count as usize;
+        let n = self.unison_voice_count.as_usize();
         let random = self.unison_phase_random.as_f32();
         for phase in &mut self.unison_phases[..n] {
             *phase = if random > 0.0 {
@@ -564,15 +567,15 @@ impl PolyModule for Oscillator {
 
     fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
         match dest_index {
-            0 => self.mod_offset_pitch += value,
-            1 => self.mod_offset_level += value,
+            0 => self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value),
+            1 => self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value),
             _ => {}
         }
     }
 
     fn clear_mod_offsets(&mut self) {
-        self.mod_offset_pitch = 0.0;
-        self.mod_offset_level = 0.0;
+        self.mod_offset_pitch = Semitones::ZERO;
+        self.mod_offset_level = BipolarValue::CENTER;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -589,7 +592,7 @@ mod tests {
         let osc = Oscillator::new();
         assert_eq!(osc.waveform, Waveform::Sawtooth);
         assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
-        assert_eq!(osc.unison_voice_count, 1);
+        assert_eq!(osc.unison_voice_count, VoiceCount::MONO);
     }
 
     #[test]
@@ -626,7 +629,7 @@ mod tests {
     #[test]
     fn test_unison_spread_calculation() {
         let mut osc = Oscillator::new();
-        osc.unison_voice_count = 3;
+        osc.unison_voice_count = VoiceCount::new(3);
         osc.unison_detune = Cents::new(20.0);
         osc.unison_spread = NormalizedValue::new(0.8);
         osc.recalculate_unison_spread();
@@ -666,7 +669,7 @@ mod tests {
     #[test]
     fn test_unison_single_voice_unchanged() {
         let mut osc = Oscillator::new();
-        osc.unison_voice_count = 1;
+        osc.unison_voice_count = VoiceCount::MONO;
         osc.recalculate_unison_spread();
 
         assert!(
@@ -685,7 +688,7 @@ mod tests {
         osc.waveform = Waveform::Sawtooth;
         osc.frequency = Hertz::new(440.0);
         osc.sample_rate = SampleRate::DVD_QUALITY;
-        osc.unison_voice_count = 5;
+        osc.unison_voice_count = VoiceCount::new(5);
         osc.unison_detune = Cents::new(30.0);
         osc.unison_spread = NormalizedValue::MAX;
         osc.recalculate_unison_spread();

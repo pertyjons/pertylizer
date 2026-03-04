@@ -11,7 +11,7 @@ use synth_core::{
     ProcessContext, WidgetHint,
 };
 use synth_core::{DistortionMode, DistortionParam, ModuleType, Param};
-use synth_core::{Hertz, NormalizedValue, SampleRate};
+use synth_core::{FilterState, Hertz, NormalizedValue, SampleRate};
 
 // Type alias for local use
 pub type DistortionType = DistortionMode;
@@ -26,7 +26,7 @@ pub struct Distortion {
     bit_depth: f32, // For bitcrush (1-16) - not a normalized value
 
     // Filter state
-    filter_state: f32,
+    filter_state: FilterState,
 
     // State
     sample_rate: SampleRate,
@@ -40,7 +40,7 @@ impl Distortion {
             tone: NormalizedValue::new(0.8),
             mix: NormalizedValue::MAX,
             bit_depth: 8.0,
-            filter_state: 0.0,
+            filter_state: FilterState::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
         }
     }
@@ -107,8 +107,9 @@ impl Distortion {
         let tone = self.tone.as_f32();
         let cutoff = Hertz::new(200.0 + tone * tone * 15000.0);
         let coef = cutoff.to_exp_coeff(self.sample_rate);
-        self.filter_state = input * (1.0 - coef) + self.filter_state * coef;
-        self.filter_state
+        self.filter_state =
+            FilterState::new(input * (1.0 - coef) + self.filter_state.as_f32() * coef);
+        self.filter_state.as_f32()
     }
 }
 
@@ -192,7 +193,7 @@ impl AudioEffect for Distortion {
     }
 
     fn reset(&mut self) {
-        self.filter_state = 0.0;
+        self.filter_state = FilterState::ZERO;
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

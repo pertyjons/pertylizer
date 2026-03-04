@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use synth_core::{MidiNote, Param, PortDirection, Velocity};
+use synth_core::{MidiNote, NormalizedValue, Param, PortDirection, Velocity};
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
@@ -90,9 +90,9 @@ impl AppSynthBridge {
         InstrumentInfo {
             id: snap.id.as_u64(),
             name: snap.name.clone(),
-            midi_channel: snap.midi_channel,
-            volume: snap.volume,
-            pan: snap.pan,
+            midi_channel: snap.midi_channel.as_u8(),
+            volume: snap.volume.as_f32(),
+            pan: snap.pan.as_f32(),
             enabled: snap.enabled,
             muted: snap.muted,
             solo: snap.solo,
@@ -230,12 +230,12 @@ impl SynthBridge for AppSynthBridge {
             cpu_usage: state.cpu_usage.load(),
             voice_count: state.voice_count.load(),
             sample_rate: state.sample_rate.load(),
-            peak_left,
-            peak_right,
-            rms_left,
-            rms_right,
+            peak_left: peak_left.as_f32(),
+            peak_right: peak_right.as_f32(),
+            rms_left: rms_left.as_f32(),
+            rms_right: rms_right.as_f32(),
             master_volume: state.master_volume.load(),
-            tempo: state.transport.get_tempo(),
+            tempo: state.transport.get_tempo().as_f32(),
             is_playing: state.transport.is_playing(),
             instrument_count: state.instrument_snapshots.read().len(),
         })
@@ -359,14 +359,20 @@ impl SynthBridge for AppSynthBridge {
     fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_volume(InstrumentId::new(instrument_id), volume)
+            .set_instrument_volume(
+                InstrumentId::new(instrument_id),
+                synth_core::Gain::new(volume),
+            )
             .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 
     fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_pan(InstrumentId::new(instrument_id), pan)
+            .set_instrument_pan(
+                InstrumentId::new(instrument_id),
+                synth_core::BipolarValue::new(pan),
+            )
             .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 
@@ -1504,13 +1510,13 @@ impl SynthBridge for AppSynthBridge {
         if let Some(vol) = spec.volume {
             let _ = self
                 .session
-                .set_instrument_volume(inst_id, vol)
+                .set_instrument_volume(inst_id, synth_core::Gain::new(vol))
                 .map_err(|e| errors.push(format!("volume: {e}")));
         }
         if let Some(pan) = spec.pan {
             let _ = self
                 .session
-                .set_instrument_pan(inst_id, pan)
+                .set_instrument_pan(inst_id, synth_core::BipolarValue::new(pan))
                 .map_err(|e| errors.push(format!("pan: {e}")));
         }
 
@@ -1696,7 +1702,9 @@ impl SynthBridge for AppSynthBridge {
             let tick = PatternTick(beats_to_ticks(pt.beat));
             let curve = parse_curve_type(&pt.curve);
             let lane = pattern.get_or_create_automation(target);
-            lane.add_point(AutomationPoint::new(tick, pt.value).with_curve(curve));
+            lane.add_point(
+                AutomationPoint::new(tick, NormalizedValue::new(pt.value)).with_curve(curve),
+            );
             items.push(BatchItemResult {
                 index: i,
                 success: true,
@@ -1768,7 +1776,7 @@ impl SynthBridge for AppSynthBridge {
             .iter()
             .map(|p| AutomationPointInfo {
                 beat: ticks_to_beats(p.tick.0),
-                value: p.value,
+                value: p.value.as_f32(),
                 curve: format_curve_type(p.curve),
             })
             .collect())
@@ -2272,7 +2280,9 @@ fn insert_automation_into_pattern(
         let tick = PatternTick(beats_to_ticks(pt.beat));
         let curve = parse_curve_type(&pt.curve);
         let lane = pattern.get_or_create_automation(target);
-        lane.add_point(AutomationPoint::new(tick, pt.value).with_curve(curve));
+        lane.add_point(
+            AutomationPoint::new(tick, NormalizedValue::new(pt.value)).with_curve(curve),
+        );
     }
 }
 

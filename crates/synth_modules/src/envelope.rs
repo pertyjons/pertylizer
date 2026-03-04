@@ -136,11 +136,11 @@ pub struct Envelope {
     target_level: NormalizedValue,
     output_buffer: AudioBuffer,
     /// Time elapsed in current stage (seconds).
-    time_in_stage: f32,
+    time_in_stage: Seconds,
     /// Position buffer for GUI visualization.
     position_buffer: Arc<EnvelopePositionBuffer>,
     /// Previous gate value for edge detection (persists across buffers).
-    prev_gate: f32,
+    prev_gate: NormalizedValue,
 }
 
 impl Envelope {
@@ -160,9 +160,9 @@ impl Envelope {
             sample_rate: SampleRate::DVD_QUALITY,
             target_level: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(1024),
-            time_in_stage: 0.0,
+            time_in_stage: Seconds::ZERO,
             position_buffer: Arc::new(EnvelopePositionBuffer::new()),
-            prev_gate: 0.0,
+            prev_gate: NormalizedValue::MIN,
         }
     }
 
@@ -184,14 +184,14 @@ impl Envelope {
         self.velocity = NormalizedValue::new(velocity.as_f32());
         self.stage = EnvelopeStage::Attack;
         self.target_level = NormalizedValue::MAX;
-        self.time_in_stage = 0.0;
+        self.time_in_stage = Seconds::ZERO;
     }
 
     pub fn release(&mut self) {
         if self.stage != EnvelopeStage::Idle {
             self.stage = EnvelopeStage::Release;
             self.target_level = NormalizedValue::MIN;
-            self.time_in_stage = 0.0;
+            self.time_in_stage = Seconds::ZERO;
         }
     }
 
@@ -293,10 +293,11 @@ impl Envelope {
         // Update time tracking
         if self.stage != prev_stage {
             // Stage changed - reset time
-            self.time_in_stage = 0.0;
+            self.time_in_stage = Seconds::ZERO;
         } else if self.stage != EnvelopeStage::Idle {
             // Increment time (1 sample)
-            self.time_in_stage += 1.0 / self.sample_rate.as_f32();
+            self.time_in_stage =
+                Seconds::new(self.time_in_stage.as_f32() + 1.0 / self.sample_rate.as_f32());
         }
 
         self.level.as_f32() * velocity_scale
@@ -425,13 +426,13 @@ impl PolyModule for Envelope {
         for i in 0..context.samples.as_usize() {
             if let Some(gate) = gate_input {
                 let gate_val = gate[i];
-                if gate_val > 0.5 && self.prev_gate <= 0.5 {
+                if gate_val > 0.5 && self.prev_gate.as_f32() <= 0.5 {
                     let vel = Velocity::new(velocity_input.map(|v| v[i]).unwrap_or(1.0));
                     self.trigger(vel);
-                } else if gate_val <= 0.5 && self.prev_gate > 0.5 {
+                } else if gate_val <= 0.5 && self.prev_gate.as_f32() > 0.5 {
                     self.release();
                 }
-                self.prev_gate = gate_val;
+                self.prev_gate = NormalizedValue::new(gate_val);
             }
             self.output_buffer[i] = self.process_sample();
         }
@@ -441,7 +442,8 @@ impl PolyModule for Envelope {
         }
 
         // Update position buffer for GUI visualization (stage + time)
-        self.position_buffer.set(self.stage, self.time_in_stage);
+        self.position_buffer
+            .set(self.stage, self.time_in_stage.as_f32());
     }
 
     fn set_param(&mut self, param: Param) {
@@ -498,8 +500,8 @@ impl PolyModule for Envelope {
     fn reset(&mut self) {
         self.stage = EnvelopeStage::Idle;
         self.level = NormalizedValue::MIN;
-        self.time_in_stage = 0.0;
-        self.prev_gate = 0.0;
+        self.time_in_stage = Seconds::ZERO;
+        self.prev_gate = NormalizedValue::MIN;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {

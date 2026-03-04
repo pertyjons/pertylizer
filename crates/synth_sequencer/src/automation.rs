@@ -1,6 +1,7 @@
 //! Automation system for parameter control over time.
 
 use serde::{Deserialize, Serialize};
+use synth_core::NormalizedValue;
 
 use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
@@ -11,17 +12,17 @@ pub struct AutomationPoint {
     /// Position within the pattern.
     pub tick: PatternTick,
     /// Normalized value (0.0 - 1.0).
-    pub value: f32,
+    pub value: NormalizedValue,
     /// Curve type for interpolation to next point.
     pub curve: CurveType,
 }
 
 impl AutomationPoint {
     /// Create a new automation point with linear interpolation.
-    pub fn new(tick: PatternTick, value: f32) -> Self {
+    pub fn new(tick: PatternTick, value: NormalizedValue) -> Self {
         Self {
             tick,
-            value: value.clamp(0.0, 1.0),
+            value,
             curve: CurveType::Linear,
         }
     }
@@ -50,25 +51,33 @@ pub enum CurveType {
 impl CurveType {
     /// Interpolate between two values using this curve type.
     /// `t` is the normalized position (0.0 to 1.0).
-    pub fn interpolate(&self, from: f32, to: f32, t: f32) -> f32 {
-        let t = t.clamp(0.0, 1.0);
-        match self {
-            Self::Linear => from + (to - from) * t,
-            Self::Step => from,
+    pub fn interpolate(
+        &self,
+        from: NormalizedValue,
+        to: NormalizedValue,
+        t: NormalizedValue,
+    ) -> NormalizedValue {
+        let t = t.as_f32().clamp(0.0, 1.0);
+        let from_f = from.as_f32();
+        let to_f = to.as_f32();
+        let result = match self {
+            Self::Linear => from_f + (to_f - from_f) * t,
+            Self::Step => from_f,
             Self::Exponential(strength) => {
                 let exp_t = if *strength >= 0 {
                     t.powf(1.0 + *strength as f32 * 0.02)
                 } else {
                     1.0 - (1.0 - t).powf(1.0 - *strength as f32 * 0.02)
                 };
-                from + (to - from) * exp_t
+                from_f + (to_f - from_f) * exp_t
             }
             Self::SCurve => {
                 // Smoothstep: 3t² - 2t³
                 let s = t * t * (3.0 - 2.0 * t);
-                from + (to - from) * s
+                from_f + (to_f - from_f) * s
             }
-        }
+        };
+        NormalizedValue::new(result)
     }
 }
 
@@ -114,7 +123,7 @@ impl AutomationLane {
     }
 
     /// Get interpolated value at the given tick.
-    pub fn value_at(&self, tick: PatternTick) -> Option<f32> {
+    pub fn value_at(&self, tick: PatternTick) -> Option<NormalizedValue> {
         if self.points.is_empty() {
             return None;
         }
@@ -135,13 +144,15 @@ impl AutomationLane {
         let after = &self.points[idx];
 
         // Calculate interpolation position
-        let t = (tick.0 - before.tick.0) as f32 / (after.tick.0 - before.tick.0) as f32;
+        let t = NormalizedValue::new(
+            (tick.0 - before.tick.0) as f32 / (after.tick.0 - before.tick.0) as f32,
+        );
 
         Some(before.curve.interpolate(before.value, after.value, t))
     }
 
     /// Get the value at a tick, or a default if no points exist.
-    pub fn value_at_or(&self, tick: PatternTick, default: f32) -> f32 {
+    pub fn value_at_or(&self, tick: PatternTick, default: NormalizedValue) -> NormalizedValue {
         self.value_at(tick).unwrap_or(default)
     }
 
@@ -261,65 +272,101 @@ mod tests {
 
     #[test]
     fn test_automation_point_creation() {
-        let point = AutomationPoint::new(PatternTick(480), 0.5);
+        let point = AutomationPoint::new(PatternTick(480), NormalizedValue::new(0.5));
         assert_eq!(point.tick.0, 480);
-        assert_eq!(point.value, 0.5);
+        assert_eq!(point.value, NormalizedValue::new(0.5));
         assert_eq!(point.curve, CurveType::Linear);
     }
 
     #[test]
     fn test_curve_linear() {
         let curve = CurveType::Linear;
-        assert_eq!(curve.interpolate(0.0, 1.0, 0.0), 0.0);
-        assert_eq!(curve.interpolate(0.0, 1.0, 0.5), 0.5);
-        assert_eq!(curve.interpolate(0.0, 1.0, 1.0), 1.0);
+        let zero = NormalizedValue::new(0.0);
+        let half = NormalizedValue::new(0.5);
+        let one = NormalizedValue::new(1.0);
+        assert_eq!(curve.interpolate(zero, one, zero), zero);
+        assert_eq!(curve.interpolate(zero, one, half), half);
+        assert_eq!(curve.interpolate(zero, one, one), one);
     }
 
     #[test]
     fn test_curve_step() {
         let curve = CurveType::Step;
-        assert_eq!(curve.interpolate(0.0, 1.0, 0.0), 0.0);
-        assert_eq!(curve.interpolate(0.0, 1.0, 0.5), 0.0);
-        assert_eq!(curve.interpolate(0.0, 1.0, 0.99), 0.0);
+        let zero = NormalizedValue::new(0.0);
+        let one = NormalizedValue::new(1.0);
+        assert_eq!(curve.interpolate(zero, one, zero), zero);
+        assert_eq!(
+            curve.interpolate(zero, one, NormalizedValue::new(0.5)),
+            zero
+        );
+        assert_eq!(
+            curve.interpolate(zero, one, NormalizedValue::new(0.99)),
+            zero
+        );
     }
 
     #[test]
     fn test_curve_scurve() {
         let curve = CurveType::SCurve;
-        let mid = curve.interpolate(0.0, 1.0, 0.5);
-        assert!((mid - 0.5).abs() < 0.01); // S-curve passes through 0.5 at t=0.5
+        let mid = curve.interpolate(
+            NormalizedValue::new(0.0),
+            NormalizedValue::new(1.0),
+            NormalizedValue::new(0.5),
+        );
+        assert!((mid.as_f32() - 0.5).abs() < 0.01); // S-curve passes through 0.5 at t=0.5
     }
 
     #[test]
     fn test_automation_lane_value_at() {
         let mut lane = AutomationLane::new(AutomationTarget::Global(GlobalParam::Tempo));
 
-        lane.add_point(AutomationPoint::new(PatternTick(0), 0.0));
-        lane.add_point(AutomationPoint::new(PatternTick(960), 1.0));
+        lane.add_point(AutomationPoint::new(
+            PatternTick(0),
+            NormalizedValue::new(0.0),
+        ));
+        lane.add_point(AutomationPoint::new(
+            PatternTick(960),
+            NormalizedValue::new(1.0),
+        ));
 
         // Before first point
-        assert_eq!(lane.value_at(PatternTick(0)), Some(0.0));
+        assert_eq!(
+            lane.value_at(PatternTick(0)),
+            Some(NormalizedValue::new(0.0))
+        );
 
         // At first point
-        assert!((lane.value_at(PatternTick(0)).unwrap() - 0.0).abs() < 0.01);
+        assert!((lane.value_at(PatternTick(0)).unwrap().as_f32() - 0.0).abs() < 0.01);
 
         // Middle (linear interpolation)
-        assert!((lane.value_at(PatternTick(480)).unwrap() - 0.5).abs() < 0.01);
+        assert!((lane.value_at(PatternTick(480)).unwrap().as_f32() - 0.5).abs() < 0.01);
 
         // At last point
-        assert!((lane.value_at(PatternTick(960)).unwrap() - 1.0).abs() < 0.01);
+        assert!((lane.value_at(PatternTick(960)).unwrap().as_f32() - 1.0).abs() < 0.01);
 
         // After last point
-        assert_eq!(lane.value_at(PatternTick(2000)), Some(1.0));
+        assert_eq!(
+            lane.value_at(PatternTick(2000)),
+            Some(NormalizedValue::new(1.0))
+        );
     }
 
     #[test]
     fn test_automation_lane_add_remove() {
         let mut lane = AutomationLane::new(AutomationTarget::Global(GlobalParam::MasterVolume));
 
-        lane.add_point(AutomationPoint::new(PatternTick(100), 0.5));
-        lane.add_point(AutomationPoint::new(PatternTick(50), 0.3)); // Should sort before
-        lane.add_point(AutomationPoint::new(PatternTick(200), 0.8));
+        lane.add_point(AutomationPoint::new(
+            PatternTick(100),
+            NormalizedValue::new(0.5),
+        ));
+        lane.add_point(AutomationPoint::new(
+            PatternTick(50),
+            NormalizedValue::new(0.3),
+        )); // Should sort before
+        lane.add_point(AutomationPoint::new(
+            PatternTick(200),
+            NormalizedValue::new(0.8),
+        ));
 
         assert_eq!(lane.len(), 3);
         assert_eq!(lane.points()[0].tick.0, 50);
@@ -335,10 +382,16 @@ mod tests {
     fn test_automation_lane_replace_at_same_tick() {
         let mut lane = AutomationLane::new(AutomationTarget::Global(GlobalParam::Swing));
 
-        lane.add_point(AutomationPoint::new(PatternTick(100), 0.5));
-        lane.add_point(AutomationPoint::new(PatternTick(100), 0.8)); // Same tick, should replace
+        lane.add_point(AutomationPoint::new(
+            PatternTick(100),
+            NormalizedValue::new(0.5),
+        ));
+        lane.add_point(AutomationPoint::new(
+            PatternTick(100),
+            NormalizedValue::new(0.8),
+        )); // Same tick, should replace
 
         assert_eq!(lane.len(), 1);
-        assert_eq!(lane.points()[0].value, 0.8);
+        assert_eq!(lane.points()[0].value, NormalizedValue::new(0.8));
     }
 }

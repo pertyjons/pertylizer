@@ -5,11 +5,11 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
-use super::ids::{NoteId, PatternId, SeqInstrumentId};
+use super::ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
-use synth_core::Semitones;
+use synth_core::{NormalizedValue, Semitones};
 
 // ============================================================================
 // RowResolution - Grid timing configuration
@@ -19,38 +19,38 @@ use synth_core::Semitones;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowResolution {
     /// Number of rows in this pattern.
-    pub rows: u16,
+    pub rows: RowCount,
     /// Ticks per row.
-    pub ticks_per_row: u16,
+    pub ticks_per_row: TicksPerRow,
 }
 
 impl RowResolution {
     /// Standard: 64 rows, 16 rows per bar at 4/4.
     pub fn standard_64() -> Self {
         Self {
-            rows: 64,
-            ticks_per_row: 240, // 4 bars * 960 ticks / 64 rows
+            rows: RowCount::new(64),
+            ticks_per_row: TicksPerRow::new(240), // 4 bars * 960 ticks / 64 rows
         }
     }
 
     /// Short pattern: 16 rows.
     pub fn short_16() -> Self {
         Self {
-            rows: 16,
-            ticks_per_row: 240,
+            rows: RowCount::new(16),
+            ticks_per_row: TicksPerRow::new(240),
         }
     }
 
     /// High resolution: 128 rows.
     pub fn high_128() -> Self {
         Self {
-            rows: 128,
-            ticks_per_row: 120,
+            rows: RowCount::new(128),
+            ticks_per_row: TicksPerRow::new(120),
         }
     }
 
     /// Custom resolution.
-    pub fn custom(rows: u16, ticks_per_row: u16) -> Self {
+    pub fn custom(rows: RowCount, ticks_per_row: TicksPerRow) -> Self {
         Self {
             rows,
             ticks_per_row,
@@ -59,23 +59,24 @@ impl RowResolution {
 
     /// Calculate pattern length in ticks.
     pub fn total_ticks(&self) -> Duration {
-        Duration(self.rows as u32 * self.ticks_per_row as u32)
+        Duration(self.rows.as_u16() as u32 * self.ticks_per_row.as_u32())
     }
 
     /// Convert row to tick.
-    pub fn row_to_tick(&self, row: u16) -> PatternTick {
-        PatternTick(row as u32 * self.ticks_per_row as u32)
+    pub fn row_to_tick(&self, row: RowIndex) -> PatternTick {
+        PatternTick(row.as_u32() * self.ticks_per_row.as_u32())
     }
 
     /// Convert tick to row (rounded down).
-    pub fn tick_to_row(&self, tick: PatternTick) -> u16 {
-        (tick.0 / self.ticks_per_row as u32) as u16
+    pub fn tick_to_row(&self, tick: PatternTick) -> RowIndex {
+        RowIndex::new((tick.0 / self.ticks_per_row.as_u32()) as u16)
     }
 
     /// Quantize tick to nearest row.
     pub fn quantize(&self, tick: PatternTick) -> PatternTick {
-        let row = (tick.0 + self.ticks_per_row as u32 / 2) / self.ticks_per_row as u32;
-        PatternTick(row * self.ticks_per_row as u32)
+        let tpr = self.ticks_per_row.as_u32();
+        let row = (tick.0 + tpr / 2) / tpr;
+        PatternTick(row * tpr)
     }
 
     /// Quantize with strength (0.0 = no change, 1.0 = full quantize).
@@ -210,9 +211,9 @@ impl Pattern {
     }
 
     /// Get notes starting at a specific row.
-    pub fn notes_at_row(&self, row: u16) -> impl Iterator<Item = &Note> {
+    pub fn notes_at_row(&self, row: RowIndex) -> impl Iterator<Item = &Note> {
         let tick = self.row_resolution.row_to_tick(row);
-        let next_tick = self.row_resolution.row_to_tick(row + 1);
+        let next_tick = self.row_resolution.row_to_tick(row.next());
         self.notes
             .iter()
             .filter(move |n| n.start >= tick && n.start < next_tick)
@@ -292,21 +293,22 @@ impl Pattern {
     pub fn quantize_selected(
         &mut self,
         note_ids: &HashSet<NoteId>,
-        grid_ticks: u32,
-        strength: f32,
+        grid_ticks: Duration,
+        strength: NormalizedValue,
     ) {
-        if grid_ticks == 0 {
+        if grid_ticks.0 == 0 {
             return;
         }
-        let strength = strength.clamp(0.0, 1.0);
+        let grid = grid_ticks.0;
+        let str_f = strength.as_f32().clamp(0.0, 1.0);
         for note in &mut self.notes {
             if !note_ids.contains(&note.id) {
                 continue;
             }
-            let quantized = ((note.start.0 + grid_ticks / 2) / grid_ticks) * grid_ticks;
+            let quantized = ((note.start.0 + grid / 2) / grid) * grid;
             let diff = quantized as f32 - note.start.0 as f32;
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let new_tick = (note.start.0 as f32 + diff * strength) as u32;
+            let new_tick = (note.start.0 as f32 + diff * str_f) as u32;
             note.start = PatternTick(new_tick);
         }
         self.notes.sort_by_key(|n| n.start);
@@ -316,21 +318,23 @@ impl Pattern {
     pub fn humanize_notes(
         &mut self,
         note_ids: &HashSet<NoteId>,
-        timing_range: u32,
-        velocity_range: f32,
+        timing_range: Duration,
+        velocity_range: NormalizedValue,
     ) {
+        let timing_ticks = timing_range.0;
+        let vel_range = velocity_range.as_f32();
         for note in &mut self.notes {
             if !note_ids.contains(&note.id) {
                 continue;
             }
             // Random timing offset: ±timing_range ticks
-            let timing_offset = fastrand::i32(-(timing_range as i32)..=(timing_range as i32));
+            let timing_offset = fastrand::i32(-(timing_ticks as i32)..=(timing_ticks as i32));
             #[allow(clippy::cast_sign_loss)]
             let new_tick = (note.start.0 as i64 + timing_offset as i64).max(0) as u32;
             note.start = PatternTick(new_tick);
 
             // Random velocity offset: ±velocity_range
-            let vel_offset = fastrand::f32() * 2.0 * velocity_range - velocity_range;
+            let vel_offset = fastrand::f32() * 2.0 * vel_range - vel_range;
             let new_vel = (note.velocity.as_f32() + vel_offset).clamp(0.01, 1.0);
             note.velocity = Velocity::new(new_vel);
         }
@@ -353,21 +357,27 @@ impl Pattern {
     /// `grid_ticks` defines the base subdivision (e.g. 480 for 1/8 notes).
     /// `swing` ranges from 0.0 (no swing) to 1.0 (full shuffle).
     /// Even-numbered beats within each pair are delayed by `swing * grid_ticks / 2`.
-    pub fn apply_swing(&mut self, note_ids: &HashSet<NoteId>, grid_ticks: u32, swing: f32) {
-        if grid_ticks == 0 {
+    pub fn apply_swing(
+        &mut self,
+        note_ids: &HashSet<NoteId>,
+        grid_ticks: Duration,
+        swing: NormalizedValue,
+    ) {
+        let grid = grid_ticks.0;
+        if grid == 0 {
             return;
         }
-        let swing = swing.clamp(0.0, 1.0);
-        let max_shift = grid_ticks as f32 / 2.0;
+        let swing_f = swing.as_f32().clamp(0.0, 1.0);
+        let max_shift = grid as f32 / 2.0;
         for note in &mut self.notes {
             if !note_ids.contains(&note.id) {
                 continue;
             }
             // Determine which grid position this note is on
-            let grid_pos = note.start.0 / grid_ticks;
+            let grid_pos = note.start.0 / grid;
             // Odd grid positions (the "even" subdivisions in musical terms) get shifted
             if grid_pos % 2 == 1 {
-                let shift = (max_shift * swing) as u32;
+                let shift = (max_shift * swing_f) as u32;
                 note.start = PatternTick(note.start.0 + shift);
             }
         }
@@ -679,7 +689,7 @@ mod tests {
     fn test_row_resolution() {
         let res = RowResolution::standard_64();
         assert_eq!(res.total_ticks().0, 64 * 240);
-        assert_eq!(res.row_to_tick(4).0, 960);
-        assert_eq!(res.tick_to_row(PatternTick(960)), 4);
+        assert_eq!(res.row_to_tick(RowIndex::new(4)).0, 960);
+        assert_eq!(res.tick_to_row(PatternTick(960)), RowIndex::new(4));
     }
 }

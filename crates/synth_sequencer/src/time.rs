@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
+use synth_core::Bpm;
 
 /// Ticks per quarter note (PPQN).
 pub const TICKS_PER_QUARTER: u32 = 960;
@@ -23,14 +24,14 @@ impl Tick {
     }
 
     /// Convert to seconds at a given tempo.
-    pub fn to_seconds(&self, tempo_bpm: f32) -> f64 {
+    pub fn to_seconds(&self, tempo_bpm: Bpm) -> f64 {
         let beats = self.0 as f64 / TICKS_PER_QUARTER as f64;
-        beats * 60.0 / tempo_bpm as f64
+        beats * 60.0 / tempo_bpm.as_f32() as f64
     }
 
     /// Create from seconds at a given tempo.
-    pub fn from_seconds(seconds: f64, tempo_bpm: f32) -> Self {
-        let beats = seconds * tempo_bpm as f64 / 60.0;
+    pub fn from_seconds(seconds: f64, tempo_bpm: Bpm) -> Self {
+        let beats = seconds * tempo_bpm.as_f32() as f64 / 60.0;
         Self((beats * TICKS_PER_QUARTER as f64) as u64)
     }
 
@@ -249,13 +250,13 @@ mod tests {
     fn test_tick_to_seconds() {
         // 120 BPM = 2 beats/sec = 1920 ticks/sec
         let tick = Tick(1920);
-        let seconds = tick.to_seconds(120.0);
+        let seconds = tick.to_seconds(Bpm::new(120.0));
         assert!((seconds - 1.0).abs() < 0.001);
     }
 
     #[test]
     fn test_tick_from_seconds() {
-        let tick = Tick::from_seconds(1.0, 120.0);
+        let tick = Tick::from_seconds(1.0, Bpm::new(120.0));
         assert_eq!(tick.0, 1920);
     }
 
