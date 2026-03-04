@@ -373,12 +373,12 @@ fn draw_transport_bar(
             } else if let Some(pattern_id) = view_state.opened_pattern {
                 // Arm — look up placement bounds and time signature
                 let bounds = song.try_read().ok().and_then(|s| {
-                    let mut best: Option<(Tick, u32, u32)> = None;
+                    let mut best: Option<(Tick, SeqDuration, SeqDuration)> = None;
                     for p in s.arrangement() {
                         if p.pattern_id == pattern_id {
                             let pat = s.pattern(pattern_id)?;
-                            let tpb = s.time_signature_at(p.start).ticks_per_bar();
-                            best = Some((p.start, pat.length.0, tpb));
+                            let tpb = SeqDuration(s.time_signature_at(p.start).ticks_per_bar());
+                            best = Some((p.start, pat.length, tpb));
                             break;
                         }
                     }
@@ -389,9 +389,9 @@ fn draw_transport_bar(
                         pattern_id,
                         track_id: TrackId::new(0),
                         region_start,
-                        pattern_length_ticks: pattern_length,
+                        pattern_length,
                         ticks_per_bar,
-                        quantize_grid: view_state.record_quantize,
+                        quantize_grid: SeqDuration(view_state.record_quantize),
                         overdub: view_state.overdub,
                     });
                 }

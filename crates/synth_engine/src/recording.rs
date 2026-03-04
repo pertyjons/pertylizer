@@ -35,8 +35,8 @@ struct RecordTarget {
     #[allow(dead_code)] // Will be used for track-specific recording
     track_id: TrackId,
     region_start: Tick,
-    pattern_length_ticks: u32,
-    ticks_per_bar: u32,
+    pattern_length: Duration,
+    ticks_per_bar: Duration,
     /// Whether to layer notes on existing pattern (true) or replace (false).
     overdub: bool,
 }
@@ -86,8 +86,8 @@ pub(crate) struct RecordingBuffer {
     recorded_notes: Vec<RecordedNote>,
     /// Tick at which the count-in ends and capturing begins.
     capture_start_tick: Tick,
-    /// Quantization grid size (0 = no quantization).
-    quantize_grid: u32,
+    /// Quantization grid size (Duration(0) = no quantization).
+    quantize_grid: Duration,
 }
 
 impl RecordingBuffer {
@@ -99,7 +99,7 @@ impl RecordingBuffer {
             held_notes: [None; MAX_HELD_NOTES],
             recorded_notes: Vec::with_capacity(MAX_RECORDED_NOTES),
             capture_start_tick: Tick::ZERO,
-            quantize_grid: 0,
+            quantize_grid: Duration(0),
         }
     }
 
@@ -113,9 +113,9 @@ impl RecordingBuffer {
         self.target.map(|t| t.pattern_id)
     }
 
-    /// Set the quantization grid size (0 = no quantization).
-    pub(crate) fn set_quantize_grid(&mut self, grid_ticks: u32) {
-        self.quantize_grid = grid_ticks;
+    /// Set the quantization grid size (Duration(0) = no quantization).
+    pub(crate) fn set_quantize_grid(&mut self, grid: Duration) {
+        self.quantize_grid = grid;
     }
 
     /// Whether the current recording session uses overdub mode.
@@ -129,8 +129,8 @@ impl RecordingBuffer {
         pattern_id: PatternId,
         track_id: TrackId,
         region_start: Tick,
-        pattern_length_ticks: u32,
-        ticks_per_bar: u32,
+        pattern_length: Duration,
+        ticks_per_bar: Duration,
         overdub: bool,
     ) {
         self.state = RecordingState::Armed;
@@ -138,7 +138,7 @@ impl RecordingBuffer {
             pattern_id,
             track_id,
             region_start,
-            pattern_length_ticks,
+            pattern_length,
             ticks_per_bar,
             overdub,
         });
@@ -165,14 +165,18 @@ impl RecordingBuffer {
         self.capture_start_tick = target.region_start;
 
         // Seek to 1 bar before region start
-        let count_in_ticks = target.ticks_per_bar as u64;
-        let seek_to = Tick(target.region_start.0.saturating_sub(count_in_ticks));
+        let seek_to = Tick(
+            target
+                .region_start
+                .0
+                .saturating_sub(target.ticks_per_bar.0 as u64),
+        );
         Some(seek_to)
     }
 
     /// Get cached ticks_per_bar (for metronome accent detection).
-    pub(crate) fn ticks_per_bar(&self) -> u32 {
-        self.target.map_or(3840, |t| t.ticks_per_bar) // Default 4/4 at 960 PPQN
+    pub(crate) fn ticks_per_bar(&self) -> Duration {
+        self.target.map_or(Duration::WHOLE, |t| t.ticks_per_bar) // Default 4/4 at 960 PPQN
     }
 
     /// Tick the state machine — called each audio tick.
@@ -255,21 +259,22 @@ impl RecordingBuffer {
     }
 
     /// Convert a song tick to a pattern-relative tick.
+    #[allow(clippy::cast_possible_truncation)] // pattern_tick fits in u32 after modulo
     fn song_tick_to_pattern_tick(&self, song_tick: Tick) -> PatternTick {
         let Some(target) = self.target else {
             return PatternTick::ZERO;
         };
         let relative = song_tick.0.saturating_sub(target.region_start.0);
-        let pattern_tick = if target.pattern_length_ticks > 0 {
-            (relative % target.pattern_length_ticks as u64) as u32
+        let pattern_tick = if target.pattern_length.0 > 0 {
+            (relative % target.pattern_length.0 as u64) as u32
         } else {
             relative as u32
         };
 
         // Apply quantization if enabled
-        if self.quantize_grid > 0 {
-            let rounded =
-                ((pattern_tick + self.quantize_grid / 2) / self.quantize_grid) * self.quantize_grid;
+        let grid = self.quantize_grid.0;
+        if grid > 0 {
+            let rounded = ((pattern_tick + grid / 2) / grid) * grid;
             PatternTick(rounded)
         } else {
             PatternTick(pattern_tick)
@@ -305,8 +310,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(3840),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         assert_eq!(buf.state(), RecordingState::Armed);
@@ -320,8 +325,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(3840),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
 
@@ -345,8 +350,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(0),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         buf.state = RecordingState::Capturing;
@@ -374,8 +379,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(3840),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         buf.state = RecordingState::Capturing;
@@ -397,8 +402,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(0),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         buf.state = RecordingState::Capturing;
@@ -418,8 +423,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(3840),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         let _ = buf.start_playback();
@@ -439,8 +444,8 @@ mod tests {
             PatternId::new(1),
             TrackId::new(0),
             Tick(0),
-            3840,
-            3840,
+            Duration::WHOLE,
+            Duration::WHOLE,
             true,
         );
         buf.state = RecordingState::Capturing;
