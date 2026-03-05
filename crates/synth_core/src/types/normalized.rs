@@ -83,6 +83,15 @@ impl NormalizedValue {
         BipolarValue::new(self.0 * 2.0 - 1.0)
     }
 
+    /// Blend (dry/wet mix) between two values.
+    ///
+    /// Uses `self` as the mix amount: `0.0` returns `dry`, `1.0` returns `wet`.
+    #[inline]
+    #[must_use]
+    pub fn blend(self, dry: f32, wet: f32) -> f32 {
+        dry * (1.0 - self.0) + wet * self.0
+    }
+
     /// Invert (1 - value).
     #[inline]
     #[must_use]

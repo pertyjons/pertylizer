@@ -2,7 +2,7 @@
 
 use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
-    PortDescriptor, ProcessContext, WidgetHint,
+    PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{Decibels, Hertz, NormalizedValue, SampleRate};
 use synth_core::{EqParam, ModuleType, Param};
@@ -307,21 +307,10 @@ impl AudioEffect for Eq {
         self.update_coefficients();
 
         // Process stereo interleaved
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Process through 3 bands in series
             let (low_l, low_r) = self.low_state.process(in_l, in_r, &self.low_coeffs);
@@ -330,12 +319,8 @@ impl AudioEffect for Eq {
 
             // Mix dry/wet
             let mix = self.mix.as_f32();
-            if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result = StereoSample::new(in_l, in_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

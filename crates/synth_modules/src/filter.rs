@@ -137,74 +137,31 @@ impl Filter {
                     input * self.drive.as_f32()
                 };
 
-                let g = cutoff.to_tan_coeff(self.sample_rate);
-                let k = 2.0 - 2.0 * resonance;
-
-                let a1 = 1.0 / (1.0 + g * (g + k));
-                let a2 = g * a1;
-                let a3 = g * a2;
-
-                let ic1 = self.ic1eq.as_f32();
-                let ic2 = self.ic2eq.as_f32();
-
-                let v3 = driven - ic2;
-                let v1 = a1 * ic1 + a2 * v3;
-                let v2 = ic2 + a2 * ic1 + a3 * v3;
-
-                self.ic1eq = FilterState::new(2.0 * v1 - ic1);
-                self.ic2eq = FilterState::new(2.0 * v2 - ic2);
-
-                // Prevent denormals for consistent performance
-                self.ic1eq.flush_denormals();
-                self.ic2eq.flush_denormals();
-
-                match self.filter_type {
-                    FilterMode::Lowpass => v2,
-                    FilterMode::Highpass => input - k * v1 - v2,
-                    FilterMode::Bandpass => v1,
-                    FilterMode::Notch => input - k * v1,
-                    FilterMode::Peak => {
-                        let lp = v2;
-                        let hp = input - k * v1 - v2;
-                        lp - hp
-                    }
-                    FilterMode::LowShelf => {
-                        let lp = v2;
-                        input * 0.5 + lp * 0.5
-                    }
-                    FilterMode::HighShelf => {
-                        let hp = input - k * v1 - v2;
-                        input * 0.5 + hp * 0.5
-                    }
-                }
+                let coeffs =
+                    SvfCoeffs::new(cutoff, NormalizedValue::new(resonance), self.sample_rate);
+                let svf_type = self.filter_mode_to_svf_type();
+                coeffs.process(driven, &mut self.ic1eq, &mut self.ic2eq, svf_type)
             }
             FilterModel::Fluid => {
                 let coeffs =
                     SvfCoeffs::new(cutoff, NormalizedValue::new(resonance), self.sample_rate);
-                let out = self.fluid.process(input, &coeffs, self.drive, self.morph);
-                self.fluid.flush_denormals();
-                out
+                self.fluid.process(input, &coeffs, self.drive, self.morph)
             }
             FilterModel::Screamer => {
                 let g = cutoff.to_tan_coeff(self.sample_rate);
-                let out =
-                    self.screamer
-                        .process(input, g, NormalizedValue::new(resonance), self.drive);
-                self.screamer.flush_denormals();
-                out
+                self.screamer
+                    .process(input, g, NormalizedValue::new(resonance), self.drive)
             }
             FilterModel::Acid => {
                 let g = cutoff.to_tan_coeff(self.sample_rate);
                 let svf_type = self.filter_mode_to_svf_type();
-                let out = self.acid.process(
+                self.acid.process(
                     input,
                     g,
                     NormalizedValue::new(resonance),
                     self.drive,
                     svf_type,
-                );
-                self.acid.flush_denormals();
-                out
+                )
             }
         }
     }
@@ -327,18 +284,14 @@ impl PolyModule for Filter {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let audio_in = inputs.get(PortName::IN);
-        let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
-        let res_cv = inputs.get(PortName::RESONANCE_CV);
+        let audio_in = inputs.reader(PortName::IN, 0.0);
+        let cutoff_cv = inputs.reader(PortName::CUTOFF_CV, 0.0);
+        let res_cv = inputs.reader(PortName::RESONANCE_CV, 0.0);
 
         for i in 0..context.samples.as_usize() {
-            let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
-            let cutoff_mod = Semitones::new(
-                cutoff_cv
-                    .map(|b| b[i] * self.cutoff_mod_amount.as_f32())
-                    .unwrap_or(0.0),
-            );
-            let res_mod = NormalizedValue::new(res_cv.map(|b| b[i]).unwrap_or(0.0));
+            let input = audio_in[i];
+            let cutoff_mod = Semitones::new(cutoff_cv[i] * self.cutoff_mod_amount.as_f32());
+            let res_mod = NormalizedValue::new(res_cv[i]);
 
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
         }
@@ -506,14 +459,6 @@ impl LadderFilter {
             self.delay[i] = self.stage[i];
         }
 
-        // Prevent denormals for consistent performance
-        for state in &mut self.stage {
-            state.flush_denormals();
-        }
-        for state in &mut self.delay {
-            state.flush_denormals();
-        }
-
         self.stage[3].as_f32()
     }
 }
@@ -585,14 +530,14 @@ impl PolyModule for LadderFilter {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let audio_in = inputs.get(PortName::IN);
-        let cutoff_cv = inputs.get(PortName::CUTOFF_CV);
+        let audio_in = inputs.reader(PortName::IN, 0.0);
+        let cutoff_cv = inputs.reader(PortName::CUTOFF_CV, 0.0);
 
         for i in 0..context.samples.as_usize() {
-            let input = audio_in.map(|b| b[i]).unwrap_or(0.0);
+            let input = audio_in[i];
 
-            let effective_cutoff = if let Some(cv) = cutoff_cv {
-                let mod_amount = cv[i];
+            let effective_cutoff = if cutoff_cv.is_connected() {
+                let mod_amount = cutoff_cv[i];
                 Hertz::new((self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0))
             } else {
                 self.cutoff

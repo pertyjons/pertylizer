@@ -4,7 +4,9 @@ use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
     PortDescriptor, ProcessContext, WidgetHint,
 };
-use synth_core::{BipolarValue, FilterState, Hertz, NormalizedValue, Phase, SampleRate};
+use synth_core::{
+    BipolarValue, FilterState, Hertz, NormalizedValue, Phase, SampleRate, StereoSample,
+};
 use synth_core::{ModuleType, Param, PhaserParam};
 
 /// Number of all-pass filter stages (fixed at 6 for classic phaser sound).
@@ -165,31 +167,20 @@ impl Describable for Phaser {
 impl AudioEffect for Phaser {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         self.sample_rate = context.sample_rate;
-        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
+        let phase_inc = self.rate.phase_increment(self.sample_rate);
 
         // Process stereo interleaved
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Calculate LFO values (sine wave with stereo offset)
             let lfo_phase_l = self.lfo_phase.as_f32();
             let lfo_phase_r = (lfo_phase_l + 0.25).rem_euclid(1.0); // 90° offset for stereo width
             let lfo_l = (lfo_phase_l * std::f32::consts::TAU).sin();
             let lfo_r = (lfo_phase_r * std::f32::consts::TAU).sin();
-            self.lfo_phase = Phase::new((lfo_phase_l + phase_inc).rem_euclid(1.0));
+            self.lfo_phase = self.lfo_phase.advance(phase_inc);
 
             // Calculate modulated frequencies for left and right
             let depth = self.depth.as_f32();
@@ -221,12 +212,9 @@ impl AudioEffect for Phaser {
 
             // Mix dry/wet
             let mix = self.mix.as_f32();
-            if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + sample_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + sample_r * mix;
-            }
+            let result =
+                StereoSample::new(in_l, in_r).blend(StereoSample::new(sample_l, sample_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

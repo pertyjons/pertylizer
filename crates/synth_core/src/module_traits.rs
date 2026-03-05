@@ -207,6 +207,65 @@ impl<'a> InputPorts<'a> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// Get a zero-cost reader for a port with a default value.
+    ///
+    /// Returns an [`InputReader`] that can be indexed directly, eliminating the
+    /// `.map(|b| b[i]).unwrap_or(default)` pattern.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let fm = inputs.reader(PortName::FM, 0.0);
+    /// let cv = inputs.reader(PortName::CV, 1.0);
+    /// for i in 0..samples {
+    ///     output[i] = input[i] * cv[i] + fm[i];
+    /// }
+    /// ```
+    #[inline]
+    pub fn reader(&self, name: PortName, default: f32) -> InputReader<'a> {
+        let buffer = self.0.iter().find(|(n, _)| *n == name).map(|(_, buf)| *buf);
+        InputReader { buffer, default }
+    }
+}
+
+/// Zero-cost reader for a single input port.
+///
+/// When the port is connected, indexes into the `AudioBuffer`.
+/// When unconnected, returns the default value for any index.
+/// This eliminates the `.map(|b| b[i]).unwrap_or(default)` pattern.
+///
+/// Created via [`InputPorts::reader()`].
+#[must_use]
+#[derive(Clone, Copy)]
+pub struct InputReader<'a> {
+    buffer: Option<&'a AudioBuffer>,
+    default: f32,
+}
+
+impl<'a> InputReader<'a> {
+    /// Check if this port is connected.
+    #[inline]
+    pub fn is_connected(&self) -> bool {
+        self.buffer.is_some()
+    }
+
+    /// Get the underlying buffer slice, if connected.
+    #[inline]
+    pub fn as_slice(&self) -> Option<&'a [f32]> {
+        self.buffer.map(AudioBuffer::as_slice)
+    }
+}
+
+impl std::ops::Index<usize> for InputReader<'_> {
+    type Output = f32;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        match self.buffer {
+            Some(buf) => &buf[index],
+            None => &self.default,
+        }
+    }
 }
 
 // ============================================================================
@@ -995,5 +1054,58 @@ pub trait VisualizationSink: Send + Sync {
     /// Must be non-blocking from the audio thread (use `try_lock` internally).
     fn write_sweep(&self, _samples: &[f32], _voice_start_time: u64) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_input_reader_connected() {
+        let mut buf = AudioBuffer::new(4);
+        buf[0] = 1.0;
+        buf[1] = 2.0;
+        buf[2] = 3.0;
+        buf[3] = 4.0;
+
+        let ports_data = [(PortName::IN, &buf)];
+        let ports = InputPorts::new(&ports_data);
+        let reader = ports.reader(PortName::IN, 0.0);
+
+        assert!(reader.is_connected());
+        assert_eq!(reader[0], 1.0);
+        assert_eq!(reader[1], 2.0);
+        assert_eq!(reader[2], 3.0);
+        assert_eq!(reader[3], 4.0);
+        assert!(reader.as_slice().is_some());
+        assert_eq!(reader.as_slice().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn test_input_reader_unconnected() {
+        let ports = InputPorts::empty();
+        let reader = ports.reader(PortName::FM, 0.5);
+
+        assert!(!reader.is_connected());
+        assert_eq!(reader[0], 0.5);
+        assert_eq!(reader[99], 0.5);
+        assert!(reader.as_slice().is_none());
+    }
+
+    #[test]
+    fn test_input_reader_default_zero() {
+        let ports = InputPorts::empty();
+        let reader = ports.reader(PortName::IN, 0.0);
+
+        assert_eq!(reader[0], 0.0);
+    }
+
+    #[test]
+    fn test_input_reader_default_one() {
+        let ports = InputPorts::empty();
+        let reader = ports.reader(PortName::CV, 1.0);
+
+        assert_eq!(reader[0], 1.0);
     }
 }

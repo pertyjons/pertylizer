@@ -147,13 +147,8 @@ impl InterpolatedDelayLine {
     pub fn read_interpolated(&self, delay_samples: f32) -> f32 {
         let len = self.buffer.len();
         let delay_clamped = delay_samples.clamp(0.0, (len - 1) as f32);
-
-        let read_pos = (self.write_pos.as_usize() as f32 - delay_clamped).rem_euclid(len as f32);
-        let idx0 = (read_pos as usize) % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-
-        self.buffer[idx0] * (1.0 - frac) + self.buffer[idx1] * frac
+        self.write_pos
+            .read_interpolated(&self.buffer, delay_clamped)
     }
 
     /// Read with cubic (Hermite) interpolation for higher quality.

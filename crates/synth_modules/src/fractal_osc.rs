@@ -257,14 +257,12 @@ impl PolyModule for FractalOscillator {
         let dispersion = self.dispersion.as_f32().clamp(0.0, 1.0);
         let spread = self.spread.as_f32().clamp(0.0, 1.0);
 
-        let base_freq = self.note_freq.as_f32();
-
         for i in 0..num_samples {
             // Apply frequency CV (1V/oct)
             let freq = if let Some(cv) = freq_cv {
-                base_freq * (2.0_f32).powf(cv[i])
+                self.note_freq.apply_cv(cv[i]).as_f32()
             } else {
-                base_freq
+                self.note_freq.as_f32()
             };
 
             let (l, r) = self.process_sample(freq, a, b, dispersion, spread, nyquist);

@@ -216,9 +216,9 @@ impl PolyModule for StereoOutput {
         }
 
         // Get input buffers
-        let mono_in = inputs.get(PortName::IN);
-        let left_in = inputs.get(PortName::IN_L);
-        let right_in = inputs.get(PortName::IN_R);
+        let mono_in = inputs.reader(PortName::IN, 0.0);
+        let left_in = inputs.reader(PortName::IN_L, 0.0);
+        let right_in = inputs.reader(PortName::IN_R, 0.0);
 
         // Calculate pan coefficients
         let (pan_l, pan_r) = self.pan_coefficients();
@@ -227,20 +227,25 @@ impl PolyModule for StereoOutput {
         let mut peak_l = Amplitude::ZERO;
         let mut peak_r = Amplitude::ZERO;
 
+        // Determine connection topology once before the loop
+        let has_left = left_in.is_connected();
+        let has_right = right_in.is_connected();
+        let has_mono = mono_in.is_connected();
+
         // Process each sample
         for i in 0..context.samples.as_usize() {
             // Get input samples - handle partial connections
-            let input = match (left_in, right_in, mono_in) {
+            let input = match (has_left, has_right, has_mono) {
                 // Full stereo input
-                (Some(l), Some(r), _) => StereoSample::new(l[i], r[i]),
+                (true, true, _) => StereoSample::new(left_in[i], right_in[i]),
                 // Only left input - duplicate to both channels
-                (Some(l), None, _) => StereoSample::from_mono(l[i]),
+                (true, false, _) => StereoSample::from_mono(left_in[i]),
                 // Only right input - duplicate to both channels
-                (None, Some(r), _) => StereoSample::from_mono(r[i]),
+                (false, true, _) => StereoSample::from_mono(right_in[i]),
                 // Mono input - duplicate to both channels
-                (None, None, Some(m)) => StereoSample::from_mono(m[i]),
+                (false, false, true) => StereoSample::from_mono(mono_in[i]),
                 // No input - silence
-                (None, None, None) => StereoSample::ZERO,
+                (false, false, false) => StereoSample::ZERO,
             };
 
             // Process stereo sample

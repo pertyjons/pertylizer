@@ -86,18 +86,6 @@ impl Delay {
         }
     }
 
-    /// Read from delay buffer with linear interpolation.
-    #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: BufferIndex, delay_samples: f32) -> f32 {
-        let len = buffer.len();
-        let read_pos = (write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
-        let idx0 = (read_pos as usize) % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-
-        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
-    }
-
     /// One-pole lowpass for feedback damping.
     #[inline]
     fn lowpass(input: f32, state: &mut FilterState, cutoff: Hertz, sample_rate: SampleRate) -> f32 {
@@ -204,24 +192,16 @@ impl AudioEffect for Delay {
         let mix = self.mix.as_f32();
 
         // Process assuming interleaved stereo
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
             // Get input as stereo sample
-            let dry = if idx_r < input.len() {
-                StereoSample::new(input[idx_l], input[idx_r])
-            } else if idx_l < input.len() {
-                StereoSample::from_mono(input[idx_l])
-            } else {
-                StereoSample::ZERO
-            };
+            let dry = StereoSample::read_frame(input, frame);
 
             // Read from delay buffers
             let delayed = StereoSample::new(
-                Self::read_interpolated(&self.buffer_left, self.write_pos, delay_samples_left),
-                Self::read_interpolated(&self.buffer_right, self.write_pos, delay_samples_right),
+                self.write_pos
+                    .read_interpolated(&self.buffer_left, delay_samples_left),
+                self.write_pos
+                    .read_interpolated(&self.buffer_right, delay_samples_right),
             );
 
             // Apply feedback filtering
@@ -268,17 +248,9 @@ impl AudioEffect for Delay {
             self.write_pos = self.write_pos.advance(len);
 
             // Mix dry/wet
-            let wet = StereoSample::new(
-                dry.left * (1.0 - mix) + delayed.left * mix,
-                dry.right * (1.0 - mix) + delayed.right * mix,
-            );
+            let wet = dry.blend(delayed, mix);
 
-            if idx_l < output.len() {
-                output[idx_l] = wet.left;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = wet.right;
-            }
+            StereoSample::write_frame(output, frame, wet);
         }
     }
 

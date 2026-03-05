@@ -11,7 +11,7 @@ use synth_core::{
     PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{FrequencyShifterParam, ModuleType, Param};
-use synth_core::{Hertz, NormalizedValue, Phase, SampleRate};
+use synth_core::{Hertz, NormalizedValue, Phase, SampleRate, StereoSample};
 
 /// Number of all-pass stages per Hilbert chain.
 const NUM_STAGES: usize = 4;
@@ -138,22 +138,10 @@ impl AudioEffect for FrequencyShifter {
         let phase_inc = shift_hz.abs() / sr;
         let shift_sign = shift_hz.signum();
 
-        let channels = 2;
-
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Hilbert transform: process through both all-pass chains
             let hilbert_a_l = Self::process_chain(&mut self.chain_a_l, &HILBERT_COEFFS_A, in_l);
@@ -165,7 +153,7 @@ impl AudioEffect for FrequencyShifter {
             let p = self.osc_phase.as_f32();
             let cos_val = (p * std::f32::consts::TAU).cos();
             let sin_val = (p * std::f32::consts::TAU).sin();
-            self.osc_phase = Phase::new((p + phase_inc).rem_euclid(1.0));
+            self.osc_phase = self.osc_phase.advance(phase_inc);
 
             // Single-sideband modulation:
             // Up-shift:   out = hilbert_a * cos - hilbert_b * sin
@@ -190,12 +178,9 @@ impl AudioEffect for FrequencyShifter {
 
             // Mix
             let mix = self.mix.as_f32();
-            if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + shifted_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + shifted_r * mix;
-            }
+            let result =
+                StereoSample::new(in_l, in_r).blend(StereoSample::new(shifted_l, shifted_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

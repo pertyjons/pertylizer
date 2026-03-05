@@ -2,7 +2,7 @@
 
 use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
-    PortDescriptor, ProcessContext, WidgetHint,
+    PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{CompressorParam, ModuleType, Param};
 use synth_core::{Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, SampleRate};
@@ -213,35 +213,15 @@ impl AudioEffect for Compressor {
         let use_sidechain = self.sidechain_enabled && !self.sidechain_buffer.is_empty();
 
         // Process stereo interleaved
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Determine detection signal: sidechain or input
             let detect_peak = if use_sidechain {
-                let sc_l = if idx_l < self.sidechain_buffer.len() {
-                    self.sidechain_buffer[idx_l]
-                } else {
-                    0.0
-                };
-                let sc_r = if idx_r < self.sidechain_buffer.len() {
-                    self.sidechain_buffer[idx_r]
-                } else {
-                    sc_l
-                };
-                let sc_mono = sc_l.abs().max(sc_r.abs());
+                let sc = StereoSample::read_frame(&self.sidechain_buffer, frame);
+                let sc_mono = sc.left.abs().max(sc.right.abs());
 
                 // Apply HPF to sidechain signal
                 if sc_hpf_coeff > 0.0 {
@@ -274,12 +254,8 @@ impl AudioEffect for Compressor {
 
             // Mix dry/wet (parallel compression)
             let mix = self.mix.as_f32();
-            if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result = StereoSample::new(in_l, in_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

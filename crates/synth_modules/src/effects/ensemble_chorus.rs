@@ -8,9 +8,9 @@
 
 use synth_core::NoiseState;
 use synth_core::{
-    AudioEffect, Describable, EnsembleChorusParam, Hertz, Milliseconds, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    Phase, ProcessContext, SampleRate, VoiceCount, WidgetHint,
+    AudioEffect, BufferIndex, Describable, EnsembleChorusParam, Hertz, Milliseconds,
+    ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
+    ParameterUnit, Phase, ProcessContext, SampleRate, StereoSample, VoiceCount, WidgetHint,
 };
 
 /// Maximum delay in milliseconds (for buffer sizing).
@@ -92,16 +92,6 @@ impl EnsembleChorus {
             }
         }
         self.write_pos = 0;
-    }
-
-    #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: usize, delay_samples: f32) -> f32 {
-        let len = buffer.len();
-        let read_pos = (write_pos as f32 - delay_samples).rem_euclid(len as f32);
-        let idx0 = (read_pos as usize) % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
     }
 }
 
@@ -209,34 +199,23 @@ impl AudioEffect for EnsembleChorus {
     #[allow(clippy::too_many_lines)]
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
         let sr = self.sample_rate.as_f32();
-        let phase_inc = self.rate.as_f32() / sr;
+        let phase_inc = self.rate.phase_increment(self.sample_rate);
         let depth_samples = self.depth.as_f32() / 1000.0 * sr;
         let base_samples = self.base_delay.as_f32() / 1000.0 * sr;
         let voice_count = (self.voices.as_u8() as usize).clamp(2, MAX_VOICES);
 
         // Tone filter coefficient: map tone 0..1 to cutoff 1000..8000 Hz
-        let fc = 1000.0 + self.tone.as_f32() * 7000.0;
-        let tone_coeff = (-std::f32::consts::TAU * fc / sr).exp();
+        let fc = Hertz::new(1000.0 + self.tone.as_f32() * 7000.0);
+        let tone_coeff = fc.to_exp_coeff(self.sample_rate);
 
         let noise_level = self.noise_amt.as_f32() * 0.005;
         let mix = self.mix.as_f32();
         let width = self.stereo_width.as_f32();
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let dry_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let dry_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                0.0
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let dry_l = dry.left;
+            let dry_r = dry.right;
 
             let mut wet_l = 0.0f32;
             let mut wet_r = 0.0f32;
@@ -252,10 +231,10 @@ impl AudioEffect for EnsembleChorus {
                 let delay_l = base_samples + depth_samples * lfo;
                 let delay_r = base_samples - depth_samples * lfo;
 
-                let mut sample_l =
-                    Self::read_interpolated(&self.buffers_l[v], self.write_pos, delay_l.max(1.0));
-                let mut sample_r =
-                    Self::read_interpolated(&self.buffers_r[v], self.write_pos, delay_r.max(1.0));
+                let mut sample_l = BufferIndex::new(self.write_pos)
+                    .read_interpolated(&self.buffers_l[v], delay_l.max(1.0));
+                let mut sample_r = BufferIndex::new(self.write_pos)
+                    .read_interpolated(&self.buffers_r[v], delay_r.max(1.0));
 
                 // One-pole tone filter
                 self.tone_state_l[v] =
@@ -276,8 +255,7 @@ impl AudioEffect for EnsembleChorus {
                 wet_r += sample_r;
 
                 // Advance LFO
-                self.lfo_phases[v] =
-                    Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
+                self.lfo_phases[v] = self.lfo_phases[v].advance(phase_inc);
             }
 
             wet_l /= voice_count as f32;
@@ -294,12 +272,9 @@ impl AudioEffect for EnsembleChorus {
             self.write_pos = (self.write_pos + 1) % buf_len;
 
             // Mix
-            if idx_l < output.len() {
-                output[idx_l] = dry_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = dry_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result =
+                StereoSample::new(dry_l, dry_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

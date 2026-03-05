@@ -10,7 +10,7 @@ use synth_core::NoiseState;
 use synth_core::{
     AudioEffect, BipolarValue, Describable, GranularFxParam, Milliseconds, ModuleCategory,
     ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, SampleRate, Seconds, WidgetHint,
+    ProcessContext, SampleRate, Seconds, StereoSample, WidgetHint,
 };
 
 const MAX_GRAINS: usize = 64;
@@ -261,21 +261,10 @@ impl AudioEffect for GranularFx {
         self.spawn_interval = sr / grains_per_sec;
         let mix = self.mix.as_f32();
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let dry_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let dry_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                0.0
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let dry_l = dry.left;
+            let dry_r = dry.right;
 
             // Write to ring buffer (unless frozen)
             if !self.freeze {
@@ -325,12 +314,9 @@ impl AudioEffect for GranularFx {
             }
 
             // Mix
-            if idx_l < output.len() {
-                output[idx_l] = dry_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = dry_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result =
+                StereoSample::new(dry_l, dry_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

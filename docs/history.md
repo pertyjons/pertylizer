@@ -1,5 +1,16 @@
 # Version History
 
+## [0.212.0] - 2026-03-05
+### DSP abstractions and effects deduplication
+- **`InputReader` abstraction** — zero-cost port reader (`inputs.reader(PortName, default)`) that eliminates `.map(|b| b[i]).unwrap_or(default)` boilerplate across all modules
+- **`StereoSample` helpers** — `read_frame()`, `write_frame()` for interleaved buffer I/O, `blend()` for dry/wet mixing; replaces duplicated frame-reading and mix code in every stereo effect
+- **`BufferIndex::read_interpolated()`** — shared circular buffer interpolation, replacing per-module copies in BBD delay, chorus, flanger, ensemble chorus, etc.
+- **`Hertz::to_exp_coeff()`** — one-pole filter coefficient helper, deduplicates `(-TAU * freq / sr).exp()` pattern
+- **`BiquadCoeffs::biquad_precompute()`** — shared omega/alpha computation for all biquad filter types
+- **Removed `flush_denormals()` methods** — `FluidFilter`, `ScreamerFilter`, and other filters no longer need manual denormal flushing (handled by `FilterState`)
+- **Effects cleanup** — all 20+ effects refactored to use new shared abstractions, removing ~600 lines of duplicated code
+- **TODO updates** — added newtype arithmetic refinements backlog, linked AWE improvement findings
+
 ## [0.211.0] - 2026-03-05
 ### Deep newtype enforcement pass 2
 - **New `StepCount(u8)` type** — for step-based pattern counts in generative modules (Euclidean, Turing Machine)

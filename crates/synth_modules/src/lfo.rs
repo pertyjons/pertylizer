@@ -166,18 +166,16 @@ impl PolyModule for Lfo {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let retrigger_input = inputs.get(PortName::intern("retrigger"));
-        let rate_cv = inputs.get(PortName::RATE_CV);
+        let retrigger_reader = inputs.reader(PortName::intern("retrigger"), 0.0);
+        let rate_cv_reader = inputs.reader(PortName::RATE_CV, 0.0);
 
         // In tempo sync mode, derive phase directly from beat position for lock
         let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
 
         for i in 0..context.samples.as_usize() {
             // Only process retrigger input if retrigger_mode is set to Retrigger
-            if self.retrigger_mode.should_retrigger()
-                && let Some(retrig) = retrigger_input
-            {
-                let val = retrig[i];
+            if self.retrigger_mode.should_retrigger() && retrigger_reader.is_connected() {
+                let val = retrigger_reader[i];
                 if val > 0.5 && self.prev_retrigger.as_f32() <= 0.5 {
                     self.retrigger();
                 }
@@ -203,10 +201,9 @@ impl PolyModule for Lfo {
                     )
                 };
 
-                let effective_rate = if let Some(cv) = rate_cv {
-                    let mod_amount = cv[i];
-                    let rate_mult = (mod_amount * 2.0).exp2();
-                    Hertz::new((base_rate.as_f32() * rate_mult).clamp(0.01, 50.0))
+                let effective_rate = if rate_cv_reader.is_connected() {
+                    let mod_amount = rate_cv_reader[i];
+                    Hertz::new(base_rate.apply_fm(mod_amount).as_f32().clamp(0.01, 50.0))
                 } else {
                     base_rate
                 };

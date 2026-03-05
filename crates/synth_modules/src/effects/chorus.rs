@@ -59,16 +59,6 @@ impl Chorus {
             self.write_pos = BufferIndex::ZERO;
         }
     }
-
-    #[inline]
-    fn read_interpolated(&self, delay_samples: f32) -> f32 {
-        let len = self.buffer.len();
-        let read_pos = (self.write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
-        let idx0 = (read_pos as usize) % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-        self.buffer[idx0] * (1.0 - frac) + self.buffer[idx1] * frac
-    }
 }
 
 impl Default for Chorus {
@@ -141,7 +131,7 @@ impl AudioEffect for Chorus {
 
         let base_delay_ms = 7.0;
         let mod_depth_ms = self.depth.as_f32() * 5.0;
-        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
+        let phase_inc = self.rate.phase_increment(self.sample_rate);
 
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
@@ -157,11 +147,12 @@ impl AudioEffect for Chorus {
                 let delay_ms = base_delay_ms + mod_depth_ms * lfo;
                 let delay_samples = delay_ms / 1000.0 * self.sample_rate.as_f32();
 
-                wet += self.read_interpolated(delay_samples);
+                wet += self
+                    .write_pos
+                    .read_interpolated(&self.buffer, delay_samples);
 
                 // Advance LFO
-                self.lfo_phases[v] =
-                    Phase::new((self.lfo_phases[v].as_f32() + phase_inc).rem_euclid(1.0));
+                self.lfo_phases[v] = self.lfo_phases[v].advance(phase_inc);
             }
 
             wet /= voice_count as f32;
@@ -169,8 +160,7 @@ impl AudioEffect for Chorus {
             // Advance write position
             self.write_pos = self.write_pos.advance(self.buffer.len());
 
-            let mix = self.mix.as_f32();
-            output[i] = dry * (1.0 - mix) + wet * mix;
+            output[i] = self.mix.blend(dry, wet);
         }
     }
 

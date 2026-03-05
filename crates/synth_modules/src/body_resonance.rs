@@ -81,10 +81,6 @@ impl BodyResonance {
         state[0] = FilterState::new((b2 / a0) * input - (a1 / a0) * output + state[1].as_f32());
         state[1] = FilterState::new(-(a2 / a0) * output);
 
-        // Prevent denormals for consistent performance
-        state[0].flush_denormals();
-        state[1].flush_denormals();
-
         output
     }
 }

@@ -126,13 +126,22 @@ pub struct BiquadCoeffs {
 }
 
 impl BiquadCoeffs {
-    /// Create lowpass biquad coefficients.
-    #[must_use]
-    pub fn lowpass(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> Self {
+    /// Precompute common biquad variables from cutoff and Q.
+    ///
+    /// Returns `(sin_omega, cos_omega, alpha)`.
+    #[inline]
+    fn biquad_precompute(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> (f32, f32, f32) {
         let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
         let sin_omega = omega.sin();
         let cos_omega = omega.cos();
         let alpha = sin_omega / (2.0 * q.max(0.1));
+        (sin_omega, cos_omega, alpha)
+    }
+
+    /// Create lowpass biquad coefficients.
+    #[must_use]
+    pub fn lowpass(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> Self {
+        let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(cutoff, q, sample_rate);
 
         let b0 = (1.0 - cos_omega) / 2.0;
         let b1 = 1.0 - cos_omega;
@@ -153,10 +162,7 @@ impl BiquadCoeffs {
     /// Create highpass biquad coefficients.
     #[must_use]
     pub fn highpass(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> Self {
-        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
-        let sin_omega = omega.sin();
-        let cos_omega = omega.cos();
-        let alpha = sin_omega / (2.0 * q.max(0.1));
+        let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(cutoff, q, sample_rate);
 
         let b0 = (1.0 + cos_omega) / 2.0;
         let b1 = -(1.0 + cos_omega);
@@ -177,10 +183,7 @@ impl BiquadCoeffs {
     /// Create bandpass biquad coefficients.
     #[must_use]
     pub fn bandpass(center: Hertz, q: f32, sample_rate: SampleRate) -> Self {
-        let omega = std::f32::consts::TAU * center.as_f32() / sample_rate.as_f32();
-        let sin_omega = omega.sin();
-        let cos_omega = omega.cos();
-        let alpha = sin_omega / (2.0 * q.max(0.1));
+        let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(center, q, sample_rate);
 
         let b0 = alpha;
         let b1 = 0.0;
@@ -282,13 +285,6 @@ impl FluidFilter {
         }
     }
 
-    /// Flush denormals to zero for consistent performance.
-    #[inline]
-    pub fn flush_denormals(&mut self) {
-        self.ic1eq.flush_denormals();
-        self.ic2eq.flush_denormals();
-    }
-
     /// Reset filter state.
     pub fn reset(&mut self) {
         self.ic1eq = FilterState::ZERO;
@@ -364,15 +360,6 @@ impl ScreamerFilter {
         self.lp_s2 = FilterState::new(lp2_out + lp2_v);
 
         lp2_out
-    }
-
-    /// Flush denormals to zero for consistent performance.
-    #[inline]
-    pub fn flush_denormals(&mut self) {
-        self.hp_s1.flush_denormals();
-        self.hp_s2.flush_denormals();
-        self.lp_s1.flush_denormals();
-        self.lp_s2.flush_denormals();
     }
 
     /// Reset filter state.
@@ -458,17 +445,83 @@ impl AcidFilter {
         }
     }
 
-    /// Flush denormals to zero for consistent performance.
-    #[inline]
-    pub fn flush_denormals(&mut self) {
-        self.s1.flush_denormals();
-        self.s2.flush_denormals();
-    }
-
     /// Reset filter state.
     pub fn reset(&mut self) {
         self.s1 = FilterState::ZERO;
         self.s2 = FilterState::ZERO;
+    }
+}
+
+// ============================================================================
+// STEREO FILTER WRAPPERS
+// ============================================================================
+
+use synth_core::StereoSample;
+
+/// Paired SVF filters for stereo processing with shared coefficients.
+///
+/// Maintains independent state for left and right channels.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StereoSvf {
+    left_ic1: FilterState,
+    left_ic2: FilterState,
+    right_ic1: FilterState,
+    right_ic2: FilterState,
+}
+
+impl StereoSvf {
+    /// Process a stereo sample through both filters.
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: StereoSample,
+        coeffs: &SvfCoeffs,
+        filter_type: SvfFilterType,
+    ) -> StereoSample {
+        let left = coeffs.process(
+            input.left,
+            &mut self.left_ic1,
+            &mut self.left_ic2,
+            filter_type,
+        );
+        let right = coeffs.process(
+            input.right,
+            &mut self.right_ic1,
+            &mut self.right_ic2,
+            filter_type,
+        );
+        StereoSample::new(left, right)
+    }
+
+    /// Reset all filter state.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Paired biquad filters for stereo processing with shared coefficients.
+///
+/// Maintains independent state for left and right channels.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StereoBiquad {
+    left_z1: FilterState,
+    left_z2: FilterState,
+    right_z1: FilterState,
+    right_z2: FilterState,
+}
+
+impl StereoBiquad {
+    /// Process a stereo sample through both biquad filters.
+    #[inline]
+    pub fn process(&mut self, input: StereoSample, coeffs: &BiquadCoeffs) -> StereoSample {
+        let left = coeffs.process(input.left, &mut self.left_z1, &mut self.left_z2);
+        let right = coeffs.process(input.right, &mut self.right_z1, &mut self.right_z2);
+        StereoSample::new(left, right)
+    }
+
+    /// Reset all filter state.
+    pub fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -529,5 +582,76 @@ mod tests {
         // After settling, DC should be nearly zero
         let final_output = coeffs.process(1.0, &mut z1, &mut z2);
         assert!(final_output.abs() < 0.1);
+    }
+
+    #[test]
+    fn test_stereo_svf_matches_mono() {
+        let coeffs = SvfCoeffs::new(
+            Hertz::new(1000.0),
+            NormalizedValue::new(0.5),
+            SampleRate::DVD_QUALITY,
+        );
+
+        // Process with StereoSvf
+        let mut stereo = StereoSvf::default();
+        let input = StereoSample::new(0.5, -0.3);
+        let stereo_out = stereo.process(input, &coeffs, SvfFilterType::Lowpass);
+
+        // Process with two separate mono filters
+        let mut l_ic1 = FilterState::ZERO;
+        let mut l_ic2 = FilterState::ZERO;
+        let mut r_ic1 = FilterState::ZERO;
+        let mut r_ic2 = FilterState::ZERO;
+        let mono_l = coeffs.process(0.5, &mut l_ic1, &mut l_ic2, SvfFilterType::Lowpass);
+        let mono_r = coeffs.process(-0.3, &mut r_ic1, &mut r_ic2, SvfFilterType::Lowpass);
+
+        assert_eq!(stereo_out.left, mono_l);
+        assert_eq!(stereo_out.right, mono_r);
+    }
+
+    #[test]
+    fn test_stereo_biquad_matches_mono() {
+        let coeffs = BiquadCoeffs::lowpass(Hertz::new(1000.0), 0.707, SampleRate::DVD_QUALITY);
+
+        let mut stereo = StereoBiquad::default();
+        let input = StereoSample::new(1.0, -1.0);
+        let stereo_out = stereo.process(input, &coeffs);
+
+        let mut l_z1 = FilterState::ZERO;
+        let mut l_z2 = FilterState::ZERO;
+        let mut r_z1 = FilterState::ZERO;
+        let mut r_z2 = FilterState::ZERO;
+        let mono_l = coeffs.process(1.0, &mut l_z1, &mut l_z2);
+        let mono_r = coeffs.process(-1.0, &mut r_z1, &mut r_z2);
+
+        assert_eq!(stereo_out.left, mono_l);
+        assert_eq!(stereo_out.right, mono_r);
+    }
+
+    #[test]
+    fn test_stereo_svf_reset() {
+        let coeffs = SvfCoeffs::new(
+            Hertz::new(1000.0),
+            NormalizedValue::new(0.5),
+            SampleRate::DVD_QUALITY,
+        );
+        let mut svf = StereoSvf::default();
+        let fresh = StereoSvf::default();
+        svf.process(StereoSample::new(1.0, 1.0), &coeffs, SvfFilterType::Lowpass);
+        svf.reset();
+        // After reset, processing should produce same result as a fresh instance
+        let result_reset = svf.process(
+            StereoSample::new(0.5, -0.5),
+            &coeffs,
+            SvfFilterType::Lowpass,
+        );
+        let mut fresh2 = fresh;
+        let result_fresh = fresh2.process(
+            StereoSample::new(0.5, -0.5),
+            &coeffs,
+            SvfFilterType::Lowpass,
+        );
+        assert_eq!(result_reset.left, result_fresh.left);
+        assert_eq!(result_reset.right, result_fresh.right);
     }
 }

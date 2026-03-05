@@ -4,7 +4,7 @@ use std::ops::{Add, Sub};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Decibels, Gain};
+use super::{Decibels, Gain, Seconds};
 
 /// Deprecated: Use Bpm instead.
 #[deprecated(since = "0.33.0", note = "Use Bpm instead")]
@@ -47,6 +47,20 @@ impl BufferIndex {
     #[inline]
     pub fn delay_read(self, delay_samples: usize, buffer_size: usize) -> Self {
         Self((self.0 + buffer_size - delay_samples) % buffer_size)
+    }
+
+    /// Read from a circular buffer with linear interpolation.
+    ///
+    /// Calculates the fractional read position relative to the write position
+    /// and interpolates between two adjacent samples.
+    #[inline]
+    pub fn read_interpolated(self, buffer: &[f32], delay_samples: f32) -> f32 {
+        let len = buffer.len();
+        let read_pos = (self.0 as f32 - delay_samples).rem_euclid(len as f32);
+        let idx0 = (read_pos as usize) % len;
+        let idx1 = (idx0 + 1) % len;
+        let frac = read_pos - read_pos.floor();
+        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
     }
 }
 
@@ -648,6 +662,19 @@ impl StereoSample {
         self.apply_stereo_gain(left_gain, right_gain)
     }
 
+    /// Blend (dry/wet mix) between self and another sample.
+    ///
+    /// `mix = 0.0` returns `self` (dry), `mix = 1.0` returns `wet`.
+    #[inline]
+    #[must_use]
+    pub fn blend(self, wet: Self, mix: f32) -> Self {
+        let dry_amt = 1.0 - mix;
+        Self {
+            left: self.left * dry_amt + wet.left * mix,
+            right: self.right * dry_amt + wet.right * mix,
+        }
+    }
+
     /// Convert to mono by averaging left and right channels.
     #[inline]
     pub fn to_mono(self) -> f32 {
@@ -761,6 +788,152 @@ impl From<[f32; 2]> for StereoSample {
 impl From<StereoSample> for [f32; 2] {
     fn from(sample: StereoSample) -> Self {
         [sample.left, sample.right]
+    }
+}
+
+impl StereoSample {
+    /// Read a stereo frame from an interleaved buffer.
+    ///
+    /// Handles bounds checking: returns mono fallback for odd-length
+    /// buffers and [`StereoSample::ZERO`] for out-of-bounds access.
+    #[inline]
+    pub fn read_frame(data: &[f32], frame: usize) -> Self {
+        let idx_l = frame * 2;
+        let idx_r = idx_l + 1;
+        if idx_r < data.len() {
+            Self::new(data[idx_l], data[idx_r])
+        } else if idx_l < data.len() {
+            Self::from_mono(data[idx_l])
+        } else {
+            Self::ZERO
+        }
+    }
+
+    /// Write a stereo frame to an interleaved buffer.
+    ///
+    /// Handles bounds checking: silently skips out-of-bounds writes.
+    #[inline]
+    pub fn write_frame(data: &mut [f32], frame: usize, sample: Self) {
+        let idx_l = frame * 2;
+        let idx_r = idx_l + 1;
+        if idx_l < data.len() {
+            data[idx_l] = sample.left;
+        }
+        if idx_r < data.len() {
+            data[idx_r] = sample.right;
+        }
+    }
+
+    /// Create an iterator over stereo frames in an interleaved buffer.
+    #[inline]
+    pub fn iter_frames(data: &[f32], num_frames: usize) -> StereoFrameIter<'_> {
+        StereoFrameIter {
+            data,
+            frame: 0,
+            num_frames,
+        }
+    }
+}
+
+/// Iterator over interleaved stereo frames, yielding [`StereoSample`] values.
+///
+/// Handles bounds checking and mono fallback automatically.
+/// Created via [`StereoSample::iter_frames()`].
+pub struct StereoFrameIter<'a> {
+    data: &'a [f32],
+    frame: usize,
+    num_frames: usize,
+}
+
+impl Iterator for StereoFrameIter<'_> {
+    type Item = StereoSample;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.frame >= self.num_frames {
+            return None;
+        }
+        let sample = StereoSample::read_frame(self.data, self.frame);
+        self.frame += 1;
+        Some(sample)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.num_frames - self.frame;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for StereoFrameIter<'_> {}
+
+// ============================================================================
+// PARAMETER SMOOTHING
+// ============================================================================
+
+/// One-pole parameter smoother for click-free parameter changes.
+///
+/// Provides exponential smoothing to avoid audible clicks and zipper noise
+/// when parameters change. Pre-calculates the coefficient from a smoothing time.
+///
+/// # Example
+/// ```ignore
+/// let mut gain_smooth = OnePoleSmooth::new(Seconds::new(0.005), sample_rate); // 5ms smoothing
+/// for i in 0..samples {
+///     let smoothed = gain_smooth.process(target_gain);
+///     output[i] = input[i] * smoothed;
+/// }
+/// ```
+#[must_use]
+#[derive(Debug, Clone, Copy)]
+pub struct OnePoleSmooth {
+    state: FilterState,
+    coeff: f32,
+}
+
+impl OnePoleSmooth {
+    /// Create a new smoother with the given time constant.
+    #[inline]
+    pub fn new(time: Seconds, sample_rate: super::SampleRate) -> Self {
+        Self {
+            state: FilterState::ZERO,
+            coeff: time.to_exp_coeff(sample_rate),
+        }
+    }
+
+    /// Process one sample: move state toward target.
+    #[inline]
+    #[must_use]
+    pub fn process(&mut self, target: f32) -> f32 {
+        self.state.one_pole(target, self.coeff)
+    }
+
+    /// Set to a value immediately (no smoothing).
+    #[inline]
+    pub fn set(&mut self, value: f32) {
+        self.state = FilterState::new(value);
+    }
+
+    /// Get the current smoothed value.
+    #[inline]
+    #[must_use]
+    pub fn current(&self) -> f32 {
+        self.state.as_f32()
+    }
+
+    /// Update smoothing time.
+    #[inline]
+    pub fn set_time(&mut self, time: Seconds, sample_rate: super::SampleRate) {
+        self.coeff = time.to_exp_coeff(sample_rate);
+    }
+}
+
+impl Default for OnePoleSmooth {
+    fn default() -> Self {
+        Self {
+            state: FilterState::ZERO,
+            coeff: 0.0,
+        }
     }
 }
 
@@ -1299,5 +1472,104 @@ mod tests {
 
         let valid = VoiceCount::new(64);
         assert_eq!(valid.as_u8(), 64);
+    }
+
+    #[test]
+    fn test_stereo_read_frame() {
+        let data = [1.0, 2.0, 3.0, 4.0];
+        let f0 = StereoSample::read_frame(&data, 0);
+        assert_eq!(f0.left, 1.0);
+        assert_eq!(f0.right, 2.0);
+
+        let f1 = StereoSample::read_frame(&data, 1);
+        assert_eq!(f1.left, 3.0);
+        assert_eq!(f1.right, 4.0);
+    }
+
+    #[test]
+    fn test_stereo_read_frame_odd_length() {
+        let data = [1.0, 2.0, 3.0];
+        let f1 = StereoSample::read_frame(&data, 1);
+        assert_eq!(f1.left, 3.0);
+        assert_eq!(f1.right, 3.0); // mono fallback
+    }
+
+    #[test]
+    fn test_stereo_read_frame_out_of_bounds() {
+        let data = [1.0, 2.0];
+        let f1 = StereoSample::read_frame(&data, 1);
+        assert_eq!(f1, StereoSample::ZERO);
+    }
+
+    #[test]
+    fn test_stereo_write_frame() {
+        let mut data = [0.0; 4];
+        StereoSample::write_frame(&mut data, 0, StereoSample::new(1.0, 2.0));
+        StereoSample::write_frame(&mut data, 1, StereoSample::new(3.0, 4.0));
+        assert_eq!(data, [1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_stereo_write_frame_out_of_bounds() {
+        let mut data = [0.0; 2];
+        StereoSample::write_frame(&mut data, 1, StereoSample::new(5.0, 6.0));
+        assert_eq!(data, [0.0, 0.0]); // no panic, no write
+    }
+
+    #[test]
+    fn test_stereo_frame_iter() {
+        let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let frames: Vec<_> = StereoSample::iter_frames(&data, 3).collect();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0], StereoSample::new(1.0, 2.0));
+        assert_eq!(frames[1], StereoSample::new(3.0, 4.0));
+        assert_eq!(frames[2], StereoSample::new(5.0, 6.0));
+    }
+
+    #[test]
+    fn test_stereo_frame_iter_exact_size() {
+        let data = [1.0, 2.0, 3.0, 4.0];
+        let iter = StereoSample::iter_frames(&data, 2);
+        assert_eq!(iter.len(), 2);
+    }
+
+    #[test]
+    fn test_stereo_frame_iter_empty() {
+        let data: [f32; 0] = [];
+        let frames: Vec<_> = StereoSample::iter_frames(&data, 0).collect();
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn test_one_pole_smooth_converges() {
+        let sr = super::SampleRate::CD_QUALITY;
+        let mut smoother = OnePoleSmooth::new(super::Seconds::new(0.01), sr); // 10ms
+        smoother.set(0.0);
+
+        // Process toward target 1.0
+        for _ in 0..10000 {
+            smoother.process(1.0);
+        }
+        assert!(
+            (smoother.current() - 1.0).abs() < 0.001,
+            "Should converge to target"
+        );
+    }
+
+    #[test]
+    fn test_one_pole_smooth_immediate_set() {
+        let sr = super::SampleRate::CD_QUALITY;
+        let mut smoother = OnePoleSmooth::new(super::Seconds::new(0.01), sr);
+        smoother.set(0.75);
+        assert_eq!(smoother.current(), 0.75);
+    }
+
+    #[test]
+    fn test_one_pole_smooth_zero_time() {
+        let sr = super::SampleRate::CD_QUALITY;
+        let mut smoother = OnePoleSmooth::new(super::Seconds::ZERO, sr);
+        // With zero time, should track instantly
+        let result = smoother.process(0.5);
+        assert_eq!(result, 0.5);
     }
 }

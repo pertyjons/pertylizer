@@ -361,47 +361,42 @@ impl PolyModule for Oscillator {
         self.output_buffer_left.resize(n_samples);
         self.output_buffer_right.resize(n_samples);
 
-        let fm_input = inputs.get(PortName::FM);
-        let pm_input = inputs.get(PortName::PM);
+        let fm_reader = inputs.reader(PortName::FM, 0.0);
+        let pm_reader = inputs.reader(PortName::PM, 0.0);
         #[allow(clippy::similar_names)]
         // pm = phase mod, pwm = pulse width mod - different concepts
-        let pwm_input = inputs.get(PortName::PWM);
-        let sync_input = inputs.get(PortName::SYNC);
-        let cross_mod_input = inputs.get(PortName::intern("cross_mod"));
+        let pwm_reader = inputs.reader(PortName::PWM, 0.0);
+        let sync_reader = inputs.reader(PortName::SYNC, 0.0);
+        let cross_mod_reader = inputs.reader(PortName::intern("cross_mod"), 0.0);
 
         let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
 
         for i in 0..n_samples {
-            let fm = fm_input
-                .map(|f| f[i] * self.fm_amount.as_f32())
-                .unwrap_or(0.0);
+            let fm = fm_reader[i] * self.fm_amount.as_f32();
 
             // Cross-modulation: adds to FM signal
-            let cross_mod = cross_mod_input
-                .map(|c| c[i] * self.cross_mod_amount.as_f32())
-                .unwrap_or(0.0);
+            let cross_mod = cross_mod_reader[i] * self.cross_mod_amount.as_f32();
 
             let total_fm = fm + cross_mod;
 
             let freq = match self.fm_mode {
-                FmMode::Exponential => {
-                    let freq_mult = (total_fm * 2.0).exp2();
-                    Hertz::new(base_freq.as_f32() * freq_mult)
-                }
+                FmMode::Exponential => base_freq.apply_fm(total_fm),
                 FmMode::Linear => {
                     Hertz::new((base_freq.as_f32() + total_fm * base_freq.as_f32() * 4.0).max(1.0))
                 }
             };
 
-            let effective_pulse_width = if let Some(pwm) = pwm_input {
-                NormalizedValue::new((self.pulse_width.as_f32() + pwm[i] * 0.49).clamp(0.01, 0.99))
+            let effective_pulse_width = if pwm_reader.is_connected() {
+                NormalizedValue::new(
+                    (self.pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
+                )
             } else {
                 self.pulse_width
             };
 
-            if let Some(sync) = sync_input {
-                let sync_val = sync[i];
+            if sync_reader.is_connected() {
+                let sync_val = sync_reader[i];
                 if sync_val > 0.5 && self.prev_sync.as_f32() <= 0.5 {
                     for phase in &mut self.unison_phases[..voice_count] {
                         *phase = Phase::ZERO;
@@ -410,7 +405,7 @@ impl PolyModule for Oscillator {
                 self.prev_sync = NormalizedValue::new(sync_val);
             }
 
-            let pm = pm_input.map(|p| p[i]).unwrap_or(0.0);
+            let pm = pm_reader[i];
             let effective_level =
                 (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
 

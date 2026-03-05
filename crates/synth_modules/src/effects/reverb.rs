@@ -250,19 +250,9 @@ impl AudioEffect for Reverb {
         let pre_delay_samples = ((self.pre_delay.as_f32() * self.sample_rate.as_f32()) as usize)
             .min(self.pre_delay_buffer.len() - 1);
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
             // Get input as stereo sample
-            let dry = if idx_r < input.len() {
-                StereoSample::new(input[idx_l], input[idx_r])
-            } else if idx_l < input.len() {
-                StereoSample::from_mono(input[idx_l])
-            } else {
-                StereoSample::ZERO
-            };
+            let dry = StereoSample::read_frame(input, frame);
 
             // Pre-delay (works on mono sum of input)
             let pre_delayed = if pre_delay_samples > 0 {
@@ -290,17 +280,9 @@ impl AudioEffect for Reverb {
             );
 
             // Mix dry/wet
-            let result = StereoSample::new(
-                dry.left * (1.0 - mix) + wet.left * mix,
-                dry.right * (1.0 - mix) + wet.right * mix,
-            );
+            let result = dry.blend(wet.into(), mix);
 
-            if idx_l < output.len() {
-                output[idx_l] = result.left;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = result.right;
-            }
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

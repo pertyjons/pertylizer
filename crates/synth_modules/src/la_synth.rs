@@ -68,9 +68,11 @@ impl LaSynth {
     }
 
     fn update_times(&mut self) {
-        let sr = self.sample_rate.as_f32();
-        self.attack_samples = (self.attack_time.as_f32() * 0.001 * sr) as u32;
-        self.xfade_samples = (self.crossfade_time.as_f32() * 0.001 * sr) as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            self.attack_samples = self.attack_time.to_samples(self.sample_rate) as u32;
+            self.xfade_samples = self.crossfade_time.to_samples(self.sample_rate) as u32;
+        }
         self.total_samples = self.attack_samples + self.xfade_samples;
         if self.total_samples == 0 {
             self.total_samples = 1;

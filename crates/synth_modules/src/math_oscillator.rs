@@ -103,7 +103,7 @@ impl MathOscillator {
     #[allow(clippy::many_single_char_names)] // Mathematical variables: t, a, b, c
     fn generate_sample(&mut self) -> f32 {
         let t = self.phase.as_f32();
-        let dt = self.frequency.as_f32() / self.sample_rate.as_f32();
+        let dt = self.frequency.phase_increment(self.sample_rate);
         let a = self.var_a.as_f32();
         let b = self.var_b.as_f32();
         let c = self.var_c.as_f32();
@@ -371,7 +371,7 @@ impl MathOscillator {
         };
 
         // Advance phase
-        self.phase = Phase::new((t + dt).rem_euclid(1.0));
+        self.phase = self.phase.advance(dt);
 
         // Final clamp and apply level
         sample.clamp(-1.0, 1.0) * self.level.as_f32()
@@ -515,8 +515,7 @@ impl PolyModule for MathOscillator {
             if let Some(fm) = fm_input {
                 let fm_val = fm[i];
                 // FM modulates frequency exponentially relative to base frequency
-                let freq_mult = (fm_val * 2.0).exp2();
-                self.frequency = Hertz::new(self.base_frequency.as_f32() * freq_mult);
+                self.frequency = self.base_frequency.apply_fm(fm_val);
             }
 
             // Apply param modulation
