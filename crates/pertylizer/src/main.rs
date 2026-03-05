@@ -3,14 +3,14 @@
 //! # Usage
 //!
 //! ```bash
-//! # Run with GUI (default)
+//! # Run with GUI (MCP on port 9850 + OSC telemetry enabled by default)
 //! cargo run
 //!
-//! # Run with GUI + MCP server on port 9850
-//! cargo run --features mcp
-//!
 //! # Run headless (no GUI, MCP server on stdio)
-//! cargo run --features mcp -- --headless
+//! cargo run -- --headless
+//!
+//! # Run without OSC telemetry
+//! cargo run -- --no-osc
 //! ```
 
 use std::env;
@@ -60,22 +60,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     };
     let (engine, mut handle) = SynthEngine::with_config(allocator_config.clone());
 
-    // Start OSC telemetry if --osc flag is passed
+    // Start OSC telemetry by default (disable with --no-osc)
     #[cfg(feature = "osc")]
-    let _osc_telemetry = if args.iter().any(|a| a == "--osc") {
+    let _osc_telemetry = if args.iter().any(|a| a == "--no-osc") {
+        None
+    } else {
         let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::default());
         if let Some(consumer) = handle.take_note_event_consumer() {
             osc.start(std::sync::Arc::clone(&handle.state), consumer);
         }
         Some(osc)
-    } else {
-        None
     };
-
-    #[cfg(not(feature = "osc"))]
-    if args.iter().any(|a| a == "--osc") {
-        eprintln!("Warning: --osc flag requires the 'osc' feature (enabled by default)");
-    }
 
     // Create the shared session (module lifecycle owner)
     let session = std::sync::Arc::new(pertylizer::session::SynthSession::new(
@@ -236,7 +231,7 @@ fn print_help() {
     #[cfg(feature = "mcp")]
     println!("    --headless    Run without GUI (MCP server on stdio)");
     #[cfg(feature = "osc")]
-    println!("    --osc         Enable OSC telemetry output (UDP to 127.0.0.1:9000)");
+    println!("    --no-osc      Disable OSC telemetry output (enabled by default)");
     println!("    -h, --help    Print this help message");
     println!();
     println!("KEYBOARD:");

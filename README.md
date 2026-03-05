@@ -23,6 +23,8 @@ A modular audio synthesizer written in Rust with a real-time egui GUI, pattern s
 - **Generative Sequencing** — Euclidean rhythm generator, Turing machine, random gates
 - **AWE (Acoustic World Engine)** — physics-based spatial audio with room simulation, early reflections (image-source method), late reverb (FDN), room modes, per-voice 3D spatialization, and internal modulation LFOs
 - **MCP Server (79 tools)** — full remote control via HTTP or stdio, enabling AI agents like Claude to build instruments, compose songs, tweak parameters, and play notes in real time
+- **OSC Telemetry** — real-time spectrum, RMS, note events, and transport state streamed over UDP at 30 Hz (enabled by default, `--no-osc` to disable)
+- **Bevy 3D Visualizer** — separate `visualizer/` project receives OSC data and renders FFT bars, note flashes, and beat-synced effects (work in progress)
 
 ### Architecture
 
@@ -40,6 +42,8 @@ A modular audio synthesizer written in Rust with a real-time egui GUI, pattern s
 - **MIDI:** midir
 - **DSP:** PolyBLEP oscillators, SVF/biquad/ladder filters, FFT via realfft
 - **MCP:** rmcp + axum (Streamable HTTP on port 9850)
+- **OSC:** rosc (Open Sound Control over UDP)
+- **Visualizer:** Bevy 0.16 (3D rendering)
 - **Concurrency:** lock-free ringbuf, parking_lot
 
 ## Building & Running
@@ -48,14 +52,14 @@ A modular audio synthesizer written in Rust with a real-time egui GUI, pattern s
 # Build
 cargo build
 
-# Run with GUI (default)
+# Run with GUI (MCP + OSC telemetry enabled by default)
 cargo run
 
-# Run with GUI + MCP server
-cargo run --features mcp
+# Run without OSC telemetry
+cargo run -- --no-osc
 
 # Run headless (no GUI, MCP server on stdio)
-cargo run --features mcp -- --headless
+cargo run -- --headless
 
 # Tests, lints, formatting
 cargo test && cargo clippy --all-targets && cargo fmt --check
@@ -72,4 +76,6 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 | `synth_modules` | 35 voice modules and 21 effects |
 | `synth_engine` | Audio engine: voice allocation, modular graph, mixing |
 | `synth_mcp` | MCP server with 79 tools for AI agent integration |
+| `synth_osc` | OSC telemetry sender (spectrum, notes, transport over UDP) |
 | `pertylizer` | Main application: GUI, audio I/O, MIDI |
+| `visualizer` | Bevy 3D visualizer driven by OSC telemetry (separate binary) |

@@ -17,3 +17,4 @@ Thumbs.db
 .gemini/settings.json
 .ai/
 rec_debug.log
+/visualizer/target/
