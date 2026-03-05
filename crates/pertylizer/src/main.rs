@@ -47,6 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+
     // Load persistent settings
     let settings = pertylizer::io::AppSettings::load();
 
@@ -56,7 +58,24 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         mode: AllocationMode::Polyphonic,
         ..Default::default()
     };
-    let (engine, handle) = SynthEngine::with_config(allocator_config.clone());
+    let (engine, mut handle) = SynthEngine::with_config(allocator_config.clone());
+
+    // Start OSC telemetry if --osc flag is passed
+    #[cfg(feature = "osc")]
+    let _osc_telemetry = if args.iter().any(|a| a == "--osc") {
+        let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::default());
+        if let Some(consumer) = handle.take_note_event_consumer() {
+            osc.start(std::sync::Arc::clone(&handle.state), consumer);
+        }
+        Some(osc)
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "osc"))]
+    if args.iter().any(|a| a == "--osc") {
+        eprintln!("Warning: --osc flag requires the 'osc' feature (enabled by default)");
+    }
 
     // Create the shared session (module lifecycle owner)
     let session = std::sync::Arc::new(pertylizer::session::SynthSession::new(
@@ -216,6 +235,8 @@ fn print_help() {
     println!("OPTIONS:");
     #[cfg(feature = "mcp")]
     println!("    --headless    Run without GUI (MCP server on stdio)");
+    #[cfg(feature = "osc")]
+    println!("    --osc         Enable OSC telemetry output (UDP to 127.0.0.1:9000)");
     println!("    -h, --help    Print this help message");
     println!();
     println!("KEYBOARD:");

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::commands::{EngineCommand, EngineEvent, ModuleId, PortId};
+use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel};
@@ -133,6 +133,8 @@ pub struct EngineHandle {
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
     pub visualization_buffers: HashMap<ModuleId, Arc<VisualizationBuffer>>,
+    /// Note event consumer for OSC telemetry.
+    note_event_consumer: Option<ringbuf::HeapCons<NoteEvent>>,
 }
 
 impl EngineHandle {
@@ -153,6 +155,12 @@ impl EngineHandle {
     /// This allows multiple threads/sources to send commands to the engine.
     pub fn command_sender(&self) -> CommandSender {
         self.command_sender.clone()
+    }
+
+    /// Take the note event consumer for OSC telemetry.
+    /// Returns `None` if already taken.
+    pub fn take_note_event_consumer(&mut self) -> Option<ringbuf::HeapCons<NoteEvent>> {
+        self.note_event_consumer.take()
     }
 
     /// Poll and drop any modules/instruments returned from the audio thread.
@@ -329,6 +337,8 @@ pub struct SynthEngine {
     command_consumer: ringbuf::HeapCons<EngineCommand>,
     /// Send events to UI.
     event_producer: ringbuf::HeapProd<EngineEvent>,
+    /// Send note events to OSC telemetry (lock-free, fire-and-forget).
+    note_event_producer: ringbuf::HeapProd<NoteEvent>,
     /// Send removed modules back to UI for dropping on main thread.
     return_producer: ringbuf::HeapProd<DroppedModule>,
     /// Send removed instruments back to UI for dropping on main thread.
@@ -408,6 +418,10 @@ impl SynthEngine {
         let event_rb = HeapRb::<EngineEvent>::new(EVENT_BUFFER_SIZE);
         let (event_producer, event_consumer) = event_rb.split();
 
+        // Create note event ring buffer for OSC telemetry
+        let note_event_rb = HeapRb::<NoteEvent>::new(EVENT_BUFFER_SIZE);
+        let (note_event_producer, note_event_consumer) = note_event_rb.split();
+
         // Create return buffer for modules to be dropped on main thread
         let return_rb = HeapRb::<DroppedModule>::new(RETURN_BUFFER_SIZE);
         let (return_producer, return_consumer) = return_rb.split();
@@ -437,6 +451,7 @@ impl SynthEngine {
         let engine = Self {
             command_consumer,
             event_producer,
+            note_event_producer,
             return_producer,
             instrument_return_producer,
             state: Arc::clone(&state),
@@ -475,6 +490,7 @@ impl SynthEngine {
             instrument_return_consumer,
             state,
             visualization_buffers: HashMap::new(),
+            note_event_consumer: Some(note_event_consumer),
         };
 
         (engine, handle)
@@ -1215,6 +1231,11 @@ impl SynthEngine {
                 velocity,
                 channel,
             });
+            let _ = self.note_event_producer.try_push(NoteEvent::On {
+                note,
+                velocity,
+                channel,
+            });
         }
     }
 
@@ -1252,6 +1273,9 @@ impl SynthEngine {
         let _ = self
             .event_producer
             .try_push(EngineEvent::NoteReleased { note, channel });
+        let _ = self
+            .note_event_producer
+            .try_push(NoteEvent::Off { note, channel });
     }
 
     fn handle_all_notes_off(&mut self) {

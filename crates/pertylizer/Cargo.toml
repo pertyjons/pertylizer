@@ -12,9 +12,10 @@ default-run = "pertylizer"
 workspace = true
 
 [features]
-default = ["gui-egui", "mcp"]
+default = ["gui-egui", "mcp", "osc"]
 gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon"]
 mcp = ["dep:synth_mcp", "dep:tokio"]
+osc = ["dep:synth_osc"]
 
 [dependencies]
 synth_core = { path = "../synth_core" }
@@ -60,8 +61,11 @@ egui-remixicon = { workspace = true, optional = true }
 synth_mcp = { path = "../synth_mcp", optional = true }
 tokio = { workspace = true, optional = true }
 
+# OSC telemetry (optional)
+synth_osc = { path = "../synth_osc", optional = true }
+
 [dev-dependencies]
-tempfile = "3.26.0"
+tempfile = { workspace = true }
 
 [[bin]]
 name = "pertylizer"

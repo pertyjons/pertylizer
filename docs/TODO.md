@@ -44,12 +44,12 @@
 > Full plan: [osc-telemetry-plan.md](osc-telemetry-plan.md)
 
 ### Phase 1: Synth OSC sender (`synth_osc` crate)
-- [ ] Create `crates/synth_osc/` crate skeleton (config, address constants, sender)
-- [ ] Add second event ring buffer to `SynthEngine` for OSC event stream
-- [ ] Implement OSC sender thread (poll shared state + drain events → rosc → UDP)
-- [ ] Expose master `VisualizationBuffer` (spectrum FFT data) for OSC access
-- [ ] Wire into `pertylizer` app with `--osc` CLI flag
-- [ ] Test with external OSC monitor tool
+- [x] Create `crates/synth_osc/` crate skeleton (config, address constants, sender)
+- [x] Add second event ring buffer to `SynthEngine` for OSC event stream (note on/off)
+- [x] Implement OSC sender thread (poll shared state → rosc → UDP at ~30 Hz)
+- [x] Expose master `VisualizationBuffer` (spectrum FFT data) for OSC access
+- [x] Wire into `pertylizer` app with `--osc` CLI flag
+- [x] Test with external OSC monitor tool
 
 ### Phase 2: Bevy visualizer (separate project `pertylizer-visualizer`)
 - [ ] Scaffold Bevy 0.16 project with camera and ground plane
@@ -57,6 +57,9 @@
 - [ ] Build FFT bar visualization (128 cubes driven by frequency bands)
 - [ ] Add RMS-driven point light and note-flash emissive sphere
 - [ ] Add bloom post-processing, orbital camera, beat-synced pulse
+
+### 1.7 Shared dB conversion utility
+- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — inline `20.0 * x.log10()` + normalization is repeated in 4+ locations (spectrum_analyzer, OSC sender, meter widget, visual_state)
 
 ---
 
