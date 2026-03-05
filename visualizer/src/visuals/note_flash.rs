@@ -50,11 +50,11 @@ pub fn update(
 ) {
     for (mut flash, material_handle) in &mut query {
         // Trigger on fresh note-on
-        if telemetry.note_age_frames < 2 {
-            if let Some((note, velocity, _channel)) = telemetry.last_note_on {
-                flash.hue = (note as f32 / 127.0) * 360.0;
-                flash.brightness = velocity as f32 / 127.0;
-            }
+        if telemetry.note_age_frames < 2
+            && let Some((note, velocity, _channel)) = telemetry.last_note_on
+        {
+            flash.hue = (note as f32 / 127.0) * 360.0;
+            flash.brightness = velocity as f32 / 127.0;
         }
 
         // Decay
