@@ -11,6 +11,7 @@ members = [
     "crates/synth_osc",
     "crates/pertylizer",
 ]
+exclude = ["visualizer"]
 
 # Default to run the main application
 default-members = ["crates/pertylizer"]
@@ -45,7 +46,7 @@ parking_lot = "0.12.5"
 realfft = "3.5"
 
 # OSC (Open Sound Control)
-rosc = "0.10"
+rosc = "0.11.4"
 
 # Fast random number generation
 fastrand = "2.3.0"

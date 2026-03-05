@@ -57,8 +57,8 @@
 - [x] Build FFT bar visualization (128 cubes driven by frequency bands)
 - [x] Add RMS-driven point light and note-flash emissive sphere
 - [x] Add orbital camera
-- [ ] Add bloom post-processing
-- [ ] Add beat-synced pulse
+- [x] Add bloom post-processing
+- [x] Add beat-synced pulse (ground plane glow + ambient light on beat crossings, stronger on downbeats)
 
 ### 1.A.3 OSC idle mode (`synth_osc`)
 - [ ] Skip FFT computation and UDP sends when no visualizer is connected — currently runs 2048-point FFT 30×/sec unconditionally

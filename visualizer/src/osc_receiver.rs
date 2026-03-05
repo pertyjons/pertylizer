@@ -43,15 +43,10 @@ fn receive_osc(mut socket: ResMut<OscSocket>, mut telemetry: ResMut<SynthTelemet
 
     // Drain all pending UDP packets (non-blocking)
     let sock = &mut *socket;
-    loop {
-        match sock.socket.recv(&mut sock.buf) {
-            Ok(size) => {
-                if let Ok((_, packet)) = rosc::decoder::decode_udp(&sock.buf[..size]) {
-                    handle_packet(&packet, &mut telemetry);
-                    received_any = true;
-                }
-            }
-            Err(_) => break, // WouldBlock = no more data
+    while let Ok(size) = sock.socket.recv(&mut sock.buf) {
+        if let Ok((_, packet)) = rosc::decoder::decode_udp(&sock.buf[..size]) {
+            handle_packet(&packet, &mut telemetry);
+            received_any = true;
         }
     }
 
