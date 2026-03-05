@@ -403,7 +403,7 @@ fn draw_transport_bar(
             view_state.auto_follow_playhead = true;
         }
 
-        // Stop
+        // Stop (rewinds to beginning)
         if ui
             .button(RichText::new(ri::STOP_FILL).color(if is_playing {
                 t.colors.accent_red
@@ -414,6 +414,7 @@ fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::Stop);
+            view_state.auto_follow_playhead = true;
         }
 
         // Record button
@@ -1052,7 +1053,9 @@ fn draw_arrangement(
         });
 
     // ── Timeline area (right side, uses painter for performance) ──
-    let scroll_id = ui.id().with("seq_scroll");
+    // The scroll area's actual ID = ui.make_persistent_id(Id::new(salt))
+    let scroll_salt = "seq_scroll";
+    let scroll_id = ui.make_persistent_id(egui::Id::new(scroll_salt));
 
     // Pre-set scroll offset for auto-follow before showing the scroll area
     if is_playing && view_state.auto_follow_playhead && ticks_per_beat > 0 {
@@ -1070,7 +1073,7 @@ fn draw_arrangement(
     }
 
     let scroll_output = egui::ScrollArea::horizontal()
-        .id_salt(scroll_id)
+        .id_salt(scroll_salt)
         .show(ui, |ui| {
             let total_size = Vec2::new(
                 timeline_width,
@@ -2324,8 +2327,30 @@ fn draw_piano_roll(
     // ── Scrollable piano roll area ──
     // Use all available height (panel is resizable via TopBottomPanel)
     let scroll_max_height = ui.available_height().max(100.0);
+
+    // Auto-follow playhead in piano roll during playback
+    let pr_scroll_salt = "piano_roll_scroll";
+    let pr_scroll_id = ui.make_persistent_id(egui::Id::new(pr_scroll_salt));
+    if is_playing
+        && view_state.auto_follow_playhead
+        && data.length_ticks.0 > 0
+        && ticks_per_beat > 0
+    {
+        #[allow(clippy::cast_possible_truncation)]
+        let pattern_tick = (current_tick % data.length_ticks.0 as u64) as f32;
+        let playhead_beats = pattern_tick / ticks_per_beat as f32;
+        let playhead_x = KEY_WIDTH + playhead_beats * PR_PIXELS_PER_BEAT;
+        let visible_width = ui.available_width();
+        let target_offset = (playhead_x - visible_width * 0.5).max(0.0);
+
+        if let Some(mut scroll_state) = egui::scroll_area::State::load(ui.ctx(), pr_scroll_id) {
+            scroll_state.offset.x = target_offset;
+            scroll_state.store(ui.ctx(), pr_scroll_id);
+        }
+    }
+
     egui::ScrollArea::both()
-        .id_salt("piano_roll_scroll")
+        .id_salt(pr_scroll_salt)
         .max_height(scroll_max_height)
         .scroll_source(egui::scroll_area::ScrollSource {
             scroll_bar: true,

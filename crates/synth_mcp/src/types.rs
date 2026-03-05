@@ -9,6 +9,8 @@ pub struct InstrumentInfo {
     pub id: u64,
     /// Instrument name.
     pub name: String,
+    /// Instrument category (e.g. "Drums", "Bass", "Pad", "Lead").
+    pub category: String,
     /// MIDI channel (1-16).
     pub midi_channel: u8,
     /// Volume (0.0-2.0).

@@ -1,8 +1,10 @@
-//! Spectral waterfall — scrolling 3D spectrogram.
+//! Spectral waterfall — scrolling 3D spectrogram / terrain.
 //!
 //! A grid of cubes where each row represents a moment in time.
-//! Rows scroll backward along the Z axis, with the front row
-//! receiving fresh FFT data. Color intensity = magnitude.
+//! Rows physically scroll backward along the Z axis.
+//! To maintain high performance (batching), we only use 64 materials (one per band)
+//! and represent the magnitude via the Y-scale (height) of the cubes, rather than
+//! unique colors per cube which would cause 2000+ draw calls and massive lag.
 
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
@@ -38,6 +40,12 @@ pub struct WaterfallCell {
     row: usize,
 }
 
+/// Shared materials per band (to allow Bevy to batch rendering into 64 draw calls instead of 2048).
+#[derive(Resource)]
+pub struct WaterfallMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
+
 /// Tracks which logical row is at the front and scroll timing.
 #[derive(Resource)]
 pub struct WaterfallState {
@@ -45,8 +53,8 @@ pub struct WaterfallState {
     front_row: usize,
     /// Timer for scroll advancement.
     timer: f32,
-    /// Whether materials need updating (set when history changes or fade changes).
-    dirty: bool,
+    /// Set to true during crossfades to update all materials with the new fade value.
+    full_update_needed: bool,
     /// FFT history: [row][band] magnitudes.
     history: [[f32; BANDS]; ROWS],
 }
@@ -56,7 +64,7 @@ impl Default for WaterfallState {
         Self {
             front_row: 0,
             timer: 0.0,
-            dirty: true,
+            full_update_needed: true,
             history: [[0.0; BANDS]; ROWS],
         }
     }
@@ -68,22 +76,33 @@ pub fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.9, 0.15, ROW_DEPTH * 0.85));
+    let mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.9, 1.0, ROW_DEPTH * 0.85));
+
+    // Create 64 shared materials (one for each frequency band)
+    let mut shared_mats = Vec::with_capacity(BANDS);
+    for band in 0..BANDS {
+        let hue = (band as f32 / BANDS as f32) * 270.0;
+        let color = Color::hsl(hue, 0.8, 0.5);
+        shared_mats.push(materials.add(StandardMaterial {
+            base_color: color,
+            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            ..default()
+        }));
+    }
+    commands.insert_resource(WaterfallMaterials {
+        materials: shared_mats.clone(),
+    });
 
     for row in 0..ROWS {
-        let z = -(row as f32) * ROW_DEPTH;
-
-        for band in 0..BANDS {
+        for (band, shared_mat) in shared_mats.iter().enumerate().take(BANDS) {
             let x = (band as f32 - BANDS as f32 / 2.0) * CELL_SIZE;
+
+            // Z will be set properly in the first update
 
             commands.spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::BLACK,
-                    emissive: LinearRgba::BLACK,
-                    ..default()
-                })),
-                Transform::from_xyz(x, 0.05, z - 8.0),
+                MeshMaterial3d(shared_mat.clone()),
+                Transform::from_xyz(x, 0.05, -8.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),
                 Visibility::Hidden,
                 WaterfallCell { band, row },
                 EffectLayer(EffectId::SpectralWaterfall),
@@ -107,28 +126,22 @@ fn downsample_fft(fft: &[f32; NUM_FFT_BANDS]) -> [f32; BANDS] {
     out
 }
 
-/// Advance the waterfall history and update cell colors.
+/// Advance the waterfall history by shifting the rows physically and updating their height scale.
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     mut state: ResMut<WaterfallState>,
-    mut query: Query<(&WaterfallCell, &MeshMaterial3d<StandardMaterial>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(&WaterfallCell, &mut Transform)>,
 ) {
-    if effect_state.active != EffectId::SpectralWaterfall {
+    if !effect_state.active.is_active(EffectId::SpectralWaterfall) && effect_state.fade == 0.0 {
         return;
-    }
-
-    let fade = effect_state.fade;
-
-    // Mark dirty during crossfade (fade is changing)
-    if fade < 1.0 {
-        state.dirty = true;
     }
 
     // Advance scroll on timer
     state.timer += time.delta_secs();
+    let mut scrolled = false;
+
     if state.timer >= SCROLL_INTERVAL {
         state.timer -= SCROLL_INTERVAL;
 
@@ -138,26 +151,70 @@ pub fn update(
         // Write new FFT data to the new front row
         let front = state.front_row;
         state.history[front] = downsample_fft(&telemetry.fft);
-        state.dirty = true;
+        scrolled = true;
     }
 
-    // Only update materials when history or fade changed
-    if !state.dirty {
+    // We only need to physically move transforms if we scrolled,
+    // OR if we are updating the active crossfade animation
+    let fade = effect_state.fade;
+
+    if !scrolled && fade == 1.0 && !state.full_update_needed {
         return;
     }
-    state.dirty = false;
 
-    for (cell, material_handle) in &mut query {
-        // Map visual row to logical row in ring buffer
-        let logical_row = (state.front_row + ROWS - cell.row) % ROWS;
-        let magnitude = state.history[logical_row][cell.band];
+    if fade == 1.0 {
+        state.full_update_needed = false;
+    }
 
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            let hue = (cell.band as f32 / BANDS as f32) * 270.0;
-            let lightness = magnitude * 0.5 * fade;
+    // Since we use shared materials, we apply the "magnitude" and "fade" entirely via scale!
+    for (cell, mut transform) in &mut query {
+        // Calculate how far back this row is from the front
+        let age = (state.front_row + ROWS - cell.row) % ROWS;
+
+        if scrolled {
+            // Shift physical position instead of shifting data through materials
+            transform.translation.z = -(age as f32) * ROW_DEPTH - 8.0;
+        }
+
+        // Only scale if it just reached the front OR we are doing a crossfade
+        if age == 0 || fade < 1.0 || state.full_update_needed {
+            let magnitude = state.history[cell.row][cell.band];
+
+            // Height = magnitude * fade multiplier. Max height ~4.0
+            let target_height = (magnitude * 4.0 * fade).max(0.01);
+            transform.scale.y = target_height;
+            // Adjust translation so base stays flat on ground
+            transform.translation.y = target_height / 2.0;
+        }
+    }
+}
+
+/// Handles the global fade of the shared materials during crossfades
+pub fn update_materials(
+    effect_state: Res<EffectState>,
+    state: Res<WaterfallState>,
+    waterfall_materials: Res<WaterfallMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if !effect_state.active.is_active(EffectId::SpectralWaterfall) && effect_state.fade == 0.0 {
+        return;
+    }
+
+    let fade = effect_state.fade;
+
+    // Only update materials if fade is active
+    if fade == 1.0 && !state.full_update_needed {
+        return;
+    }
+
+    // Update the 64 shared materials once per frame during crossfade
+    for (band, handle) in waterfall_materials.materials.iter().enumerate() {
+        if let Some(material) = materials.get_mut(handle) {
+            let hue = (band as f32 / BANDS as f32) * 270.0;
+            let lightness = 0.5 * fade;
             let color = Color::hsl(hue, 0.8, lightness);
             material.base_color = color;
-            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * magnitude * fade;
+            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
         }
     }
 }

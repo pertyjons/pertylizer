@@ -1,13 +1,27 @@
 //! Visual systems driven by synth telemetry.
 
+pub mod base_floor;
 pub mod beat_pulse;
 pub mod camera;
+pub mod centroid_nebula;
+pub mod chord_bloom;
+pub mod cpu_overdrive;
 pub mod effects;
+pub mod ferrofluid_tendrils;
 pub mod fft_bars;
-pub mod note_flash;
+pub mod flux_supernova;
+pub mod fractal_pulse;
+pub mod harmonic_ribbons;
+pub mod instrument_cubes;
+pub mod neon_calligraphy;
 pub mod particles;
+pub mod phase_rings;
+pub mod pulse_terrain;
 pub mod rms_light;
+pub mod spectral_cathedral;
+pub mod spectral_origami;
 pub mod spectral_waterfall;
+pub mod velocity_meteors;
 pub mod waiting_indicator;
 pub mod waveform_ring;
 
@@ -27,15 +41,38 @@ impl Plugin for VisualsPlugin {
             .init_resource::<particles::ParticleCount>()
             .init_resource::<effects::EffectState>()
             .init_resource::<spectral_waterfall::WaterfallState>()
+            .init_resource::<phase_rings::RingState>()
+            .init_resource::<flux_supernova::SupernovaState>()
+            .init_resource::<chord_bloom::ChordState>()
+            .init_resource::<instrument_cubes::CubeCount>()
             .add_systems(
                 Startup,
                 (
                     setup_scene,
+                    base_floor::setup,
                     fft_bars::setup,
-                    note_flash::setup,
                     particles::setup,
                     waveform_ring::setup,
                     spectral_waterfall::setup,
+                    velocity_meteors::setup,
+                    phase_rings::setup,
+                    centroid_nebula::setup,
+                    flux_supernova::setup,
+                    cpu_overdrive::setup,
+                    fractal_pulse::setup,
+                ),
+            )
+            .add_systems(
+                Startup,
+                (
+                    spectral_cathedral::setup,
+                    harmonic_ribbons::setup,
+                    chord_bloom::setup,
+                    pulse_terrain::setup,
+                    spectral_origami::setup,
+                    ferrofluid_tendrils::setup,
+                    neon_calligraphy::setup,
+                    instrument_cubes::setup,
                     waiting_indicator::setup,
                 ),
             )
@@ -49,15 +86,48 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
+                    base_floor::update,
                     fft_bars::update,
                     waveform_ring::update,
                     spectral_waterfall::update,
+                    spectral_waterfall::update_materials,
+                    velocity_meteors::spawn,
+                    velocity_meteors::update,
+                    phase_rings::spawn_and_update,
+                    centroid_nebula::update,
+                    centroid_nebula::update_material,
+                    flux_supernova::update,
+                    cpu_overdrive::update,
+                    fractal_pulse::update,
+                )
+                    .after(EffectSwitch),
+            )
+            .add_systems(
+                Update,
+                (
+                    spectral_cathedral::update,
+                    harmonic_ribbons::spawn_and_update,
+                    chord_bloom::spawn_and_update,
+                    pulse_terrain::update,
+                    pulse_terrain::update_material,
+                    spectral_origami::update,
+                    spectral_origami::update_material,
+                    ferrofluid_tendrils::update,
+                    ferrofluid_tendrils::update_material,
+                    neon_calligraphy::update,
+                )
+                    .after(EffectSwitch),
+            )
+            .add_systems(
+                Update,
+                (
                     rms_light::update,
-                    note_flash::update,
                     beat_pulse::update,
                     camera::orbit,
                     particles::spawn,
                     particles::update,
+                    instrument_cubes::spawn,
+                    instrument_cubes::update,
                     waiting_indicator::update,
                 )
                     .after(EffectSwitch),
@@ -70,22 +140,7 @@ impl Plugin for VisualsPlugin {
 pub struct RmsLight;
 
 /// Set up the base scene: ground plane, camera, lights.
-fn setup_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Ground plane (with BeatPulseGround marker for beat-synced glow)
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(50.0)))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.05, 0.05, 0.08),
-            perceptual_roughness: 0.9,
-            ..default()
-        })),
-        beat_pulse::BeatPulseGround,
-    ));
-
+fn setup_scene(mut commands: Commands) {
     // Ambient light
     commands.spawn(AmbientLight {
         color: Color::srgb(0.3, 0.3, 0.4),

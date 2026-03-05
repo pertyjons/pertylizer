@@ -42,10 +42,13 @@ pub struct SynthTelemetry {
     pub fft_freqs: [f32; NUM_FFT_BANDS],
 
     // -- Note events --
-    /// Most recent note-on: (midi_note, velocity, channel).
-    pub last_note_on: Option<(u8, u8, u8)>,
+    /// Most recent note-on: (midi_note, velocity, instrument_id, category).
+    pub last_note_on: Option<(u8, u8, u32, u8)>,
     /// Frame counter since last note-on (for decay).
     pub note_age_frames: u32,
+    /// Queued note-on events this frame: (midi_note, velocity, instrument_id, category).
+    /// Consumed each frame by effects that need per-instrument events.
+    pub pending_note_events: Vec<(u8, u8, u32, u8)>,
 
     // -- Transport --
     /// Whether the sequencer is playing.
@@ -86,6 +89,7 @@ impl Default for SynthTelemetry {
             fft_freqs: [0.0; NUM_FFT_BANDS],
             last_note_on: None,
             note_age_frames: u32::MAX,
+            pending_note_events: Vec::new(),
             playing: false,
             tempo: 120.0,
             beat_position: 0.0,

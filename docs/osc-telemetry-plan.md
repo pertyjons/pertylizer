@@ -166,6 +166,11 @@ All priority streams implemented (see address map above).
 | Ferrofluid Tendrils | Magnetic tendrils from bass | Low FFT | Curl noise + instanced strands |
 | Neon Calligraphy | Notes draw glyph strokes | Note on/off, pitch | SDF strokes + bloom |
 | Fractal Pulse | Recursive shapes synced to beat | Tempo, RMS | Fractal instancing |
+| CPU Overdrive Core | Glowing core that spins and fractures under load | CPU Usage, Voice Count | Rotating core with noise displacement, color shifting to red on high CPU |
+| Flux Supernova | Star that explodes on sudden spectral changes | Spectral Flux, RMS | Particle explosion / bloom flash triggered by flux spikes |
+| Phase Rings | Concentric rings expanding with the beat phase | Beat Phase, Tempo | Torus instances scaling from 0 to max radius synced to `beat_phase` |
+| Centroid Nebula | Particle cloud shifting color/shape based on brightness | Spectral Centroid, RMS | Compute shader / particle system where centroid Hz shifts color (warm to cool) and turbulence |
+| Velocity Meteors | Meteors falling with size based on impact | Note-on, Velocity | Spheres with trail renderer falling from top, size/brightness mapped to velocity |
 
 ### Future Features
 - Per-instrument OSC streams and per-track visual layers

@@ -251,6 +251,24 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set instrument category.
+    pub fn set_instrument_category(
+        &self,
+        instrument_id: InstrumentId,
+        category: synth_engine::InstrumentCategory,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentCategory {
+                instrument_id,
+                category,
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set instrument solo state.
     pub fn set_instrument_solo(
         &self,

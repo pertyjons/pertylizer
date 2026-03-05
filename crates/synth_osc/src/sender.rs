@@ -208,23 +208,30 @@ pub(crate) fn run(
                 NoteEvent::On {
                     note,
                     velocity,
-                    channel,
+                    instrument_id,
+                    category,
                 } => {
                     messages.push(osc_msg(
                         addresses::EVENT_NOTE_ON,
                         vec![
                             OscType::Int(i32::from(note.as_u8())),
                             OscType::Int(i32::from(velocity.to_midi())),
-                            OscType::Int(i32::from(channel.as_zero_indexed())),
+                            OscType::Int(instrument_id.as_u64() as i32),
+                            OscType::Int(i32::from(category.as_u8())),
                         ],
                     ));
                 }
-                NoteEvent::Off { note, channel } => {
+                NoteEvent::Off {
+                    note,
+                    instrument_id,
+                    category,
+                } => {
                     messages.push(osc_msg(
                         addresses::EVENT_NOTE_OFF,
                         vec![
                             OscType::Int(i32::from(note.as_u8())),
-                            OscType::Int(i32::from(channel.as_zero_indexed())),
+                            OscType::Int(instrument_id.as_u64() as i32),
+                            OscType::Int(i32::from(category.as_u8())),
                         ],
                     ));
                 }

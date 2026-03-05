@@ -52,6 +52,9 @@ fn setup_osc_socket(mut commands: Commands) {
 }
 
 fn receive_osc(mut socket: ResMut<OscSocket>, mut telemetry: ResMut<SynthTelemetry>) {
+    // Clear pending events from previous frame before processing new packets
+    telemetry.pending_note_events.clear();
+
     let mut received_any = false;
 
     // Drain all pending UDP packets (non-blocking)
@@ -178,9 +181,22 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
         }
 
         "/synth/event/note_on" => {
-            if let [OscType::Int(note), OscType::Int(vel), OscType::Int(ch)] = msg.args.as_slice() {
-                telemetry.last_note_on = Some((*note as u8, *vel as u8, *ch as u8));
+            if let [
+                OscType::Int(note),
+                OscType::Int(vel),
+                OscType::Int(instrument_id),
+                OscType::Int(category),
+            ] = msg.args.as_slice()
+            {
+                let event = (
+                    *note as u8,
+                    *vel as u8,
+                    *instrument_id as u32,
+                    *category as u8,
+                );
+                telemetry.last_note_on = Some(event);
                 telemetry.note_age_frames = 0;
+                telemetry.pending_note_events.push(event);
             }
         }
 

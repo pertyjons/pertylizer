@@ -90,6 +90,7 @@ impl AppSynthBridge {
         InstrumentInfo {
             id: snap.id.as_u64(),
             name: snap.name.clone(),
+            category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
             volume: snap.volume.as_f32(),
             pan: snap.pan.as_f32(),
@@ -334,6 +335,7 @@ impl SynthBridge for AppSynthBridge {
             solo: false,
             module_count: 0,
             effect_count: 0,
+            category: "uncategorized".to_owned(),
         })
     }
 
@@ -410,6 +412,19 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_enabled(InstrumentId::new(instrument_id), enabled)
+            .map_err(|_| McpBridgeError::CommandSendFailed)
+    }
+
+    fn set_instrument_category(
+        &self,
+        instrument_id: u64,
+        category: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let cat: synth_engine::InstrumentCategory =
+            category.parse().map_err(McpBridgeError::Other)?;
+        self.session
+            .set_instrument_category(InstrumentId::new(instrument_id), cat)
             .map_err(|_| McpBridgeError::CommandSendFailed)
     }
 

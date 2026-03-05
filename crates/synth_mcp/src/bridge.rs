@@ -211,6 +211,13 @@ pub trait SynthBridge: Send + Sync + 'static {
         enabled: bool,
     ) -> Result<(), McpBridgeError>;
 
+    /// Set instrument category (for visualization routing).
+    fn set_instrument_category(
+        &self,
+        instrument_id: u64,
+        category: &str,
+    ) -> Result<(), McpBridgeError>;
+
     // === Write operations ===
 
     /// Set a module parameter by name.

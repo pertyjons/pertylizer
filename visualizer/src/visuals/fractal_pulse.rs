@@ -1,0 +1,129 @@
+//! Fractal Pulse — Recursive rings synced to the beat.
+//!
+//! A set of concentric tori that scale and rotate. Based on Tempo and RMS.
+
+use bevy::color::LinearRgba;
+use bevy::prelude::*;
+
+use super::effects::{EffectId, EffectLayer, EffectState};
+use crate::telemetry::SynthTelemetry;
+
+/// Number of concentric rings.
+const NUM_RINGS: usize = 6;
+
+/// Base scale difference between rings.
+const SCALE_STEP: f32 = 1.5;
+
+/// Base emissive strength.
+const EMISSIVE_STRENGTH: f32 = 8.0;
+
+#[derive(Component)]
+pub struct FractalRing {
+    /// Ring index (0 is innermost).
+    pub index: usize,
+    /// Base rotation speed.
+    pub base_speed: f32,
+    /// Rotation axis.
+    pub axis: Dir3,
+}
+
+pub fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mesh = meshes.add(Torus::new(1.0, 0.05));
+
+    // Create materials for each ring
+    let mut ring_materials = Vec::new();
+    for i in 0..NUM_RINGS {
+        let hue = (i as f32 / NUM_RINGS as f32) * 360.0;
+        let color = Color::hsl(hue, 0.9, 0.5);
+        ring_materials.push(materials.add(StandardMaterial {
+            base_color: color,
+            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            ..default()
+        }));
+    }
+
+    for (i, ring_mat) in ring_materials.iter().enumerate().take(NUM_RINGS) {
+        let axis = if i % 2 == 0 { Dir3::X } else { Dir3::Z };
+        let speed = if i % 2 == 0 { 0.5 } else { -0.5 } * (1.0 - (i as f32 * 0.1));
+
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(ring_mat.clone()),
+            Transform::from_scale(Vec3::splat(1.0 + i as f32 * SCALE_STEP)),
+            Visibility::Hidden,
+            FractalRing {
+                index: i,
+                base_speed: speed,
+                axis,
+            },
+            EffectLayer(EffectId::FractalPulse),
+        ));
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct FractalState {
+    full_update_needed: bool,
+}
+
+pub fn update(
+    time: Res<Time>,
+    telemetry: Res<SynthTelemetry>,
+    effect_state: Res<EffectState>,
+    mut state: Local<FractalState>,
+    mut query: Query<(
+        &FractalRing,
+        &mut Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if !effect_state.active.is_active(EffectId::FractalPulse) && effect_state.fade == 0.0 {
+        return;
+    }
+
+    let dt = time.delta_secs();
+
+    // Energy drives scale pulsing
+    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.5);
+
+    // Tempo drives rotation speed multiplier
+    let tempo_mult = (telemetry.tempo / 120.0).max(0.5);
+
+    let fade = effect_state.fade;
+
+    if fade < 1.0 {
+        state.full_update_needed = true;
+    }
+
+    for (ring, mut transform, material_handle) in &mut query {
+        // Rotate
+        let speed = ring.base_speed * tempo_mult;
+        transform.rotate_axis(ring.axis, speed * dt);
+
+        // Always rotate slowly on Y as well for global movement
+        transform.rotate_local_y(0.2 * tempo_mult * dt);
+
+        // Pulse scale based on energy, more pronounced on inner rings
+        let pulse_amount = energy * (1.0 - (ring.index as f32 / NUM_RINGS as f32) * 0.5);
+        let base_scale = 1.0 + ring.index as f32 * SCALE_STEP;
+        transform.scale = Vec3::splat(base_scale + pulse_amount * 2.0);
+
+        if (fade < 1.0 || state.full_update_needed)
+            && let Some(material) = materials.get_mut(&material_handle.0)
+        {
+            let hue = (ring.index as f32 / NUM_RINGS as f32) * 360.0;
+            let color = Color::hsl(hue, 0.9, 0.5 * fade);
+            material.base_color = color;
+            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+        }
+    }
+
+    if fade == 1.0 {
+        state.full_update_needed = false;
+    }
+}

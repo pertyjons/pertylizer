@@ -682,6 +682,19 @@ impl SynthEngine {
             } => {
                 self.handle_set_instrument_enabled(instrument_id, enabled);
             }
+            EngineCommand::SetInstrumentCategory {
+                instrument_id,
+                category,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_category(category);
+                    self.update_shared_instruments();
+                }
+            }
             EngineCommand::SetInstrumentSolo {
                 instrument_id,
                 solo,
@@ -915,6 +928,7 @@ impl SynthEngine {
 
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
+                self.state.transport.set_ticks(0);
 
                 // Release all voices on all instruments
                 for instrument in &mut self.instruments {
@@ -1224,6 +1238,20 @@ impl SynthEngine {
 
             if instrument.note_on(note, velocity).is_some() {
                 note_triggered = true;
+                if self
+                    .note_event_producer
+                    .try_push(NoteEvent::On {
+                        note,
+                        velocity,
+                        instrument_id: instrument.id(),
+                        category: instrument.category(),
+                    })
+                    .is_err()
+                {
+                    self.state
+                        .event_drops
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
 
@@ -1242,11 +1270,6 @@ impl SynthEngine {
 
         if note_triggered {
             let _ = self.event_producer.try_push(EngineEvent::NoteTriggered {
-                note,
-                velocity,
-                channel,
-            });
-            self.push_note_event(NoteEvent::On {
                 note,
                 velocity,
                 channel,
@@ -1271,6 +1294,19 @@ impl SynthEngine {
                 continue;
             }
             instrument.note_off(note);
+            if self
+                .note_event_producer
+                .try_push(NoteEvent::Off {
+                    note,
+                    instrument_id: instrument.id(),
+                    category: instrument.category(),
+                })
+                .is_err()
+            {
+                self.state
+                    .event_drops
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         if self.use_modular_routing {
@@ -1288,7 +1324,6 @@ impl SynthEngine {
         let _ = self
             .event_producer
             .try_push(EngineEvent::NoteReleased { note, channel });
-        self.push_note_event(NoteEvent::Off { note, channel });
     }
 
     /// Push a note event to the OSC telemetry ring buffer, tracking drops.
@@ -1852,6 +1887,7 @@ impl SynthEngine {
                     id: inst.id(),
                     seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
+                    category: inst.category(),
                     midi_channel: synth_core::MidiChannel::new(
                         inst.midi_channel().as_zero_indexed() + 1,
                     ),
@@ -2040,7 +2076,8 @@ fn route_sequencer_events(
                         .try_push(NoteEvent::On {
                             note,
                             velocity: vel,
-                            channel: MidiChannel::CH1,
+                            instrument_id: instruments[idx].id(),
+                            category: instruments[idx].category(),
                         })
                         .is_err()
                     {
@@ -2059,7 +2096,8 @@ fn route_sequencer_events(
                     if note_event_producer
                         .try_push(NoteEvent::Off {
                             note,
-                            channel: MidiChannel::CH1,
+                            instrument_id: instruments[idx].id(),
+                            category: instruments[idx].category(),
                         })
                         .is_err()
                     {

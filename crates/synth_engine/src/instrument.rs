@@ -166,6 +166,91 @@ impl From<u64> for InstrumentId {
     }
 }
 
+/// Category of an instrument, used for visualization and routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[repr(u8)]
+pub enum InstrumentCategory {
+    /// No specific category assigned.
+    #[default]
+    Uncategorized = 0,
+    /// Drum / percussion instruments.
+    Drums = 1,
+    /// Bass instruments.
+    Bass = 2,
+    /// Sustained pad / string sounds.
+    Pad = 3,
+    /// Lead / melody instruments.
+    Lead = 4,
+    /// Arpeggiated / sequenced parts.
+    Arp = 5,
+    /// Keyboard / piano sounds.
+    Keys = 6,
+    /// Sound effects / atmosphere.
+    FX = 7,
+}
+
+impl InstrumentCategory {
+    /// Create from a raw `u8` value, returning `Uncategorized` for unknown values.
+    #[must_use]
+    pub const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Drums,
+            2 => Self::Bass,
+            3 => Self::Pad,
+            4 => Self::Lead,
+            5 => Self::Arp,
+            6 => Self::Keys,
+            7 => Self::FX,
+            _ => Self::Uncategorized,
+        }
+    }
+
+    /// Get the raw `u8` value.
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Get a human-readable name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Uncategorized => "Uncategorized",
+            Self::Drums => "Drums",
+            Self::Bass => "Bass",
+            Self::Pad => "Pad",
+            Self::Lead => "Lead",
+            Self::Arp => "Arp",
+            Self::Keys => "Keys",
+            Self::FX => "FX",
+        }
+    }
+}
+
+impl fmt::Display for InstrumentCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for InstrumentCategory {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "drums" => Ok(Self::Drums),
+            "bass" => Ok(Self::Bass),
+            "pad" => Ok(Self::Pad),
+            "lead" => Ok(Self::Lead),
+            "arp" => Ok(Self::Arp),
+            "keys" => Ok(Self::Keys),
+            "fx" => Ok(Self::FX),
+            "uncategorized" | "" => Ok(Self::Uncategorized),
+            _ => Err(format!("unknown category: {s}")),
+        }
+    }
+}
+
 /// MIDI channel number (1-16).
 ///
 /// MIDI channels are one-indexed for human display (1-16),
@@ -362,6 +447,8 @@ pub struct Instrument {
     id: InstrumentId,
     /// Human-readable name.
     name: String,
+    /// Instrument category (drums, bass, pad, lead, etc.).
+    category: InstrumentCategory,
     /// MIDI channel this instrument responds to.
     midi_channel: MidiChannel,
     /// Key range this instrument responds to.
@@ -423,6 +510,7 @@ impl Instrument {
         Self {
             id,
             name: name.into(),
+            category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
             transpose: Semitones::ZERO,
@@ -457,6 +545,7 @@ impl Instrument {
         Self {
             id,
             name: name.into(),
+            category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
             transpose: Semitones::ZERO,
@@ -499,6 +588,18 @@ impl Instrument {
     #[inline]
     pub fn set_name(&mut self, name: impl Into<String>) {
         self.name = name.into();
+    }
+
+    /// Get the instrument category.
+    #[inline]
+    pub fn category(&self) -> InstrumentCategory {
+        self.category
+    }
+
+    /// Set the instrument category.
+    #[inline]
+    pub fn set_category(&mut self, category: InstrumentCategory) {
+        self.category = category;
     }
 
     /// Get the MIDI channel.
