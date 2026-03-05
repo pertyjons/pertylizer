@@ -1,5 +1,18 @@
 # Version History
 
+## [0.214.0] - 2026-03-06
+### Visualizer performance optimization
+- **Disabled shadow maps** — removed point light shadow rendering (6 extra cube-face passes per frame)
+- **Shared hue-bucketed materials** — all effects now use 8–16 shared material buckets instead of per-entity unique materials, enabling Bevy draw-call batching
+- **Extracted material helpers** — `HueMaterialConfig`, `create_hue_materials()`, `update_hue_materials_for_fade()` in `effects.rs` eliminate ~150 lines of duplicated material setup
+- **Scale-based fade** — per-entity visibility controlled via transform scale instead of emissive material mutation (avoids GPU re-uploads)
+- **Removed `AlphaMode::Blend`** — phase_rings no longer disables instancing/batching
+- **Reduced centroid_nebula particles** — 2000 → 500 particles
+- **Material update gating** — materials only re-uploaded when fade changes by more than `FADE_EPSILON`
+- **Fixed velocity_meteors bug** — exponential shrink from `transform.scale *= scale` → `transform.scale = Vec3::splat(life_pct)`
+- **Pre-allocated mesh resources** — chord_bloom and harmonic_ribbons avoid per-spawn mesh creation
+- **Updated docs** — TODO.md and osc-telemetry-plan.md reflect completed Phase 3 and all 13 creative effects
+
 ## [0.213.0] - 2026-03-05
 ### OSC/MCP defaults, Bevy 3D visualizer with bloom and beat-sync
 - **OSC telemetry enabled by default** — no longer requires `--osc` flag; use `--no-osc` to disable

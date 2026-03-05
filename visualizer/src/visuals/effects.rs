@@ -6,6 +6,7 @@
 //!
 //! Effects are grouped into 4 categories to prevent Z-fighting and visual clutter.
 
+use bevy::color::LinearRgba;
 use bevy::prelude::*;
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -113,6 +114,9 @@ pub struct EffectState {
 
 /// Crossfade speed (units per second).
 const FADE_SPEED: f32 = 4.0;
+
+/// Minimum fade change to trigger a material re-upload.
+pub const FADE_EPSILON: f32 = 0.005;
 
 impl Default for EffectState {
     fn default() -> Self {
@@ -285,4 +289,55 @@ pub fn crossfade(
     } else if state.fade < 1.0 {
         state.fade = (state.fade + FADE_SPEED * dt).min(1.0);
     }
+}
+
+/// Configuration for hue-bucketed shared materials.
+pub struct HueMaterialConfig {
+    pub hue_range: f32,
+    pub saturation: f32,
+    pub lightness: f32,
+    pub emissive_strength: f32,
+}
+
+/// Create a set of hue-bucketed `StandardMaterial`s for use as shared materials.
+pub fn create_hue_materials(
+    materials: &mut Assets<StandardMaterial>,
+    num_buckets: usize,
+    config: &HueMaterialConfig,
+) -> Vec<Handle<StandardMaterial>> {
+    let mut result = Vec::with_capacity(num_buckets);
+    for bucket in 0..num_buckets {
+        let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
+        let color = Color::hsl(hue, config.saturation, config.lightness);
+        result.push(materials.add(StandardMaterial {
+            base_color: color,
+            emissive: LinearRgba::from(color) * config.emissive_strength,
+            ..default()
+        }));
+    }
+    result
+}
+
+/// Update hue-bucketed shared materials for crossfade.
+pub fn update_hue_materials_for_fade(
+    materials: &mut Assets<StandardMaterial>,
+    handles: &[Handle<StandardMaterial>],
+    config: &HueMaterialConfig,
+    fade: f32,
+    last_fade: &mut f32,
+) {
+    if (fade - *last_fade).abs() < FADE_EPSILON {
+        return;
+    }
+
+    let num_buckets = handles.len();
+    for (bucket, handle) in handles.iter().enumerate() {
+        if let Some(material) = materials.get_mut(handle) {
+            let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
+            let color = Color::hsl(hue, config.saturation, config.lightness * fade);
+            material.base_color = color;
+            material.emissive = LinearRgba::from(color) * config.emissive_strength * fade;
+        }
+    }
+    *last_fade = fade;
 }

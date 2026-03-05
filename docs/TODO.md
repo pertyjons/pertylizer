@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.213.0)
+# TODO - Pertylizer (v0.214.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -29,7 +29,7 @@
 - [x] "Waiting for signal" indicator when no OSC data received (fades in after ~2s stale)
 - [x] Protocol version check — warn once on mismatch with `/synth/meta`
 - [x] Visualizer handles all Phase 3 telemetry streams (centroid, flux, phase, cc, drops, fft_freqs)
-- [x] Per-particle material mutations (up to 512/frame) — consider shared material approach or GPU instancing to reduce asset churn
+- [x] Per-particle material mutations (up to 512/frame) — replaced with shared hue-bucketed materials across all effects
 - [ ] Configurable FFT bin count (64/128/256)
 - [ ] Extract shared OSC address constants — visualizer hardcodes `"/viz/pong"` instead of using `synth_osc::addresses::VIZ_PONG` (separate workspace can't depend on `synth_osc`, consider a shared `synth_osc_protocol` crate or constants file)
 - [ ] Replace `last_note_on: Option<(u8, u8, u8)>` with a named `NoteOnEvent` struct (fields: `note`, `velocity`, `channel`) — raw tuple used in telemetry + 3 visual consumers
@@ -40,6 +40,17 @@
 - [x] Fade-through-black crossfade between effects on switch
 - [x] Spectral waterfall: replace 2048-entity grid with texture-based approach (single quad + custom shader) for fewer draw calls (Implemented via shared materials and Y-scale scaling instead)
 - [ ] Replace per-effect `if active != MyEffect { return }` guards with Bevy run conditions — cleaner system signatures, skips dispatch entirely (matters when effect count grows)
+
+### 0.4b Visualizer performance optimization — DONE
+- [x] Disabled shadow maps on point light (was rendering 6 extra cube-face passes of the entire scene)
+- [x] Shared hue-bucketed materials for all effects — reduces draw calls via Bevy batching (e.g., 128 unique materials → 16 shared buckets)
+- [x] Extracted `HueMaterialConfig`, `create_hue_materials()`, `update_hue_materials_for_fade()` helpers into `effects.rs`
+- [x] Eliminated per-entity material mutation — use transform scale for fade/visibility instead of emissive changes
+- [x] Removed `AlphaMode::Blend` from phase_rings (was disabling instancing/batching)
+- [x] Reduced centroid_nebula particle count from 2000 → 500
+- [x] Material updates only on meaningful change (fade delta > `FADE_EPSILON`)
+- [x] Fixed velocity_meteors exponential shrink bug (`transform.scale *= scale` → `transform.scale = Vec3::splat(life_pct)`)
+- [x] Pre-allocated mesh resources for chord_bloom and harmonic_ribbons (avoid per-spawn mesh creation)
 
 ### 0.5 Settings & control
 - [ ] OSC enable/disable toggle in Pertylizer settings GUI

@@ -6,7 +6,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 const NUM_TENDRILS: usize = 30;
@@ -117,18 +117,27 @@ pub fn update_material(
     telemetry: Res<SynthTelemetry>,
     material_res: Res<FerrofluidMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut last_energy: Local<f32>,
+    mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::FerrofluidTendrils) && effect_state.fade == 0.0 {
+    let fade = effect_state.fade;
+
+    if !effect_state.active.is_active(EffectId::FerrofluidTendrils) && fade == 0.0 {
+        return;
+    }
+
+    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
+
+    // Only update material when energy or fade changes meaningfully
+    if (energy - *last_energy).abs() < 0.02 && (fade - *last_fade).abs() < effects::FADE_EPSILON {
         return;
     }
 
     if let Some(material) = materials.get_mut(&material_res.0) {
-        let fade = effect_state.fade;
-
-        // Modulate emissive based on RMS (globs glow when it's loud)
-        let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
-
         let color = Color::srgb(0.1, 0.2 + energy * 0.5, 0.5 + energy * 0.5);
         material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
     }
+
+    *last_energy = energy;
+    *last_fade = fade;
 }

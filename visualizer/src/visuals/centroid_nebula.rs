@@ -4,11 +4,11 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 use rand::Rng;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::SynthTelemetry;
 
-/// Number of particles in the nebula.
-const NEBULA_PARTICLES: usize = 2000;
+/// Number of particles in the nebula (reduced from 2000 for performance).
+const NEBULA_PARTICLES: usize = 500;
 
 /// Base bounds of the particle cloud.
 const BOUNDS: f32 = 15.0;
@@ -75,7 +75,7 @@ pub fn update(
     mut query: Query<(&NebulaParticle, &mut Transform)>,
     mut last_centroid: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::CentroidNebula) {
+    if !effect_state.active.is_active(EffectId::CentroidNebula) && effect_state.fade == 0.0 {
         return;
     }
 
@@ -122,25 +122,35 @@ pub fn update_material(
     query: Query<&MeshMaterial3d<StandardMaterial>, With<NebulaParticle>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     last_centroid: Local<f32>,
+    mut last_hue: Local<f32>,
+    mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::CentroidNebula) && effect_state.fade == 0.0 {
+    let fade = effect_state.fade;
+
+    if !effect_state.active.is_active(EffectId::CentroidNebula) && fade == 0.0 {
+        return;
+    }
+
+    let centroid = *last_centroid;
+    let centroid_norm = ((centroid.max(1.0).log2() - 200.0_f32.log2())
+        / (10000.0_f32.log2() - 200.0_f32.log2()))
+    .clamp(0.0, 1.0);
+
+    let hue = 330.0 - (centroid_norm * 130.0);
+
+    // Only update material when hue or fade changes meaningfully
+    if (hue - *last_hue).abs() < 1.0 && (fade - *last_fade).abs() < effects::FADE_EPSILON {
         return;
     }
 
     if let Some(handle) = query.iter().next()
         && let Some(material) = materials.get_mut(&handle.0)
     {
-        let centroid = *last_centroid;
-        let centroid_norm = ((centroid.log2() - 200.0_f32.log2())
-            / (10000.0_f32.log2() - 200.0_f32.log2()))
-        .clamp(0.0, 1.0);
-
-        // Low freq = Red/Purple (300 -> 360/0), High freq = Cyan/Blue (180 -> 220)
-        // Let's map 0.0 -> 330.0 (Pinkish red) and 1.0 -> 200.0 (Light blue)
-        let hue = 330.0 - (centroid_norm * 130.0);
-
-        let color = Color::hsl(hue, 0.8, 0.5 * effect_state.fade);
+        let color = Color::hsl(hue, 0.8, 0.5 * fade);
         material.base_color = color;
-        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * effect_state.fade;
+        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
     }
+
+    *last_hue = hue;
+    *last_fade = fade;
 }

@@ -6,7 +6,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 20; // 20x20 grid
@@ -112,15 +112,23 @@ pub fn update_material(
     effect_state: Res<EffectState>,
     terrain_material: Res<TerrainMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::PulseTerrain) && effect_state.fade == 0.0 {
+    let fade = effect_state.fade;
+
+    if !effect_state.active.is_active(EffectId::PulseTerrain) && fade == 0.0 {
+        return;
+    }
+
+    // Only update material when fade actually changes
+    if (fade - *last_fade).abs() < effects::FADE_EPSILON {
         return;
     }
 
     if let Some(material) = materials.get_mut(&terrain_material.0) {
-        let fade = effect_state.fade;
         let color = Color::hsl(140.0, 0.8, 0.5 * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
     }
+    *last_fade = fade;
 }
