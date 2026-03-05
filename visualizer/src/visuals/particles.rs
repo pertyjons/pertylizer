@@ -1,11 +1,13 @@
 //! Note particles — burst of small spheres on note-on events.
 //!
-//! Each note-on spawns a cluster of particles that fly outward and fade.
+//! Each note-on spawns a cluster of particles that fly outward and shrink.
 //! Hue is mapped from MIDI note, speed from velocity.
+//! Uses a shared material pool to prevent asset churn and stuttering.
 
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
+use super::effects::{EffectId, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum live particles to prevent unbounded growth.
@@ -30,15 +32,19 @@ pub struct NoteParticle {
     velocity: Vec3,
     /// Remaining lifetime in seconds.
     life: f32,
-    /// Initial lifetime (for alpha computation).
+    /// Initial lifetime (for scale computation).
     max_life: f32,
-    /// Hue for this particle (degrees).
-    hue: f32,
 }
 
 /// Cached mesh handle to avoid creating a new mesh asset per note-on.
 #[derive(Resource)]
 pub struct ParticleMesh(Handle<Mesh>);
+
+/// Shared materials for each MIDI note (0-127) to avoid asset churn.
+#[derive(Resource)]
+pub struct ParticleMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
 
 /// Tracks particle count to enforce the cap.
 #[derive(Resource, Default)]
@@ -46,24 +52,47 @@ pub struct ParticleCount {
     pub count: usize,
 }
 
-/// Create the shared particle mesh at startup.
-pub fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+/// Create the shared particle mesh and 128 note materials at startup.
+pub fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.insert_resource(ParticleMesh(meshes.add(Sphere::new(0.18))));
+
+    let mut shared_mats = Vec::with_capacity(128);
+    for note in 0..128 {
+        let hue = (note as f32 / 127.0) * 360.0;
+        let color = Color::hsl(hue, 0.9, 0.5);
+        shared_mats.push(materials.add(StandardMaterial {
+            base_color: color,
+            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            ..default()
+        }));
+    }
+    commands.insert_resource(ParticleMaterials {
+        materials: shared_mats,
+    });
 }
 
-/// Spawn particles on note-on events.
+/// Spawn particles on note-on events using shared materials.
 pub fn spawn(
     mut commands: Commands,
     telemetry: Res<SynthTelemetry>,
+    effect_state: Res<EffectState>,
     particle_mesh: Res<ParticleMesh>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    particle_materials: Res<ParticleMaterials>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
+    if !effect_state.active.is_active(EffectId::NoteParticles) {
+        return;
+    }
+
     // Only trigger on fresh note-on
     if telemetry.note_age_frames >= 2 {
         return;
     }
-    let Some((note, velocity, _channel)) = telemetry.last_note_on else {
+    let Some((note, velocity, _instrument_id, _category)) = telemetry.last_note_on else {
         return;
     };
 
@@ -72,7 +101,7 @@ pub fn spawn(
         return;
     }
 
-    let hue = (note as f32 / 127.0) * 360.0;
+    let note_idx = (note as usize).min(127);
     let speed = 2.0 + (velocity as f32 / 127.0) * 6.0;
 
     let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
@@ -88,13 +117,7 @@ pub fn spawn(
         // Slight randomization via index-based variation
         let speed_var = speed * (0.8 + 0.4 * ((i * 7 + 3) % 10) as f32 / 10.0);
 
-        // Each particle needs its own material since fade mutates it independently
-        let color = Color::hsl(hue, 0.9, 0.5);
-        let material = materials.add(StandardMaterial {
-            base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
-            ..default()
-        });
+        let material = particle_materials.materials[note_idx].clone();
 
         commands.spawn((
             Mesh3d(particle_mesh.0.clone()),
@@ -104,7 +127,6 @@ pub fn spawn(
                 velocity: dir * speed_var,
                 life: LIFETIME,
                 max_life: LIFETIME,
-                hue,
             },
         ));
     }
@@ -112,27 +134,19 @@ pub fn spawn(
     particle_count.count += spawn_count;
 }
 
-/// Update particle positions, fade, and despawn dead particles.
+/// Update particle positions, shrink, and despawn dead particles.
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(
-        Entity,
-        &mut NoteParticle,
-        &mut Transform,
-        &MeshMaterial3d<StandardMaterial>,
-    )>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(Entity, &mut NoteParticle, &mut Transform)>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
     let dt = time.delta_secs();
 
-    for (entity, mut particle, mut transform, material_handle) in &mut query {
+    for (entity, mut particle, mut transform) in &mut query {
         particle.life -= dt;
 
         if particle.life <= 0.0 {
-            // Remove the material asset to prevent leaks
-            materials.remove(&material_handle.0);
             commands.entity(entity).despawn();
             particle_count.count = particle_count.count.saturating_sub(1);
             continue;
@@ -142,12 +156,8 @@ pub fn update(
         particle.velocity.y -= 3.0 * dt;
         transform.translation += particle.velocity * dt;
 
-        // Fade emissive based on remaining life
-        let alpha = particle.life / particle.max_life;
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            let base = Color::hsl(particle.hue, 0.9, 0.3 * alpha);
-            material.base_color = base;
-            material.emissive = LinearRgba::from(base) * EMISSIVE_STRENGTH * alpha;
-        }
+        // Shrink instead of fading emissive to avoid material mutation
+        let scale = (particle.life / particle.max_life).max(0.0);
+        transform.scale = Vec3::splat(scale);
     }
 }

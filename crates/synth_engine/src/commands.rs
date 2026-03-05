@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
+use super::instrument::{
+    Instrument, InstrumentCategory, InstrumentId, KeyRange, LearnState, MidiChannel,
+};
 use synth_core::{
     Amplitude, BipolarValue, Bpm, CcNumber, CpuUsage, Gain, MidiNote, NormalizedValue, PortName,
     Seconds, Semitones, Velocity,
@@ -291,6 +293,12 @@ pub enum EngineCommand {
     SetInstrumentEnabled {
         instrument_id: InstrumentId,
         enabled: bool,
+    },
+
+    /// Set instrument category for visualization routing.
+    SetInstrumentCategory {
+        instrument_id: InstrumentId,
+        category: InstrumentCategory,
     },
 
     /// Solo an instrument.
@@ -808,12 +816,14 @@ pub enum NoteEvent {
     On {
         note: MidiNote,
         velocity: Velocity,
-        channel: MidiChannel,
+        instrument_id: InstrumentId,
+        category: InstrumentCategory,
     },
     /// A note was released.
     Off {
         note: MidiNote,
-        channel: MidiChannel,
+        instrument_id: InstrumentId,
+        category: InstrumentCategory,
     },
     /// A MIDI controller change (CC1=mod wheel, CC128=pitch bend, CC129=aftertouch).
     Cc {
@@ -870,6 +880,14 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("SetInstrumentEnabled")
                 .field("instrument_id", instrument_id)
                 .field("enabled", enabled)
+                .finish(),
+            Self::SetInstrumentCategory {
+                instrument_id,
+                category,
+            } => f
+                .debug_struct("SetInstrumentCategory")
+                .field("instrument_id", instrument_id)
+                .field("category", category)
                 .finish(),
             Self::SetInstrumentSolo {
                 instrument_id,

@@ -1,45 +1,94 @@
 //! Effect rack — switchable visual layers with fade-through-black crossfade.
 //!
 //! Keyboard controls:
-//! - Left/Right arrows: previous/next effect
-//! - R: random effect
+//! - Left/Right arrows: previous/next preset scene
+//! - R: generate random scene
 //!
-//! The `EffectState.fade` multiplier is read by each effect's update system
-//! to scale emissive intensity, producing a smooth crossfade.
+//! Effects are grouped into 4 categories to prevent Z-fighting and visual clutter.
 
 use bevy::prelude::*;
+use rand::Rng;
+use rand::seq::SliceRandom;
 
 /// Available visual effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EffectId {
-    #[default]
+    // Note Particles (was originally hardcoded, we make it an effect now)
+    NoteParticles,
+
+    // Terrain / Base
+    BaseFloor,
     FftBars,
     WaveformRing,
     SpectralWaterfall,
+    PulseTerrain,
+    SpectralOrigami,
+
+    // Hero / Centerpiece
+    CpuOverdriveCore,
+    FluxSupernova,
+    FractalPulse,
+    FerrofluidTendrils,
+
+    // Ambient / Sky
+    CentroidNebula,
+    SpectralCathedral,
+
+    // Transients / Actions
+    VelocityMeteors,
+    PhaseRings,
+    HarmonicRibbons,
+    ChordBloom,
+    NeonCalligraphy,
+    InstrumentCubes,
 }
 
 impl EffectId {
-    const ALL: [Self; 3] = [Self::FftBars, Self::WaveformRing, Self::SpectralWaterfall];
+    pub const TERRAIN: &[Self] = &[
+        Self::BaseFloor,
+        Self::FftBars,
+        Self::WaveformRing,
+        Self::SpectralWaterfall,
+        Self::PulseTerrain,
+        Self::SpectralOrigami,
+        Self::PhaseRings,
+    ];
 
-    fn index(self) -> usize {
-        match self {
-            Self::FftBars => 0,
-            Self::WaveformRing => 1,
-            Self::SpectralWaterfall => 2,
-        }
-    }
+    pub const HERO: &[Self] = &[
+        Self::CpuOverdriveCore,
+        Self::FluxSupernova,
+        Self::FractalPulse,
+        Self::FerrofluidTendrils,
+    ];
 
-    fn from_index(i: usize) -> Self {
-        Self::ALL[i % Self::ALL.len()]
-    }
+    pub const AMBIENT: &[Self] = &[Self::CentroidNebula, Self::SpectralCathedral];
 
-    fn next(self) -> Self {
-        Self::from_index(self.index() + 1)
-    }
+    pub const TRANSIENTS: &[Self] = &[
+        Self::NoteParticles,
+        Self::VelocityMeteors,
+        Self::HarmonicRibbons,
+        Self::ChordBloom,
+        Self::NeonCalligraphy,
+        Self::InstrumentCubes,
+    ];
+}
 
-    fn prev(self) -> Self {
-        let i = self.index();
-        Self::from_index(if i == 0 { Self::ALL.len() - 1 } else { i - 1 })
+/// Defines a complete visual scene.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SceneConfig {
+    pub terrain: Option<EffectId>,
+    pub hero: Option<EffectId>,
+    pub ambient: Option<EffectId>,
+    pub transients: Vec<EffectId>,
+}
+
+impl SceneConfig {
+    /// Returns true if the given effect is active in this scene.
+    pub fn is_active(&self, effect: EffectId) -> bool {
+        self.terrain == Some(effect)
+            || self.hero == Some(effect)
+            || self.ambient == Some(effect)
+            || self.transients.contains(&effect)
     }
 }
 
@@ -47,17 +96,19 @@ impl EffectId {
 #[derive(Component)]
 pub struct EffectLayer(pub EffectId);
 
-/// Global effect state — controls which effect is active and crossfade progress.
+/// Global effect state — controls which scene is active and crossfade progress.
 #[derive(Resource)]
 pub struct EffectState {
-    /// Currently visible effect.
-    pub active: EffectId,
-    /// Effect to switch to after fade-out completes.
-    pending: Option<EffectId>,
+    /// Currently visible scene.
+    pub active: SceneConfig,
+    /// Scene to switch to after fade-out completes.
+    pending: Option<SceneConfig>,
     /// Fade multiplier: 1.0 = fully visible, 0.0 = black.
     pub fade: f32,
     /// True while fading out (toward 0), false while fading in (toward 1).
     fading_out: bool,
+    /// Current preset index.
+    preset_index: usize,
 }
 
 /// Crossfade speed (units per second).
@@ -65,43 +116,140 @@ const FADE_SPEED: f32 = 4.0;
 
 impl Default for EffectState {
     fn default() -> Self {
+        // Default to a sensible base scene
+        let default_scene = SceneConfig {
+            terrain: Some(EffectId::BaseFloor),
+            hero: None,
+            ambient: None,
+            transients: vec![EffectId::NoteParticles, EffectId::InstrumentCubes],
+        };
+
         Self {
-            active: EffectId::default(),
+            active: default_scene,
             pending: None,
             fade: 1.0,
             fading_out: false,
+            preset_index: 0,
         }
     }
 }
 
-/// Handle keyboard input for effect switching.
+/// Returns a few hand-crafted scenes.
+fn get_presets() -> Vec<SceneConfig> {
+    vec![
+        // 0: Classic Pertylizer
+        SceneConfig {
+            terrain: Some(EffectId::SpectralWaterfall),
+            hero: None,
+            ambient: None,
+            transients: vec![EffectId::NoteParticles],
+        },
+        // 1: The Matrix
+        SceneConfig {
+            terrain: Some(EffectId::PulseTerrain),
+            hero: Some(EffectId::CpuOverdriveCore),
+            ambient: Some(EffectId::CentroidNebula),
+            transients: vec![EffectId::VelocityMeteors],
+        },
+        // 2: Sacred Geometry
+        SceneConfig {
+            terrain: Some(EffectId::SpectralOrigami),
+            hero: Some(EffectId::FractalPulse),
+            ambient: Some(EffectId::SpectralCathedral),
+            transients: vec![EffectId::ChordBloom],
+        },
+        // 3: Magnetic Storm
+        SceneConfig {
+            terrain: Some(EffectId::WaveformRing),
+            hero: Some(EffectId::FerrofluidTendrils),
+            ambient: Some(EffectId::CentroidNebula),
+            transients: vec![EffectId::PhaseRings, EffectId::HarmonicRibbons],
+        },
+        // 4: The Exploding Sun
+        SceneConfig {
+            terrain: Some(EffectId::FftBars),
+            hero: Some(EffectId::FluxSupernova),
+            ambient: None,
+            transients: vec![EffectId::NeonCalligraphy, EffectId::NoteParticles],
+        },
+        // 5: Metallic Orchestra
+        SceneConfig {
+            terrain: Some(EffectId::BaseFloor),
+            hero: Some(EffectId::FractalPulse),
+            ambient: Some(EffectId::CentroidNebula),
+            transients: vec![EffectId::InstrumentCubes],
+        },
+    ]
+}
+
+/// Generate a completely random scene using the slot rules.
+fn generate_random_scene() -> SceneConfig {
+    let mut rng = rand::thread_rng();
+
+    // 80% chance to have a terrain
+    let terrain = if rng.gen_bool(0.8) {
+        Some(*EffectId::TERRAIN.choose(&mut rng).unwrap())
+    } else {
+        None
+    };
+
+    // 70% chance to have a hero
+    let hero = if rng.gen_bool(0.7) {
+        Some(*EffectId::HERO.choose(&mut rng).unwrap())
+    } else {
+        None
+    };
+
+    // 50% chance to have an ambient effect
+    let ambient = if rng.gen_bool(0.5) {
+        Some(*EffectId::AMBIENT.choose(&mut rng).unwrap())
+    } else {
+        None
+    };
+
+    // Pick 1 to 3 random transients
+    let mut transients = Vec::new();
+    let num_transients = rng.gen_range(1..=3);
+    let mut available_transients = EffectId::TRANSIENTS.to_vec();
+    available_transients.shuffle(&mut rng);
+    for transient in available_transients.iter().take(num_transients) {
+        transients.push(*transient);
+    }
+
+    SceneConfig {
+        terrain,
+        hero,
+        ambient,
+        transients,
+    }
+}
+
+/// Handle keyboard input for scene switching.
 pub fn input(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<EffectState>) {
     // Ignore input during crossfade
     if state.pending.is_some() {
         return;
     }
 
-    let next = if keys.just_pressed(KeyCode::ArrowRight) {
-        Some(state.active.next())
-    } else if keys.just_pressed(KeyCode::ArrowLeft) {
-        Some(state.active.prev())
-    } else if keys.just_pressed(KeyCode::KeyR) {
-        // Pick a different random effect using frame count as seed
-        let current = state.active.index();
-        let offset = 1
-            + (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .subsec_nanos() as usize
-                % (EffectId::ALL.len() - 1));
-        Some(EffectId::from_index(
-            (current + offset) % EffectId::ALL.len(),
-        ))
-    } else {
-        None
-    };
+    let presets = get_presets();
 
-    if let Some(target) = next {
+    let mut next_scene = None;
+
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        state.preset_index = (state.preset_index + 1) % presets.len();
+        next_scene = Some(presets[state.preset_index].clone());
+    } else if keys.just_pressed(KeyCode::ArrowLeft) {
+        state.preset_index = if state.preset_index == 0 {
+            presets.len() - 1
+        } else {
+            state.preset_index - 1
+        };
+        next_scene = Some(presets[state.preset_index].clone());
+    } else if keys.just_pressed(KeyCode::KeyR) {
+        next_scene = Some(generate_random_scene());
+    }
+
+    if let Some(target) = next_scene {
         state.pending = Some(target);
         state.fading_out = true;
     }
@@ -118,18 +266,19 @@ pub fn crossfade(
     if state.fading_out {
         state.fade = (state.fade - FADE_SPEED * dt).max(0.0);
         if state.fade <= 0.0 {
-            // Swap: hide old, show new
-            if let Some(new_effect) = state.pending.take() {
-                let old_effect = state.active;
-                state.active = new_effect;
-
+            // Swap: hide old effects, show new effects
+            if let Some(new_scene) = state.pending.take() {
                 for (layer, mut vis) in &mut query {
-                    if layer.0 == old_effect {
-                        *vis = Visibility::Hidden;
-                    } else if layer.0 == new_effect {
+                    // Turn on if it belongs to the new scene
+                    if new_scene.is_active(layer.0) {
                         *vis = Visibility::Inherited;
                     }
+                    // Turn off if it belonged to the old scene but not the new
+                    else if state.active.is_active(layer.0) {
+                        *vis = Visibility::Hidden;
+                    }
                 }
+                state.active = new_scene;
             }
             state.fading_out = false;
         }

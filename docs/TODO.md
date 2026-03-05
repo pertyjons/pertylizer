@@ -29,16 +29,16 @@
 - [x] "Waiting for signal" indicator when no OSC data received (fades in after ~2s stale)
 - [x] Protocol version check — warn once on mismatch with `/synth/meta`
 - [x] Visualizer handles all Phase 3 telemetry streams (centroid, flux, phase, cc, drops, fft_freqs)
+- [x] Per-particle material mutations (up to 512/frame) — consider shared material approach or GPU instancing to reduce asset churn
 - [ ] Configurable FFT bin count (64/128/256)
 - [ ] Extract shared OSC address constants — visualizer hardcodes `"/viz/pong"` instead of using `synth_osc::addresses::VIZ_PONG` (separate workspace can't depend on `synth_osc`, consider a shared `synth_osc_protocol` crate or constants file)
 - [ ] Replace `last_note_on: Option<(u8, u8, u8)>` with a named `NoteOnEvent` struct (fields: `note`, `velocity`, `channel`) — raw tuple used in telemetry + 3 visual consumers
-- [ ] Per-particle material mutations (up to 512/frame) — consider shared material approach or GPU instancing to reduce asset churn
 
 ### 0.4 Visualizer effect system — DONE
 - [x] Effect rack with switchable visual layers (Left/Right arrows for prev/next, R for random)
 - [x] 2 additional effect modes: Waveform Ring (circular FFT) and Spectral Waterfall (scrolling 3D spectrogram)
 - [x] Fade-through-black crossfade between effects on switch
-- [ ] Spectral waterfall: replace 2048-entity grid with texture-based approach (single quad + custom shader) for fewer draw calls
+- [x] Spectral waterfall: replace 2048-entity grid with texture-based approach (single quad + custom shader) for fewer draw calls (Implemented via shared materials and Y-scale scaling instead)
 - [ ] Replace per-effect `if active != MyEffect { return }` guards with Bevy run conditions — cleaner system signatures, skips dispatch entirely (matters when effect count grows)
 
 ### 0.5 Settings & control
@@ -146,3 +146,18 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] Voice count configurable per instrument (GUI control)
 - [ ] Voice stealing mode selection (oldest, quietest, none)
 - [ ] Unison detune/spread controls
+
+### 5.5 Future Visualizer Effects
+- [x] Spectral Cathedral (FFT bands form arches that breathe, driven by FFT, RMS)
+- [x] Harmonic Ribbons (Ribbons track pitch and glide, driven by Note-on, pitch)
+- [x] Chord Bloom (Chords trigger radial bursts, driven by Note clusters)
+- [x] Pulse Terrain (Landscape breathes with bass, driven by Low FFT, RMS)
+- [x] Spectral Origami (Folded planes open with harmonics, driven by FFT, centroid)
+- [x] Ferrofluid Tendrils (Magnetic tendrils from bass, driven by Low FFT)
+- [x] Neon Calligraphy (Notes draw glyph strokes, driven by Note on/off, pitch)
+- [x] Fractal Pulse (Recursive shapes synced to beat, driven by Tempo, RMS)
+- [x] CPU Overdrive Core (Glowing core that spins and fractures under load, driven by CPU Usage, Voice Count)
+- [x] Flux Supernova (Star that explodes on sudden spectral changes, driven by Spectral Flux, RMS)
+- [x] Phase Rings (Concentric rings expanding with the beat phase, driven by Beat Phase, Tempo)
+- [x] Centroid Nebula (Particle cloud shifting color/shape based on brightness, driven by Spectral Centroid, RMS)
+- [x] Velocity Meteors (Meteors falling with size based on impact, driven by Note-on, Velocity)

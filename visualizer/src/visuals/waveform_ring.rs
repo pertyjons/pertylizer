@@ -65,7 +65,7 @@ pub fn update(
     mut query: Query<(&mut Transform, &RingBar, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if effect_state.active != EffectId::WaveformRing {
+    if !effect_state.active.is_active(EffectId::WaveformRing) {
         return;
     }
 

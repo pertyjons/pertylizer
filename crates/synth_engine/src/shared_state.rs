@@ -335,6 +335,8 @@ pub struct InstrumentSnapshot {
     pub seq_instrument_id: u16,
     /// Instrument name.
     pub name: String,
+    /// Instrument category (drums, bass, pad, etc.).
+    pub category: crate::InstrumentCategory,
     /// MIDI channel (1-indexed).
     pub midi_channel: synth_core::MidiChannel,
     /// Volume.

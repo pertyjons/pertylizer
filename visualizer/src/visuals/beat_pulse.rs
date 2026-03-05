@@ -1,4 +1,4 @@
-//! Beat-synced pulse — ground plane and ambient light pulse on each beat.
+//! Beat-synced pulse — ambient light pulse on each beat.
 
 use bevy::prelude::*;
 
@@ -12,10 +12,6 @@ const DECAY_RATE: f32 = 8.0;
 
 /// Intensity below which we skip visual updates.
 const INTENSITY_EPSILON: f32 = 0.001;
-
-/// Marker for the ground plane that pulses on beats.
-#[derive(Component)]
-pub struct BeatPulseGround;
 
 /// Tracks beat pulse state.
 #[derive(Resource)]
@@ -40,8 +36,6 @@ pub fn update(
     telemetry: Res<SynthTelemetry>,
     time: Res<Time>,
     mut state: ResMut<BeatPulseState>,
-    mut query: Query<&MeshMaterial3d<StandardMaterial>, With<BeatPulseGround>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient: Query<&mut AmbientLight>,
 ) {
     let dt = time.delta_secs();
@@ -69,14 +63,6 @@ pub fn update(
     if state.intensity < INTENSITY_EPSILON {
         state.intensity = 0.0;
         return;
-    }
-
-    // Update ground plane emissive
-    for material_handle in &mut query {
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            let glow = state.intensity * 0.3;
-            material.emissive = Color::srgb(glow * 0.3, glow * 0.4, glow * 1.0).into();
-        }
     }
 
     // Pulse ambient light brightness

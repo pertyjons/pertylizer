@@ -550,6 +550,13 @@ impl Clone for EngineCommand {
                 instrument_id: *instrument_id,
                 solo: *solo,
             },
+            Self::SetInstrumentCategory {
+                instrument_id,
+                category,
+            } => Self::SetInstrumentCategory {
+                instrument_id: *instrument_id,
+                category: *category,
+            },
             // Song (Arc can be cloned)
             Self::SetSong { song } => Self::SetSong {
                 song: std::sync::Arc::clone(song),

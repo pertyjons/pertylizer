@@ -59,7 +59,7 @@ pub fn update(
     mut query: Query<(&mut Transform, &FftBar, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if effect_state.active != EffectId::FftBars {
+    if !effect_state.active.is_active(EffectId::FftBars) {
         return;
     }
 

@@ -172,6 +172,14 @@ pub struct SetInstrumentEnabledParam {
     pub enabled: bool,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentCategoryParam {
+    #[schemars(description = "Instrument ID")]
+    pub instrument_id: u64,
+    #[schemars(description = "Category: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX")]
+    pub category: String,
+}
+
 // === Sequencer parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1277,6 +1285,25 @@ impl SynthMcpServer {
                 };
                 format!("OK: instrument {} {state}", params.0.instrument_id)
             }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the category of an instrument (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX."
+    )]
+    async fn set_instrument_category(
+        &self,
+        params: Parameters<SetInstrumentCategoryParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_instrument_category(params.0.instrument_id, &params.0.category)
+        {
+            Ok(()) => format!(
+                "OK: instrument {} category set to {}",
+                params.0.instrument_id, params.0.category
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

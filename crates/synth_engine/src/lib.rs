@@ -52,7 +52,7 @@ pub use event_priority::{
 };
 pub use graph::{Connection, GraphError, ModuleGraph};
 pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
-pub use instrument::{Instrument, InstrumentId, MidiChannel};
+pub use instrument::{Instrument, InstrumentCategory, InstrumentId, MidiChannel};
 pub use instrument_mapping::InstrumentMapping;
 pub use metering::*;
 pub use recording::RecordingState;

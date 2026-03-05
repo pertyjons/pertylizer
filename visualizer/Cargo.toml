@@ -10,4 +10,5 @@ repository = "https://github.com/pertyjons/pertylizer"
 
 [dependencies]
 bevy = "0.18.1"
+rand = "0.8"
 rosc = "0.11.4"
