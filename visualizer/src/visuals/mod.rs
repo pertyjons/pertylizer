@@ -43,7 +43,6 @@ impl Plugin for VisualsPlugin {
             .init_resource::<spectral_waterfall::WaterfallState>()
             .init_resource::<phase_rings::RingState>()
             .init_resource::<flux_supernova::SupernovaState>()
-            .init_resource::<chord_bloom::ChordState>()
             .init_resource::<instrument_cubes::CubeCount>()
             .add_systems(
                 Startup,
@@ -154,7 +153,7 @@ fn setup_scene(mut commands: Commands) {
             intensity: 0.0,
             range: 40.0,
             color: Color::srgb(1.0, 0.8, 0.5),
-            shadows_enabled: true,
+            shadows_enabled: false,
             ..default()
         },
         Transform::from_xyz(0.0, 10.0, 0.0),

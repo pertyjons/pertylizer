@@ -1,12 +1,10 @@
 //! Harmonic Ribbons — Ribbons that track pitch and glide.
 //!
-//! Visual idea: Sine wave-like trails that spawn based on note events and their lengths are
-//! driven by note hold (although we don't have note-off yet, we can simulate a decaying trail).
+//! Uses pre-allocated mesh and shared materials to avoid per-note allocations.
 
-use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 const MAX_RIBBONS: usize = 32;
@@ -14,10 +12,18 @@ const SEGMENTS_PER_RIBBON: usize = 40;
 const RIBBON_LIFETIME: f32 = 3.0;
 const SPEED: f32 = 10.0;
 const EMISSIVE_STRENGTH: f32 = 10.0;
+/// Number of shared material buckets.
+const NUM_MATERIAL_BUCKETS: usize = 12;
+
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 360.0,
+    saturation: 0.9,
+    lightness: 0.5,
+    emissive_strength: EMISSIVE_STRENGTH,
+};
 
 #[derive(Component)]
 pub struct Ribbon {
-    pub hue: f32,
     pub life: f32,
     pub age: f32,
     pub base_y: f32,
@@ -25,8 +31,28 @@ pub struct Ribbon {
     pub segments: Vec<Entity>,
 }
 
-pub fn setup() {
-    // Ribbons will be dynamically spawned on note-on
+/// Pre-allocated mesh for ribbon segments.
+#[derive(Resource)]
+pub struct RibbonMesh(Handle<Mesh>);
+
+/// Shared materials bucketed by hue.
+#[derive(Resource)]
+pub struct RibbonMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
+
+pub fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(RibbonMesh(meshes.add(Cuboid::new(0.5, 0.2, 2.0))));
+
+    let shared_mats =
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+    commands.insert_resource(RibbonMaterials {
+        materials: shared_mats,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -36,9 +62,11 @@ pub fn spawn_and_update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     mut query: Query<(Entity, &mut Ribbon)>,
-    mut segment_query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>)>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut segment_query: Query<&mut Transform>,
+    ribbon_mesh: Res<RibbonMesh>,
+    ribbon_materials: Res<RibbonMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut last_fade: Local<f32>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::HarmonicRibbons);
     let fade = effect_state.fade;
@@ -58,25 +86,21 @@ pub fn spawn_and_update(
         let active_count = query.iter().count();
 
         if active_count < MAX_RIBBONS {
-            let hue = (note as f32 / 127.0) * 360.0;
             let vel_norm = velocity as f32 / 127.0;
 
             // Map pitch to Y axis
             let y = ((note as f32 / 127.0) * 20.0) - 5.0;
 
-            let mesh = meshes.add(Cuboid::new(0.5, 0.2, 2.0));
-            let color = Color::hsl(hue, 0.9, 0.5);
-            let material = materials.add(StandardMaterial {
-                base_color: color,
-                emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
-                ..default()
-            });
+            // Pick shared material based on note
+            let mat_idx =
+                (note as usize * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
+            let material = ribbon_materials.materials[mat_idx].clone();
 
             let mut segments = Vec::with_capacity(SEGMENTS_PER_RIBBON);
             for _ in 0..SEGMENTS_PER_RIBBON {
                 let seg_ent = commands
                     .spawn((
-                        Mesh3d(mesh.clone()),
+                        Mesh3d(ribbon_mesh.0.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::from_xyz(0.0, -100.0, 0.0).with_scale(Vec3::ZERO),
                         Visibility::Hidden,
@@ -87,7 +111,6 @@ pub fn spawn_and_update(
             }
 
             commands.spawn(Ribbon {
-                hue,
                 life: RIBBON_LIFETIME * vel_norm, // Quieter notes die faster
                 age: 0.0,
                 base_y: y,
@@ -97,9 +120,7 @@ pub fn spawn_and_update(
         }
     }
 
-    let fade = effect_state.fade;
-
-    // 2. Update existing ribbons
+    // 2. Update existing ribbons — transform only, no material mutation per entity
     for (entity, mut ribbon) in &mut query {
         ribbon.age += dt;
 
@@ -127,32 +148,25 @@ pub fn spawn_and_update(
             let wave = (seg_x * 0.5 + ribbon.age * 5.0).sin() * 2.0;
             let z = (seg_x * 0.3).cos() * 5.0;
 
-            if let Ok((mut transform, mat_handle)) = segment_query.get_mut(*seg_ent) {
+            if let Ok(mut transform) = segment_query.get_mut(*seg_ent) {
                 transform.translation = Vec3::new(seg_x, ribbon.base_y + wave, z);
 
                 // Tail tapers off in thickness
                 let tail_scale = (1.0 - (i_f / total_f)).max(0.01);
-                // Head scales down as it dies
-                let scale_y = tail_scale * life_pct;
+                // Head scales down as it dies, encode fade into scale
+                let scale_y = tail_scale * life_pct * fade;
                 transform.scale = Vec3::new(1.0, scale_y, tail_scale);
 
-                // Look at previous segment for smooth curve
-                if seg_x > -20.0 && scale_y > 0.01 {
-                    // Since we do procedural translation, rotation can be kept simple or derived
-                    // We just rotate along X axis slightly to give a ribbon feel
-                    transform.rotation = Quat::from_rotation_x(wave * 0.2);
-                }
-
-                // Update material for crossfade
-                if fade < 1.0
-                    && let Some(material) = materials.get_mut(&mat_handle.0)
-                {
-                    let color = Color::hsl(ribbon.hue, 0.9, 0.5 * fade * life_pct);
-                    material.base_color = color;
-                    material.emissive =
-                        LinearRgba::from(color) * EMISSIVE_STRENGTH * fade * life_pct;
-                }
+                transform.rotation = Quat::from_rotation_x(wave * 0.2);
             }
         }
     }
+
+    effects::update_hue_materials_for_fade(
+        &mut materials,
+        &ribbon_materials.materials,
+        &MAT_CONFIG,
+        fade,
+        &mut last_fade,
+    );
 }

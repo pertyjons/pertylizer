@@ -6,7 +6,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 /// The base rotation speed when CPU is 0%.
@@ -78,8 +78,8 @@ pub fn update(
     let strain = (cpu_norm * 0.7 + voice_strain * 0.3).clamp(0.0, 1.0);
 
     let fade = effect_state.fade;
-    let needs_material_update = (strain - state.last_strain).abs() > 0.005
-        || (fade - state.last_fade).abs() > 0.005
+    let needs_material_update = (strain - state.last_strain).abs() > effects::FADE_EPSILON
+        || (fade - state.last_fade).abs() > effects::FADE_EPSILON
         || fade < 1.0;
 
     for (mut transform, material_handle) in &mut query {

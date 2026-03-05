@@ -1,12 +1,11 @@
 //! Waveform ring — FFT bands arranged in a circle.
 //!
 //! 128 thin bars positioned on a ring, with height driven by FFT magnitude.
-//! Creates a pulsing circular spectrum visualizer.
+//! Uses shared materials per hue-group to allow Bevy batching.
 
-use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
 
 /// Marker with FFT band index.
@@ -25,6 +24,22 @@ const BAR_THICKNESS: f32 = 0.15;
 /// Emissive intensity multiplier.
 const EMISSIVE_STRENGTH: f32 = 6.0;
 
+/// Number of shared material buckets.
+const NUM_MATERIAL_BUCKETS: usize = 16;
+
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 360.0,
+    saturation: 0.85,
+    lightness: 0.5,
+    emissive_strength: EMISSIVE_STRENGTH,
+};
+
+/// Shared materials per hue bucket.
+#[derive(Resource)]
+pub struct RingBarMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
+
 /// Spawn 128 bars arranged in a circle (initially hidden).
 pub fn setup(
     mut commands: Commands,
@@ -33,21 +48,22 @@ pub fn setup(
 ) {
     let mesh = meshes.add(Cuboid::new(BAR_THICKNESS, 1.0, BAR_THICKNESS));
 
+    let shared_mats =
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+    commands.insert_resource(RingBarMaterials {
+        materials: shared_mats.clone(),
+    });
+
     for i in 0..NUM_FFT_BANDS {
         let angle = (i as f32 / NUM_FFT_BANDS as f32) * std::f32::consts::TAU;
         let x = angle.cos() * RING_RADIUS;
         let z = angle.sin() * RING_RADIUS;
 
-        let hue = (i as f32 / NUM_FFT_BANDS as f32) * 360.0;
-        let color = Color::hsl(hue, 0.85, 0.5);
+        let bucket = (i * NUM_MATERIAL_BUCKETS / NUM_FFT_BANDS).min(NUM_MATERIAL_BUCKETS - 1);
 
         commands.spawn((
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color,
-                emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
-                ..default()
-            })),
+            MeshMaterial3d(shared_mats[bucket].clone()),
             Transform::from_xyz(x, 0.0, z)
                 .with_scale(Vec3::new(1.0, 0.01, 1.0))
                 .with_rotation(Quat::from_rotation_y(-angle)),
@@ -58,20 +74,20 @@ pub fn setup(
     }
 }
 
-/// Update ring bar heights and emissive from FFT.
+/// Update ring bar heights from FFT.
 pub fn update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
-    mut query: Query<(&mut Transform, &RingBar, &MeshMaterial3d<StandardMaterial>)>,
+    mut query: Query<(&mut Transform, &RingBar)>,
+    ring_materials: Res<RingBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut last_fade: Local<f32>,
 ) {
     if !effect_state.active.is_active(EffectId::WaveformRing) {
         return;
     }
 
-    let fade = effect_state.fade;
-
-    for (mut transform, bar, material_handle) in &mut query {
+    for (mut transform, bar) in &mut query {
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
         // Smooth lerp
@@ -82,14 +98,13 @@ pub fn update(
         transform.scale.y = new_height;
         // Keep bar base on the ground
         transform.translation.y = new_height / 2.0;
-
-        // Update emissive only during crossfade
-        if fade < 1.0
-            && let Some(material) = materials.get_mut(&material_handle.0)
-        {
-            let hue = (bar.0 as f32 / NUM_FFT_BANDS as f32) * 360.0;
-            let color = Color::hsl(hue, 0.85, 0.5 * fade);
-            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
-        }
     }
+
+    effects::update_hue_materials_for_fade(
+        &mut materials,
+        &ring_materials.materials,
+        &MAT_CONFIG,
+        effect_state.fade,
+        &mut last_fade,
+    );
 }

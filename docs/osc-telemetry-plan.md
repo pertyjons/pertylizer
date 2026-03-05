@@ -6,7 +6,7 @@
 |-------|--------|-------------|
 | Phase 1 | **Complete** | `synth_osc` crate — sender thread, event ring buffer, FFT, OSC encoding |
 | Phase 2 | **Complete** | Bevy visualizer — FFT bars, RMS light, note flash, orbital camera, bloom, beat pulse |
-| Phase 3 | **In progress** | Polish & extend — idle mode, additional telemetry, particle effects, effect system |
+| Phase 3 | **Complete** | Polish & extend — idle mode, additional telemetry, particle effects, effect system, performance optimization |
 | Phase 4 | Future | Creative effects, per-instrument streams, video export |
 
 ## Overview
@@ -131,7 +131,7 @@ rosc = "0.11.4"
 
 ---
 
-## Phase 3: Polish & Extend (In Progress)
+## Phase 3: Polish & Extend — COMPLETE
 
 See `TODO.md` Priority 0 for the full task list.
 
@@ -143,34 +143,47 @@ See `TODO.md` Priority 0 for the full task list.
 ### 3.2 Additional Telemetry Streams — COMPLETE
 All priority streams implemented (see address map above).
 
-### 3.3 Visualizer Improvements
+### 3.3 Visualizer Improvements — COMPLETE
 - Particle systems for note events
 - Camera auto-movement synced to tempo
 - "Waiting for signal" indicator
 - Protocol version check from `/synth/meta`
-- Effect rack with switchable visual layers
+- Effect rack with switchable visual layers (15 effects, Left/Right/R switching, fade-through-black crossfade)
+- All 13 creative effects from Phase 4 catalog implemented
+
+### 3.4 Visualizer Performance Optimization — COMPLETE
+- Disabled shadow maps (eliminated 6 cube-face re-renders per frame)
+- Shared hue-bucketed materials across all effects (16 shared instead of 128 unique per effect)
+- Extracted `HueMaterialConfig` + helpers into `effects.rs` for DRY material setup/update
+- Scale-based fade instead of per-entity material emissive mutation
+- Removed `AlphaMode::Blend` (was disabling batching)
+- Material updates gated by `FADE_EPSILON` threshold
+- Reduced centroid_nebula particles (2000 → 500)
+- Fixed velocity_meteors exponential shrink bug
 
 ---
 
 ## Phase 4: Future Ideas
 
-### Creative Effect Catalog
+### Creative Effect Catalog — ALL IMPLEMENTED
 
-| Effect | Visual idea | Driven by | Technical approach |
+All 13 effects from the original catalog are implemented and available in the effect rack:
+
+| Effect | Visual idea | Driven by | Status |
 |---|---|---|---|
-| Spectral Cathedral | FFT bands form arches that breathe | FFT, RMS | Instanced arches + emissive |
-| Harmonic Ribbons | Ribbons track pitch and glide | Note-on, pitch | Spline trails, hue = note |
-| Chord Bloom | Chords trigger radial bursts | Note clusters | Particle bursts + radial expansion |
-| Pulse Terrain | Landscape breathes with bass | Low FFT, RMS | Heightmap displacement |
-| Spectral Origami | Folded planes open with harmonics | FFT, centroid | Mesh folding + shader |
-| Ferrofluid Tendrils | Magnetic tendrils from bass | Low FFT | Curl noise + instanced strands |
-| Neon Calligraphy | Notes draw glyph strokes | Note on/off, pitch | SDF strokes + bloom |
-| Fractal Pulse | Recursive shapes synced to beat | Tempo, RMS | Fractal instancing |
-| CPU Overdrive Core | Glowing core that spins and fractures under load | CPU Usage, Voice Count | Rotating core with noise displacement, color shifting to red on high CPU |
-| Flux Supernova | Star that explodes on sudden spectral changes | Spectral Flux, RMS | Particle explosion / bloom flash triggered by flux spikes |
-| Phase Rings | Concentric rings expanding with the beat phase | Beat Phase, Tempo | Torus instances scaling from 0 to max radius synced to `beat_phase` |
-| Centroid Nebula | Particle cloud shifting color/shape based on brightness | Spectral Centroid, RMS | Compute shader / particle system where centroid Hz shifts color (warm to cool) and turbulence |
-| Velocity Meteors | Meteors falling with size based on impact | Note-on, Velocity | Spheres with trail renderer falling from top, size/brightness mapped to velocity |
+| Spectral Cathedral | FFT bands form arches that breathe | FFT, RMS | Done |
+| Harmonic Ribbons | Ribbons track pitch and glide | Note-on, pitch | Done |
+| Chord Bloom | Chords trigger radial bursts | Note clusters | Done |
+| Pulse Terrain | Landscape breathes with bass | Low FFT, RMS | Done |
+| Spectral Origami | Folded planes open with harmonics | FFT, centroid | Done |
+| Ferrofluid Tendrils | Magnetic tendrils from bass | Low FFT | Done |
+| Neon Calligraphy | Notes draw glyph strokes | Note on/off, pitch | Done |
+| Fractal Pulse | Recursive shapes synced to beat | Tempo, RMS | Done |
+| CPU Overdrive Core | Glowing core under load | CPU Usage, Voice Count | Done |
+| Flux Supernova | Star explodes on spectral changes | Spectral Flux, RMS | Done |
+| Phase Rings | Concentric rings with beat phase | Beat Phase, Tempo | Done |
+| Centroid Nebula | Particle cloud shifting by brightness | Spectral Centroid, RMS | Done |
+| Velocity Meteors | Meteors falling by velocity | Note-on, Velocity | Done |
 
 ### Future Features
 - Per-instrument OSC streams and per-track visual layers

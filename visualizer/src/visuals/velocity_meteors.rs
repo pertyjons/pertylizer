@@ -123,9 +123,8 @@ pub fn update(
         transform.translation.y -= fall_amt;
 
         // Shrink as it falls, like it's burning up
-        let life_pct = 1.0 - (meteor.fallen / FALL_DISTANCE);
-        let scale = life_pct.max(0.01);
-        transform.scale *= scale;
+        let life_pct = (1.0 - (meteor.fallen / FALL_DISTANCE)).max(0.01);
+        transform.scale = Vec3::splat(life_pct);
 
         if meteor.fallen >= FALL_DISTANCE {
             commands.entity(entity).despawn();

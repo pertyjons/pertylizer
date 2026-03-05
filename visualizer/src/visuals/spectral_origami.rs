@@ -106,18 +106,25 @@ pub fn update_material(
     origami_material: Res<OrigamiMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_hue: Local<f32>,
+    mut frame_counter: Local<u32>,
 ) {
-    if !effect_state.active.is_active(EffectId::SpectralOrigami) && effect_state.fade == 0.0 {
+    let fade = effect_state.fade;
+
+    if !effect_state.active.is_active(EffectId::SpectralOrigami) && fade == 0.0 {
+        return;
+    }
+
+    // Shift hue slowly over time, bumped by centroid
+    let centroid_norm = (telemetry.centroid_hz / 5000.0).clamp(0.0, 1.0);
+    *last_hue = (*last_hue + 0.5 + centroid_norm * 2.0) % 360.0;
+
+    // Only update material every 3rd frame to reduce GPU re-uploads
+    *frame_counter = frame_counter.wrapping_add(1);
+    if !(*frame_counter).is_multiple_of(3) {
         return;
     }
 
     if let Some(material) = materials.get_mut(&origami_material.0) {
-        let fade = effect_state.fade;
-
-        // Shift hue slowly over time, bumped by centroid
-        let centroid_norm = (telemetry.centroid_hz / 5000.0).clamp(0.0, 1.0);
-        *last_hue = (*last_hue + 0.5 + centroid_norm * 2.0) % 360.0;
-
         let color = Color::hsl(*last_hue, 0.8, 0.5 * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
