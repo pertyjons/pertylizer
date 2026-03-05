@@ -50,6 +50,18 @@ impl Pitch {
     ///
     /// Returns `None` if the result would be outside valid MIDI range (0-127).
     #[allow(clippy::cast_possible_truncation)]
+    /// Saturating subtraction of a raw offset (clamped to valid MIDI range).
+    #[must_use]
+    pub fn saturating_sub(self, offset: u8) -> Self {
+        Self(self.0.saturating_sub(offset))
+    }
+
+    /// Saturating addition of a raw offset (clamped to 127).
+    #[must_use]
+    pub fn saturating_add(self, offset: u8) -> Self {
+        Self(self.0.saturating_add(offset).min(127))
+    }
+
     pub fn transpose(&self, semitones: Semitones) -> Option<Self> {
         let transposed = self.0 as i16 + semitones.as_f32().round() as i16;
         if (0..=127).contains(&transposed) {
