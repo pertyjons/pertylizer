@@ -266,6 +266,25 @@ impl VisualizationBuffer {
         (snapshot_l.clone(), snapshot_r.clone())
     }
 
+    /// Copy the left-channel snapshot into `dst` with windowing applied, without
+    /// draining the ring buffer.
+    ///
+    /// Copies the last `dst.len()` samples from the snapshot into `dst`,
+    /// multiplied element-wise by `window`. If the snapshot is shorter than `dst`,
+    /// the remaining elements are zeroed. Unlike [`read_samples`], this only locks
+    /// the snapshot mutex (not the consumer), so it does not compete with the GUI.
+    pub fn copy_snapshot_windowed_into(&self, dst: &mut [f32], window: &[f32]) {
+        let snapshot = self.snapshot_l.lock();
+        let copy_len = snapshot.len().min(dst.len());
+        let src_offset = snapshot.len().saturating_sub(copy_len);
+        for i in 0..copy_len {
+            dst[i] = snapshot[src_offset + i] * window[i];
+        }
+        for sample in dst.iter_mut().skip(copy_len) {
+            *sample = 0.0;
+        }
+    }
+
     /// Get current peak levels (lock-free).
     pub fn get_peaks(&self) -> (f32, f32) {
         (self.peak_l.load(), self.peak_r.load())

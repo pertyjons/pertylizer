@@ -798,6 +798,25 @@ pub enum EngineEvent {
     },
 }
 
+/// Lightweight note event for OSC telemetry (audio thread → OSC thread).
+///
+/// This is `Copy` and small, suitable for lock-free ring buffer transport
+/// without cloning expensive `EngineEvent` variants.
+#[derive(Debug, Clone, Copy)]
+pub enum NoteEvent {
+    /// A note was triggered.
+    On {
+        note: MidiNote,
+        velocity: Velocity,
+        channel: MidiChannel,
+    },
+    /// A note was released.
+    Off {
+        note: MidiNote,
+        channel: MidiChannel,
+    },
+}
+
 // Manual Debug implementation because Box<dyn PolyModule> doesn't implement Debug
 impl std::fmt::Debug for EngineCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

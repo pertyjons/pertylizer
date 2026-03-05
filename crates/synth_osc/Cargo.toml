@@ -1,0 +1,19 @@
+[package]
+name = "synth_osc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "OSC telemetry sender for Pertylizer"
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+realfft = { workspace = true }
+rosc = { workspace = true }
+ringbuf = { workspace = true }
+synth_engine = { path = "../synth_engine" }
+synth_core = { path = "../synth_core" }
+synth_dsp = { path = "../synth_dsp" }

@@ -38,8 +38,8 @@ pub mod voice_allocator;
 
 // Engine exports
 pub use commands::{
-    EffectType, EngineCommand, EngineEvent, InstrumentParam, ModuleId, ModuleTypeId, PortId,
-    VisualizerType,
+    EffectType, EngineCommand, EngineEvent, InstrumentParam, ModuleId, ModuleTypeId, NoteEvent,
+    PortId, VisualizerType,
 };
 pub use connectivity::{
     ModuleConnectivityStatus, ModuleError, ModuleErrorKind, PortVisualState, VoiceStealReason,
