@@ -1,5 +1,6 @@
 //! FFT bar visualization — 128 cubes driven by frequency band magnitudes.
 
+use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
@@ -36,7 +37,7 @@ pub fn setup(
             Mesh3d(mesh.clone()),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color,
-                emissive: color.into(),
+                emissive: LinearRgba::from(color) * 5.0,
                 ..default()
             })),
             Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),

@@ -685,6 +685,49 @@ impl std::fmt::Display for MidiChannel {
     }
 }
 
+/// MIDI controller number (0–127 for standard CCs, 128+ for pseudo-CCs).
+///
+/// Pseudo-CCs map non-CC controllers to a unified CC space for telemetry:
+/// - 128 = Pitch Bend
+/// - 129 = Channel Aftertouch
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CcNumber(pub u8);
+
+impl CcNumber {
+    /// Mod wheel (CC1).
+    pub const MOD_WHEEL: Self = Self(1);
+    /// Pitch bend (pseudo-CC, not a real MIDI CC).
+    pub const PITCH_BEND: Self = Self(128);
+    /// Channel aftertouch (pseudo-CC, not a real MIDI CC).
+    pub const AFTERTOUCH: Self = Self(129);
+
+    /// Create a new CC number.
+    #[inline]
+    #[must_use]
+    pub const fn new(cc: u8) -> Self {
+        Self(cc)
+    }
+
+    /// Get the raw CC number.
+    #[inline]
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<u8> for CcNumber {
+    fn from(cc: u8) -> Self {
+        Self(cc)
+    }
+}
+
+impl From<CcNumber> for u8 {
+    fn from(cc: CcNumber) -> Self {
+        cc.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

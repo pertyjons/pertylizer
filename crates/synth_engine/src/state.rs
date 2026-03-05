@@ -322,6 +322,8 @@ pub struct EngineState {
     pub effect_count: AtomicU32,
     /// Instrument metadata snapshots for MCP and multi-GUI access.
     pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
+    /// Count of dropped note events (ring buffer overflow).
+    pub event_drops: StdAtomicU32,
 }
 
 impl EngineState {
@@ -338,6 +340,7 @@ impl EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            event_drops: StdAtomicU32::new(0),
         })
     }
 
@@ -373,6 +376,7 @@ impl Default for EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            event_drops: StdAtomicU32::new(0),
         }
     }
 }

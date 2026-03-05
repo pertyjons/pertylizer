@@ -11,6 +11,8 @@ pub struct OscConfig {
     pub update_rate_hz: f32,
     /// How often to send `/synth/meta` (seconds, 0 = only on start).
     pub meta_interval_secs: f32,
+    /// Seconds without `/viz/pong` before entering idle mode (skip FFT, reduce rate).
+    pub idle_timeout_secs: f32,
 }
 
 impl Default for OscConfig {
@@ -21,6 +23,7 @@ impl Default for OscConfig {
                 .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 9000))),
             update_rate_hz: 30.0,
             meta_interval_secs: 5.0,
+            idle_timeout_secs: 5.0,
         }
     }
 }

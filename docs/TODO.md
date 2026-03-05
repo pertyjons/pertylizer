@@ -1,9 +1,48 @@
-# TODO - Pertylizer (v0.212.0)
+# TODO - Pertylizer (v0.213.0)
 
-## Priority 0.A.8 — Newtype arithmetic refinements (completed)
-- [x] `view_pitch_min`/`view_pitch_max` should be `Pitch` in `handle_piano_roll_interaction` (eliminates ~6 `Pitch::new().unwrap_or()` calls)
-- [x] Add `impl Sub<PatternTick> for PatternTick` → `SeqDuration` (eliminates ~10 manual `.0.saturating_sub(.0)` patterns)
-- [x] Add `SeqDuration::as_pattern_tick()` helper for `PatternTick(data.length_ticks.0)` conversion
+## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
+
+> Full plan: [osc-telemetry-plan.md](osc-telemetry-plan.md)
+
+### 0.1 OSC idle mode (`synth_osc`) — DONE
+- [x] Skip FFT computation and UDP sends when no visualizer is connected
+- [x] `/viz/ping`↔`/viz/pong` handshake: sender includes `/viz/ping` in meta bundles, visualizer replies with `/viz/pong` every 2s
+- [x] Idle timeout (5s default): when no pong received, skip FFT + full telemetry, send meta-only beacon
+- [x] Automatic resume when client connects, with console log for state changes
+
+### 0.1b OSC status indicator in top bar — DONE
+- [x] Show OSC status icon + text in the top bar (like MCP indicator)
+- [x] Three states: **Off** (red), **Idle** (dim, sending beacon but no client), **Connected** (green, client responding with `/viz/pong`)
+- [x] Hover tooltip with status description
+
+### 0.2 Additional OSC telemetry streams — DONE
+- [x] `/synth/audio/centroid` — spectral centroid (brightness) for effect selection
+- [x] `/synth/audio/flux` — spectral flux for onset/section detection
+- [x] `/synth/transport/phase` — beat phase 0..1 within current beat
+- [x] `/synth/event/cc` — MIDI CC events (cc, value, channel) including pitch bend (128) and aftertouch (129)
+- [x] `/synth/engine/event_drops` — event ring buffer drop count (only sent when > 0)
+- [x] `/synth/meta/fft_freqs` — 128 center frequencies for log-spaced bar positioning (sent with meta)
+
+### 0.3 Visualizer improvements (`visualizer/`) — DONE
+- [x] Particle systems for note events (golden-angle burst on note-on, gravity + fade, 512 particle cap)
+- [x] Camera auto-movement synced to tempo (orbit speed scales with BPM, 120 BPM = baseline)
+- [x] "Waiting for signal" indicator when no OSC data received (fades in after ~2s stale)
+- [x] Protocol version check — warn once on mismatch with `/synth/meta`
+- [x] Visualizer handles all Phase 3 telemetry streams (centroid, flux, phase, cc, drops, fft_freqs)
+- [ ] Configurable FFT bin count (64/128/256)
+- [ ] Extract shared OSC address constants — visualizer hardcodes `"/viz/pong"` instead of using `synth_osc::addresses::VIZ_PONG` (separate workspace can't depend on `synth_osc`, consider a shared `synth_osc_protocol` crate or constants file)
+
+### 0.4 Visualizer effect system
+- [ ] Effect rack with switchable visual layers (manual next/prev/random)
+- [ ] At least 2 additional effect modes beyond FFT bars (e.g. harmonic ribbons, spectral cathedral)
+- [ ] Crossfade between effects on switch
+
+### 0.5 Settings & control
+- [ ] OSC enable/disable toggle in Pertylizer settings GUI
+- [ ] `/viz/` OSC control endpoints (effect select, param set, scene load)
+
+### 0.6 Shared dB conversion utility
+- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — inline `20.0 * x.log10()` + normalization repeated in 4+ locations
 
 ---
 
@@ -36,36 +75,6 @@
 - [ ] Add patch template directory and `Save Patch as Template` action
 - [ ] Add Patch Template browser to load patch templates
 - [ ] Support optional `license` and `min_app_version` metadata in group templates
-
----
-
-## Priority 1.A — OSC Telemetry & Bevy Visualizer
-
-> Full plan: [osc-telemetry-plan.md](osc-telemetry-plan.md)
-
-### Phase 1: Synth OSC sender (`synth_osc` crate)
-- [x] Create `crates/synth_osc/` crate skeleton (config, address constants, sender)
-- [x] Add second event ring buffer to `SynthEngine` for OSC event stream (note on/off)
-- [x] Implement OSC sender thread (poll shared state → rosc → UDP at ~30 Hz)
-- [x] Expose master `VisualizationBuffer` (spectrum FFT data) for OSC access
-- [x] Wire into `pertylizer` app (enabled by default, `--no-osc` to disable)
-- [x] Test with external OSC monitor tool
-
-### Phase 2: Bevy visualizer (`visualizer/`)
-- [x] Scaffold Bevy 0.16 project with camera and ground plane
-- [x] Implement `SynthTelemetry` resource and non-blocking OSC receiver system
-- [x] Build FFT bar visualization (128 cubes driven by frequency bands)
-- [x] Add RMS-driven point light and note-flash emissive sphere
-- [x] Add orbital camera
-- [x] Add bloom post-processing
-- [x] Add beat-synced pulse (ground plane glow + ambient light on beat crossings, stronger on downbeats)
-
-### 1.A.3 OSC idle mode (`synth_osc`)
-- [ ] Skip FFT computation and UDP sends when no visualizer is connected — currently runs 2048-point FFT 30×/sec unconditionally
-- [ ] Detect client presence via handshake, or track whether UDP sends succeed
-
-### 1.7 Shared dB conversion utility
-- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — inline `20.0 * x.log10()` + normalization is repeated in 4+ locations (spectrum_analyzer, OSC sender, meter widget, visual_state)
 
 ---
 

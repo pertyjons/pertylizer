@@ -26,9 +26,9 @@ use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue,
-    EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType, NormalizedValue,
-    OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate,
-    Seconds, StreamInfo, Velocity, Waveform,
+    CcNumber, EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType,
+    NormalizedValue, OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext,
+    SampleCount, SampleRate, Seconds, StreamInfo, Velocity, Waveform,
 };
 use synth_modules::{Amplifier, Envelope, Filter, Lfo, Oscillator};
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
@@ -707,12 +707,27 @@ impl SynthEngine {
             // MIDI controllers
             EngineCommand::PitchBend { value, channel } => {
                 self.handle_pitch_bend(value, channel);
+                self.push_note_event(NoteEvent::Cc {
+                    cc: CcNumber::PITCH_BEND,
+                    value: value.to_unipolar(),
+                    channel,
+                });
             }
             EngineCommand::ModWheel { value, channel } => {
                 self.handle_mod_wheel(value, channel);
+                self.push_note_event(NoteEvent::Cc {
+                    cc: CcNumber::MOD_WHEEL,
+                    value,
+                    channel,
+                });
             }
             EngineCommand::Aftertouch { value, channel } => {
                 self.handle_aftertouch(value, channel);
+                self.push_note_event(NoteEvent::Cc {
+                    cc: CcNumber::AFTERTOUCH,
+                    value,
+                    channel,
+                });
             }
             EngineCommand::PolyAftertouch {
                 note,
@@ -1231,7 +1246,7 @@ impl SynthEngine {
                 velocity,
                 channel,
             });
-            let _ = self.note_event_producer.try_push(NoteEvent::On {
+            self.push_note_event(NoteEvent::On {
                 note,
                 velocity,
                 channel,
@@ -1273,9 +1288,16 @@ impl SynthEngine {
         let _ = self
             .event_producer
             .try_push(EngineEvent::NoteReleased { note, channel });
-        let _ = self
-            .note_event_producer
-            .try_push(NoteEvent::Off { note, channel });
+        self.push_note_event(NoteEvent::Off { note, channel });
+    }
+
+    /// Push a note event to the OSC telemetry ring buffer, tracking drops.
+    fn push_note_event(&mut self, event: NoteEvent) {
+        if self.note_event_producer.try_push(event).is_err() {
+            self.state
+                .event_drops
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn handle_all_notes_off(&mut self) {

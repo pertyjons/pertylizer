@@ -62,14 +62,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start OSC telemetry by default (disable with --no-osc)
     #[cfg(feature = "osc")]
-    let _osc_telemetry = if args.iter().any(|a| a == "--no-osc") {
-        None
+    let (_osc_telemetry, osc_shared) = if args.iter().any(|a| a == "--no-osc") {
+        (None, None)
     } else {
         let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::default());
+        let shared = osc.shared_state();
         if let Some(consumer) = handle.take_note_event_consumer() {
             osc.start(std::sync::Arc::clone(&handle.state), consumer);
         }
-        Some(osc)
+        (Some(osc), Some(shared))
     };
 
     // Create the shared session (module lifecycle owner)
@@ -153,6 +154,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         song,
         #[cfg(feature = "mcp")]
         mcp_shared: Some(mcp_shared),
+        #[cfg(feature = "osc")]
+        osc_shared,
         settings,
     };
 

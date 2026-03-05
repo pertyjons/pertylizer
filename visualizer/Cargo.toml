@@ -6,6 +6,7 @@ rust-version = "1.93"
 description = "Bevy 3D visualizer for Pertylizer — driven by OSC telemetry"
 authors = ["Per Jonsson"]
 license = "MIT"
+repository = "https://github.com/pertyjons/pertylizer"
 
 [dependencies]
 bevy = "0.18.1"

@@ -1,5 +1,20 @@
 # Version History
 
+## [0.213.0] - 2026-03-05
+### OSC/MCP defaults, Bevy 3D visualizer with bloom and beat-sync
+- **OSC telemetry enabled by default** — no longer requires `--osc` flag; use `--no-osc` to disable
+- **MCP server enabled by default** — `--features mcp` no longer needed (was already default feature)
+- **Bevy 3D visualizer** (`visualizer/`) — separate Bevy 0.18 project receiving OSC telemetry over UDP:
+  - FFT bar visualization (128 cubes with hue gradient, smooth lerp attack/decay)
+  - RMS-driven point light (intensity tracks audio level)
+  - Note-flash emissive sphere (hue from MIDI note, brightness from velocity)
+  - Orbital camera (slow rotation around scene)
+  - Bloom post-processing (HDR glow on emissive materials)
+  - Beat-synced pulse (ground plane glow + ambient light boost on beat crossings, stronger on downbeats, frame-rate-independent decay)
+- **Workspace cleanup** — `visualizer/` excluded from main workspace (separate Bevy dependency graph)
+- **Updated README** — added OSC, visualizer, and `synth_osc` crate to features, tech stack, and crate table
+- **rosc bumped to 0.11.4**
+
 ## [0.212.0] - 2026-03-05
 ### DSP abstractions and effects deduplication
 - **`InputReader` abstraction** — zero-cost port reader (`inputs.reader(PortName, default)`) that eliminates `.map(|b| b[i]).unwrap_or(default)` boilerplate across all modules

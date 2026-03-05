@@ -4,7 +4,9 @@ pub mod beat_pulse;
 pub mod camera;
 pub mod fft_bars;
 pub mod note_flash;
+pub mod particles;
 pub mod rms_light;
+pub mod waiting_indicator;
 
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -15,7 +17,16 @@ pub struct VisualsPlugin;
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<beat_pulse::BeatPulseState>()
-            .add_systems(Startup, (setup_scene, fft_bars::setup, note_flash::setup))
+            .init_resource::<particles::ParticleCount>()
+            .add_systems(
+                Startup,
+                (
+                    setup_scene,
+                    fft_bars::setup,
+                    note_flash::setup,
+                    waiting_indicator::setup,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -24,6 +35,9 @@ impl Plugin for VisualsPlugin {
                     note_flash::update,
                     beat_pulse::update,
                     camera::orbit,
+                    particles::spawn,
+                    particles::update,
+                    waiting_indicator::update,
                 ),
             );
     }
@@ -76,7 +90,6 @@ fn setup_scene(
         Transform::from_xyz(0.0, 12.0, 25.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
         camera::OrbitCamera {
             radius: 25.0,
-            speed: 0.1,
             angle: 0.0,
         },
         Bloom {

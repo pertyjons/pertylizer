@@ -1,11 +1,11 @@
 //! Pertylizer Visualizer — Bevy 3D visualizer driven by OSC telemetry.
 //!
 //! Receives OSC data from Pertylizer on UDP port 9000 and renders
-//! FFT bars, RMS-driven lighting, and note-flash effects.
+//! FFT bars, RMS-driven lighting, note particles, and beat-synced effects.
 //!
 //! # Usage
 //!
-//! 1. Start Pertylizer with `--osc` flag
+//! 1. Start Pertylizer (OSC telemetry enabled by default)
 //! 2. Run this visualizer: `cargo run --release`
 
 mod osc_receiver;
