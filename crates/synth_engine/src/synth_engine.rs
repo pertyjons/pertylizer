@@ -2014,10 +2014,13 @@ fn resolve_instrument_index(
 /// Route sequencer events to the appropriate instruments.
 ///
 /// Uses `InstrumentMapping` for stable lookup instead of vec-index casting.
+/// Also pushes note events to the OSC telemetry ring buffer.
 fn route_sequencer_events(
     events: &[SequencerEvent],
     instruments: &mut [Box<Instrument>],
     mapping: &InstrumentMapping,
+    note_event_producer: &mut ringbuf::HeapProd<NoteEvent>,
+    event_drops: &std::sync::atomic::AtomicU32,
 ) {
     for event in events {
         match event {
@@ -2032,6 +2035,17 @@ fn route_sequencer_events(
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
                     instruments[idx].note_on(note, vel);
+
+                    if note_event_producer
+                        .try_push(NoteEvent::On {
+                            note,
+                            velocity: vel,
+                            channel: MidiChannel::CH1,
+                        })
+                        .is_err()
+                    {
+                        event_drops.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
             SequencerEvent::NoteOff {
@@ -2041,6 +2055,16 @@ fn route_sequencer_events(
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
                     instruments[idx].note_off(note);
+
+                    if note_event_producer
+                        .try_push(NoteEvent::Off {
+                            note,
+                            channel: MidiChannel::CH1,
+                        })
+                        .is_err()
+                    {
+                        event_drops.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
             SequencerEvent::Parameter { target, value, .. } => {
@@ -2148,6 +2172,8 @@ impl AudioProcessor for SynthEngine {
             &self.sequencer_event_buffer,
             &mut self.instruments,
             &self.instrument_mapping,
+            &mut self.note_event_producer,
+            &self.state.event_drops,
         );
 
         self.process_voices(&process_context);
