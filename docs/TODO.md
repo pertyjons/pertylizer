@@ -48,15 +48,21 @@
 - [x] Add second event ring buffer to `SynthEngine` for OSC event stream (note on/off)
 - [x] Implement OSC sender thread (poll shared state → rosc → UDP at ~30 Hz)
 - [x] Expose master `VisualizationBuffer` (spectrum FFT data) for OSC access
-- [x] Wire into `pertylizer` app with `--osc` CLI flag
+- [x] Wire into `pertylizer` app (enabled by default, `--no-osc` to disable)
 - [x] Test with external OSC monitor tool
 
-### Phase 2: Bevy visualizer (separate project `pertylizer-visualizer`)
-- [ ] Scaffold Bevy 0.16 project with camera and ground plane
-- [ ] Implement `SynthTelemetry` resource and non-blocking OSC receiver system
-- [ ] Build FFT bar visualization (128 cubes driven by frequency bands)
-- [ ] Add RMS-driven point light and note-flash emissive sphere
-- [ ] Add bloom post-processing, orbital camera, beat-synced pulse
+### Phase 2: Bevy visualizer (`visualizer/`)
+- [x] Scaffold Bevy 0.16 project with camera and ground plane
+- [x] Implement `SynthTelemetry` resource and non-blocking OSC receiver system
+- [x] Build FFT bar visualization (128 cubes driven by frequency bands)
+- [x] Add RMS-driven point light and note-flash emissive sphere
+- [x] Add orbital camera
+- [ ] Add bloom post-processing
+- [ ] Add beat-synced pulse
+
+### 1.A.3 OSC idle mode (`synth_osc`)
+- [ ] Skip FFT computation and UDP sends when no visualizer is connected — currently runs 2048-point FFT 30×/sec unconditionally
+- [ ] Detect client presence via handshake, or track whether UDP sends succeed
 
 ### 1.7 Shared dB conversion utility
 - [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — inline `20.0 * x.log10()` + normalization is repeated in 4+ locations (spectrum_analyzer, OSC sender, meter widget, visual_state)

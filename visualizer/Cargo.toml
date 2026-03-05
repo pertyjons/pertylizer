@@ -1,0 +1,12 @@
+[package]
+name = "pertylizer-visualizer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Bevy 3D visualizer for Pertylizer — driven by OSC telemetry"
+authors = ["Per Jonsson"]
+license = "MIT"
+
+[dependencies]
+bevy = "0.18.1"
+rosc = "0.10.1"
