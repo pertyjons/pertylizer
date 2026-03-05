@@ -9,7 +9,7 @@
 use synth_core::{
     AudioEffect, Describable, FftSizeOption, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ProcessContext, SampleRate, SpectralBlurParam,
-    WidgetHint,
+    StereoSample, WidgetHint,
 };
 use synth_dsp::{Complex, StftProcessor, WindowType};
 
@@ -188,10 +188,9 @@ impl AudioEffect for SpectralBlur {
 
         let frames = num_frames.min(1024);
         for i in 0..frames {
-            let il = i * 2;
-            let ir = i * 2 + 1;
-            mono_l[i] = if il < input.len() { input[il] } else { 0.0 };
-            mono_r[i] = if ir < input.len() { input[ir] } else { 0.0 };
+            let frame = StereoSample::read_frame(input, i);
+            mono_l[i] = frame.left;
+            mono_r[i] = frame.right;
         }
 
         // Capture references to smooth buffers for the closure
@@ -256,14 +255,9 @@ impl AudioEffect for SpectralBlur {
 
         // Re-interleave with dry/wet mix
         for i in 0..frames {
-            let il = i * 2;
-            let ir = i * 2 + 1;
-            if il < output.len() {
-                output[il] = mono_l[i] * (1.0 - mix) + out_l[i] * mix;
-            }
-            if ir < output.len() {
-                output[ir] = mono_r[i] * (1.0 - mix) + out_r[i] * mix;
-            }
+            let result = StereoSample::new(mono_l[i], mono_r[i])
+                .blend(StereoSample::new(out_l[i], out_r[i]), mix);
+            StereoSample::write_frame(output, i, result);
         }
     }
 

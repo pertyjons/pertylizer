@@ -139,28 +139,25 @@ impl PolyModule for Amplifier {
         self.output_left.resize(context.samples.as_usize());
         self.output_right.resize(context.samples.as_usize());
 
-        let audio_in = inputs.get(PortName::IN);
-        let audio_in_l = inputs.get(PortName::IN_L);
-        let audio_in_r = inputs.get(PortName::IN_R);
-        let cv_in = inputs.get(PortName::CV);
-        let pan_cv = inputs.get(PortName::PAN_CV);
+        let audio_in = inputs.reader(PortName::IN, 0.0);
+        let audio_in_l = inputs.reader(PortName::IN_L, 0.0);
+        let audio_in_r = inputs.reader(PortName::IN_R, 0.0);
+        let cv_in = inputs.reader(PortName::CV, 1.0);
+        let pan_cv = inputs.reader(PortName::PAN_CV, 0.0);
 
         // Determine if we have stereo input
-        let has_stereo_input = audio_in_l.is_some() || audio_in_r.is_some();
+        let has_stereo_input = audio_in_l.is_connected() || audio_in_r.is_connected();
 
         for i in 0..context.samples.as_usize() {
             // Get input: use stereo inputs if connected, otherwise mono
             let (input_l, input_r) = if has_stereo_input {
-                (
-                    audio_in_l.map(|b| b[i]).unwrap_or(0.0),
-                    audio_in_r.map(|b| b[i]).unwrap_or(0.0),
-                )
+                (audio_in_l[i], audio_in_r[i])
             } else {
-                let mono = audio_in.map(|b| b[i]).unwrap_or(0.0);
+                let mono = audio_in[i];
                 (mono, mono)
             };
 
-            let cv = cv_in.map(|b| b[i]).unwrap_or(1.0);
+            let cv = cv_in[i];
             // In bipolar mode, CV can be negative (ring modulation)
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
@@ -168,8 +165,8 @@ impl PolyModule for Amplifier {
             let base_level = (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
             let effective_level = base_level * cv_scaled;
 
-            let effective_pan = if let Some(pan_mod) = pan_cv {
-                BipolarValue::new(self.pan.as_f32() + pan_mod[i] + self.mod_offset_pan.as_f32())
+            let effective_pan = if pan_cv.is_connected() {
+                BipolarValue::new(self.pan.as_f32() + pan_cv[i] + self.mod_offset_pan.as_f32())
             } else {
                 BipolarValue::new(
                     (self.pan.as_f32() + self.mod_offset_pan.as_f32()).clamp(-1.0, 1.0),

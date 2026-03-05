@@ -12,7 +12,7 @@ use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioEffect, Describable, FftSizeOption, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PhaseVocoderParam, ProcessContext,
-    SampleCount, Semitones, WidgetHint,
+    SampleCount, Semitones, StereoSample, WidgetHint,
 };
 use synth_dsp::{StftProcessor, WindowType};
 
@@ -215,7 +215,6 @@ impl AudioEffect for PhaseVocoder {
 
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
-        let dry = 1.0 - mix;
         let shift_ratio = 2.0f32.powf(self.pitch_shift.0 / 12.0);
         let freeze = self.freeze;
         let fft_size = self.fft_size_option.size();
@@ -228,8 +227,9 @@ impl AudioEffect for PhaseVocoder {
         self.mono_out_r.resize(num_frames, 0.0);
 
         for i in 0..num_frames {
-            self.mono_in_l[i] = input[i * 2];
-            self.mono_in_r[i] = input[i * 2 + 1];
+            let frame = StereoSample::read_frame(input, i);
+            self.mono_in_l[i] = frame.left;
+            self.mono_in_r[i] = frame.right;
         }
 
         // Process left channel
@@ -284,8 +284,11 @@ impl AudioEffect for PhaseVocoder {
 
         // Interleave and mix
         for i in 0..num_frames {
-            output[i * 2] = self.mono_in_l[i] * dry + self.mono_out_l[i] * mix;
-            output[i * 2 + 1] = self.mono_in_r[i] * dry + self.mono_out_r[i] * mix;
+            let result = StereoSample::new(self.mono_in_l[i], self.mono_in_r[i]).blend(
+                StereoSample::new(self.mono_out_l[i], self.mono_out_r[i]),
+                mix,
+            );
+            StereoSample::write_frame(output, i, result);
         }
     }
 

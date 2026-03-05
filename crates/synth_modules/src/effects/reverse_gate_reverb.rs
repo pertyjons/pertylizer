@@ -9,7 +9,7 @@
 use synth_core::{
     AudioEffect, Decibels, Describable, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverseGateMode,
-    ReverseGateReverbParam, ReverseGateTrigger, SampleRate, WidgetHint,
+    ReverseGateReverbParam, ReverseGateTrigger, SampleRate, StereoSample, WidgetHint,
 };
 
 /// Maximum window time in milliseconds.
@@ -80,8 +80,7 @@ impl ReverseGateReverb {
     }
 
     fn update_window_samples(&mut self) {
-        #[allow(clippy::cast_possible_truncation)]
-        let samples = (self.window_time.as_f32() / 1000.0 * self.sample_rate.as_f32()) as usize;
+        let samples = self.window_time.to_samples(self.sample_rate);
         self.window_samples = samples.clamp(1, self.capture_l.len());
     }
 
@@ -201,28 +200,14 @@ impl Describable for ReverseGateReverb {
 
 impl AudioEffect for ReverseGateReverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        let sr = self.sample_rate.as_f32();
         let mix = self.mix.as_f32();
-        let threshold_linear = 10.0f32.powf(self.threshold.as_f32() / 20.0);
-        #[allow(clippy::cast_possible_truncation)]
-        let gate_samples = (self.gate_time.as_f32() / 1000.0 * sr) as usize;
-        let gate_samples = gate_samples.max(1);
+        let threshold_linear = self.threshold.to_linear();
+        let gate_samples = self.gate_time.to_samples(self.sample_rate).max(1);
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let dry_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let dry_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                0.0
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let dry_l = dry.left;
+            let dry_r = dry.right;
 
             // Write to capture buffer
             let cap_idx = self.capture_pos % self.window_samples;
@@ -301,12 +286,9 @@ impl AudioEffect for ReverseGateReverb {
                 (0.0, 0.0)
             };
 
-            if idx_l < output.len() {
-                output[idx_l] = dry_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = dry_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result =
+                StereoSample::new(dry_l, dry_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

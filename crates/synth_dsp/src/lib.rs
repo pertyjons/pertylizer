@@ -24,7 +24,8 @@ pub mod spectral;
 pub use delay::{DelayLine, InterpolatedDelayLine};
 pub use fdn::FdnCore;
 pub use filters::{
-    AcidFilter, BiquadCoeffs, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType,
+    AcidFilter, BiquadCoeffs, FluidFilter, ScreamerFilter, StereoBiquad, StereoSvf, SvfCoeffs,
+    SvfFilterType,
 };
 pub use oscillators::{poly_blep, poly_blep_integrated};
 pub use oversampling::{Downsampler, OversamplingFactor};

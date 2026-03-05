@@ -88,6 +88,11 @@
 - [x] Humanize — slight random timing/velocity offset for selected notes (backend exists)
 - [x] Step entry mode — advance cursor by grid step after each note input
 
+### 0.8 Newtype arithmetic refinements
+- [ ] `view_pitch_min`/`view_pitch_max` should be `Pitch` in `handle_piano_roll_interaction` (eliminates ~6 `Pitch::new().unwrap_or()` calls)
+- [ ] Add `impl Sub<PatternTick> for PatternTick` → `SeqDuration` (eliminates ~10 manual `.0.saturating_sub(.0)` patterns)
+- [ ] Add `SeqDuration::as_pattern_tick()` helper for `PatternTick(data.length_ticks.0)` conversion
+
 ---
 
 ## Priority 1 — Foundation & Core Functionality
@@ -173,6 +178,8 @@
 ---
 
 ## Priority 4 — AWE Improvements
+
+Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
 ### 4.1 Rework room visualization
 - [ ] Redesign the 3D isometric room rendering

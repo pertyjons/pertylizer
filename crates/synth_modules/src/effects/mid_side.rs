@@ -116,19 +116,9 @@ impl AudioEffect for MidSide {
         let mid_gain_linear = self.mid_gain.to_linear();
         let side_gain_linear = self.side_gain.to_linear();
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
             // Read input as stereo sample
-            let dry = if idx_r < input.len() {
-                StereoSample::new(input[idx_l], input[idx_r])
-            } else if idx_l < input.len() {
-                StereoSample::from_mono(input[idx_l])
-            } else {
-                StereoSample::ZERO
-            };
+            let dry = StereoSample::read_frame(input, frame);
 
             // Encode to mid/side
             let mid = (dry.left + dry.right) * 0.5;
@@ -142,17 +132,9 @@ impl AudioEffect for MidSide {
             let wet = StereoSample::new(mid + side * width, mid - side * width);
 
             // Mix dry/wet
-            let result = StereoSample::new(
-                dry.left * (1.0 - mix) + wet.left * mix,
-                dry.right * (1.0 - mix) + wet.right * mix,
-            );
+            let result = dry.blend(wet, mix);
 
-            if idx_l < output.len() {
-                output[idx_l] = result.left;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = result.right;
-            }
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

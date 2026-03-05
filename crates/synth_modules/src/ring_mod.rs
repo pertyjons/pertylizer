@@ -207,9 +207,8 @@ impl PolyModule for RingMod {
 
             // Apply frequency CV if connected
             let freq = if let Some(cv) = freq_cv {
-                let cv_val = cv[i];
                 // CV scales freq exponentially: +1V = double freq
-                Hertz::new(carrier_freq.as_f32() * (2.0_f32).powf(cv_val))
+                carrier_freq.apply_cv(cv[i])
             } else {
                 carrier_freq
             };

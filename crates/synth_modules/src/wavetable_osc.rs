@@ -183,7 +183,7 @@ impl PolyModule for WavetableOsc {
             // Apply FM
             let freq = if let Some(fm) = fm_input {
                 let fm_val = fm[i];
-                Hertz::new(base_freq.as_f32() * (2.0_f32).powf(fm_val))
+                base_freq.apply_cv(fm_val)
             } else {
                 base_freq
             };

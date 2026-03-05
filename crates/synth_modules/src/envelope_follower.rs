@@ -45,16 +45,6 @@ impl EnvelopeFollower {
             output_buffer: AudioBuffer::new(1024),
         }
     }
-
-    /// Compute one-pole coefficient from time in ms.
-    #[inline]
-    fn time_to_coeff(ms: Milliseconds, sample_rate: SampleRate) -> f32 {
-        let time_secs = ms.as_f32() * 0.001;
-        if time_secs < 0.000_01 {
-            return 0.0; // Instant
-        }
-        (-1.0 / (time_secs * sample_rate.as_f32())).exp()
-    }
 }
 
 impl Default for EnvelopeFollower {
@@ -131,8 +121,8 @@ impl PolyModule for EnvelopeFollower {
 
         let input = inputs.get(PortName::IN);
 
-        let attack_coeff = Self::time_to_coeff(self.attack, self.sample_rate);
-        let release_coeff = Self::time_to_coeff(self.release, self.sample_rate);
+        let attack_coeff = self.attack.to_exp_coeff(self.sample_rate);
+        let release_coeff = self.release.to_exp_coeff(self.sample_rate);
         let sensitivity_scale = self.sensitivity.as_f32() * 4.0;
 
         for i in 0..num_samples {

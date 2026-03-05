@@ -184,12 +184,10 @@ impl Describable for Waveshaper {
 
 impl AudioEffect for Waveshaper {
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext) {
-        let mix = self.mix.as_f32();
-
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
             let shaped = self.shape(dry);
-            output[i] = dry * (1.0 - mix) + shaped * mix;
+            output[i] = self.mix.blend(dry, shaped);
         }
     }
 

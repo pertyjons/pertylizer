@@ -160,6 +160,14 @@ impl Milliseconds {
     pub fn to_samples(self, sample_rate: SampleRate) -> usize {
         ((self.0 / 1000.0) * sample_rate.as_f32()).round() as usize
     }
+
+    /// Calculate one-pole filter coefficient for envelope smoothing.
+    ///
+    /// Delegates to [`Seconds::to_exp_coeff`] after converting to seconds.
+    #[inline]
+    pub fn to_exp_coeff(self, sample_rate: SampleRate) -> f32 {
+        self.to_seconds().to_exp_coeff(sample_rate)
+    }
 }
 
 impl From<Seconds> for Milliseconds {

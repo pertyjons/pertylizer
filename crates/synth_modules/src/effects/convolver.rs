@@ -10,7 +10,7 @@ use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioEffect, ConvolverParam, Describable, ImpulseResponse, Milliseconds, ModuleCategory,
     ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, SampleCount, SampleRate, WidgetHint,
+    ProcessContext, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 use synth_dsp::PartitionedConvolver;
 
@@ -222,15 +222,15 @@ impl AudioEffect for Convolver {
 
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
-        let dry = 1.0 - mix;
 
         // One-pole LP coefficient for brightness
         let brightness = self.brightness.as_f32();
         let lp_coeff = brightness * brightness; // 0=dark, 1=bright (bypass)
 
         for frame in 0..num_frames {
-            let in_l = input[frame * 2];
-            let in_r = input[frame * 2 + 1];
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Write to pre-delay buffer
             let buf_len = self.delay_buf_l.len();
@@ -282,8 +282,9 @@ impl AudioEffect for Convolver {
             let filtered_r = self.lp_state_r;
 
             // Mix dry/wet
-            output[frame * 2] = in_l * dry + filtered_l * mix;
-            output[frame * 2 + 1] = in_r * dry + filtered_r * mix;
+            let result =
+                StereoSample::new(in_l, in_r).blend(StereoSample::new(filtered_l, filtered_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

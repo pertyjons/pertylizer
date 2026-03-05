@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use synth_core::DenormalGuard;
+
 use crate::audio::traits::{AudioBackend, AudioProcessor, AudioStream};
 use crate::audio::types::*;
 
@@ -257,6 +259,8 @@ impl CpalStream {
             .build_output_stream(
                 &cpal_config,
                 move |data: &mut [f32], _output_info: &cpal::OutputCallbackInfo| {
+                    let _denormal_guard = DenormalGuard::new();
+
                     if !running_clone.load(Ordering::Relaxed) {
                         // Fill with silence when not running
                         data.fill(0.0);

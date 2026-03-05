@@ -102,13 +102,13 @@ impl AdditiveOsc {
 
     /// Get the frequency for a given harmonic with stretch applied.
     #[inline]
-    fn harmonic_freq(&self, harmonic_index: usize) -> f32 {
+    fn harmonic_freq(&self, harmonic_index: usize, base_freq: Hertz) -> f32 {
         let n = (harmonic_index + 1) as f32;
         let stretch = self.stretch.as_f32();
         // Stretch factor: slightly detune higher harmonics
         // stretch=0: pure harmonic, stretch=1: significant inharmonicity
         let stretch_factor = 1.0 + stretch * 0.01 * (n - 1.0) * (n - 1.0);
-        self.note_freq.as_f32() * n * stretch_factor
+        base_freq.as_f32() * n * stretch_factor
     }
 
     /// Randomize phases for a new note.
@@ -234,11 +234,11 @@ impl PolyModule for AdditiveOsc {
         for i in 0..num_samples {
             let mut sample = 0.0_f32;
 
-            // Apply frequency CV
-            let freq_mult = if let Some(cv) = freq_cv {
-                (2.0_f32).powf(cv[i])
+            // Apply frequency CV (1V/oct)
+            let base_freq = if let Some(cv) = freq_cv {
+                self.note_freq.apply_cv(cv[i])
             } else {
-                1.0
+                self.note_freq
             };
 
             for h in 0..NUM_HARMONICS {
@@ -247,7 +247,7 @@ impl PolyModule for AdditiveOsc {
                     continue;
                 }
 
-                let freq = self.harmonic_freq(h) * freq_mult;
+                let freq = self.harmonic_freq(h, base_freq);
 
                 // Skip harmonics above Nyquist
                 if freq >= nyquist {
@@ -259,7 +259,7 @@ impl PolyModule for AdditiveOsc {
                 sample += (phase * TAU).sin() * amp;
 
                 // Advance phase
-                let dt = freq / self.sample_rate.as_f32();
+                let dt = Hertz::new(freq).phase_increment(self.sample_rate);
                 self.phases[h] = (phase + dt).rem_euclid(1.0);
             }
 

@@ -6,7 +6,7 @@
 //! - Modulated delay times for diffusion
 //! - Stereo output with width control
 
-use synth_core::{FilterState, Gain, Hertz, NormalizedValue, Phase};
+use synth_core::{BufferIndex, FilterState, Gain, Hertz, NormalizedValue, Phase, StereoSample};
 
 /// Number of channels in the FDN.
 pub const FDN_CHANNELS: usize = 8;
@@ -105,14 +105,7 @@ impl FdnChannel {
     /// Read from the delay line with linear interpolation (for modulated delay).
     #[inline]
     fn read_interpolated(&self, delay_frac: f32) -> f32 {
-        let buf_len = self.buffer.len();
-        let delay_int = delay_frac as usize;
-        let frac = delay_frac - delay_int as f32;
-
-        let read_a = (self.write_index + buf_len - delay_int) % buf_len;
-        let read_b = (self.write_index + buf_len - delay_int - 1) % buf_len;
-
-        self.buffer[read_a] * (1.0 - frac) + self.buffer[read_b] * frac
+        BufferIndex::new(self.write_index).read_interpolated(&self.buffer, delay_frac)
     }
 
     /// Write a sample into the delay line and advance the write pointer.
@@ -158,6 +151,12 @@ pub struct FdnStereoOutput {
     pub left: f32,
     /// Right channel sample.
     pub right: f32,
+}
+
+impl From<FdnStereoOutput> for StereoSample {
+    fn from(output: FdnStereoOutput) -> Self {
+        Self::new(output.left, output.right)
+    }
 }
 
 /// 8-channel Feedback Delay Network core.
@@ -242,10 +241,6 @@ impl FdnCore {
             let hp_out = self.channels[i]
                 .highpass_state
                 .one_pole_hp(lp_out, hp_coeff.as_f32());
-
-            // Flush denormals periodically (cheap check)
-            self.channels[i].lowpass_state.flush_denormals();
-            self.channels[i].highpass_state.flush_denormals();
 
             // Add input signal and write to delay line
             let write_val = hp_out + input;

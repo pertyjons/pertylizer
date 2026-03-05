@@ -195,6 +195,20 @@ impl Envelope {
         }
     }
 
+    /// Apply curve shaping to a base exponential coefficient.
+    ///
+    /// Negative curve = slower start (raise coeff), positive = faster start (lower coeff).
+    #[inline]
+    fn apply_curve(base_coef: f32, curve: f32) -> f32 {
+        if curve.abs() < 0.01 {
+            base_coef
+        } else if curve < 0.0 {
+            base_coef.powf(1.0 + (-curve) * 3.0)
+        } else {
+            base_coef.powf(1.0 / (1.0 + curve * 3.0))
+        }
+    }
+
     #[inline]
     fn process_sample(&mut self) -> f32 {
         let velocity_scale =
@@ -213,14 +227,7 @@ impl Envelope {
                     self.target_level = self.sustain;
                 } else {
                     let base_coef = self.attack.to_exp_coeff(self.sample_rate);
-                    let curve = self.attack_curve.as_f32();
-                    let effective_coef = if curve.abs() < 0.01 {
-                        base_coef
-                    } else if curve < 0.0 {
-                        base_coef.powf(1.0 + (-curve) * 3.0)
-                    } else {
-                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
-                    };
+                    let effective_coef = Self::apply_curve(base_coef, self.attack_curve.as_f32());
 
                     let target = self.target_level.as_f32();
                     let current = self.level.as_f32();
@@ -242,14 +249,7 @@ impl Envelope {
                     let base_coef = self.decay.to_exp_coeff(self.sample_rate);
                     let sustain = self.sustain.as_f32();
                     let current = self.level.as_f32();
-                    let curve = self.decay_curve.as_f32();
-                    let effective_coef = if curve.abs() < 0.01 {
-                        base_coef
-                    } else if curve < 0.0 {
-                        base_coef.powf(1.0 + (-curve) * 3.0)
-                    } else {
-                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
-                    };
+                    let effective_coef = Self::apply_curve(base_coef, self.decay_curve.as_f32());
 
                     let new_level = sustain + (current - sustain) * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
@@ -270,14 +270,7 @@ impl Envelope {
                 } else {
                     let base_coef = self.release.to_exp_coeff(self.sample_rate);
                     let current = self.level.as_f32();
-                    let curve = self.release_curve.as_f32();
-                    let effective_coef = if curve.abs() < 0.01 {
-                        base_coef
-                    } else if curve < 0.0 {
-                        base_coef.powf(1.0 + (-curve) * 3.0)
-                    } else {
-                        base_coef.powf(1.0 / (1.0 + curve * 3.0))
-                    };
+                    let effective_coef = Self::apply_curve(base_coef, self.release_curve.as_f32());
 
                     let new_level = current * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
@@ -420,14 +413,14 @@ impl PolyModule for Envelope {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let gate_input = inputs.get(PortName::GATE);
-        let velocity_input = inputs.get(PortName::VELOCITY);
+        let gate_reader = inputs.reader(PortName::GATE, 0.0);
+        let velocity_reader = inputs.reader(PortName::VELOCITY, 1.0);
 
         for i in 0..context.samples.as_usize() {
-            if let Some(gate) = gate_input {
-                let gate_val = gate[i];
+            if gate_reader.is_connected() {
+                let gate_val = gate_reader[i];
                 if gate_val > 0.5 && self.prev_gate.as_f32() <= 0.5 {
-                    let vel = Velocity::new(velocity_input.map(|v| v[i]).unwrap_or(1.0));
+                    let vel = Velocity::new(velocity_reader[i]);
                     self.trigger(vel);
                 } else if gate_val <= 0.5 && self.prev_gate.as_f32() > 0.5 {
                     self.release();

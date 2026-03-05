@@ -126,6 +126,26 @@ impl Hertz {
         Self(self.0 * 2.0f32.powi(octaves))
     }
 
+    /// Apply exponential FM modulation (±2 octave range per unit CV).
+    ///
+    /// Computes `self * 2^(cv * 2)` — standard exponential FM scaling
+    /// where `cv = 1.0` produces a 4x frequency multiplier (2 octaves up).
+    #[inline]
+    #[must_use]
+    pub fn apply_fm(self, cv: f32) -> Self {
+        Self(self.0 * (cv * 2.0).exp2())
+    }
+
+    /// Apply 1V/octave CV pitch tracking.
+    ///
+    /// Computes `self * 2^cv` — the Eurorack standard where
+    /// each unit of CV shifts the frequency by one octave.
+    #[inline]
+    #[must_use]
+    pub fn apply_cv(self, cv: f32) -> Self {
+        Self(self.0 * cv.exp2())
+    }
+
     /// Clamp to audible range.
     #[inline]
     #[must_use]

@@ -9,7 +9,7 @@
 use synth_core::{
     AudioEffect, Decibels, Describable, LimiterParam, Milliseconds, ModuleCategory,
     ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, ResponseCurve, SampleCount, SampleRate, WidgetHint,
+    ProcessContext, ResponseCurve, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 
 /// Maximum look-ahead in samples at 48kHz (~5ms).
@@ -133,29 +133,18 @@ impl Describable for Limiter {
 impl AudioEffect for Limiter {
     #[allow(clippy::too_many_lines)]
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
-        let ceiling_linear = 10.0_f32.powf(self.ceiling.as_f32() / 20.0);
+        let ceiling_linear = self.ceiling.to_linear();
         let release_coeff =
             (-1.0 / (self.release_ms.as_f32() * 0.001 * self.sample_rate.as_f32()).max(1.0)).exp();
         let mix = self.mix.as_f32();
         let lookahead = self.lookahead_samples;
         let total_frames = self.lookahead_buffer.len() / 2;
 
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
             // Read input
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                0.0
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Write to look-ahead buffer
             self.lookahead_buffer[self.write_pos] = in_l;
@@ -195,12 +184,9 @@ impl AudioEffect for Limiter {
             let limited_r = delayed_r * self.gain_envelope;
 
             // Mix (dry = delayed signal, wet = limited)
-            if idx_l < output.len() {
-                output[idx_l] = delayed_l * (1.0 - mix) + limited_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = delayed_r * (1.0 - mix) + limited_r * mix;
-            }
+            let result = StereoSample::new(delayed_l, delayed_r)
+                .blend(StereoSample::new(limited_l, limited_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 

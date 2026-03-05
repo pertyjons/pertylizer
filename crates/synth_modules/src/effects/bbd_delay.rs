@@ -9,9 +9,9 @@
 //! - Maximum 1.0 second delay time
 
 use synth_core::{
-    AudioEffect, BbdDelayParam, Describable, FilterState, ModuleCategory, ModuleDescriptor,
-    ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext,
-    ResponseCurve, SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
+    AudioEffect, BbdDelayParam, BufferIndex, Describable, FilterState, Hertz, ModuleCategory,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
+    ProcessContext, ResponseCurve, SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
 };
 
 /// Maximum delay time in seconds for the BBD delay.
@@ -95,19 +95,6 @@ impl BbdDelay {
         }
     }
 
-    /// Read from delay buffer with linear interpolation.
-    #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: usize, delay_samples: f32) -> f32 {
-        let len = buffer.len();
-        let read_pos = (write_pos as f32 - delay_samples).rem_euclid(len as f32);
-        #[allow(clippy::cast_possible_truncation)]
-        let idx0 = (read_pos as usize) % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-
-        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
-    }
-
     /// Compander: compress signal using tanh before entering delay.
     #[inline]
     fn compress(sample: f32) -> f32 {
@@ -140,8 +127,7 @@ impl BbdDelay {
     /// One-pole lowpass filter for feedback/tone path.
     #[inline]
     fn lowpass(input: f32, state: &mut FilterState, cutoff_hz: f32, sample_rate: f32) -> f32 {
-        // Compute one-pole coefficient: exp(-2*pi*fc/fs)
-        let coeff = (-std::f32::consts::TAU * cutoff_hz / sample_rate).exp();
+        let coeff = Hertz::new(cutoff_hz).to_exp_coeff(SampleRate::new(sample_rate));
         state.one_pole(input, coeff)
     }
 
@@ -280,19 +266,9 @@ impl AudioEffect for BbdDelay {
         let noise_scale = clock_noise_amount * 0.003 * (self.time.as_f32() / MAX_DELAY_SECONDS);
 
         // Process interleaved stereo
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
             // Read stereo input
-            let dry = if idx_r < input.len() {
-                StereoSample::new(input[idx_l], input[idx_r])
-            } else if idx_l < input.len() {
-                StereoSample::from_mono(input[idx_l])
-            } else {
-                StereoSample::ZERO
-            };
+            let dry = StereoSample::read_frame(input, frame);
 
             // Step 1: Apply compander compression to input
             let compressed = StereoSample::new(Self::compress(dry.left), Self::compress(dry.right));
@@ -323,8 +299,10 @@ impl AudioEffect for BbdDelay {
 
             // Step 4: Read from delay buffers with interpolation
             let delayed = StereoSample::new(
-                Self::read_interpolated(&self.buffer_left, self.write_pos, modulated_delay),
-                Self::read_interpolated(&self.buffer_right, self.write_pos, modulated_delay),
+                BufferIndex::new(self.write_pos)
+                    .read_interpolated(&self.buffer_left, modulated_delay),
+                BufferIndex::new(self.write_pos)
+                    .read_interpolated(&self.buffer_right, modulated_delay),
             );
 
             // Step 5: Apply lowpass in feedback path (tone control / per-repeat darkening)
@@ -369,17 +347,9 @@ impl AudioEffect for BbdDelay {
                 StereoSample::new(Self::expand(delayed.left), Self::expand(delayed.right));
 
             // Step 9: Mix dry/wet
-            let wet = StereoSample::new(
-                dry.left * (1.0 - mix) + expanded.left * mix,
-                dry.right * (1.0 - mix) + expanded.right * mix,
-            );
+            let wet = dry.blend(expanded, mix);
 
-            if idx_l < output.len() {
-                output[idx_l] = wet.left;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = wet.right;
-            }
+            StereoSample::write_frame(output, frame, wet);
         }
     }
 

@@ -2,7 +2,7 @@
 
 use synth_core::{
     AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
-    PortDescriptor, ProcessContext, WidgetHint,
+    PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{
     BipolarValue, BufferIndex, Hertz, Milliseconds, NormalizedValue, Phase, SampleRate,
@@ -62,17 +62,6 @@ impl Flanger {
             self.buffer_r.resize(size, 0.0);
             self.write_pos = BufferIndex::ZERO;
         }
-    }
-
-    /// Read from delay buffer with linear interpolation.
-    #[inline]
-    fn read_interpolated(buffer: &[f32], write_pos: BufferIndex, delay_samples: f32) -> f32 {
-        let len = buffer.len();
-        let read_pos = (write_pos.as_usize() as f32 - delay_samples).rem_euclid(len as f32);
-        let idx0 = read_pos as usize % len;
-        let idx1 = (idx0 + 1) % len;
-        let frac = read_pos - read_pos.floor();
-        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
     }
 }
 
@@ -160,26 +149,15 @@ impl AudioEffect for Flanger {
             "Flanger sample rate mismatch - call set_sample_rate() before processing"
         );
 
-        let phase_inc = self.rate.as_f32() / self.sample_rate.as_f32();
+        let phase_inc = self.rate.phase_increment(self.sample_rate);
         let delay_ms = self.delay_base.as_f32();
         let max_mod_ms = delay_ms.min(MAX_DELAY_MS - delay_ms);
 
         // Process stereo interleaved
-        let channels = 2;
         for frame in 0..context.samples.as_usize() {
-            let idx_l = frame * channels;
-            let idx_r = frame * channels + 1;
-
-            let in_l = if idx_l < input.len() {
-                input[idx_l]
-            } else {
-                0.0
-            };
-            let in_r = if idx_r < input.len() {
-                input[idx_r]
-            } else {
-                in_l
-            };
+            let dry = StereoSample::read_frame(input, frame);
+            let in_l = dry.left;
+            let in_r = dry.right;
 
             // Calculate LFO value (triangle wave for smoother flanging)
             let phase = self.lfo_phase.as_f32();
@@ -188,7 +166,7 @@ impl AudioEffect for Flanger {
             } else {
                 3.0 - phase * 4.0
             };
-            self.lfo_phase = Phase::new((phase + phase_inc).rem_euclid(1.0));
+            self.lfo_phase = self.lfo_phase.advance(phase_inc);
 
             // Calculate modulated delay time
             let depth = self.depth.as_f32();
@@ -202,8 +180,12 @@ impl AudioEffect for Flanger {
             self.buffer_r[write_idx] = in_r + self.feedback_r * feedback;
 
             // Read from delay with interpolation
-            let wet_l = Self::read_interpolated(&self.buffer_l, self.write_pos, delay_samples);
-            let wet_r = Self::read_interpolated(&self.buffer_r, self.write_pos, delay_samples);
+            let wet_l = self
+                .write_pos
+                .read_interpolated(&self.buffer_l, delay_samples);
+            let wet_r = self
+                .write_pos
+                .read_interpolated(&self.buffer_r, delay_samples);
 
             // Store for feedback
             self.feedback_l = wet_l;
@@ -214,12 +196,8 @@ impl AudioEffect for Flanger {
 
             // Mix dry/wet
             let mix = self.mix.as_f32();
-            if idx_l < output.len() {
-                output[idx_l] = in_l * (1.0 - mix) + wet_l * mix;
-            }
-            if idx_r < output.len() {
-                output[idx_r] = in_r * (1.0 - mix) + wet_r * mix;
-            }
+            let result = StereoSample::new(in_l, in_r).blend(StereoSample::new(wet_l, wet_r), mix);
+            StereoSample::write_frame(output, frame, result);
         }
     }
 
