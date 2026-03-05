@@ -67,6 +67,11 @@ pub fn update(
         // Frame-rate-independent exponential decay
         flash.brightness *= (-DECAY_RATE * dt).exp();
 
+        // Skip material update when fully faded
+        if flash.brightness < 0.001 {
+            continue;
+        }
+
         // Update material
         if let Some(material) = materials.get_mut(&material_handle.0) {
             let lightness = 0.5 * flash.brightness;

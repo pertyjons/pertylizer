@@ -20,6 +20,9 @@ const PARTICLES_PER_NOTE: usize = 16;
 /// Emissive intensity multiplier (needs to be high for bloom to pick it up).
 const EMISSIVE_STRENGTH: f32 = 15.0;
 
+/// Golden angle in radians for even spherical distribution.
+const GOLDEN_ANGLE: f32 = 2.399_963;
+
 /// A single note particle.
 #[derive(Component)]
 pub struct NoteParticle {
@@ -33,17 +36,26 @@ pub struct NoteParticle {
     hue: f32,
 }
 
+/// Cached mesh handle to avoid creating a new mesh asset per note-on.
+#[derive(Resource)]
+pub struct ParticleMesh(Handle<Mesh>);
+
 /// Tracks particle count to enforce the cap.
 #[derive(Resource, Default)]
 pub struct ParticleCount {
     pub count: usize,
 }
 
+/// Create the shared particle mesh at startup.
+pub fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    commands.insert_resource(ParticleMesh(meshes.add(Sphere::new(0.18))));
+}
+
 /// Spawn particles on note-on events.
 pub fn spawn(
     mut commands: Commands,
     telemetry: Res<SynthTelemetry>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    particle_mesh: Res<ParticleMesh>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
@@ -62,14 +74,12 @@ pub fn spawn(
 
     let hue = (note as f32 / 127.0) * 360.0;
     let speed = 2.0 + (velocity as f32 / 127.0) * 6.0;
-    let mesh = meshes.add(Sphere::new(0.18));
 
     let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
 
     for i in 0..spawn_count {
         // Distribute directions using golden angle for even spread
-        let golden_angle = 2.399_963; // pi * (3 - sqrt(5))
-        let theta = golden_angle * i as f32;
+        let theta = GOLDEN_ANGLE * i as f32;
         let phi = (1.0 - 2.0 * (i as f32 + 0.5) / spawn_count as f32).acos();
 
         let dir = Vec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos())
@@ -78,6 +88,7 @@ pub fn spawn(
         // Slight randomization via index-based variation
         let speed_var = speed * (0.8 + 0.4 * ((i * 7 + 3) % 10) as f32 / 10.0);
 
+        // Each particle needs its own material since fade mutates it independently
         let color = Color::hsl(hue, 0.9, 0.5);
         let material = materials.add(StandardMaterial {
             base_color: color,
@@ -86,7 +97,7 @@ pub fn spawn(
         });
 
         commands.spawn((
-            Mesh3d(mesh.clone()),
+            Mesh3d(particle_mesh.0.clone()),
             MeshMaterial3d(material),
             Transform::from_xyz(0.0, 5.0, -5.0),
             NoteParticle {
@@ -120,6 +131,8 @@ pub fn update(
         particle.life -= dt;
 
         if particle.life <= 0.0 {
+            // Remove the material asset to prevent leaks
+            materials.remove(&material_handle.0);
             commands.entity(entity).despawn();
             particle_count.count = particle_count.count.saturating_sub(1);
             continue;

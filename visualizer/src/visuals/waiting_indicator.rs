@@ -38,10 +38,18 @@ pub fn update(
     let visible = telemetry.stale_frames > STALE_THRESHOLD;
 
     for mut color in &mut query {
-        // Fade in/out smoothly
         let target_alpha = if visible { 0.8 } else { 0.0 };
         let current = color.0.alpha();
-        let new_alpha = current + (target_alpha - current) * 0.1;
-        *color = TextColor(Color::srgba(0.7, 0.7, 0.8, new_alpha));
+
+        // Snap to target when close enough to avoid unnecessary writes
+        let new_alpha = if (target_alpha - current).abs() < 0.005 {
+            target_alpha
+        } else {
+            current + (target_alpha - current) * 0.1
+        };
+
+        if (new_alpha - current).abs() > f32::EPSILON {
+            *color = TextColor(Color::srgba(0.7, 0.7, 0.8, new_alpha));
+        }
     }
 }

@@ -691,7 +691,7 @@ impl std::fmt::Display for MidiChannel {
 /// - 128 = Pitch Bend
 /// - 129 = Channel Aftertouch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CcNumber(pub u8);
+pub struct CcNumber(u8);
 
 impl CcNumber {
     /// Mod wheel (CC1).

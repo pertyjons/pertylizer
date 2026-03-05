@@ -31,15 +31,20 @@
 - [x] Visualizer handles all Phase 3 telemetry streams (centroid, flux, phase, cc, drops, fft_freqs)
 - [ ] Configurable FFT bin count (64/128/256)
 - [ ] Extract shared OSC address constants — visualizer hardcodes `"/viz/pong"` instead of using `synth_osc::addresses::VIZ_PONG` (separate workspace can't depend on `synth_osc`, consider a shared `synth_osc_protocol` crate or constants file)
+- [ ] Replace `last_note_on: Option<(u8, u8, u8)>` with a named `NoteOnEvent` struct (fields: `note`, `velocity`, `channel`) — raw tuple used in telemetry + 3 visual consumers
+- [ ] Per-particle material mutations (up to 512/frame) — consider shared material approach or GPU instancing to reduce asset churn
 
-### 0.4 Visualizer effect system
-- [ ] Effect rack with switchable visual layers (manual next/prev/random)
-- [ ] At least 2 additional effect modes beyond FFT bars (e.g. harmonic ribbons, spectral cathedral)
-- [ ] Crossfade between effects on switch
+### 0.4 Visualizer effect system — DONE
+- [x] Effect rack with switchable visual layers (Left/Right arrows for prev/next, R for random)
+- [x] 2 additional effect modes: Waveform Ring (circular FFT) and Spectral Waterfall (scrolling 3D spectrogram)
+- [x] Fade-through-black crossfade between effects on switch
+- [ ] Spectral waterfall: replace 2048-entity grid with texture-based approach (single quad + custom shader) for fewer draw calls
+- [ ] Replace per-effect `if active != MyEffect { return }` guards with Bevy run conditions — cleaner system signatures, skips dispatch entirely (matters when effect count grows)
 
 ### 0.5 Settings & control
 - [ ] OSC enable/disable toggle in Pertylizer settings GUI
 - [ ] `/viz/` OSC control endpoints (effect select, param set, scene load)
+- [ ] Support connecting multiple OSC clients simultaneously (e.g., via `send_to` and active client tracking)
 
 ### 0.6 Shared dB conversion utility
 - [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — inline `20.0 * x.log10()` + normalization repeated in 4+ locations

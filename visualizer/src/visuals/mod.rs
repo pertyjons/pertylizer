@@ -2,14 +2,21 @@
 
 pub mod beat_pulse;
 pub mod camera;
+pub mod effects;
 pub mod fft_bars;
 pub mod note_flash;
 pub mod particles;
 pub mod rms_light;
+pub mod spectral_waterfall;
 pub mod waiting_indicator;
+pub mod waveform_ring;
 
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+
+/// System set for effect switching (runs before visual updates).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct EffectSwitch;
 
 /// Plugin that registers all visual systems.
 pub struct VisualsPlugin;
@@ -18,19 +25,33 @@ impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<beat_pulse::BeatPulseState>()
             .init_resource::<particles::ParticleCount>()
+            .init_resource::<effects::EffectState>()
+            .init_resource::<spectral_waterfall::WaterfallState>()
             .add_systems(
                 Startup,
                 (
                     setup_scene,
                     fft_bars::setup,
                     note_flash::setup,
+                    particles::setup,
+                    waveform_ring::setup,
+                    spectral_waterfall::setup,
                     waiting_indicator::setup,
                 ),
+            )
+            // Effect input → crossfade must run before effect updates
+            .add_systems(
+                Update,
+                (effects::input, effects::crossfade)
+                    .chain()
+                    .in_set(EffectSwitch),
             )
             .add_systems(
                 Update,
                 (
                     fft_bars::update,
+                    waveform_ring::update,
+                    spectral_waterfall::update,
                     rms_light::update,
                     note_flash::update,
                     beat_pulse::update,
@@ -38,7 +59,8 @@ impl Plugin for VisualsPlugin {
                     particles::spawn,
                     particles::update,
                     waiting_indicator::update,
-                ),
+                )
+                    .after(EffectSwitch),
             );
     }
 }
