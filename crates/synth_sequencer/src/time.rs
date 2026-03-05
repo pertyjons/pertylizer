@@ -105,9 +105,9 @@ impl Add for PatternTick {
 }
 
 impl Sub for PatternTick {
-    type Output = Self;
+    type Output = Duration;
     fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0.saturating_sub(rhs.0))
+        Duration(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -157,6 +157,12 @@ impl Duration {
     /// Create a dotted duration (1.5x length).
     pub fn dotted(self) -> Self {
         Self(self.0 + self.0 / 2)
+    }
+
+    /// Convert this duration to a pattern-relative tick position.
+    #[must_use]
+    pub fn as_pattern_tick(self) -> PatternTick {
+        PatternTick(self.0)
     }
 }
 
@@ -285,5 +291,28 @@ mod tests {
     fn test_dotted_duration() {
         let dotted_quarter = Duration::QUARTER.dotted();
         assert_eq!(dotted_quarter.0, 1440); // 960 + 480
+    }
+
+    #[test]
+    fn test_pattern_tick_sub_returns_duration() {
+        let a = PatternTick(1000);
+        let b = PatternTick(400);
+        let d: Duration = a - b;
+        assert_eq!(d.0, 600);
+    }
+
+    #[test]
+    fn test_pattern_tick_sub_saturates() {
+        let a = PatternTick(100);
+        let b = PatternTick(500);
+        let d: Duration = a - b;
+        assert_eq!(d.0, 0);
+    }
+
+    #[test]
+    fn test_duration_as_pattern_tick() {
+        let d = Duration::QUARTER;
+        let pt = d.as_pattern_tick();
+        assert_eq!(pt.0, 960);
     }
 }

@@ -1831,7 +1831,7 @@ fn note_at_pos(
         let x_start = tick_to_x(note.start_tick);
         let x_end = match note.end_tick {
             Some(end) => tick_to_x(end),
-            None => tick_to_x(PatternTick(length_ticks.0)),
+            None => tick_to_x(length_ticks.as_pattern_tick()),
         };
         let note_width = (x_end - x_start).max(3.0);
 
@@ -2292,10 +2292,10 @@ fn draw_piano_roll(
     ui.separator();
 
     // ── Pitch range with margin ──
-    let margin = 6_u8;
-    let view_pitch_min = data.pitch_min.as_midi().saturating_sub(margin);
-    let view_pitch_max = (data.pitch_max.as_midi() + margin).min(127);
-    let pitch_range = view_pitch_max - view_pitch_min + 1;
+    let margin = 6;
+    let view_pitch_min = data.pitch_min.saturating_sub(margin);
+    let view_pitch_max = data.pitch_max.saturating_add(margin);
+    let pitch_range = view_pitch_max.as_midi() - view_pitch_min.as_midi() + 1;
 
     let grid_height = pitch_range as f32 * NOTE_ROW_HEIGHT;
     let auto_height = if view_state.selected_automation.is_some() {
@@ -2356,7 +2356,7 @@ fn draw_piano_roll(
 
             // Helper: pitch to y position (higher pitch = lower y, piano style)
             let pitch_to_y = |pitch: Pitch| -> f32 {
-                let row = view_pitch_max.saturating_sub(pitch.as_midi());
+                let row = view_pitch_max.as_midi().saturating_sub(pitch.as_midi());
                 grid_y + row as f32 * NOTE_ROW_HEIGHT
             };
 
@@ -2372,8 +2372,9 @@ fn draw_piano_roll(
                 #[allow(clippy::cast_possible_truncation)]
                 let row = ((y - grid_y) / NOTE_ROW_HEIGHT).floor().max(0.0) as u8;
                 let midi = view_pitch_max
+                    .as_midi()
                     .saturating_sub(row)
-                    .clamp(view_pitch_min, view_pitch_max);
+                    .clamp(view_pitch_min.as_midi(), view_pitch_max.as_midi());
                 Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C)
             };
 
@@ -2390,7 +2391,7 @@ fn draw_piano_roll(
                 t.colors.bg_dark,
             );
 
-            for p in view_pitch_min..=view_pitch_max {
+            for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
                 let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
                 let y = pitch_to_y(pitch);
                 let note_name = NoteName::from_midi(p % 12);
@@ -2434,7 +2435,7 @@ fn draw_piano_roll(
             }
 
             // ── Note grid background ──
-            for p in view_pitch_min..=view_pitch_max {
+            for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
                 let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
                 let y = pitch_to_y(pitch);
                 let note_name = NoteName::from_midi(p % 12);
@@ -2517,7 +2518,7 @@ fn draw_piano_roll(
             let selected_color = Color32::from_rgb(140, 210, 255);
 
             for note in &data.notes {
-                if note.pitch.as_midi() < view_pitch_min || note.pitch.as_midi() > view_pitch_max {
+                if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
                     continue;
                 }
 
@@ -2537,7 +2538,7 @@ fn draw_piano_roll(
                     Some(end) => tick_to_x(end),
                     None => {
                         // Open-ended: draw to pattern end or at least a visible width
-                        tick_to_x(PatternTick(data.length_ticks.0)).min(x_start + grid_width)
+                        tick_to_x(data.length_ticks.as_pattern_tick()).min(x_start + grid_width)
                     }
                 };
 
@@ -2608,13 +2609,12 @@ fn draw_piano_roll(
 
                 // Draw completed preview notes
                 for note in &view_state.recording_preview_completed {
-                    let midi = note.pitch.as_midi();
-                    if midi < view_pitch_min || midi > view_pitch_max {
+                    if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
                         continue;
                     }
-                    let y = pitch_to_y(Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C));
+                    let y = pitch_to_y(note.pitch);
                     let x_start = tick_to_x(note.start);
-                    let x_end = tick_to_x(PatternTick(note.start.0 + note.duration.0));
+                    let x_end = tick_to_x(note.start + note.duration);
                     let note_width = (x_end - x_start).max(3.0);
                     let alpha = 180_u8;
 
@@ -2654,8 +2654,7 @@ fn draw_piano_roll(
                     };
 
                     for (pitch, start_tick) in &view_state.recording_preview_held {
-                        let midi = pitch.as_midi();
-                        if midi < view_pitch_min || midi > view_pitch_max {
+                        if *pitch < view_pitch_min || *pitch > view_pitch_max {
                             continue;
                         }
                         let y = pitch_to_y(*pitch);
@@ -2664,7 +2663,7 @@ fn draw_piano_roll(
                             PatternTick(playhead_in_pattern)
                         } else {
                             // Note wraps around pattern — draw to end
-                            PatternTick(data.length_ticks.0)
+                            data.length_ticks.as_pattern_tick()
                         };
                         let x_end = tick_to_x(end);
                         let note_width = (x_end - x_start).max(3.0);
@@ -2702,8 +2701,8 @@ fn draw_piano_roll(
                 // Find the original note data for velocity/duration
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == *note_id) {
                     let duration_ticks = note.end_tick.map_or(
-                        SeqDuration(data.length_ticks.0.saturating_sub(note.start_tick.0)),
-                        |end| SeqDuration(end.0.saturating_sub(note.start_tick.0)),
+                        data.length_ticks.as_pattern_tick() - note.start_tick,
+                        |end| end - note.start_tick,
                     );
                     let y = pitch_to_y(*drag_pitch);
                     let x_start = tick_to_x(*drag_tick);
@@ -2903,8 +2902,8 @@ fn draw_piano_roll(
                 if auto_rect.is_some_and(|r| r.contains(pos)) {
                     ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
                 } else if grid_rect.contains(pos) {
-                    let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
-                    let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
+                    let vp_min = view_pitch_min;
+                    let vp_max = view_pitch_max;
                     let hit = note_at_pos(
                         &data.notes,
                         pos,
@@ -2928,7 +2927,7 @@ fn draw_piano_roll(
                                 let x_start = tick_to_x(note.start_tick);
                                 let x_end = match note.end_tick {
                                     Some(end) => tick_to_x(end),
-                                    None => tick_to_x(PatternTick(data.length_ticks.0)),
+                                    None => tick_to_x(data.length_ticks.as_pattern_tick()),
                                 };
                                 let hover_rect = Rect::from_min_size(
                                     Pos2::new(x_start, y + 1.0),
@@ -3145,8 +3144,8 @@ fn handle_piano_roll_interaction(
     y_to_pitch: &dyn Fn(f32) -> Pitch,
     tick_to_x: &dyn Fn(PatternTick) -> f32,
     pitch_to_y: &dyn Fn(Pitch) -> f32,
-    view_pitch_min: u8,
-    view_pitch_max: u8,
+    view_pitch_min: Pitch,
+    view_pitch_max: Pitch,
 ) {
     let shift_held = ui.ctx().input(|i| i.modifiers.shift);
 
@@ -3197,8 +3196,8 @@ fn handle_piano_roll_interaction(
         && let Some(pos) = response.interact_pointer_pos()
         && grid_rect.contains(pos)
     {
-        let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
-        let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
+        let vp_min = view_pitch_min;
+        let vp_max = view_pitch_max;
         let hit = note_at_pos(
             &data.notes,
             pos,
@@ -3305,8 +3304,8 @@ fn handle_piano_roll_interaction(
         && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
         && grid_rect.contains(pos)
     {
-        let vp_min = Pitch::new(view_pitch_min).unwrap_or(Pitch::MIN);
-        let vp_max = Pitch::new(view_pitch_max).unwrap_or(Pitch::MAX);
+        let vp_min = view_pitch_min;
+        let vp_max = view_pitch_max;
         let hit = note_at_pos(
             &data.notes,
             pos,
@@ -3324,9 +3323,8 @@ fn handle_piano_roll_interaction(
                     // If note has no explicit duration, lock it before move
                     // so the visual length is preserved
                     if note.end_tick.is_none() {
-                        let implied_dur = SeqDuration(
-                            data.length_ticks.0.saturating_sub(note.start_tick.0).max(1),
-                        );
+                        let implied_dur = (data.length_ticks.as_pattern_tick() - note.start_tick)
+                            .max(SeqDuration(1));
                         if let Ok(mut song_w) = song.write()
                             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                         {
@@ -3335,7 +3333,7 @@ fn handle_piano_roll_interaction(
                     }
                     // Calculate where on the note the user grabbed
                     let grab_tick = x_to_tick(pos.x);
-                    let grab_offset = SeqDuration(grab_tick.0.saturating_sub(note.start_tick.0));
+                    let grab_offset = grab_tick - note.start_tick;
                     view_state.drag = Some(DragState::MoveNote {
                         note_id,
                         original_tick: note.start_tick,
@@ -3354,7 +3352,7 @@ fn handle_piano_roll_interaction(
             Some((note_id, HitZone::RightEdge)) => {
                 // Start resizing the note
                 if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                    let end_tick = note.end_tick.unwrap_or(PatternTick(data.length_ticks.0));
+                    let end_tick = note.end_tick.unwrap_or(data.length_ticks.as_pattern_tick());
                     view_state.drag = Some(DragState::ResizeNote {
                         note_id,
                         original_end_tick: end_tick,
@@ -3515,8 +3513,7 @@ fn handle_piano_roll_interaction(
                 if current_end_tick != original_end_tick
                     && let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
                 {
-                    let new_duration =
-                        SeqDuration(current_end_tick.0.saturating_sub(note.start_tick.0).max(1));
+                    let new_duration = (current_end_tick - note.start_tick).max(SeqDuration(1));
                     if let Ok(mut song_w) = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
@@ -3530,7 +3527,7 @@ fn handle_piano_roll_interaction(
                 current_end_tick,
             } => {
                 // Create the note with the dragged duration (only if no duplicate)
-                let duration = SeqDuration(current_end_tick.0.saturating_sub(start_tick.0).max(1));
+                let duration = (current_end_tick - start_tick).max(SeqDuration(1));
                 if !has_note_at(&data.notes, start_tick, pitch)
                     && let Ok(mut song_w) = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
@@ -3561,7 +3558,7 @@ fn handle_piano_roll_interaction(
                 let p_max = pitch_bottom.max(pitch_top);
 
                 for note in &data.notes {
-                    let note_end = note.end_tick.unwrap_or(PatternTick(data.length_ticks.0));
+                    let note_end = note.end_tick.unwrap_or(data.length_ticks.as_pattern_tick());
                     if note.start_tick < tick_end
                         && note_end > tick_start
                         && note.pitch >= p_min
@@ -3833,16 +3830,14 @@ fn copy_selected_notes(
         .max()
         .unwrap_or(min_tick);
 
-    clipboard.selection_width = SeqDuration(max_end.0.saturating_sub(min_tick.0));
+    clipboard.selection_width = max_end - min_tick;
 
     for note in &selected_notes {
         clipboard.notes.push(ClipboardNote {
-            tick_offset: SeqDuration(note.start_tick.0.saturating_sub(min_tick.0)),
+            tick_offset: note.start_tick - min_tick,
             pitch: note.pitch,
             velocity: note.velocity,
-            duration: note
-                .end_tick
-                .map(|e| SeqDuration(e.0.saturating_sub(note.start_tick.0))),
+            duration: note.end_tick.map(|e| e - note.start_tick),
             instrument: SeqInstrumentId::new(0),
         });
     }
@@ -3866,7 +3861,7 @@ fn paste_clipboard_notes(
         && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
         for cn in &clipboard.notes {
-            let tick = PatternTick(paste_tick.0 + cn.tick_offset.0);
+            let tick = paste_tick + cn.tick_offset;
             let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
             if let Some(dur) = cn.duration {
                 pattern.resize_note(note_id, dur);

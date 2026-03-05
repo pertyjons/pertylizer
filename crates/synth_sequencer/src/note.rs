@@ -61,7 +61,7 @@ impl Note {
 
     /// Get the end tick (None if duration is None).
     pub fn end(&self) -> Option<PatternTick> {
-        self.duration.map(|d| PatternTick(self.start.0 + d.0))
+        self.duration.map(|d| self.start + d)
     }
 
     /// Check if the note is playing at the given tick.
