@@ -29,3 +29,27 @@ pub const ENGINE_VOICE_COUNT: &str = "/synth/engine/voice_count";
 
 /// CPU usage percentage.
 pub const ENGINE_CPU: &str = "/synth/engine/cpu";
+
+/// Spectral centroid (brightness indicator, in Hz).
+pub const AUDIO_CENTROID: &str = "/synth/audio/centroid";
+
+/// Spectral flux (onset/change magnitude, arbitrary units).
+pub const AUDIO_FLUX: &str = "/synth/audio/flux";
+
+/// Beat phase within current beat (0.0–1.0).
+pub const TRANSPORT_PHASE: &str = "/synth/transport/phase";
+
+/// MIDI CC event (cc_number, value_normalized, channel).
+pub const EVENT_CC: &str = "/synth/event/cc";
+
+/// Event ring buffer drop count since last report.
+pub const ENGINE_EVENT_DROPS: &str = "/synth/engine/event_drops";
+
+/// FFT band center frequencies in Hz (128 floats, sent with meta).
+pub const META_FFT_FREQS: &str = "/synth/meta/fft_freqs";
+
+/// Ping from sender — included in bundles so visualizer knows sender is alive.
+pub const VIZ_PING: &str = "/viz/ping";
+
+/// Pong from visualizer — reply to indicate a client is connected.
+pub const VIZ_PONG: &str = "/viz/pong";

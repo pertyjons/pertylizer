@@ -244,6 +244,10 @@ struct SynthApp {
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
 
+    // OSC shared state
+    #[cfg(feature = "osc")]
+    osc_shared: Option<synth_osc::OscSharedState>,
+
     // Persistent application settings
     settings: crate::io::settings::AppSettings,
 }
@@ -342,6 +346,8 @@ impl SynthApp {
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
+            #[cfg(feature = "osc")]
+            osc_shared: config.osc_shared,
             settings,
         }
     }
@@ -838,6 +844,34 @@ impl eframe::App for SynthApp {
                                 "MCP: listening (no active sessions)".to_owned()
                             } else {
                                 "MCP: not running".to_owned()
+                            });
+                        }
+                        ui.separator();
+                    }
+                    // OSC telemetry status indicator
+                    #[cfg(feature = "osc")]
+                    {
+                        let osc_status = self
+                            .osc_shared
+                            .as_ref()
+                            .map_or(synth_osc::OscStatus::Off, |s| s.status());
+                        let (icon, label, color) = match osc_status {
+                            synth_osc::OscStatus::Connected => {
+                                (ri::BROADCAST_FILL, "OSC", theme().colors.meter_green)
+                            }
+                            synth_osc::OscStatus::Idle => {
+                                (ri::BROADCAST_LINE, "OSC", theme().colors.text_dim)
+                            }
+                            synth_osc::OscStatus::Off => {
+                                (ri::BROADCAST_LINE, "OSC", theme().colors.accent_red)
+                            }
+                        };
+                        let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
+                        if resp.hovered() {
+                            resp.on_hover_text(match osc_status {
+                                synth_osc::OscStatus::Connected => "OSC: visualizer connected",
+                                synth_osc::OscStatus::Idle => "OSC: sending beacon (no visualizer)",
+                                synth_osc::OscStatus::Off => "OSC: disabled",
                             });
                         }
                         ui.separator();

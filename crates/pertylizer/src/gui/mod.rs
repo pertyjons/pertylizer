@@ -79,6 +79,9 @@ pub struct SynthGuiConfig {
     /// Shared MCP state (if MCP feature enabled).
     #[cfg(feature = "mcp")]
     pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
+    /// Shared OSC state (if OSC feature enabled).
+    #[cfg(feature = "osc")]
+    pub osc_shared: Option<synth_osc::OscSharedState>,
     /// Persistent application settings.
     pub settings: crate::io::settings::AppSettings,
 }

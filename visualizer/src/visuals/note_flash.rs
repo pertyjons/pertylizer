@@ -1,8 +1,15 @@
 //! Note flash — emissive sphere that flashes on note-on events.
 
+use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use crate::telemetry::SynthTelemetry;
+
+/// Decay rate (higher = faster fade).
+const DECAY_RATE: f32 = 6.0;
+
+/// Emissive intensity multiplier for bloom visibility.
+const EMISSIVE_STRENGTH: f32 = 20.0;
 
 /// Marker for the note-flash sphere.
 #[derive(Component)]
@@ -42,12 +49,12 @@ pub fn setup(
 /// Update flash sphere: trigger on note-on, decay over time.
 pub fn update(
     telemetry: Res<SynthTelemetry>,
-    mut query: Query<
-        (&mut FlashState, &MeshMaterial3d<StandardMaterial>),
-        With<NoteFlashSphere>,
-    >,
+    time: Res<Time>,
+    mut query: Query<(&mut FlashState, &MeshMaterial3d<StandardMaterial>), With<NoteFlashSphere>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let dt = time.delta_secs();
+
     for (mut flash, material_handle) in &mut query {
         // Trigger on fresh note-on
         if telemetry.note_age_frames < 2
@@ -57,16 +64,15 @@ pub fn update(
             flash.brightness = velocity as f32 / 127.0;
         }
 
-        // Decay
-        flash.brightness *= 0.92;
+        // Frame-rate-independent exponential decay
+        flash.brightness *= (-DECAY_RATE * dt).exp();
 
         // Update material
         if let Some(material) = materials.get_mut(&material_handle.0) {
             let lightness = 0.5 * flash.brightness;
             let color = Color::hsl(flash.hue, 0.9, lightness);
-            let emissive_lightness = lightness * 8.0;
-            material.emissive = Color::hsl(flash.hue, 0.9, emissive_lightness).into();
             material.base_color = color;
+            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * flash.brightness;
         }
     }
 }

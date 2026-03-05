@@ -12,8 +12,8 @@ use std::str::FromStr;
 
 use super::instrument::{Instrument, InstrumentId, KeyRange, LearnState, MidiChannel};
 use synth_core::{
-    Amplitude, BipolarValue, Bpm, CpuUsage, Gain, MidiNote, NormalizedValue, PortName, Seconds,
-    Semitones, Velocity,
+    Amplitude, BipolarValue, Bpm, CcNumber, CpuUsage, Gain, MidiNote, NormalizedValue, PortName,
+    Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, Tick, TrackId};
@@ -813,6 +813,14 @@ pub enum NoteEvent {
     /// A note was released.
     Off {
         note: MidiNote,
+        channel: MidiChannel,
+    },
+    /// A MIDI controller change (CC1=mod wheel, CC128=pitch bend, CC129=aftertouch).
+    Cc {
+        /// MIDI CC number (0–127 standard, 128+ for pseudo-CCs).
+        cc: CcNumber,
+        /// Normalized value (0.0–1.0).
+        value: NormalizedValue,
         channel: MidiChannel,
     },
 }
