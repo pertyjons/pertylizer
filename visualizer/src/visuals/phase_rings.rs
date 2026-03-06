@@ -87,6 +87,7 @@ pub fn spawn_and_update(
     mut last_fade: Local<f32>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
+    mut last_policy_version: Local<u64>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::PhaseRings);
     let fade = effect_state.fade;
@@ -140,10 +141,12 @@ pub fn spawn_and_update(
     }
 
     // Only update the 2 shared materials during crossfade
-    if (fade - *last_fade).abs() > effects::FADE_EPSILON {
+    if (fade - *last_fade).abs() > effects::FADE_EPSILON || *last_policy_version != policy.version {
         let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+        let metallic = policy.metallic;
+        let roughness = policy.roughness;
 
         for (handle, hue) in [
             (&ring_materials.downbeat, 200.0),
@@ -153,8 +156,11 @@ pub fn spawn_and_update(
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;
+                material.metallic = metallic;
+                material.perceptual_roughness = roughness;
             }
         }
         *last_fade = fade;
+        *last_policy_version = policy.version;
     }
 }

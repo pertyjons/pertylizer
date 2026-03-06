@@ -334,6 +334,8 @@ pub fn create_hue_materials(
     let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = config.emissive_strength * policy.emissive_multiplier;
+    let metallic = policy.metallic;
+    let roughness = policy.roughness;
 
     let mut result = Vec::with_capacity(num_buckets);
     for bucket in 0..num_buckets {
@@ -343,6 +345,8 @@ pub fn create_hue_materials(
         result.push(materials.add(StandardMaterial {
             base_color: color,
             emissive: LinearRgba::from(color) * emissive,
+            metallic,
+            perceptual_roughness: roughness,
             ..default()
         }));
     }
@@ -359,14 +363,17 @@ pub fn update_hue_materials_for_fade(
     policy: &ThemeMaterialPolicy,
     fade: f32,
     last_fade: &mut f32,
+    last_policy_version: &mut u64,
 ) {
-    if (fade - *last_fade).abs() < FADE_EPSILON {
+    if (fade - *last_fade).abs() < FADE_EPSILON && *last_policy_version == policy.version {
         return;
     }
 
     let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = config.emissive_strength * policy.emissive_multiplier;
+    let metallic = policy.metallic;
+    let roughness = policy.roughness;
 
     let num_buckets = handles.len();
     for (bucket, handle) in handles.iter().enumerate() {
@@ -376,7 +383,10 @@ pub fn update_hue_materials_for_fade(
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = metallic;
+            material.perceptual_roughness = roughness;
         }
     }
     *last_fade = fade;
+    *last_policy_version = policy.version;
 }

@@ -74,6 +74,7 @@ pub fn setup(
 #[derive(Resource, Default)]
 pub struct FractalState {
     full_update_needed: bool,
+    last_policy_version: u64,
 }
 
 pub fn update(
@@ -102,6 +103,10 @@ pub fn update(
     if fade < 1.0 {
         state.full_update_needed = true;
     }
+    if state.last_policy_version != policy.version {
+        state.full_update_needed = true;
+        state.last_policy_version = policy.version;
+    }
 
     for (ring, mut transform, material_handle) in &mut query {
         // Rotate
@@ -122,10 +127,14 @@ pub fn update(
             let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
             let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
             let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+            let metallic = policy.metallic;
+            let roughness = policy.roughness;
             let hue = (ring.index as f32 / NUM_RINGS as f32) * 360.0;
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = metallic;
+            material.perceptual_roughness = roughness;
         }
     }
 

@@ -85,6 +85,7 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
 ) {
     let bin_count = telemetry.fft_bin_count;
     let bar_width = TOTAL_WIDTH / bin_count.max(1) as f32;
@@ -129,5 +130,6 @@ pub fn update(
         &policy,
         effect_state.fade,
         &mut last_fade,
+        &mut last_policy_version,
     );
 }

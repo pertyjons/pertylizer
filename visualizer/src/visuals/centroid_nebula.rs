@@ -121,6 +121,7 @@ pub fn update_material(
     mut last_centroid: Local<f32>,
     mut last_hue: Local<f32>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
@@ -139,7 +140,10 @@ pub fn update_material(
     let hue = 330.0 - (centroid_norm * 130.0);
 
     // Only update material when hue or fade changes meaningfully
-    if (hue - *last_hue).abs() < 1.0 && (fade - *last_fade).abs() < effects::FADE_EPSILON {
+    if (hue - *last_hue).abs() < 1.0
+        && (fade - *last_fade).abs() < effects::FADE_EPSILON
+        && *last_policy_version == policy.version
+    {
         return;
     }
 
@@ -153,8 +157,11 @@ pub fn update_material(
         let color = Color::hsl(hue, sat, lit * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * emissive * fade;
+        material.metallic = policy.metallic;
+        material.perceptual_roughness = policy.roughness;
     }
 
     *last_hue = hue;
     *last_fade = fade;
+    *last_policy_version = policy.version;
 }

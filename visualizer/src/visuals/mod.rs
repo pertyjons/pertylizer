@@ -56,6 +56,7 @@ impl Plugin for VisualsPlugin {
             .init_resource::<theme::ThemeState>()
             .init_resource::<theme::ThemeRegistry>()
             .init_resource::<theme::ThemeMaterialPolicy>()
+            .init_resource::<theme::ThemeRuntime>()
             .add_systems(
                 Startup,
                 (

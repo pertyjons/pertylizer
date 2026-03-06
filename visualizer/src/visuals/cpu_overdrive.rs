@@ -53,6 +53,7 @@ pub fn setup(
 pub struct CpuState {
     last_strain: f32,
     last_fade: f32,
+    last_policy_version: u64,
 }
 
 pub fn update(
@@ -78,6 +79,7 @@ pub fn update(
     let fade = effect_state.fade;
     let needs_material_update = (strain - state.last_strain).abs() > effects::FADE_EPSILON
         || (fade - state.last_fade).abs() > effects::FADE_EPSILON
+        || state.last_policy_version != policy.version
         || fade < 1.0;
 
     for (mut transform, material_handle) in &mut query {
@@ -105,9 +107,12 @@ pub fn update(
 
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive_strength * fade;
+            material.metallic = policy.metallic;
+            material.perceptual_roughness = policy.roughness;
         }
     }
 
     state.last_strain = strain;
     state.last_fade = fade;
+    state.last_policy_version = policy.version;
 }

@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use super::theme::{ThemeRegistry, ThemeState};
+use super::theme::ThemeRuntime;
 use crate::telemetry::SynthTelemetry;
 
 /// Decay rate in units per second (higher = faster fade).
@@ -34,8 +34,7 @@ pub fn update(
     telemetry: Res<SynthTelemetry>,
     time: Res<Time>,
     mut state: ResMut<BeatPulseState>,
-    theme_state: Res<ThemeState>,
-    theme_registry: Res<ThemeRegistry>,
+    runtime: Res<ThemeRuntime>,
     mut ambient: Query<&mut AmbientLight>,
 ) {
     let dt = time.delta_secs();
@@ -66,7 +65,7 @@ pub fn update(
     }
 
     // Pulse ambient light brightness using the active theme's base ambient brightness
-    let base_brightness = theme_registry.get(theme_state.active).ambient_brightness;
+    let base_brightness = runtime.ambient_brightness;
     for mut ambient_light in &mut ambient {
         let pulse_boost = state.intensity * 80.0;
         ambient_light.brightness = base_brightness + pulse_boost;

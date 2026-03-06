@@ -116,6 +116,7 @@ pub fn update_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_energy: Local<f32>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
@@ -123,7 +124,10 @@ pub fn update_material(
     let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
 
     // Only update material when energy or fade changes meaningfully
-    if (energy - *last_energy).abs() < 0.02 && (fade - *last_fade).abs() < effects::FADE_EPSILON {
+    if (energy - *last_energy).abs() < 0.02
+        && (fade - *last_fade).abs() < effects::FADE_EPSILON
+        && *last_policy_version == policy.version
+    {
         return;
     }
 
@@ -131,8 +135,11 @@ pub fn update_material(
         let color = Color::srgb(0.1, 0.2 + energy * 0.5, 0.5 + energy * 0.5);
         material.emissive =
             LinearRgba::from(color) * EMISSIVE_STRENGTH * policy.emissive_multiplier * fade;
+        material.metallic = policy.metallic;
+        material.perceptual_roughness = policy.roughness;
     }
 
     *last_energy = energy;
     *last_fade = fade;
+    *last_policy_version = policy.version;
 }

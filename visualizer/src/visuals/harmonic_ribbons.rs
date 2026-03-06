@@ -70,6 +70,7 @@ pub fn spawn_and_update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::HarmonicRibbons);
     let fade = effect_state.fade;
@@ -168,5 +169,6 @@ pub fn spawn_and_update(
         &policy,
         fade,
         &mut last_fade,
+        &mut last_policy_version,
     );
 }

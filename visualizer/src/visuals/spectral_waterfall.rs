@@ -210,16 +210,19 @@ pub fn update_materials(
     waterfall_materials: Res<WaterfallMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
+    mut last_policy_version: Local<u64>,
 ) {
     let fade = effect_state.fade;
 
     // Only update materials if fade is active
-    if fade == 1.0 && !state.full_update_needed {
+    if fade == 1.0 && !state.full_update_needed && *last_policy_version == policy.version {
         return;
     }
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let metallic = policy.metallic;
+    let roughness = policy.roughness;
 
     // Update the 64 shared materials once per frame during crossfade
     for (band, handle) in waterfall_materials.materials.iter().enumerate() {
@@ -229,6 +232,9 @@ pub fn update_materials(
             let color = Color::hsl(hue, sat, lightness);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = metallic;
+            material.perceptual_roughness = roughness;
         }
     }
+    *last_policy_version = policy.version;
 }

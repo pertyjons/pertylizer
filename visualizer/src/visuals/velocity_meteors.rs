@@ -108,9 +108,31 @@ pub fn spawn(
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
+    meteor_materials: Res<MeteorMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
+    mut last_policy_version: Local<u64>,
     mut query: Query<(Entity, &mut Meteor, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
+
+    if *last_policy_version != policy.version {
+        let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (0.6 + policy.lightness_offset).clamp(0.0, 1.0);
+        let emissive = 15.0 * policy.emissive_multiplier;
+
+        for (note, handle) in meteor_materials.materials.iter().enumerate() {
+            if let Some(material) = materials.get_mut(handle) {
+                let hue = (note as f32 / 127.0) * 360.0;
+                let color = Color::hsl(hue, sat, lit);
+                material.base_color = color;
+                material.emissive = LinearRgba::from(color) * emissive;
+                material.metallic = policy.metallic;
+                material.perceptual_roughness = policy.roughness;
+            }
+        }
+        *last_policy_version = policy.version;
+    }
 
     for (entity, mut meteor, mut transform) in &mut query {
         let fall_amt = FALL_SPEED * dt;
