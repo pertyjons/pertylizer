@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use crate::telemetry::SynthTelemetry;
 
-/// Frames of no data before showing the indicator (~2 seconds at 60 fps).
-const STALE_THRESHOLD: u32 = 120;
+/// Seconds of no data before showing the indicator.
+const STALE_THRESHOLD_SECS: f32 = 2.0;
 
 /// Marker for the waiting text entity.
 #[derive(Component)]
@@ -35,7 +35,7 @@ pub fn update(
     telemetry: Res<SynthTelemetry>,
     mut query: Query<&mut TextColor, With<WaitingIndicator>>,
 ) {
-    let visible = telemetry.stale_frames > STALE_THRESHOLD;
+    let visible = telemetry.stale_seconds > STALE_THRESHOLD_SECS;
 
     for mut color in &mut query {
         let target_alpha = if visible { 0.8 } else { 0.0 };

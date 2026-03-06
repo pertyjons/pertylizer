@@ -52,6 +52,9 @@ rosc = "0.11.4"
 # Fast random number generation
 fastrand = "2.3.0"
 
+# WAV export
+hound = "3.5"
+
 # Testing
 tempfile = "3.26.0"
 

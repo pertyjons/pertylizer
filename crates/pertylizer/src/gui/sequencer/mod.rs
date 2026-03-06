@@ -1894,6 +1894,7 @@ fn draw_piano_roll(
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instrument_name: Option<&str>,
+    undo_manager: &mut crate::undo::UndoManager,
 ) -> bool {
     let t = theme();
     let mut keep_open = true;
@@ -2995,13 +2996,19 @@ fn draw_piano_roll(
                 &pitch_to_y,
                 view_pitch_min,
                 view_pitch_max,
+                undo_manager,
             );
         });
 
     // ── Keyboard shortcuts ──
     let ctx = ui.ctx();
     if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
-        delete_selected_notes(song, data.pattern_id, &mut view_state.selected_notes);
+        delete_selected_notes(
+            song,
+            data.pattern_id,
+            &mut view_state.selected_notes,
+            undo_manager,
+        );
     }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         view_state.selected_notes.clear();
@@ -3028,7 +3035,12 @@ fn draw_piano_roll(
         && !view_state.selected_notes.is_empty()
     {
         copy_selected_notes(data, &view_state.selected_notes, &mut view_state.clipboard);
-        delete_selected_notes(song, data.pattern_id, &mut view_state.selected_notes);
+        delete_selected_notes(
+            song,
+            data.pattern_id,
+            &mut view_state.selected_notes,
+            undo_manager,
+        );
     }
 
     // ── Ctrl+V — paste at playhead or start ──
@@ -3047,6 +3059,7 @@ fn draw_piano_roll(
             &view_state.clipboard,
             paste_tick,
             &mut view_state.selected_notes,
+            undo_manager,
         );
     }
 
@@ -3070,6 +3083,7 @@ fn draw_piano_roll(
             &view_state.clipboard,
             paste_tick,
             &mut view_state.selected_notes,
+            undo_manager,
         );
     }
 
@@ -3088,8 +3102,24 @@ fn draw_piano_roll(
             if let Ok(mut song_w) = song.write()
                 && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
+                let mut composite = Vec::new();
                 for note_id in &view_state.selected_notes {
-                    pattern.transpose_note(*note_id, semitones);
+                    if let Some(note) = pattern.note(*note_id) {
+                        let old_pitch = note.pitch;
+                        if pattern.transpose_note(*note_id, semitones)
+                            && let Some(transposed) = pattern.note(*note_id)
+                        {
+                            composite.push(crate::undo::UndoAction::TransposeNote {
+                                pattern_id: data.pattern_id,
+                                note_id: *note_id,
+                                old_pitch,
+                                new_pitch: transposed.pitch,
+                            });
+                        }
+                    }
+                }
+                if !composite.is_empty() {
+                    undo_manager.push(crate::undo::UndoAction::Composite(composite));
                 }
             }
         }
@@ -3136,6 +3166,12 @@ fn draw_piano_roll(
                 SeqInstrumentId::new(0),
             );
             pattern.resize_note(note_id, step_size);
+            if let Some(note) = pattern.note(note_id) {
+                undo_manager.push(crate::undo::UndoAction::AddNote {
+                    pattern_id: data.pattern_id,
+                    note: note.into(),
+                });
+            }
             view_state.selected_notes.clear();
             view_state.selected_notes.insert(note_id);
             preview_note(handle, pitch, view_state.default_velocity);
@@ -3171,6 +3207,7 @@ fn handle_piano_roll_interaction(
     pitch_to_y: &dyn Fn(Pitch) -> f32,
     view_pitch_min: Pitch,
     view_pitch_max: Pitch,
+    undo_manager: &mut crate::undo::UndoManager,
 ) {
     let shift_held = ui.ctx().input(|i| i.modifiers.shift);
 
@@ -3273,6 +3310,12 @@ fn handle_piano_roll_interaction(
                             SeqInstrumentId::new(0),
                         );
                         pattern.resize_note(note_id, duration);
+                        if let Some(note) = pattern.note(note_id) {
+                            undo_manager.push(crate::undo::UndoAction::AddNote {
+                                pattern_id: data.pattern_id,
+                                note: note.into(),
+                            });
+                        }
                         view_state.selected_notes.clear();
                         view_state.selected_notes.insert(note_id);
                         preview_note(handle, pitch_val, view_state.default_velocity);
@@ -3517,14 +3560,30 @@ fn handle_piano_roll_interaction(
                     && let Ok(mut song_w) = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
+                    let mut composite = Vec::new();
                     if current_tick != original_tick {
                         pattern.move_note(note_id, current_tick);
+                        composite.push(crate::undo::UndoAction::MoveNote {
+                            pattern_id: data.pattern_id,
+                            note_id,
+                            old_start: original_tick,
+                            new_start: current_tick,
+                        });
                     }
                     if current_pitch != original_pitch {
                         #[allow(clippy::cast_precision_loss)]
                         let delta =
                             current_pitch.as_midi() as f32 - original_pitch.as_midi() as f32;
                         pattern.transpose_note(note_id, Semitones::new(delta));
+                        composite.push(crate::undo::UndoAction::TransposeNote {
+                            pattern_id: data.pattern_id,
+                            note_id,
+                            old_pitch: original_pitch,
+                            new_pitch: current_pitch,
+                        });
+                    }
+                    if !composite.is_empty() {
+                        undo_manager.push(crate::undo::UndoAction::Composite(composite));
                     }
                 }
             }
@@ -3539,10 +3598,17 @@ fn handle_piano_roll_interaction(
                     && let Some(note) = data.notes.iter().find(|n| n.note_id == note_id)
                 {
                     let new_duration = (current_end_tick - note.start_tick).max(SeqDuration(1));
+                    let old_duration = note.end_tick.map(|e| e - note.start_tick);
                     if let Ok(mut song_w) = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
                         pattern.resize_note(note_id, new_duration);
+                        undo_manager.push(crate::undo::UndoAction::ResizeNote {
+                            pattern_id: data.pattern_id,
+                            note_id,
+                            old_duration: old_duration.map(|d| SeqDuration(d.0)),
+                            new_duration: Some(new_duration),
+                        });
                     }
                 }
             }
@@ -3564,6 +3630,12 @@ fn handle_piano_roll_interaction(
                         SeqInstrumentId::new(0),
                     );
                     pattern.resize_note(note_id, duration);
+                    if let Some(added_note) = pattern.note(note_id) {
+                        undo_manager.push(crate::undo::UndoAction::AddNote {
+                            pattern_id: data.pattern_id,
+                            note: added_note.into(),
+                        });
+                    }
                     view_state.selected_notes.clear();
                     view_state.selected_notes.insert(note_id);
                 }
@@ -3807,6 +3879,7 @@ fn delete_selected_notes(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
     selected: &mut HashSet<NoteId>,
+    undo_manager: &mut crate::undo::UndoManager,
 ) {
     if selected.is_empty() {
         return;
@@ -3814,8 +3887,18 @@ fn delete_selected_notes(
     if let Ok(mut song_w) = song.write()
         && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
+        let mut composite = Vec::new();
         for note_id in selected.iter() {
+            if let Some(note) = pattern.note(*note_id) {
+                composite.push(crate::undo::UndoAction::RemoveNote {
+                    pattern_id,
+                    note: note.into(),
+                });
+            }
             pattern.remove_note(*note_id);
+        }
+        if !composite.is_empty() {
+            undo_manager.push(crate::undo::UndoAction::Composite(composite));
         }
     }
     selected.clear();
@@ -3875,6 +3958,7 @@ fn paste_clipboard_notes(
     clipboard: &Clipboard,
     paste_tick: PatternTick,
     selected: &mut HashSet<NoteId>,
+    undo_manager: &mut crate::undo::UndoManager,
 ) {
     if clipboard.notes.is_empty() {
         return;
@@ -3885,13 +3969,23 @@ fn paste_clipboard_notes(
     if let Ok(mut song_w) = song.write()
         && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
+        let mut composite = Vec::new();
         for cn in &clipboard.notes {
             let tick = paste_tick + cn.tick_offset;
             let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
             if let Some(dur) = cn.duration {
                 pattern.resize_note(note_id, dur);
             }
+            if let Some(note) = pattern.note(note_id) {
+                composite.push(crate::undo::UndoAction::AddNote {
+                    pattern_id,
+                    note: note.into(),
+                });
+            }
             selected.insert(note_id);
+        }
+        if !composite.is_empty() {
+            undo_manager.push(crate::undo::UndoAction::Composite(composite));
         }
     }
 }
@@ -3920,12 +4014,13 @@ fn velocity_color(vel: f32) -> Color32 {
 // ============================================================================
 
 /// Draw the full sequencer view (transport + arrangement + piano roll).
-pub fn draw_sequencer_view(
+pub(crate) fn draw_sequencer_view(
     ctx: &egui::Context,
     handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
+    undo_manager: &mut crate::undo::UndoManager,
 ) {
     // Transport bar at the top
     let is_playing = egui::TopBottomPanel::top("sequencer_transport")
@@ -3984,6 +4079,7 @@ pub fn draw_sequencer_view(
                         song,
                         view_state,
                         track_instrument_name.as_deref(),
+                        undo_manager,
                     ) {
                         view_state.opened_pattern = None;
                         view_state.selected_notes.clear();

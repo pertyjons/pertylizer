@@ -29,6 +29,8 @@ pub enum FileDialogMode {
     OpenProject,
     /// Saving a project file.
     SaveProject,
+    /// Choosing output path for WAV export.
+    ExportWav,
 }
 
 /// State for all application dialogs.
@@ -69,6 +71,10 @@ pub struct DialogState {
     file_dialog: FileDialog,
     /// Current file dialog mode.
     file_dialog_mode: Option<FileDialogMode>,
+    /// Show WAV export dialog.
+    pub show_export_wav: bool,
+    /// Export dialog state.
+    pub export_state: crate::gui::export_dialog::ExportDialogState,
 }
 
 impl Default for DialogState {
@@ -92,6 +98,8 @@ impl Default for DialogState {
             current_theme: ThemePreset::default(),
             file_dialog: FileDialog::new(),
             file_dialog_mode: None,
+            show_export_wav: false,
+            export_state: crate::gui::export_dialog::ExportDialogState::default(),
         }
     }
 }
@@ -171,6 +179,22 @@ impl DialogState {
             .add_file_filter(
                 "Project files",
                 Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .default_file_name(default_name);
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.save_file();
+    }
+
+    /// Open the file dialog for choosing a WAV export path.
+    pub fn open_export_wav_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::ExportWav);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "WAV files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {

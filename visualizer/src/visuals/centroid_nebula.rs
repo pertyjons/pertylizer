@@ -38,7 +38,6 @@ pub fn setup(
     let material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.1, 0.1, 0.3),
         emissive: LinearRgba::from(Color::srgb(0.1, 0.1, 0.3)) * EMISSIVE_STRENGTH,
-        alpha_mode: AlphaMode::Blend,
         ..default()
     });
 
@@ -114,15 +113,22 @@ pub fn update(
 
 pub fn update_material(
     effect_state: Res<EffectState>,
+    telemetry: Res<SynthTelemetry>,
     query: Query<&MeshMaterial3d<StandardMaterial>, With<NebulaParticle>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    last_centroid: Local<f32>,
+    mut last_centroid: Local<f32>,
     mut last_hue: Local<f32>,
     mut last_fade: Local<f32>,
 ) {
     let fade = effect_state.fade;
 
-    let centroid = *last_centroid;
+    let raw_centroid = telemetry.centroid_hz.clamp(200.0, 10000.0);
+    let centroid = if *last_centroid == 0.0 {
+        raw_centroid
+    } else {
+        *last_centroid + (raw_centroid - *last_centroid) * 0.1
+    };
+    *last_centroid = centroid;
     let centroid_norm = ((centroid.max(1.0).log2() - 200.0_f32.log2())
         / (10000.0_f32.log2() - 200.0_f32.log2()))
     .clamp(0.0, 1.0);

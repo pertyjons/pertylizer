@@ -53,13 +53,17 @@ fn setup_osc_socket(mut commands: Commands) {
 
     commands.insert_resource(OscSocket {
         socket,
-        buf: vec![0u8; 8192],
+        buf: vec![0u8; 65_536],
         sender_addr: None,
         last_pong_sent: Instant::now(),
     });
 }
 
-fn receive_osc(mut socket: ResMut<OscSocket>, mut telemetry: ResMut<SynthTelemetry>) {
+fn receive_osc(
+    time: Res<Time>,
+    mut socket: ResMut<OscSocket>,
+    mut telemetry: ResMut<SynthTelemetry>,
+) {
     // Clear pending events from previous frame before processing new packets
     telemetry.pending_note_events.clear();
 
@@ -86,11 +90,14 @@ fn receive_osc(mut socket: ResMut<OscSocket>, mut telemetry: ResMut<SynthTelemet
         }
     }
 
-    telemetry.stale_frames = if received_any {
-        0
+    let dt = time.delta_secs();
+    if received_any {
+        telemetry.stale_frames = 0;
+        telemetry.stale_seconds = 0.0;
     } else {
-        telemetry.stale_frames.saturating_add(1)
-    };
+        telemetry.stale_frames = telemetry.stale_frames.saturating_add(1);
+        telemetry.stale_seconds += dt;
+    }
     telemetry.note_age_frames = telemetry.note_age_frames.saturating_add(1);
 }
 

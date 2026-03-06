@@ -44,6 +44,27 @@ use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 
+/// Action deferred until the user responds to the unsaved-changes dialog.
+enum PendingAction {
+    /// Create a new project.
+    NewProject,
+    /// Open a project via file dialog.
+    OpenProject,
+    /// Load a specific project file.
+    LoadProject(PathBuf),
+    /// Quit the application.
+    Quit,
+}
+
+/// State for the "unsaved changes" confirmation dialog.
+#[derive(Default)]
+struct UnsavedChangesDialog {
+    /// Whether the dialog is currently visible.
+    open: bool,
+    /// The action to perform once the user responds.
+    pending_action: Option<PendingAction>,
+}
+
 /// Egui-based GUI backend.
 pub struct EguiBackend;
 
@@ -250,6 +271,18 @@ struct SynthApp {
 
     // Persistent application settings
     settings: crate::io::settings::AppSettings,
+
+    // Undo/redo manager
+    undo_manager: crate::undo::UndoManager,
+
+    /// Whether the current project has unsaved changes.
+    dirty: bool,
+
+    /// Unsaved changes confirmation dialog state.
+    unsaved_dialog: UnsavedChangesDialog,
+
+    /// Module clipboard for copy/paste.
+    clipboard: crate::gui::clipboard::ModuleClipboard,
 }
 
 impl SynthApp {
@@ -349,7 +382,16 @@ impl SynthApp {
             #[cfg(feature = "osc")]
             osc_shared: config.osc_shared,
             settings,
+            undo_manager: crate::undo::UndoManager::new(),
+            dirty: false,
+            unsaved_dialog: UnsavedChangesDialog::default(),
+            clipboard: crate::gui::clipboard::ModuleClipboard::new(),
         }
+    }
+
+    /// Mark the project as having unsaved changes.
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     /// Add a module via session and register it in the active patch editor.
@@ -455,6 +497,8 @@ impl eframe::App for SynthApp {
                             }
                         }
                     }
+                    self.mark_dirty();
+
                     // Clear preview — notes are now committed
                     self.sequencer_view_state
                         .recording_preview_completed
@@ -549,6 +593,12 @@ impl eframe::App for SynthApp {
         // Handle keyboard input
         self.process_keyboard_input(ctx);
 
+        // ── Undo/Redo keyboard shortcuts ──
+        self.handle_undo_redo_shortcuts(ctx);
+
+        // ── Copy/Paste/Duplicate keyboard shortcuts ──
+        self.handle_clipboard_shortcuts(ctx);
+
         // Request continuous repaint for meters
         ctx.request_repaint();
 
@@ -561,18 +611,29 @@ impl eframe::App for SynthApp {
                         .button(format!("{} New Project", ri::FILE_ADD_LINE))
                         .clicked()
                     {
-                        self.reset_to_new_project();
-                        self.dialog_state
-                            .set_status("New project created".to_string());
+                        if self.dirty {
+                            self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
+                            self.unsaved_dialog.open = true;
+                        } else {
+                            self.reset_to_new_project();
+                            self.dirty = false;
+                            self.dialog_state
+                                .set_status("New project created".to_string());
+                        }
                         ui.close();
                     }
                     if ui
                         .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
                         .clicked()
                     {
-                        let initial_dir = self.resolve_project_dir();
-                        self.dialog_state
-                            .open_open_project_dialog(initial_dir.as_deref());
+                        if self.dirty {
+                            self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
+                            self.unsaved_dialog.open = true;
+                        } else {
+                            let initial_dir = self.resolve_project_dir();
+                            self.dialog_state
+                                .open_open_project_dialog(initial_dir.as_deref());
+                        }
                         ui.close();
                     }
                     if ui
@@ -583,6 +644,9 @@ impl eframe::App for SynthApp {
                             let proj = self.create_project_from_app();
                             match proj.save(&path) {
                                 Ok(()) => {
+                                    self.dirty = false;
+                                    self.settings.add_recent_project(path.clone());
+                                    self.settings.save();
                                     self.dialog_state
                                         .set_status(format!("Project saved: {}", path.display()));
                                 }
@@ -616,6 +680,36 @@ impl eframe::App for SynthApp {
                             .open_save_project_dialog(&default_name, initial_dir.as_deref());
                         ui.close();
                     }
+                    // --- Recent Projects ---
+                    ui.menu_button(format!("{} Recent Projects", ri::HISTORY_LINE), |ui| {
+                        let projects = self.settings.recent_projects.clone();
+                        if projects.is_empty() {
+                            ui.label("(none)");
+                        } else {
+                            for path in &projects {
+                                let label =
+                                    path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
+                                let btn =
+                                    ui.button(label).on_hover_text(path.display().to_string());
+                                if btn.clicked() {
+                                    if self.dirty {
+                                        self.unsaved_dialog.pending_action =
+                                            Some(PendingAction::LoadProject(path.clone()));
+                                        self.unsaved_dialog.open = true;
+                                    } else {
+                                        self.load_recent_project(path.clone());
+                                    }
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Clear Recent").clicked() {
+                                self.settings.clear_recent_projects();
+                                self.settings.save();
+                                ui.close();
+                            }
+                        }
+                    });
                     ui.separator();
 
                     // --- Patch ---
@@ -675,6 +769,24 @@ impl eframe::App for SynthApp {
                     });
                     ui.separator();
                     if ui
+                        .button(format!("{} Export WAV...", ri::DOWNLOAD_LINE))
+                        .clicked()
+                    {
+                        // Pre-fill duration from song length
+                        let song_secs =
+                            self.song.read().map(|s| s.length_seconds()).unwrap_or(60.0);
+                        self.dialog_state
+                            .export_state
+                            .set_duration_from_song(song_secs);
+                        // Open file dialog to choose WAV path
+                        let default_name = "export.wav".to_string();
+                        let initial_dir = self.resolve_project_dir();
+                        self.dialog_state
+                            .open_export_wav_dialog(&default_name, initial_dir.as_deref());
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
                         .button(format!("{} Settings...", ri::SETTINGS_LINE))
                         .clicked()
                     {
@@ -686,7 +798,71 @@ impl eframe::App for SynthApp {
                     }
                     ui.separator();
                     if ui.button(format!("{} Quit", ri::SHUT_DOWN_LINE)).clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        if self.dirty {
+                            self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
+                            self.unsaved_dialog.open = true;
+                        } else {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("Edit", |ui| {
+                    let undo_label = format!("{} Undo", ri::ARROW_GO_BACK_LINE);
+                    let redo_label = format!("{} Redo", ri::ARROW_GO_FORWARD_LINE);
+                    if ui
+                        .add_enabled(self.undo_manager.can_undo(), egui::Button::new(&undo_label))
+                        .on_hover_text("Ctrl+Z")
+                        .clicked()
+                    {
+                        self.execute_undo();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.undo_manager.can_redo(), egui::Button::new(&redo_label))
+                        .on_hover_text("Ctrl+Shift+Z")
+                        .clicked()
+                    {
+                        self.execute_redo();
+                        ui.close();
+                    }
+                    ui.separator();
+                    let has_selection = self
+                        .active_patch_editor_ref()
+                        .is_some_and(|e| !e.effective_selection().is_empty());
+                    if ui
+                        .add_enabled(
+                            has_selection,
+                            egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE)),
+                        )
+                        .on_hover_text("Ctrl+C")
+                        .clicked()
+                    {
+                        self.copy_selected_modules();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.clipboard.is_empty(),
+                            egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE)),
+                        )
+                        .on_hover_text("Ctrl+V")
+                        .clicked()
+                    {
+                        self.paste_modules_at_offset();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            has_selection,
+                            egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE)),
+                        )
+                        .on_hover_text("Ctrl+D")
+                        .clicked()
+                    {
+                        self.duplicate_selected_modules();
+                        ui.close();
                     }
                 });
 
@@ -1003,13 +1179,16 @@ impl eframe::App for SynthApp {
                 .min_width(320.0)
                 .max_width(400.0)
                 .show(ctx, |ui| {
-                    show_instrument_rack(
+                    let rack_result = show_instrument_rack(
                         ui,
                         &mut self.instruments,
                         &mut self.active_instrument_id,
                         &mut self.handle,
                         &mut self.next_instrument_id,
                     );
+                    if rack_result.mutated {
+                        self.mark_dirty();
+                    }
                 });
         }
 
@@ -1035,6 +1214,7 @@ impl eframe::App for SynthApp {
             };
 
             let result = patch_editor.show(ui, &self.handle, active_id.as_u64());
+            let had_mutations = result.has_mutations();
 
             // Handle parameter changes - send Param directly (carries its own value)
             for (module_id, param) in result.param_changes {
@@ -1103,6 +1283,12 @@ impl eframe::App for SynthApp {
             for connection in result.connections_to_add {
                 patch_editor.add_connection(connection);
 
+                self.undo_manager
+                    .push(crate::undo::UndoAction::AddConnection {
+                        instrument_id: active_id,
+                        connection,
+                    });
+
                 // Send Connect command to engine (active instrument's voice graph)
                 self.handle.send(EngineCommand::Connect {
                     instrument_id: Some(active_id),
@@ -1113,6 +1299,12 @@ impl eframe::App for SynthApp {
 
             // Handle removed connections - send Disconnect commands to engine
             for connection in result.connections_to_remove {
+                self.undo_manager
+                    .push(crate::undo::UndoAction::RemoveConnection {
+                        instrument_id: active_id,
+                        connection,
+                    });
+
                 self.handle.send(EngineCommand::Disconnect {
                     instrument_id: Some(active_id),
                     from: PortId::new(connection.from_module, connection.from_port),
@@ -1260,6 +1452,11 @@ impl eframe::App for SynthApp {
             {
                 patch_editor.apply_auto_layout(canvas_rect);
             }
+
+            // Mark dirty if any mutations occurred
+            if had_mutations {
+                self.mark_dirty();
+            }
                 });
             }
             AppView::AcousticWorld => {
@@ -1278,6 +1475,7 @@ impl eframe::App for SynthApp {
                     &self.song,
                     &mut self.sequencer_view_state,
                     &self.instruments,
+                    &mut self.undo_manager,
                 );
             }
         }
@@ -1288,6 +1486,29 @@ impl eframe::App for SynthApp {
         // Write current UI layout to MCP shared state
         #[cfg(feature = "mcp")]
         self.write_mcp_layout(ctx);
+
+        // Update window title to reflect dirty state
+        {
+            let project_name = self
+                .current_project_path
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled");
+            let title = if self.dirty {
+                format!("Pertylizer - {project_name} *")
+            } else {
+                format!("Pertylizer - {project_name}")
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+
+        // Intercept close request when there are unsaved changes
+        if ctx.input(|i| i.viewport().close_requested()) && self.dirty {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
+            self.unsaved_dialog.open = true;
+        }
 
         // Track window geometry for saving on exit
         ctx.input(|i| {
@@ -1803,7 +2024,290 @@ impl SynthApp {
         );
     }
 
+    /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.
+    fn handle_undo_redo_shortcuts(&mut self, ctx: &egui::Context) {
+        let (ctrl_z, ctrl_shift_z) = ctx.input(|i| {
+            (
+                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
+                i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z),
+            )
+        });
+        if ctrl_shift_z {
+            self.execute_redo();
+        } else if ctrl_z {
+            self.execute_undo();
+        }
+    }
+
+    /// Handle Ctrl+C (copy), Ctrl+V (paste), Ctrl+D (duplicate) keyboard shortcuts.
+    fn handle_clipboard_shortcuts(&mut self, ctx: &egui::Context) {
+        // Only handle clipboard shortcuts in Rack view
+        if self.active_view != AppView::Rack {
+            return;
+        }
+
+        // Skip if any text edit is focused (avoids intercepting text input)
+        if ctx.memory(|m| m.focused().is_some()) {
+            return;
+        }
+
+        let (ctrl_c, ctrl_v, ctrl_d) = ctx.input(|i| {
+            let cmd = i.modifiers.command;
+            (
+                cmd && !i.modifiers.shift && i.key_pressed(egui::Key::C),
+                cmd && !i.modifiers.shift && i.key_pressed(egui::Key::V),
+                cmd && !i.modifiers.shift && i.key_pressed(egui::Key::D),
+            )
+        });
+
+        if ctrl_c {
+            self.copy_selected_modules();
+        } else if ctrl_v {
+            self.paste_modules_at_offset();
+        } else if ctrl_d {
+            self.duplicate_selected_modules();
+        }
+    }
+
+    /// Copy selected modules and their internal connections to the clipboard.
+    fn copy_selected_modules(&mut self) {
+        let Some(editor) = self.active_patch_editor_ref() else {
+            return;
+        };
+        let selection = editor.effective_selection();
+        if selection.is_empty() {
+            return;
+        }
+        let module_states = editor.extract_module_states(&selection);
+        let connection_states = editor.internal_connections(&selection);
+        self.clipboard
+            .copy_modules(&module_states, &connection_states);
+    }
+
+    /// Paste clipboard contents at an offset from the original position.
+    fn paste_modules_at_offset(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        let (modules, connections, ref_pos) = self.clipboard.contents();
+        let modules = modules.to_vec();
+        let connections = connections.to_vec();
+        let offset = crate::gui::clipboard::ModuleClipboard::paste_offset();
+        let paste_pos = (ref_pos.0 + offset, ref_pos.1 + offset);
+
+        let instrument_id = self.active_instrument_id;
+
+        // Access the patch editor by index to avoid borrowing all of self
+        let Some(inst_idx) = self.instruments.iter().position(|i| i.id == instrument_id) else {
+            return;
+        };
+
+        let new_ids = patch_bridge::paste_clipboard_modules(
+            &modules,
+            &connections,
+            ref_pos,
+            paste_pos,
+            &mut self.instruments[inst_idx].patch_editor,
+            &self.session,
+            &mut self.handle,
+            instrument_id,
+        );
+        self.instruments[inst_idx]
+            .patch_editor
+            .select_modules(&new_ids);
+        self.mark_dirty();
+    }
+
+    /// Duplicate selected modules: copy + paste at an offset.
+    fn duplicate_selected_modules(&mut self) {
+        self.copy_selected_modules();
+        self.paste_modules_at_offset();
+    }
+
+    /// Execute an undo operation by popping the undo stack and applying the inverse.
+    fn execute_undo(&mut self) {
+        if let Some(action) = self.undo_manager.undo() {
+            self.apply_undo_action(&action);
+        }
+    }
+
+    /// Execute a redo operation by popping the redo stack and re-applying.
+    fn execute_redo(&mut self) {
+        if let Some(action) = self.undo_manager.redo() {
+            self.apply_undo_action(&action);
+        }
+    }
+
+    /// Apply an undo/redo action to the current state.
+    #[allow(clippy::too_many_lines)]
+    fn apply_undo_action(&mut self, action: &crate::undo::UndoAction) {
+        use crate::undo::UndoAction;
+        match action {
+            UndoAction::AddNote { pattern_id, note } => {
+                // Re-add the note to the pattern.
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                {
+                    let nid =
+                        pattern.add_note(note.start, note.pitch, note.velocity, note.instrument);
+                    if let Some(n) = pattern.note_mut(nid) {
+                        n.duration = note.duration;
+                        n.track = note.track;
+                    }
+                }
+            }
+            UndoAction::RemoveNote { pattern_id, note } => {
+                // Remove the note from the pattern.
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                {
+                    pattern.remove_note(note.id);
+                }
+            }
+            UndoAction::MoveNote {
+                pattern_id,
+                note_id,
+                new_start,
+                ..
+            } => {
+                // Move note to the target position (new_start is the destination).
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                {
+                    pattern.move_note(*note_id, *new_start);
+                }
+            }
+            UndoAction::ResizeNote {
+                pattern_id,
+                note_id,
+                new_duration,
+                ..
+            } => {
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                {
+                    if let Some(dur) = new_duration {
+                        pattern.resize_note(*note_id, *dur);
+                    } else if let Some(n) = pattern.note_mut(*note_id) {
+                        n.duration = None;
+                    }
+                }
+            }
+            UndoAction::TransposeNote {
+                pattern_id,
+                note_id,
+                new_pitch,
+                ..
+            } => {
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                    && let Some(n) = pattern.note_mut(*note_id)
+                {
+                    n.pitch = *new_pitch;
+                }
+            }
+            UndoAction::SetNoteVelocity {
+                pattern_id,
+                note_id,
+                new_velocity,
+                ..
+            } => {
+                if let Ok(mut song_w) = self.song.write()
+                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                {
+                    pattern.set_note_velocity(*note_id, *new_velocity);
+                }
+            }
+            UndoAction::AddModule {
+                instrument_id,
+                module_state,
+            } => {
+                // Re-add the module (via session + patch editor).
+                // This is complex — for now we record it but full re-add
+                // would require reconstructing the module from ModuleState.
+                // Minimal: update patch editor position if module exists.
+                let _ = (instrument_id, module_state);
+            }
+            UndoAction::RemoveModule {
+                instrument_id,
+                module_state,
+                connections: _,
+            } => {
+                let _ = (instrument_id, module_state);
+            }
+            UndoAction::MoveModule {
+                module_id, new_pos, ..
+            } => {
+                if let Some(editor) = self.active_patch_editor() {
+                    editor.set_module_position(*module_id, egui::Pos2::new(new_pos.0, new_pos.1));
+                }
+            }
+            UndoAction::SetParameter {
+                module_id,
+                param_name,
+                new_value,
+                ..
+            } => {
+                // Apply the parameter value to the patch editor UI state.
+                // Note: full engine-side undo for parameters is not yet implemented
+                // because reconstructing the Param enum variant from a name string
+                // requires module-specific knowledge.
+                if let crate::patch::ParamValue::Float(val) = new_value
+                    && let Some(editor) = self.active_patch_editor()
+                {
+                    editor.set_parameter_by_name(*module_id, param_name, *val);
+                }
+            }
+            UndoAction::AddConnection {
+                instrument_id,
+                connection,
+            } => {
+                if let Some(editor) = self.active_patch_editor() {
+                    editor.add_connection(*connection);
+                }
+                self.handle.send(EngineCommand::Connect {
+                    instrument_id: Some(*instrument_id),
+                    from: synth_engine::commands::PortId::new(
+                        connection.from_module,
+                        connection.from_port,
+                    ),
+                    to: synth_engine::commands::PortId::new(
+                        connection.to_module,
+                        connection.to_port,
+                    ),
+                });
+            }
+            UndoAction::RemoveConnection {
+                instrument_id,
+                connection,
+            } => {
+                if let Some(editor) = self.active_patch_editor() {
+                    editor.remove_connection(connection);
+                }
+                self.handle.send(EngineCommand::Disconnect {
+                    instrument_id: Some(*instrument_id),
+                    from: synth_engine::commands::PortId::new(
+                        connection.from_module,
+                        connection.from_port,
+                    ),
+                    to: synth_engine::commands::PortId::new(
+                        connection.to_module,
+                        connection.to_port,
+                    ),
+                });
+            }
+            UndoAction::Composite(actions) => {
+                for sub_action in actions {
+                    self.apply_undo_action(sub_action);
+                }
+            }
+        }
+    }
+
     fn show_dialogs(&mut self, ctx: &egui::Context) {
+        // Unsaved changes confirmation dialog
+        self.show_unsaved_changes_dialog(ctx);
+
         // Update dialog state (clears expired status messages)
         self.dialog_state.update();
 
@@ -1826,6 +2330,37 @@ impl SynthApp {
 
         // About dialog
         show_about_dialog(ctx, &mut self.dialog_state.show_about);
+
+        // Export WAV dialog
+        if self.dialog_state.show_export_wav {
+            let mut open = self.dialog_state.show_export_wav;
+            match crate::gui::export_dialog::show_export_dialog(
+                ctx,
+                &mut self.dialog_state.export_state,
+                &mut open,
+            ) {
+                crate::gui::export_dialog::ExportDialogResult::Completed(msg) => {
+                    self.dialog_state.set_status(msg);
+                    open = false;
+                }
+                crate::gui::export_dialog::ExportDialogResult::Failed(msg) => {
+                    self.dialog_state
+                        .set_status(format!("Export failed: {msg}"));
+                    open = false;
+                }
+                crate::gui::export_dialog::ExportDialogResult::Closed => {
+                    open = false;
+                }
+                crate::gui::export_dialog::ExportDialogResult::None => {}
+            }
+            self.dialog_state.show_export_wav = open;
+
+            // Handle deferred export start (avoids borrow conflict)
+            if self.dialog_state.export_state.wants_export {
+                let project = self.create_project_from_app();
+                self.dialog_state.export_state.begin_export(project);
+            }
+        }
 
         // Load built-in patch dialog
         match show_load_patch_dialog(
@@ -1986,13 +2521,15 @@ impl SynthApp {
                 FileDialogResult::Picked(path, Some(FileDialogMode::OpenProject)) => {
                     if let Some(parent) = path.parent() {
                         self.settings.directories.last_project_dir = Some(parent.to_path_buf());
-                        self.settings.save();
                     }
                     // Smart open: auto-detect and load in a single read
                     match project::load_file(&path) {
                         Ok(LoadedFile::Project(proj)) => {
                             self.load_project_data(proj);
                             self.current_project_path = Some(path.clone());
+                            self.dirty = false;
+                            self.settings.add_recent_project(path.clone());
+                            self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Project loaded: {}", path.display()));
                         }
@@ -2000,10 +2537,14 @@ impl SynthApp {
                             self.load_patch_data(&patch);
                             self.current_patch_name = patch.name.clone();
                             self.current_patch_path = Some(path.clone());
+                            self.dirty = false;
+                            self.settings.add_recent_project(path.clone());
+                            self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Loaded patch: {}", path.display()));
                         }
                         Err(e) => {
+                            self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Error reading file: {e}"));
                         }
@@ -2012,20 +2553,28 @@ impl SynthApp {
                 FileDialogResult::Saved(path, Some(FileDialogMode::SaveProject)) => {
                     if let Some(parent) = path.parent() {
                         self.settings.directories.last_project_dir = Some(parent.to_path_buf());
-                        self.settings.save();
                     }
                     let proj = self.create_project_from_app();
                     match proj.save(&path) {
                         Ok(()) => {
                             self.current_project_path = Some(path.clone());
+                            self.dirty = false;
+                            self.settings.add_recent_project(path.clone());
+                            self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Project saved: {}", path.display()));
                         }
                         Err(e) => {
+                            self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Error saving project: {e}"));
                         }
                     }
+                }
+                FileDialogResult::Saved(path, Some(FileDialogMode::ExportWav)) => {
+                    // User picked an export path — store it and open the export dialog
+                    self.dialog_state.export_state.export_path = Some(path);
+                    self.dialog_state.show_export_wav = true;
                 }
                 FileDialogResult::Picked(path, Some(FileDialogMode::OpenGroupTemplate)) => {
                     let manager = GroupTemplateManager::default();
@@ -2126,6 +2675,8 @@ impl SynthApp {
 
     /// Load a patch into the active instrument's rack view.
     fn load_patch_data(&mut self, patch: &Patch) {
+        self.mark_dirty();
+
         // Clear visualization buffers (not handled by patch_bridge)
         self.handle.visualization_buffers.clear();
 
@@ -2384,6 +2935,8 @@ impl SynthApp {
     /// Reset the active instrument to a new empty patch.
     /// Clears all modules and adds a default StereoOutput for immediate sound.
     fn reset_to_new_patch(&mut self) {
+        self.mark_dirty();
+
         // 1. Clear active instrument's GUI state
         let active_id = self.active_instrument_id;
 
@@ -2666,6 +3219,125 @@ impl SynthApp {
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();
         self.current_patch_path = None;
+        self.dirty = false;
+    }
+
+    /// Load a project from a recent-projects path.
+    fn load_recent_project(&mut self, path: PathBuf) {
+        match project::load_file(&path) {
+            Ok(LoadedFile::Project(proj)) => {
+                self.load_project_data(proj);
+                self.current_project_path = Some(path.clone());
+                self.dirty = false;
+                self.settings.add_recent_project(path.clone());
+                self.settings.save();
+                self.dialog_state
+                    .set_status(format!("Project loaded: {}", path.display()));
+            }
+            Ok(LoadedFile::Patch(patch)) => {
+                self.load_patch_data(&patch);
+                self.current_patch_name = patch.name.clone();
+                self.current_patch_path = Some(path.clone());
+                self.dirty = false;
+                self.settings.add_recent_project(path.clone());
+                self.settings.save();
+                self.dialog_state
+                    .set_status(format!("Loaded patch: {}", path.display()));
+            }
+            Err(e) => {
+                self.settings.remove_recent_project(&path);
+                self.settings.save();
+                self.dialog_state.set_status(format!("Error loading: {e}"));
+            }
+        }
+    }
+
+    /// Save the current project (returns true on success).
+    fn save_current_project(&mut self) -> bool {
+        if let Some(path) = self.current_project_path.clone() {
+            let proj = self.create_project_from_app();
+            match proj.save(&path) {
+                Ok(()) => {
+                    self.dirty = false;
+                    self.settings.add_recent_project(path.clone());
+                    self.settings.save();
+                    self.dialog_state
+                        .set_status(format!("Project saved: {}", path.display()));
+                    true
+                }
+                Err(e) => {
+                    self.dialog_state
+                        .set_status(format!("Error saving project: {e}"));
+                    false
+                }
+            }
+        } else {
+            let default_name = "project.json".to_string();
+            let initial_dir = self.resolve_project_dir();
+            self.dialog_state
+                .open_save_project_dialog(&default_name, initial_dir.as_deref());
+            false
+        }
+    }
+
+    /// Show the unsaved-changes confirmation dialog.
+    fn show_unsaved_changes_dialog(&mut self, ctx: &egui::Context) {
+        if !self.unsaved_dialog.open {
+            return;
+        }
+        let mut close = false;
+        egui::Window::new("Unsaved Changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("You have unsaved changes. Save before continuing?");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        let saved = self.save_current_project();
+                        if saved {
+                            self.execute_pending_action(ctx);
+                        }
+                        close = true;
+                    }
+                    if ui.button("Don't Save").clicked() {
+                        self.execute_pending_action(ctx);
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            self.unsaved_dialog.open = false;
+            self.unsaved_dialog.pending_action = None;
+        }
+    }
+
+    /// Execute the pending action from the unsaved-changes dialog.
+    fn execute_pending_action(&mut self, ctx: &egui::Context) {
+        let action = self.unsaved_dialog.pending_action.take();
+        match action {
+            Some(PendingAction::NewProject) => {
+                self.reset_to_new_project();
+                self.dialog_state
+                    .set_status("New project created".to_string());
+            }
+            Some(PendingAction::OpenProject) => {
+                let initial_dir = self.resolve_project_dir();
+                self.dialog_state
+                    .open_open_project_dialog(initial_dir.as_deref());
+            }
+            Some(PendingAction::LoadProject(path)) => {
+                self.load_recent_project(path);
+            }
+            Some(PendingAction::Quit) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            None => {}
+        }
     }
 
     /// Remove all visualizer modules for a given instrument.

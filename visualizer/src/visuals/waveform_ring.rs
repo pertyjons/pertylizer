@@ -25,6 +25,10 @@ const BAR_THICKNESS: f32 = 0.15;
 /// Emissive intensity multiplier.
 const EMISSIVE_STRENGTH: f32 = 6.0;
 
+/// Per-second smoothing rates (frame-rate independent).
+const ATTACK_RATE: f32 = 30.0;
+const DECAY_RATE: f32 = 6.0;
+
 /// Number of shared material buckets.
 const NUM_MATERIAL_BUCKETS: usize = 16;
 
@@ -71,6 +75,7 @@ pub fn setup(
 
 /// Update ring bar heights and positions from FFT.
 pub fn update(
+    time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     mut query: Query<(&mut Transform, &mut Visibility, &RingBar)>,
@@ -79,13 +84,17 @@ pub fn update(
     mut last_fade: Local<f32>,
 ) {
     let bin_count = telemetry.fft_bin_count;
+    let is_active = effect_state.active.is_active(EffectId::WaveformRing);
+    let dt = time.delta_secs();
 
     for (mut transform, mut vis, bar) in &mut query {
         if bar.0 >= bin_count {
             *vis = Visibility::Hidden;
             continue;
         }
-        *vis = Visibility::Hidden; // EffectLayer handles actual visibility
+        if is_active {
+            *vis = Visibility::Inherited;
+        }
 
         // Reposition on the ring based on active bin count
         let angle = (bar.0 as f32 / bin_count as f32) * std::f32::consts::TAU;
@@ -97,10 +106,15 @@ pub fn update(
 
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
-        // Smooth lerp
+        // Smooth lerp (time-based)
         let current = transform.scale.y;
-        let speed = if target_height > current { 0.4 } else { 0.1 };
-        let new_height = current + (target_height - current) * speed;
+        let rate = if target_height > current {
+            ATTACK_RATE
+        } else {
+            DECAY_RATE
+        };
+        let alpha = 1.0 - (-rate * dt).exp();
+        let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
         // Keep bar base on the ground

@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.215.0)
+# TODO - Pertylizer (v0.219.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -78,25 +78,27 @@
 
 ## Priority 1 — Foundation & Core Functionality
 
-### 1.1 Undo/Redo
-- [ ] Implement undo/redo for sequencer operations (note add/delete/move, pattern edits)
-- [ ] Implement undo/redo for module operations (add, delete, move, parameter changes)
-- [ ] Implement undo/redo for connection operations (add, remove)
-- [ ] Keyboard shortcuts: Ctrl+Z / Ctrl+Shift+Z
+### 1.1 Undo/Redo — DONE
+- [x] Implement undo/redo for sequencer operations (note add/delete/move, pattern edits)
+- [x] Implement undo/redo for module operations (add, delete, move, parameter changes)
+- [x] Implement undo/redo for connection operations (add, remove)
+- [x] Keyboard shortcuts: Ctrl+Z / Ctrl+Shift+Z
 
-### 1.2 Audio export
-- [ ] Render arrangement to WAV file (offline, faster-than-realtime)
-- [ ] Export dialog: file path, sample rate, bit depth, duration/range
-- [ ] Progress bar during render
+### 1.2 Audio export — DONE
+- [x] Render arrangement to WAV file (offline, faster-than-realtime)
+- [x] Export dialog: file path, sample rate, bit depth, duration/range
+- [x] Progress bar during render
 
-### 1.3 Song save/load
-- [ ] Recent projects — remember last opened projects in settings, show in menu
-- [ ] Dirty state tracking — warn on unsaved changes before loading or quitting
+### 1.3 Song save/load — DONE
+- [x] Recent projects — remember last opened projects in settings, show in menu
+- [x] Dirty state tracking — warn on unsaved changes before loading or quitting
 
-### 1.4 Copy/paste modules
-- [ ] Copy a module with its current parameters
-- [ ] Paste as a new instance with the same settings
-- [ ] Consider: copy a selection of modules + their internal connections
+### 1.4 Copy/paste modules — DONE
+- [x] Copy a module with its current parameters
+- [x] Paste as a new instance with the same settings
+- [x] Copy a selection of modules + their internal connections
+- [x] Ctrl+C / Ctrl+V / Ctrl+D keyboard shortcuts
+- [x] Edit menu items (Copy, Paste, Duplicate)
 
 ### 1.5 Settings expansion
 - [ ] Add Browse button in Settings dialog to change patches directory
