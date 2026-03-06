@@ -193,6 +193,56 @@ All 13 effects from the original catalog are implemented and available in the ef
 - Recording/export: render video to file
 - GPU FFT for higher-resolution spectra
 
+### 5.6 Visualizer Themes — Implementation Plan
+
+Goal: A theme system that can swap palette, lighting, ground/sky, and post-fx across *all* effects,
+with hooks for 5.7–5.13 features. Themes must be fast to switch and not regress FPS.
+
+**Theme Architecture**
+- `ThemeId` enum + `ThemeConfig` struct (palette, lighting, post_fx, environment, camera, layering, features, material_policy)
+- `ThemeState` resource: `active`, `pending`, optional crossfade progress
+- `ThemeRegistry` resource with all theme configs
+- `ThemeApplier` system updates global scene (ambient, key/rim lights, bloom, fog/skybox, ground material)
+- `ThemeMaterialPolicy` updates shared hue-bucketed materials (emissive strength, saturation/lightness, metallic/roughness)
+
+**Theme Catalog (initial)**
+- Neon: dark background, saturated emissive, heavy bloom
+- Metal: brushed steel materials, cool lighting, high specular
+- Glass: translucent/refraction vibe, bright specular, cleaner bloom
+- Space: starfield + deep blue/purple palette, nebula fog
+- Synthwave: grid floor, pink/cyan gradient sky, retro sun
+- Ember: warm orange/red palette, glowing particles, dark smoke fog
+- Arctic: icy blue/white palette, soft ambient light, frosted materials
+- Void: pure black background, minimal monochrome, high contrast
+
+**Controls**
+- Keyboard: `T` next theme, `Shift+T` previous
+- OSC: `/viz/theme/select` (name or index), `/viz/theme/next`, `/viz/theme/prev`
+
+**Hooks for 5.7–5.13 (theme-driven feature profiles)**
+- 5.7 Post-processing: chromatic aberration, glitch, CRT/VHS, motion blur defaults
+- 5.8 Camera modes: orbit vs fly-through vs top-down, beat-synced cuts
+- 5.9 Layering: 1–3 effect layers, blending modes, opacity defaults
+- 5.10 Reactive environment: skybox, fog density, reactive ground defaults
+- 5.11 Generative geometry: enable/disable per theme (L-systems, Voronoi, RD)
+- 5.12 Interaction/export: screenshot/record toggles, debug HUD defaults
+- 5.13 Advanced simulations: swarm/cloth/text/AWE spatialization flags
+
+**F12 Info View (Debug HUD)**
+- Toggle overlay with `F12`
+- Show: active theme, active effect(s), crossfade value, FPS/frame time, entity count,
+  OSC status, RMS/peak/centroid/flux, tempo/beat/phase, voice count, CPU usage, event drops,
+  stale seconds, and current camera mode
+
+**Implementation Steps**
+1. Inventory all global visual knobs (lights, bloom, fog/sky, ground, shared materials).
+2. Implement `ThemeConfig` + `ThemeRegistry` + `ThemeState` resources.
+3. Add `ThemeApplier` to update scene-wide lighting/bloom/environment/ground.
+4. Update hue-bucketed material helpers to accept theme parameters (emissive, sat/lightness, metallic/roughness).
+5. Add theme switching input + OSC endpoints.
+6. Add F12 Debug HUD and wire to telemetry + diagnostics.
+7. Performance pass: ensure updates only on theme change (no per-frame allocations).
+
 ### Proposed `/viz/` Control Endpoints
 
 | Address | Type | Purpose |

@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::{NoteOnEvent, SynthTelemetry};
 
 const MAX_BLOOMS: usize = 10;
@@ -50,11 +51,12 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     commands.insert_resource(BloomMesh(meshes.add(Cuboid::new(1.0, 0.2, 4.0))));
 
     let shared_mats =
-        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
     commands.insert_resource(BloomMaterials {
         materials: shared_mats,
     });
@@ -72,6 +74,7 @@ pub fn spawn_and_update(
     bloom_mesh: Res<BloomMesh>,
     bloom_materials: Res<BloomMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::ChordBloom);
@@ -163,6 +166,7 @@ pub fn spawn_and_update(
         &mut materials,
         &bloom_materials.materials,
         &MAT_CONFIG,
+        &policy,
         fade,
         &mut last_fade,
     );

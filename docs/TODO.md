@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.219.0)
+# TODO - Pertylizer (v0.220.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -189,17 +189,18 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [x] Centroid Nebula (Particle cloud shifting color/shape based on brightness, driven by Spectral Centroid, RMS)
 - [x] Velocity Meteors (Meteors falling with size based on impact, driven by Note-on, Velocity)
 
-### 5.6 Visualizer themes
-- [ ] Theme system — swap material palettes, lighting, and ground/sky across all effects
-- [ ] **Neon** — dark background, saturated emissive colors, heavy bloom
-- [ ] **Metal** — brushed steel materials, specular reflections, cool white lighting
-- [ ] **Glass** — translucent refractive materials, caustic-style highlights
-- [ ] **Space** — starfield skybox, deep blue/purple palette, nebula fog
-- [ ] **Synthwave** — grid floor, pink/cyan gradient sky, retro sun
-- [ ] **Ember** — warm orange/red palette, glowing particles, dark smoke fog
-- [ ] **Arctic** — icy blue/white palette, frosted materials, soft ambient light
-- [ ] **Void** — pure black background, minimal monochrome white, high contrast
-- [ ] Theme switching via keyboard shortcut (T) or OSC `/viz/theme/select`
+### 5.6 Visualizer themes — DONE
+- [x] Theme system — swap material palettes, lighting, and ground/sky across all effects
+- [x] **Neon** — dark background, saturated emissive colors, heavy bloom
+- [x] **Metal** — brushed steel materials, specular reflections, cool white lighting
+- [x] **Glass** — translucent refractive materials, caustic-style highlights
+- [x] **Space** — starfield skybox, deep blue/purple palette, nebula fog
+- [x] **Synthwave** — grid floor, pink/cyan gradient sky, retro sun
+- [x] **Ember** — warm orange/red palette, glowing particles, dark smoke fog
+- [x] **Arctic** — icy blue/white palette, frosted materials, soft ambient light
+- [x] **Void** — pure black background, minimal monochrome white, high contrast
+- [x] Theme switching via keyboard shortcut (T / Shift+T)
+- [ ] OSC `/viz/theme/select` control endpoint
 
 ### 5.7 Post-processing & shader effects
 - [ ] Chromatic aberration — intensity scales with RMS level

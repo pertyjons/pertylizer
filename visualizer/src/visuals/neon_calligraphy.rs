@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 const NUM_STROKES: usize = 128; // One for each MIDI note
@@ -38,11 +39,12 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(0.2, STROKE_LENGTH, 0.2));
 
     let shared_mats =
-        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
     commands.insert_resource(CalligraphyMaterials {
         materials: shared_mats.clone(),
     });
@@ -88,6 +90,7 @@ pub fn setup(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
@@ -95,6 +98,7 @@ pub fn update(
     mut query: Query<(&mut GlyphStroke, &mut Transform)>,
     calligraphy_materials: Res<CalligraphyMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
 ) {
     let dt = time.delta_secs();
@@ -145,6 +149,7 @@ pub fn update(
         &mut materials,
         &calligraphy_materials.materials,
         &MAT_CONFIG,
+        &policy,
         effect_state.fade,
         &mut last_fade,
     );

@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::{MAX_FFT_BANDS, SynthTelemetry};
 
 /// Marker component with the FFT band index.
@@ -49,11 +50,12 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(MIN_BAR_WIDTH * 0.85, 1.0, MIN_BAR_WIDTH * 0.85));
 
     let shared_mats =
-        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
     commands.insert_resource(FftBarMaterials {
         materials: shared_mats.clone(),
     });
@@ -73,6 +75,7 @@ pub fn setup(
 }
 
 /// Update bar heights and positions from FFT telemetry with smooth lerp.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
@@ -80,6 +83,7 @@ pub fn update(
     mut query: Query<(&mut Transform, &mut Visibility, &FftBar)>,
     fft_materials: Res<FftBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
 ) {
     let bin_count = telemetry.fft_bin_count;
@@ -122,6 +126,7 @@ pub fn update(
         &mut materials,
         &fft_materials.materials,
         &MAT_CONFIG,
+        &policy,
         effect_state.fade,
         &mut last_fade,
     );

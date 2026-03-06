@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer};
+use super::theme::FloorEntity;
 
 #[derive(Component)]
 pub struct BaseFloor;
@@ -18,8 +19,9 @@ pub fn setup(
     // This prevents the corners from appearing as a "spinning black box" when the camera orbits.
     let mesh = meshes.add(Circle::new(200.0));
 
+    // Floor color matches the default Neon theme
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.05, 0.05, 0.08),
+        base_color: Color::srgb(0.02, 0.02, 0.05),
         perceptual_roughness: 0.9,
         ..default()
     });
@@ -31,6 +33,7 @@ pub fn setup(
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         Visibility::Hidden,
         BaseFloor,
+        FloorEntity,
         EffectLayer(EffectId::BaseFloor),
     ));
 }
