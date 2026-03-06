@@ -3,7 +3,6 @@
 use bevy::prelude::*;
 
 use super::RmsLight;
-use super::telemetry_color;
 use super::theme::ThemeRuntime;
 use crate::telemetry::SynthTelemetry;
 
@@ -44,7 +43,7 @@ pub fn update(
     };
 
     for mut light in &mut query {
-        light.intensity =
-            rms_mono * intensity_multiplier * flux_boost + (velocity_flash + peak_flash) * intensity_multiplier;
+        light.intensity = rms_mono * intensity_multiplier * flux_boost
+            + (velocity_flash + peak_flash) * intensity_multiplier;
     }
 }

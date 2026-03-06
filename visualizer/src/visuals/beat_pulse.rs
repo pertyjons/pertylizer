@@ -69,15 +69,12 @@ pub fn update(
     }
 
     // Peak transient adds extra intensity
-    let peak_boost = if telemetry_color::peak_exceeds_threshold(
-        telemetry.peak[0],
-        telemetry.peak[1],
-        0.85,
-    ) {
-        0.3
-    } else {
-        0.0
-    };
+    let peak_boost =
+        if telemetry_color::peak_exceeds_threshold(telemetry.peak[0], telemetry.peak[1], 0.85) {
+            0.3
+        } else {
+            0.0
+        };
 
     // Pulse ambient light brightness using the active theme's base ambient brightness
     let base_brightness = runtime.ambient_brightness;

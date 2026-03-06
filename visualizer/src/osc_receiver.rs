@@ -63,6 +63,7 @@ fn receive_osc(
     time: Res<Time>,
     mut socket: ResMut<OscSocket>,
     mut telemetry: ResMut<SynthTelemetry>,
+    mut camera_state: ResMut<crate::visuals::camera::CameraState>,
 ) {
     // Clear pending events from previous frame before processing new packets
     telemetry.pending_note_events.clear();
@@ -73,7 +74,7 @@ fn receive_osc(
     let sock = &mut *socket;
     while let Ok((size, addr)) = sock.socket.recv_from(&mut sock.buf) {
         if let Ok((_, packet)) = rosc::decoder::decode_udp(&sock.buf[..size]) {
-            handle_packet(&packet, &mut telemetry);
+            handle_packet(&packet, &mut telemetry, &mut camera_state);
             sock.sender_addr = Some(addr);
             received_any = true;
         }
@@ -112,18 +113,26 @@ fn send_pong(socket: &UdpSocket, addr: SocketAddr) {
     }
 }
 
-fn handle_packet(packet: &OscPacket, telemetry: &mut SynthTelemetry) {
+fn handle_packet(
+    packet: &OscPacket,
+    telemetry: &mut SynthTelemetry,
+    camera_state: &mut crate::visuals::camera::CameraState,
+) {
     match packet {
-        OscPacket::Message(msg) => handle_message(msg, telemetry),
+        OscPacket::Message(msg) => handle_message(msg, telemetry, camera_state),
         OscPacket::Bundle(bundle) => {
             for p in &bundle.content {
-                handle_packet(p, telemetry);
+                handle_packet(p, telemetry, camera_state);
             }
         }
     }
 }
 
-fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
+fn handle_message(
+    msg: &OscMessage,
+    telemetry: &mut SynthTelemetry,
+    camera_state: &mut crate::visuals::camera::CameraState,
+) {
     match msg.addr.as_str() {
         addresses::META => {
             if let [
@@ -226,8 +235,11 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
         }
 
         addresses::EVENT_CC => {
-            if let [OscType::Int(cc), OscType::Float(value), OscType::Int(channel)] =
-                msg.args.as_slice()
+            if let [
+                OscType::Int(cc),
+                OscType::Float(value),
+                OscType::Int(channel),
+            ] = msg.args.as_slice()
             {
                 let cc_num = *cc as u8;
                 // Pitch bend is sent as CC 128, aftertouch as CC 129
@@ -273,6 +285,16 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
         addresses::ENGINE_EVENT_DROPS => {
             if let Some(OscType::Int(drops)) = msg.args.first() {
                 telemetry.event_drops = *drops as u32;
+            }
+        }
+
+        addresses::VIZ_CAMERA_MODE => {
+            if let Some(OscType::String(mode_name)) = msg.args.first() {
+                if let Some(mode) = crate::visuals::camera::CameraMode::from_name(mode_name) {
+                    camera_state.osc_requested_mode = Some(mode);
+                } else {
+                    warn!("Unknown camera mode via OSC: {mode_name}");
+                }
             }
         }
 

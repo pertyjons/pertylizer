@@ -58,6 +58,7 @@ impl Plugin for VisualsPlugin {
             .init_resource::<theme::ThemeRegistry>()
             .init_resource::<theme::ThemeMaterialPolicy>()
             .init_resource::<theme::ThemeRuntime>()
+            .init_resource::<camera::CameraState>()
             .add_systems(
                 Startup,
                 (
@@ -186,7 +187,8 @@ impl Plugin for VisualsPlugin {
                 (
                     rms_light::update,
                     beat_pulse::update,
-                    camera::orbit,
+                    camera::input,
+                    camera::update,
                     particles::spawn
                         .run_if(effects::effect_active(effects::EffectId::NoteParticles)),
                     particles::update,
@@ -196,6 +198,8 @@ impl Plugin for VisualsPlugin {
                     waiting_indicator::update,
                     debug_hud::toggle,
                     debug_hud::update,
+                    debug_hud::screenshot,
+                    debug_hud::fullscreen,
                 )
                     .after(ThemeUpdate),
             );

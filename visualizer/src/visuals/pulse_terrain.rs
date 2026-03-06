@@ -128,6 +128,7 @@ pub fn update(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_material(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,

@@ -109,6 +109,7 @@ pub fn spawn(
 }
 
 /// Update falling and despawn when hitting bottom.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,

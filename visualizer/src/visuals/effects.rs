@@ -398,6 +398,7 @@ impl Default for HueMaterialTracker {
 ///
 /// `hue_offset` shifts the entire palette (e.g., centroid-driven).
 /// `emissive_boost` multiplies emissive (1.0 = no change, >1.0 = brighter on flux spikes).
+#[allow(clippy::too_many_arguments)]
 pub fn update_hue_materials_for_fade(
     materials: &mut Assets<StandardMaterial>,
     handles: &[Handle<StandardMaterial>],

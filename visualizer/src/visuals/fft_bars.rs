@@ -109,7 +109,8 @@ pub fn update(
 
         // Beat phase adds a subtle height pulse on downbeats
         let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
-        let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT * (1.0 + beat_pulse * 0.15)).max(0.01);
+        let target_height =
+            (telemetry.fft[bar.0] * MAX_HEIGHT * (1.0 + beat_pulse * 0.15)).max(0.01);
 
         // Smooth lerp — fast attack, slow decay (time-based)
         let current = transform.scale.y;

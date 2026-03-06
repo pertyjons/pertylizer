@@ -135,9 +135,6 @@ pub fn update_material(
         *last_centroid + (raw_centroid - *last_centroid) * 0.1
     };
     *last_centroid = centroid;
-    let centroid_norm = ((centroid.max(1.0).log2() - 200.0_f32.log2())
-        / (10000.0_f32.log2() - 200.0_f32.log2()))
-    .clamp(0.0, 1.0);
 
     let hue = telemetry_color::centroid_to_hue(centroid, &policy);
 
