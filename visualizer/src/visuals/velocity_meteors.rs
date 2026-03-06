@@ -72,7 +72,10 @@ pub fn spawn(
     meteor_materials: Res<MeteorMaterials>,
 ) {
     for note_event in &telemetry.pending_note_events {
-        let note_idx = (note_event.midi_note as usize).min(127);
+        // Offset material index by instrument category for per-instrument colors
+        let cat_offset = telemetry_color::category_hue_offset(note_event.category);
+        let base_idx = (note_event.midi_note as usize).min(127);
+        let note_idx = ((base_idx as f32 + cat_offset * 128.0 / 360.0) as usize) % 128;
 
         // Scale by velocity (quieter notes are smaller)
         let vel_scale = (note_event.velocity as f32 / 127.0).max(0.1);

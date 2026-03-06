@@ -23,6 +23,7 @@ const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
     saturation: 0.9,
     lightness: 0.6,
     emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: false,
 };
 
 #[derive(Component)]

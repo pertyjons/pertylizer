@@ -317,8 +317,12 @@ pub struct HueMaterialConfig {
     pub saturation: f32,
     pub lightness: f32,
     pub emissive_strength: f32,
+    /// When true, use nonlinear frequency→hue mapping (bass→red, mids→green, highs→blue)
+    /// via `telemetry_color::band_frequency_hue` instead of linear hue distribution.
+    pub frequency_mapped: bool,
 }
 
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 
 /// Create a set of hue-bucketed `StandardMaterial`s for use as shared materials.
@@ -352,7 +356,12 @@ pub fn create_hue_materials_with_offset(
     let mut result = Vec::with_capacity(num_buckets);
     for bucket in 0..num_buckets {
         #[allow(clippy::cast_precision_loss)]
-        let hue = ((bucket as f32 / num_buckets as f32) * config.hue_range + hue_offset) % 360.0;
+        let base_hue = if config.frequency_mapped {
+            telemetry_color::band_frequency_hue(bucket as f32 / num_buckets as f32)
+        } else {
+            (bucket as f32 / num_buckets as f32) * config.hue_range
+        };
+        let hue = (base_hue + hue_offset) % 360.0;
         let color = Color::hsl(hue, sat, lit);
         result.push(materials.add(StandardMaterial {
             base_color: color,
@@ -417,8 +426,12 @@ pub fn update_hue_materials_for_fade(
     for (bucket, handle) in handles.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
             #[allow(clippy::cast_precision_loss)]
-            let hue =
-                ((bucket as f32 / num_buckets as f32) * config.hue_range + hue_offset) % 360.0;
+            let base_hue = if config.frequency_mapped {
+                telemetry_color::band_frequency_hue(bucket as f32 / num_buckets as f32)
+            } else {
+                (bucket as f32 / num_buckets as f32) * config.hue_range
+            };
+            let hue = (base_hue + hue_offset) % 360.0;
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
