@@ -1,5 +1,15 @@
 # Version History
 
+## [0.226.0] - 2026-03-06
+### Generative geometry effects and camera enhancements
+- **Voronoi Shatter** (terrain) — ground grid of cells that split and tumble outward on spectral flux spikes, reassembling during calm passages
+- **FFT Terrain** (terrain) — 16×8 grid of vertical pillars whose height is driven by FFT bins, with frequency→hue coloring (bass=red, highs=violet)
+- **Reaction Diffusion** (ambient) — 12×12 sphere grid simulating Gray-Scott reaction-diffusion; spectral centroid controls feed rate, RMS controls kill rate, creating organic Turing patterns
+- **Note Tree** (hero) — L-system inspired branching cylinders that grow on note events and wither during silence; voice count controls branch density, RMS drives sway
+- **Dolly-zoom** on bass drops — FOV widens while camera pushes closer on low-FFT spikes
+- **OSC `/viz/camera/mode`** — remote camera mode switching via OSC string argument
+- 3 new preset scenes: Earthquake, Spectrum City, Living Forest
+
 ## [0.225.0] - 2026-03-06
 ### Screenshot, fullscreen, zoom, and keyboard shortcuts in debug HUD
 - **Screenshot** (P key) — saves PNG to working directory via Bevy's `Screenshot` + `save_to_disk`

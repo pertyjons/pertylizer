@@ -8,6 +8,7 @@ pub mod chord_bloom;
 pub mod cpu_overdrive;
 pub mod debug_hud;
 pub mod effects;
+pub mod fft_terrain;
 pub mod ferrofluid_tendrils;
 pub mod fft_bars;
 pub mod flux_supernova;
@@ -15,9 +16,11 @@ pub mod fractal_pulse;
 pub mod harmonic_ribbons;
 pub mod instrument_cubes;
 pub mod neon_calligraphy;
+pub mod note_tree;
 pub mod particles;
 pub mod phase_rings;
 pub mod pulse_terrain;
+pub mod reaction_diffusion;
 pub mod rms_light;
 pub mod spectral_cathedral;
 pub mod spectral_origami;
@@ -25,6 +28,7 @@ pub mod spectral_waterfall;
 pub mod telemetry_color;
 pub mod theme;
 pub mod velocity_meteors;
+pub mod voronoi_shatter;
 pub mod waiting_indicator;
 pub mod waveform_ring;
 
@@ -87,6 +91,10 @@ impl Plugin for VisualsPlugin {
                     ferrofluid_tendrils::setup,
                     neon_calligraphy::setup,
                     instrument_cubes::setup,
+                    voronoi_shatter::setup,
+                    fft_terrain::setup,
+                    reaction_diffusion::setup,
+                    note_tree::setup,
                     waiting_indicator::setup,
                     debug_hud::setup,
                 ),
@@ -178,6 +186,27 @@ impl Plugin for VisualsPlugin {
                     )),
                     neon_calligraphy::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::NeonCalligraphy,
+                    )),
+                )
+                    .after(ThemeUpdate),
+            )
+            .add_systems(
+                Update,
+                (
+                    voronoi_shatter::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::VoronoiShatter,
+                    )),
+                    voronoi_shatter::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::VoronoiShatter,
+                    )),
+                    fft_terrain::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::FftTerrain,
+                    )),
+                    reaction_diffusion::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::ReactionDiffusion,
+                    )),
+                    note_tree::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::NoteTree,
                     )),
                 )
                     .after(ThemeUpdate),

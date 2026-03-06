@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.225.0)
+# TODO - Pertylizer (v0.226.0)
 
 ## 1. Synth — Foundation & Core
 
@@ -100,17 +100,11 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] Day/night cycle driven by song position
 - [ ] Weather effects — rain on high spectral flux, lightning on transients
 
-### 4.5 Generative geometry
-- [ ] L-system trees — branches grow with incoming notes, wither during silence
-- [ ] Voronoi patterns — cells split/shatter with spectral flux
-- [ ] Reaction-diffusion patterns — driven by spectral centroid (warm ↔ cool)
-- [ ] Fractal terrain — landscape deforms in real-time with FFT bands
-
-### 4.6 Advanced simulations
+### 4.5 Advanced simulations
 - [ ] Swarm/flock simulation — particles flock or scatter based on dynamics
 - [ ] Cloth simulation — fabric that billows and ripples with FFT energy
 - [ ] Text/typography — display song title, BPM, key in stylized 3D text
 - [ ] AWE spatialization — visualize sound source position in 3D space
 
-### 4.7 Video export
+### 4.6 Video export
 - [ ] Video recording — render to MP4 or image sequence

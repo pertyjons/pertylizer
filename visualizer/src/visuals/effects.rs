@@ -43,6 +43,12 @@ pub enum EffectId {
     ChordBloom,
     NeonCalligraphy,
     InstrumentCubes,
+
+    // Generative Geometry
+    VoronoiShatter,
+    FftTerrain,
+    ReactionDiffusion,
+    NoteTree,
 }
 
 impl EffectId {
@@ -54,6 +60,8 @@ impl EffectId {
         Self::PulseTerrain,
         Self::SpectralOrigami,
         Self::PhaseRings,
+        Self::VoronoiShatter,
+        Self::FftTerrain,
     ];
 
     pub const HERO: &[Self] = &[
@@ -61,9 +69,10 @@ impl EffectId {
         Self::FluxSupernova,
         Self::FractalPulse,
         Self::FerrofluidTendrils,
+        Self::NoteTree,
     ];
 
-    pub const AMBIENT: &[Self] = &[Self::CentroidNebula, Self::SpectralCathedral];
+    pub const AMBIENT: &[Self] = &[Self::CentroidNebula, Self::SpectralCathedral, Self::ReactionDiffusion];
 
     pub const TRANSIENTS: &[Self] = &[
         Self::NoteParticles,
@@ -201,6 +210,27 @@ fn presets() -> &'static [SceneConfig] {
                 hero: Some(EffectId::FractalPulse),
                 ambient: Some(EffectId::CentroidNebula),
                 transients: vec![EffectId::InstrumentCubes],
+            },
+            // 6: Earthquake
+            SceneConfig {
+                terrain: Some(EffectId::VoronoiShatter),
+                hero: Some(EffectId::FerrofluidTendrils),
+                ambient: None,
+                transients: vec![EffectId::VelocityMeteors, EffectId::NoteParticles],
+            },
+            // 7: Spectrum City
+            SceneConfig {
+                terrain: Some(EffectId::FftTerrain),
+                hero: Some(EffectId::NoteTree),
+                ambient: Some(EffectId::ReactionDiffusion),
+                transients: vec![EffectId::ChordBloom],
+            },
+            // 8: Living Forest
+            SceneConfig {
+                terrain: Some(EffectId::PulseTerrain),
+                hero: Some(EffectId::NoteTree),
+                ambient: Some(EffectId::CentroidNebula),
+                transients: vec![EffectId::HarmonicRibbons, EffectId::NoteParticles],
             },
         ]
     })
