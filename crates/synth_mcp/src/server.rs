@@ -2189,6 +2189,19 @@ impl SynthMcpServer {
             Err(e) => format!("Error: {e}"),
         }
     }
+
+    #[tool(
+        description = "Optimize the project by removing unused patterns (not placed in arrangement), \
+                       unused tracks (no placements), and unused instruments (not referenced by any track or note). \
+                       Returns a summary of what was removed."
+    )]
+    async fn optimize_project(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.optimize_project() {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
 }
 
 /// Convert input structs to bridge-level types.

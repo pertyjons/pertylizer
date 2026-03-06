@@ -8,8 +8,8 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchResult,
     BuildInstrumentResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo, PatchResourceData,
-    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
+    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -561,6 +561,9 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Load a project from a file.
     fn load_project(&self, path: &str) -> Result<String, McpBridgeError>;
+
+    /// Optimize the project by removing unused patterns, tracks, and instruments.
+    fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

@@ -464,3 +464,16 @@ pub enum PatchParamValue {
     /// Choice/enum value (e.g. "sawtooth").
     Choice(String),
 }
+
+/// Result of optimizing a project by removing unused items.
+#[derive(Debug, Clone, Serialize)]
+pub struct OptimizeResult {
+    /// Names of removed patterns.
+    pub removed_patterns: Vec<String>,
+    /// Names of removed tracks.
+    pub removed_tracks: Vec<String>,
+    /// Names of removed instruments.
+    pub removed_instruments: Vec<String>,
+    /// Total number of items removed.
+    pub total_removed: usize,
+}

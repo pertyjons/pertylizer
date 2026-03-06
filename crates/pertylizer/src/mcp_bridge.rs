@@ -19,10 +19,10 @@ use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchItemResult, BatchResult,
     BuildInstrumentResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParamTypeInfo,
-    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
-    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
-    UiOverlap, UiSnapshot,
+    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
+    ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
+    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
+    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2370,6 +2370,120 @@ impl SynthBridge for AppSynthBridge {
             )));
         }
         self.submit_project_action(crate::mcp_shared::ProjectAction::Load(path))
+    }
+
+    fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError> {
+        use std::collections::HashSet;
+
+        let mut removed_patterns = Vec::new();
+        let mut removed_tracks = Vec::new();
+        let mut removed_instruments = Vec::new();
+
+        // --- Step 1: Find used patterns and tracks from arrangement ---
+        let mut used_pattern_ids = HashSet::new();
+        let mut used_track_ids = HashSet::new();
+        {
+            let song = self
+                .shared
+                .song
+                .read()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+            for placement in song.arrangement() {
+                used_pattern_ids.insert(placement.pattern_id);
+                used_track_ids.insert(placement.track_id);
+            }
+        }
+
+        // --- Step 2: Remove unused patterns ---
+        {
+            let song = self
+                .shared
+                .song
+                .read()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            let all_patterns: Vec<_> = song.patterns().map(|p| (p.id, p.name.clone())).collect();
+            drop(song);
+
+            let mut song = self
+                .shared
+                .song
+                .write()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            for (pid, name) in all_patterns {
+                if !used_pattern_ids.contains(&pid) {
+                    song.delete_pattern(pid);
+                    removed_patterns.push(name);
+                }
+            }
+        }
+
+        // --- Step 3: Remove unused tracks ---
+        {
+            let song = self
+                .shared
+                .song
+                .read()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            let all_tracks: Vec<_> = song.tracks().map(|t| (t.id, t.name.clone())).collect();
+            drop(song);
+
+            let mut song = self
+                .shared
+                .song
+                .write()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            for (tid, name) in all_tracks {
+                if !used_track_ids.contains(&tid) {
+                    song.delete_track(tid);
+                    removed_tracks.push(name);
+                }
+            }
+        }
+
+        // --- Step 4: Find used instruments (referenced by tracks or notes in used patterns) ---
+        let mut used_instrument_ids = HashSet::new();
+        {
+            let song = self
+                .shared
+                .song
+                .read()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+
+            // From tracks
+            for track in song.tracks() {
+                if let Some(inst) = track.instrument {
+                    used_instrument_ids.insert(inst.0 as u64);
+                }
+            }
+
+            // From notes in remaining patterns
+            for pattern in song.patterns() {
+                for note in pattern.notes() {
+                    used_instrument_ids.insert(note.instrument.0 as u64);
+                }
+            }
+        }
+
+        // --- Step 5: Remove unused instruments ---
+        let snapshots = self.session.list_instruments();
+        for snap in &snapshots {
+            let id = snap.id.as_u64();
+            if !used_instrument_ids.contains(&id) {
+                removed_instruments.push(snap.name.clone());
+                let _ = self.session.remove_instrument(snap.id);
+            }
+        }
+
+        let total_removed =
+            removed_patterns.len() + removed_tracks.len() + removed_instruments.len();
+
+        Ok(OptimizeResult {
+            removed_patterns,
+            removed_tracks,
+            removed_instruments,
+            total_removed,
+        })
     }
 }
 

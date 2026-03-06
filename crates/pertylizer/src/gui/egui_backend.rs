@@ -864,6 +864,15 @@ impl eframe::App for SynthApp {
                         self.duplicate_selected_modules();
                         ui.close();
                     }
+                    ui.separator();
+                    if ui
+                        .button(format!("{} Optimize Project", ri::DELETE_BIN_LINE))
+                        .on_hover_text("Remove unused patterns, tracks, and instruments")
+                        .clicked()
+                    {
+                        self.optimize_project();
+                        ui.close();
+                    }
                 });
 
                 ui.menu_button("Help", |ui| {
@@ -2122,6 +2131,107 @@ impl SynthApp {
     fn duplicate_selected_modules(&mut self) {
         self.copy_selected_modules();
         self.paste_modules_at_offset();
+    }
+
+    /// Optimize the project by removing unused patterns, tracks, and instruments.
+    fn optimize_project(&mut self) {
+        use std::collections::HashSet;
+
+        // Step 1: Find used patterns and tracks from arrangement
+        let mut used_pattern_ids = HashSet::new();
+        let mut used_track_ids = HashSet::new();
+        {
+            let song = self.song.read().unwrap_or_else(|e| e.into_inner());
+            for placement in song.arrangement() {
+                used_pattern_ids.insert(placement.pattern_id);
+                used_track_ids.insert(placement.track_id);
+            }
+        }
+
+        // Step 2: Remove unused patterns
+        let mut removed_patterns = 0usize;
+        {
+            let all_pattern_ids: Vec<_> = {
+                let song = self.song.read().unwrap_or_else(|e| e.into_inner());
+                song.patterns().map(|p| p.id).collect()
+            };
+            let mut song = self.song.write().unwrap_or_else(|e| e.into_inner());
+            for pid in all_pattern_ids {
+                if !used_pattern_ids.contains(&pid) {
+                    song.delete_pattern(pid);
+                    removed_patterns += 1;
+                }
+            }
+        }
+
+        // Step 3: Remove unused tracks
+        let mut removed_tracks = 0usize;
+        {
+            let all_track_ids: Vec<_> = {
+                let song = self.song.read().unwrap_or_else(|e| e.into_inner());
+                song.tracks().map(|t| t.id).collect()
+            };
+            let mut song = self.song.write().unwrap_or_else(|e| e.into_inner());
+            for tid in all_track_ids {
+                if !used_track_ids.contains(&tid) {
+                    song.delete_track(tid);
+                    removed_tracks += 1;
+                }
+            }
+        }
+
+        // Step 4: Find used instruments (referenced by remaining tracks or notes)
+        let mut used_instrument_ids = HashSet::new();
+        {
+            let song = self.song.read().unwrap_or_else(|e| e.into_inner());
+            for track in song.tracks() {
+                if let Some(inst) = track.instrument {
+                    used_instrument_ids.insert(inst.0 as u64);
+                }
+            }
+            for pattern in song.patterns() {
+                for note in pattern.notes() {
+                    used_instrument_ids.insert(note.instrument.0 as u64);
+                }
+            }
+        }
+
+        // Step 5: Remove unused instruments
+        let mut removed_instruments = 0usize;
+        let to_remove: Vec<_> = self
+            .instruments
+            .iter()
+            .filter(|inst| !used_instrument_ids.contains(&inst.id.as_u64()))
+            .map(|inst| inst.id)
+            .collect();
+        for inst_id in &to_remove {
+            self.handle.send(EngineCommand::RemoveInstrument {
+                instrument_id: *inst_id,
+            });
+            removed_instruments += 1;
+        }
+        self.instruments
+            .retain(|inst| !to_remove.contains(&inst.id));
+
+        // If active instrument was removed, select first remaining
+        if !self.instruments.is_empty()
+            && !self
+                .instruments
+                .iter()
+                .any(|i| i.id == self.active_instrument_id)
+        {
+            self.active_instrument_id = self.instruments[0].id;
+            self.handle
+                .set_focused_instrument(Some(self.active_instrument_id));
+        }
+
+        let total = removed_patterns + removed_tracks + removed_instruments;
+        if total > 0 {
+            eprintln!(
+                "Optimized project: removed {removed_patterns} patterns, \
+                 {removed_tracks} tracks, {removed_instruments} instruments"
+            );
+        }
     }
 
     /// Execute an undo operation by popping the undo stack and applying the inverse.
