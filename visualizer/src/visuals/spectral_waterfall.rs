@@ -86,9 +86,10 @@ pub fn setup(
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
     // Create 64 shared materials (one for each frequency band)
+    // Nonlinear frequency→hue mapping: bass→red, mids→green, highs→blue
     let mut shared_mats = Vec::with_capacity(BANDS);
     for band in 0..BANDS {
-        let hue = (band as f32 / BANDS as f32) * 270.0;
+        let hue = telemetry_color::band_frequency_hue(band as f32 / BANDS as f32);
         let color = Color::hsl(hue, sat, lit);
         shared_mats.push(materials.add(StandardMaterial {
             base_color: color,
@@ -233,7 +234,7 @@ pub fn update_materials(
 
     for (band, handle) in waterfall_materials.materials.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
-            let hue = ((band as f32 / BANDS as f32) * 270.0 + hue_offset) % 360.0;
+            let hue = (telemetry_color::band_frequency_hue(band as f32 / BANDS as f32) + hue_offset) % 360.0;
             let lightness = (0.5 + policy.lightness_offset).clamp(0.0, 1.0) * fade;
             let color = Color::hsl(hue, sat, lightness);
             material.base_color = color;

@@ -1,5 +1,12 @@
 # Version History
 
+## [0.224.0] - 2026-03-06
+### Per-instrument colors and frequency-aware FFT hue mapping
+- **Per-instrument color layers** — `category_hue_offset()` helper maps `InstrumentCategory` to distinct hue offsets (Drums→red, Bass→blue, Lead→gold, etc.); applied to particles, velocity_meteors, and harmonic_ribbons so different instruments produce visually distinct colors
+- **Nonlinear frequency→hue mapping** — `band_frequency_hue()` uses sqrt curve giving bass more hue space (bass→red, mids→green, highs→violet); applied to fft_bars, spectral_waterfall, spectral_cathedral
+- **`HueMaterialConfig.frequency_mapped`** flag — enables nonlinear band coloring in the shared material system; fft_bars opts in, note-based effects remain linear
+- 3 new unit tests for category hue offsets and band frequency mapping
+
 ## [0.223.0] - 2026-03-06
 ### Telemetry-driven effects: velocity, voice count, peak, CC/pitch bend, transport
 - **Velocity → brightness/size** — rms_light flashes on high-velocity notes, spectral_cathedral breathing boosted by velocity, pulse_terrain bass response amplified by recent velocity

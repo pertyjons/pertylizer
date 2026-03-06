@@ -22,6 +22,7 @@ const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
     saturation: 0.9,
     lightness: 0.5,
     emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: false,
 };
 
 #[derive(Component)]
@@ -91,9 +92,12 @@ pub fn spawn_and_update(
             // Map pitch to Y axis
             let y = ((note_event.midi_note as f32 / 127.0) * 20.0) - 5.0;
 
-            // Pick shared material based on note
-            let mat_idx = (note_event.midi_note as usize * NUM_MATERIAL_BUCKETS / 128)
-                .min(NUM_MATERIAL_BUCKETS - 1);
+            // Pick shared material based on note + instrument category offset
+            let cat_offset = telemetry_color::category_hue_offset(note_event.category);
+            let shifted_note =
+                ((note_event.midi_note as f32 + cat_offset * 128.0 / 360.0) as usize) % 128;
+            let mat_idx =
+                (shifted_note * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
             let material = ribbon_materials.materials[mat_idx].clone();
 
             let mut segments = Vec::with_capacity(SEGMENTS_PER_RIBBON);

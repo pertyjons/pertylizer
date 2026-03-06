@@ -97,7 +97,10 @@ pub fn spawn(
             break;
         }
 
-        let note_idx = (note_event.midi_note as usize).min(127);
+        // Offset material index by instrument category for per-instrument colors
+        let cat_offset = telemetry_color::category_hue_offset(note_event.category);
+        let base_idx = (note_event.midi_note as usize).min(127);
+        let note_idx = ((base_idx as f32 + cat_offset * 128.0 / 360.0) as usize) % 128;
         let speed = 2.0 + (note_event.velocity as f32 / 127.0) * 6.0;
 
         let scaled_count = (PARTICLES_PER_NOTE as f32 * voice_scale) as usize;

@@ -58,8 +58,8 @@ pub fn setup(
     // Shared materials, one per band
     let mut shared_mats = Vec::with_capacity(ARCH_BANDS);
     for band in 0..ARCH_BANDS {
-        // Hue goes from 0 (red/bass) at the front to 300 (purple/treble) at the back
-        let hue = (band as f32 / ARCH_BANDS as f32) * 300.0;
+        // Nonlinear frequency→hue: bass→red, mids→green, highs→blue
+        let hue = telemetry_color::band_frequency_hue(band as f32 / ARCH_BANDS as f32);
         let color = Color::hsl(hue, sat, lit);
         shared_mats.push(materials.add(StandardMaterial {
             base_color: color,
@@ -195,7 +195,7 @@ pub fn update(
 
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
-                let hue = ((band as f32 / ARCH_BANDS as f32) * 300.0 + hue_offset) % 360.0;
+                let hue = (telemetry_color::band_frequency_hue(band as f32 / ARCH_BANDS as f32) + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;

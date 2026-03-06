@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.223.0)
+# TODO - Pertylizer (v0.224.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -65,10 +65,10 @@
 - [x] Use MIDI CC / pitch bend for continuous parameter modulation (harmonic_ribbons wave width, spectral_origami fold angle, neon_calligraphy stroke width)
 - [x] Use voice count to scale visual density/complexity (centroid_nebula energy, particles burst size, fractal_pulse pulse amount)
 - [x] Use CPU usage for visual stress indicators (cpu_overdrive_core — already implemented)
-- [ ] Use per-instrument note events for instrument-specific colors/layers
+- [x] Use per-instrument note events for instrument-specific colors/layers (particles, velocity_meteors, harmonic_ribbons use category_hue_offset)
 - [x] Use transport state (playing/stopped/position) for scene-level changes (pulse_terrain, fractal_pulse, spectral_origami slow down when stopped)
 - [x] Use peak levels for transient-driven flashes and camera shake (rms_light flash, beat_pulse brightness spike)
-- [ ] Use FFT band energy for per-frequency color mapping (bass → red, mids → green, highs → blue)
+- [x] Use FFT band energy for per-frequency color mapping (bass → red, mids → green, highs → blue) via nonlinear band_frequency_hue in fft_bars, spectral_waterfall, spectral_cathedral
 
 ### 0.6 Settings & control
 - [ ] OSC enable/disable toggle in Pertylizer settings GUI

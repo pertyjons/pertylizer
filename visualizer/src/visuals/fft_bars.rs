@@ -38,6 +38,7 @@ const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
     saturation: 0.8,
     lightness: 0.5,
     emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: true,
 };
 
 /// Shared materials per hue bucket.

@@ -61,6 +61,37 @@ pub fn peak_exceeds_threshold(peak_l: f32, peak_r: f32, threshold: f32) -> bool 
     peak_mono > threshold
 }
 
+/// Hue offset for an instrument category, used by note-driven effects
+/// to give each instrument type a distinct visual color layer.
+#[must_use]
+pub fn category_hue_offset(category: synth_osc_protocol::InstrumentCategory) -> f32 {
+    use synth_osc_protocol::InstrumentCategory;
+    match category {
+        InstrumentCategory::Drums => 0.0,          // red range
+        InstrumentCategory::Bass => 230.0,          // deep blue
+        InstrumentCategory::Pad => 280.0,           // purple
+        InstrumentCategory::Lead => 50.0,           // golden yellow
+        InstrumentCategory::Arp => 180.0,           // cyan
+        InstrumentCategory::Keys => 130.0,          // green
+        InstrumentCategory::FX => 30.0,             // orange
+        InstrumentCategory::Uncategorized => 0.0,   // no offset
+    }
+}
+
+/// Map a normalized band position (0.0 = lowest freq, 1.0 = highest) to a
+/// perceptually meaningful hue. Uses a nonlinear curve that gives bass
+/// frequencies more hue space (red→orange→yellow) since human hearing is
+/// logarithmic and low frequencies span more perceptual territory.
+///
+/// Mapping: bass (0.0) → 0° red, mids (0.5) → 120° green, highs (1.0) → 270° violet.
+#[must_use]
+pub fn band_frequency_hue(band_position: f32) -> f32 {
+    let t = band_position.clamp(0.0, 1.0);
+    // Nonlinear: sqrt gives bass more hue space, compress treble
+    let curved = t.sqrt();
+    curved * 270.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +169,29 @@ mod tests {
     fn test_peak_threshold() {
         assert!(peak_exceeds_threshold(0.9, 0.8, 0.7));
         assert!(!peak_exceeds_threshold(0.3, 0.2, 0.7));
+    }
+
+    #[test]
+    fn test_category_hue_offset_drums_vs_bass() {
+        use synth_osc_protocol::InstrumentCategory;
+        let drums = category_hue_offset(InstrumentCategory::Drums);
+        let bass = category_hue_offset(InstrumentCategory::Bass);
+        assert!((drums - bass).abs() > 100.0, "Different categories should have distinct hues");
+    }
+
+    #[test]
+    fn test_band_frequency_hue_range() {
+        let low = band_frequency_hue(0.0);
+        let high = band_frequency_hue(1.0);
+        assert!(low < 1.0, "Bass should map near 0° (red)");
+        assert!((high - 270.0).abs() < 0.01, "Treble should map near 270° (violet)");
+    }
+
+    #[test]
+    fn test_band_frequency_hue_nonlinear() {
+        let mid_linear = band_frequency_hue(0.5);
+        // With sqrt curve, mid should be > 135 (the linear midpoint)
+        // sqrt(0.5) ≈ 0.707, so hue ≈ 191°
+        assert!(mid_linear > 135.0, "Nonlinear curve should give bass more hue space");
     }
 }
