@@ -153,7 +153,21 @@ pub fn update(
 
     // RMS + beat phase create a global "breathing" expansion
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
-    let breathe = rms_mono * 2.0 + beat_pulse * 1.5;
+
+    // Recent high-velocity notes add extra breathing
+    let velocity_boost = if telemetry.note_age_frames < 8 {
+        if let Some(note) = telemetry.last_note_on {
+            let vel_norm = note.velocity as f32 / 127.0;
+            let age_decay = 1.0 - (telemetry.note_age_frames as f32 / 8.0);
+            vel_norm * age_decay * 2.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let breathe = rms_mono * 2.0 + beat_pulse * 1.5 + velocity_boost;
 
     for (seg, mut transform) in &mut query {
         let mag = fft_downsampled[seg.band_index];

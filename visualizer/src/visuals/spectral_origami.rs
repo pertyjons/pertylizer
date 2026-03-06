@@ -72,7 +72,9 @@ pub fn update(
     effect_state: Res<EffectState>,
     mut query: Query<(&OrigamiFold, &mut Transform)>,
 ) {
-    let t = time.elapsed_secs();
+    // Transport stopped → slow down flutter
+    let time_scale = if telemetry.playing { 1.0 } else { 0.15 };
+    let t = time.elapsed_secs() * time_scale;
     let fade = effect_state.fade;
 
     // Use centroid to drive how "open" the folds are globally
@@ -86,8 +88,11 @@ pub fn update(
         let band_idx = fold.index % 64;
         let mag = telemetry.fft[band_idx];
 
-        // Base fold angle driven by centroid + individual band magnitude
-        let target_angle_x = (mag * 3.0 + centroid_norm * 2.0) * fade;
+        // Pitch bend adds extra fold angle
+        let bend_fold = telemetry.pitch_bend * 1.5;
+
+        // Base fold angle driven by centroid + individual band magnitude + pitch bend
+        let target_angle_x = (mag * 3.0 + centroid_norm * 2.0 + bend_fold) * fade;
         let target_angle_z = (mag * 2.0 + (fold.index as f32 * 0.1 + t).sin() * energy) * fade;
 
         // Apply rotation

@@ -144,8 +144,9 @@ pub fn spawn_and_update(
             let lag_x = i_f * 0.5;
             let seg_x = head_x - lag_x;
 
-            // Wavy motion based on age and index
-            let wave = (seg_x * 0.5 + ribbon.age * 5.0).sin() * 2.0;
+            // Wavy motion based on age and index, pitch bend widens the wave
+            let bend_scale = 1.0 + telemetry.pitch_bend.abs() * 2.0;
+            let wave = (seg_x * 0.5 + ribbon.age * 5.0).sin() * 2.0 * bend_scale;
             let z = (seg_x * 0.3).cos() * 5.0;
 
             if let Ok(mut transform) = segment_query.get_mut(*seg_ent) {

@@ -88,8 +88,9 @@ pub fn update(
         / (10000.0_f32.log2() - 200.0_f32.log2()))
     .clamp(0.0, 1.0);
 
-    // RMS controls overall energy/size
-    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 5.0).clamp(0.1, 2.0);
+    // RMS controls overall energy/size, voice count adds density
+    let voice_factor = 1.0 + (telemetry.voice_count as f32 / 32.0).clamp(0.0, 1.0) * 0.5;
+    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 5.0 * voice_factor).clamp(0.1, 2.5);
 
     for (particle, mut transform) in &mut query {
         // High centroid = fast turbulent movement. Low centroid = slow rolling
