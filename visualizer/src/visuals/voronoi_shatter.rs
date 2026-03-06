@@ -67,7 +67,7 @@ pub fn setup(
             let pos = Vec3::new(px, 0.05, pz);
 
             // Shatter direction: away from center in XZ
-            let dir_xz = (pos - center).normalize_or_else(|| Vec3::new(1.0, 0.0, 0.0));
+            let dir_xz = (pos - center).normalize_or(Vec3::X);
             let shatter_dir = Vec3::new(dir_xz.x, 0.0, dir_xz.z).normalize();
 
             commands.spawn((
