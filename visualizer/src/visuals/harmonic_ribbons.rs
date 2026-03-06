@@ -106,7 +106,7 @@ pub fn spawn_and_update(
                         Mesh3d(ribbon_mesh.0.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::from_xyz(0.0, -100.0, 0.0).with_scale(Vec3::ZERO),
-                        Visibility::Hidden,
+                        Visibility::Inherited,
                         EffectLayer(EffectId::HarmonicRibbons),
                     ))
                     .id();

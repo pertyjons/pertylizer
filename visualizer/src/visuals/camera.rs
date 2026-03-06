@@ -123,10 +123,11 @@ impl CameraMode {
 #[derive(Resource)]
 pub struct CameraState {
     pub mode: CameraMode,
-    /// Whether beat-synced auto-cuts are enabled.
+    /// Whether timed auto-cuts are enabled.
     pub auto_cut: bool,
+    /// Time since last auto-cut (seconds).
+    auto_cut_timer: f32,
     /// Previous beat (integer) for detecting beat crossings.
-    prev_beat: i32,
     /// Current shake intensity (decays over time).
     shake_intensity: f32,
     /// Orbit angle (shared across orbit modes).
@@ -148,7 +149,7 @@ impl Default for CameraState {
         Self {
             mode: CameraMode::Orbit,
             auto_cut: false,
-            prev_beat: 0,
+            auto_cut_timer: 0.0,
             shake_intensity: 0.0,
             angle: 0.0,
             radius: 25.0,
@@ -239,27 +240,26 @@ pub fn update(
         state.shake_intensity = 0.0;
     }
 
-    // --- Beat-synced auto-cut ---
-    if state.auto_cut && telemetry.playing {
-        let current_beat = telemetry.beat_position.floor() as i32;
-        if current_beat != state.prev_beat {
-            let beat_in_bar = current_beat.rem_euclid(4);
-            // Cut on downbeats (beat 0) — switch to a random different mode
-            if beat_in_bar == 0 {
-                let mut rng = rand::thread_rng();
-                use rand::Rng;
-                let mut next_idx = rng.gen_range(0..CameraMode::ALL.len());
-                let cur_idx = CameraMode::ALL
-                    .iter()
-                    .position(|&m| m == state.mode)
-                    .unwrap_or(0);
-                if next_idx == cur_idx {
-                    next_idx = (next_idx + 1) % CameraMode::ALL.len();
-                }
-                state.mode = CameraMode::ALL[next_idx];
+    // --- Timed auto-cut (~20 seconds) ---
+    const AUTO_CUT_INTERVAL: f32 = 20.0;
+    if state.auto_cut {
+        state.auto_cut_timer += dt;
+        if state.auto_cut_timer >= AUTO_CUT_INTERVAL {
+            state.auto_cut_timer = 0.0;
+            let mut rng = rand::thread_rng();
+            use rand::Rng;
+            let mut next_idx = rng.gen_range(0..CameraMode::ALL.len());
+            let cur_idx = CameraMode::ALL
+                .iter()
+                .position(|&m| m == state.mode)
+                .unwrap_or(0);
+            if next_idx == cur_idx {
+                next_idx = (next_idx + 1) % CameraMode::ALL.len();
             }
+            state.mode = CameraMode::ALL[next_idx];
         }
-        state.prev_beat = current_beat;
+    } else {
+        state.auto_cut_timer = 0.0;
     }
 
     // --- Zoom (all orbit-like modes) ---

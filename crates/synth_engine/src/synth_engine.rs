@@ -954,6 +954,9 @@ impl SynthEngine {
             } => {
                 self.sequencer.set_loop(start, end, enabled);
             }
+            EngineCommand::SetRepeat { enabled } => {
+                self.sequencer.set_repeat_song(enabled);
+            }
             EngineCommand::PlayPattern { pattern_id } => {
                 // Find pattern in arrangement and get boundaries
                 let bounds = self

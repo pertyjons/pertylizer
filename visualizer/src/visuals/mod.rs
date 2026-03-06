@@ -35,6 +35,8 @@ pub mod waveform_ring;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::view::Hdr;
+use bevy::ui::IsDefaultUiCamera;
 
 /// System set for effect switching (runs before visual updates).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -105,6 +107,12 @@ impl Plugin for VisualsPlugin {
                 (effects::input, effects::crossfade)
                     .chain()
                     .in_set(EffectSwitch),
+            )
+            .add_systems(
+                Update,
+                effects::init_visibility_once
+                    .in_set(EffectSwitch)
+                    .before(effects::input),
             )
             // Theme input → transition → apply must run after effect switch
             .add_systems(
@@ -277,8 +285,11 @@ fn setup_scene(mut commands: Commands) {
     ));
 
     // Camera with bloom post-processing (Neon theme defaults)
+    // In Bevy 0.18+, we use a single camera for both 3D and UI to avoid render-pass conflicts.
+    // HDR is now a standalone component (Hdr) instead of a field on Camera.
     commands.spawn((
         Camera3d::default(),
+        Hdr,
         Transform::from_xyz(0.0, 12.0, 25.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
         camera::OrbitCamera {
             radius: 25.0,
@@ -291,5 +302,6 @@ fn setup_scene(mut commands: Commands) {
             high_pass_frequency: 0.7,
             ..default()
         },
+        IsDefaultUiCamera,
     ));
 }

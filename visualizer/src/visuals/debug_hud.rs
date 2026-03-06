@@ -1,4 +1,4 @@
-//! Debug HUD overlay — toggled with F12.
+//! Debug HUD overlay — toggled with H.
 //!
 //! Shows diagnostic telemetry information as a semi-transparent
 //! text overlay in the top-left corner of the screen.
@@ -28,7 +28,7 @@ pub(crate) struct DebugHudRoot;
 #[derive(Component)]
 pub(crate) struct DebugHudText;
 
-/// Spawn the HUD UI nodes (initially hidden).
+/// Spawn the HUD UI node (initially hidden).
 pub fn setup(mut commands: Commands) {
     commands
         .spawn((
@@ -41,6 +41,7 @@ pub fn setup(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             Visibility::Hidden,
+            GlobalZIndex(10),
             DebugHudRoot,
         ))
         .with_child((
@@ -54,13 +55,13 @@ pub fn setup(mut commands: Commands) {
         ));
 }
 
-/// Toggle HUD visibility on F12.
+/// Toggle HUD visibility on H.
 pub fn toggle(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<DebugHudState>,
     mut query: Query<&mut Visibility, With<DebugHudRoot>>,
 ) {
-    if keys.just_pressed(KeyCode::F12) {
+    if keys.just_pressed(KeyCode::KeyH) {
         state.visible = !state.visible;
         for mut vis in &mut query {
             *vis = if state.visible {
@@ -158,15 +159,15 @@ pub fn update(
          Terrain: {terrain_name}\n\
          Hero: {hero_name}  Ambient: {ambient_name}\n\
          Transients: {transients_name}\n\
-         FPS: {fps:.1}  Frame: {frame_time_ms:.1}ms\n\
-         -----------------------\n\
-         RMS: {rms_l:.2} / {rms_r:.2}   Peak: {peak_l:.2} / {peak_r:.2}\n\
-         Centroid: {centroid:.0} Hz   Flux: {flux:.3}\n\
-         Tempo: {tempo:.1} BPM    Beat: {beat:.1}  Phase: {phase:.2}\n\
-         Voices: {voices}           CPU: {cpu:.1}%\n\
-         Event Drops: {drops}      Stale: {stale:.1}s\n\
-         OSC Seq: {seq}      FFT Bins: {fft_bins}\n\
-         Protocol: v{proto}\n\
+         FPS:  {fps:>6.1}   Frame: {frame_time_ms:>6.1}ms\n\
+         --------------------------------\n\
+         RMS:  {rms_l:>5.2} / {rms_r:>5.2}   Peak:  {peak_l:>5.2} / {peak_r:>5.2}\n\
+         Cent: {centroid:>8.0} Hz     Flux:  {flux:>6.3}\n\
+         BPM:  {tempo:>6.1}          Beat:  {beat:>5.1}\n\
+         Phase:{phase:>5.2}           Voices:{voices:>4}\n\
+         CPU:  {cpu:>5.1}%          Drops: {drops:>5}\n\
+         Stale:{stale:>5.1}s          Seq:   {seq:>8}\n\
+         FFT:  {fft_bins:>4} bins       Proto: v{proto}\n\
          -----------------------\n\
          Shortcuts:\n\
          Left/Right  Effect prev/next\n\
@@ -177,7 +178,7 @@ pub fn update(
          V           Auto-cut toggle\n\
          F           Fullscreen toggle\n\
          P           Screenshot\n\
-         F12         Toggle this HUD",
+         H           Toggle this HUD",
         rms_l = telemetry.rms[0],
         rms_r = telemetry.rms[1],
         peak_l = telemetry.peak[0],

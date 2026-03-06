@@ -203,12 +203,10 @@ pub struct SequencerViewState {
     editing_track_name: Option<(TrackId, String)>,
     /// Pattern currently being renamed (inline text edit).
     editing_pattern_name: Option<(PatternId, String)>,
-    /// Loop playback enabled.
-    loop_enabled: bool,
-    /// Loop start position.
-    loop_start: Tick,
-    /// Loop end position.
-    loop_end: Tick,
+    /// Repeat song (loop entire song).
+    repeat_enabled: bool,
+    /// Pattern repeat enabled (loop current pattern in piano roll).
+    pattern_repeat: bool,
     /// Stored right-click position (captured at click time, before menu opens).
     context_menu_pos: Option<Pos2>,
     /// Track to highlight (set on right-click, cleared on primary click).
@@ -250,9 +248,8 @@ impl SequencerViewState {
             selected_automation: None,
             editing_track_name: None,
             editing_pattern_name: None,
-            loop_enabled: false,
-            loop_start: Tick::ZERO,
-            loop_end: Tick::ZERO,
+            repeat_enabled: false,
+            pattern_repeat: true,
             context_menu_pos: None,
             highlighted_track: None,
             zoom_level: 1.0,
@@ -596,26 +593,24 @@ fn draw_transport_bar(
 
         ui.separator();
 
-        // Loop toggle
-        let loop_icon = if view_state.loop_enabled {
+        // Song repeat toggle
+        let repeat_icon = if view_state.repeat_enabled {
             RichText::new(ri::REPEAT_FILL).color(t.colors.accent_primary)
         } else {
             RichText::new(ri::REPEAT_LINE).color(t.colors.text_dim)
         };
         if ui
-            .button(loop_icon)
-            .on_hover_text(if view_state.loop_enabled {
-                "Disable loop"
+            .button(repeat_icon)
+            .on_hover_text(if view_state.repeat_enabled {
+                "Disable song repeat"
             } else {
-                "Enable loop"
+                "Repeat song"
             })
             .clicked()
         {
-            view_state.loop_enabled = !view_state.loop_enabled;
-            handle.send(EngineCommand::SetLoop {
-                start: view_state.loop_start,
-                end: view_state.loop_end,
-                enabled: view_state.loop_enabled,
+            view_state.repeat_enabled = !view_state.repeat_enabled;
+            handle.send(EngineCommand::SetRepeat {
+                enabled: view_state.repeat_enabled,
             });
         }
 
@@ -1975,12 +1970,22 @@ fn draw_piano_roll(
                             .size(12.0)
                             .color(t.colors.accent_green),
                     )
-                    .on_hover_text("Play pattern")
+                    .on_hover_text(if view_state.pattern_repeat {
+                        "Play pattern (loop)"
+                    } else {
+                        "Play from pattern"
+                    })
                     .clicked()
                 {
-                    handle.send(EngineCommand::PlayPattern {
-                        pattern_id: data.pattern_id,
-                    });
+                    if view_state.pattern_repeat {
+                        handle.send(EngineCommand::PlayPattern {
+                            pattern_id: data.pattern_id,
+                        });
+                    } else {
+                        handle.send(EngineCommand::PlayFromPattern {
+                            pattern_id: data.pattern_id,
+                        });
+                    }
                 }
             }
 
@@ -1999,6 +2004,28 @@ fn draw_piano_roll(
                 .clicked()
             {
                 handle.send(EngineCommand::Stop);
+            }
+
+            // Pattern repeat toggle
+            let pattern_repeat_icon = if view_state.pattern_repeat {
+                RichText::new(ri::REPEAT_FILL)
+                    .size(12.0)
+                    .color(t.colors.accent_primary)
+            } else {
+                RichText::new(ri::REPEAT_LINE)
+                    .size(12.0)
+                    .color(t.colors.text_dim)
+            };
+            if ui
+                .button(pattern_repeat_icon)
+                .on_hover_text(if view_state.pattern_repeat {
+                    "Disable pattern repeat"
+                } else {
+                    "Repeat pattern"
+                })
+                .clicked()
+            {
+                view_state.pattern_repeat = !view_state.pattern_repeat;
             }
 
             ui.spacing_mut().item_spacing.x = 8.0;

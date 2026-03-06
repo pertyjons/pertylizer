@@ -341,6 +341,27 @@ pub fn crossfade(
     }
 }
 
+/// Initialize visibility once so the default scene is visible on startup.
+pub fn init_visibility_once(
+    mut initialized: Local<bool>,
+    state: Res<EffectState>,
+    mut query: Query<(&EffectLayer, &mut Visibility)>,
+) {
+    if *initialized {
+        return;
+    }
+
+    for (layer, mut vis) in &mut query {
+        *vis = if state.active.is_active(layer.0) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    *initialized = true;
+}
+
 /// Configuration for hue-bucketed shared materials.
 pub struct HueMaterialConfig {
     pub hue_range: f32,
