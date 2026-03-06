@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.222.0)
+# TODO - Pertylizer (v0.223.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -61,13 +61,13 @@
 - [x] Use spectral centroid to shift hue/color temperature (warm low, cool high) in 16 effects — theme-aware hue range per theme
 - [x] Use spectral flux for intensity spikes, burst triggers, and transition accents in 12 effects + rms_light + beat_pulse
 - [x] Use beat phase for pulsing, scaling, rotation sync across rhythmic effects (fft_bars, fractal_pulse, spectral_cathedral, pulse_terrain)
-- [ ] Use velocity to control brightness, size, and spawn intensity (not just meteors)
-- [ ] Use MIDI CC / pitch bend for continuous parameter modulation (e.g., filter sweep → visual sweep)
-- [ ] Use voice count to scale visual density/complexity (more voices → more geometry)
-- [ ] Use CPU usage for visual stress indicators (heat, distortion, glitch)
+- [x] Use velocity to control brightness, size, and spawn intensity (rms_light flash, spectral_cathedral breathing, pulse_terrain bass boost)
+- [x] Use MIDI CC / pitch bend for continuous parameter modulation (harmonic_ribbons wave width, spectral_origami fold angle, neon_calligraphy stroke width)
+- [x] Use voice count to scale visual density/complexity (centroid_nebula energy, particles burst size, fractal_pulse pulse amount)
+- [x] Use CPU usage for visual stress indicators (cpu_overdrive_core — already implemented)
 - [ ] Use per-instrument note events for instrument-specific colors/layers
-- [ ] Use transport state (playing/stopped/position) for scene-level changes
-- [ ] Use peak levels for transient-driven flashes and camera shake
+- [x] Use transport state (playing/stopped/position) for scene-level changes (pulse_terrain, fractal_pulse, spectral_origami slow down when stopped)
+- [x] Use peak levels for transient-driven flashes and camera shake (rms_light flash, beat_pulse brightness spike)
 - [ ] Use FFT band energy for per-frequency color mapping (bass → red, mids → green, highs → blue)
 
 ### 0.6 Settings & control

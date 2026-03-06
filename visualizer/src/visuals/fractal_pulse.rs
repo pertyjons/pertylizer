@@ -93,11 +93,13 @@ pub fn update(
 ) {
     let dt = time.delta_secs();
 
-    // Energy drives scale pulsing
-    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.5);
+    // Energy drives scale pulsing, voice count adds complexity
+    let voice_boost = 1.0 + (telemetry.voice_count as f32 / 32.0).clamp(0.0, 1.0) * 0.5;
+    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0 * voice_boost).clamp(0.1, 2.0);
 
-    // Tempo drives rotation speed multiplier
-    let tempo_mult = (telemetry.tempo / 120.0).max(0.5);
+    // Tempo drives rotation speed multiplier, transport stopped slows down
+    let transport_scale = if telemetry.playing { 1.0 } else { 0.15 };
+    let tempo_mult = (telemetry.tempo / 120.0).max(0.5) * transport_scale;
 
     let fade = effect_state.fade;
 

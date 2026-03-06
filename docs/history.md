@@ -1,5 +1,13 @@
 # Version History
 
+## [0.223.0] - 2026-03-06
+### Telemetry-driven effects: velocity, voice count, peak, CC/pitch bend, transport
+- **Velocity → brightness/size** — rms_light flashes on high-velocity notes, spectral_cathedral breathing boosted by velocity, pulse_terrain bass response amplified by recent velocity
+- **Voice count → visual density** — centroid_nebula energy scales with voice count, particles burst size increases with more voices, fractal_pulse pulse amplitude boosted by voice count
+- **Peak levels → transient flashes** — rms_light and beat_pulse react to peak threshold crossings with brightness spikes
+- **CC/Pitch bend modulation** — pitch bend widens harmonic_ribbons wave amplitude, adds fold angle to spectral_origami; aftertouch widens neon_calligraphy strokes; pitch bend stretches calligraphy strokes
+- **Transport state → animation speed** — pulse_terrain, fractal_pulse, spectral_origami slow to 15% speed when transport is stopped
+
 ## [0.222.0] - 2026-03-06
 ### Telemetry-driven effects: centroid hue, flux spikes, beat phase
 - **Theme telemetry-reactive parameters** — ThemeConfig/ThemeMaterialPolicy extended with 7 new fields: centroid_hue_low/high, flux_burst_hue, flux_intensity_scale, beat_pulse_strength, peak_flash_hue, rms_emissive_scale — all lerped during theme transitions via ThemePolicySnapshot

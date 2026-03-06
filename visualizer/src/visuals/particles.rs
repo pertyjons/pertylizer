@@ -89,6 +89,9 @@ pub fn spawn(
     particle_materials: Res<ParticleMaterials>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
+    // Voice count scales burst size: more voices → more particles per note
+    let voice_scale = 1.0 + (telemetry.voice_count as f32 / 32.0).clamp(0.0, 1.0);
+
     for note_event in &telemetry.pending_note_events {
         if particle_count.count >= MAX_PARTICLES {
             break;
@@ -97,7 +100,8 @@ pub fn spawn(
         let note_idx = (note_event.midi_note as usize).min(127);
         let speed = 2.0 + (note_event.velocity as f32 / 127.0) * 6.0;
 
-        let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
+        let scaled_count = (PARTICLES_PER_NOTE as f32 * voice_scale) as usize;
+        let spawn_count = scaled_count.min(MAX_PARTICLES - particle_count.count);
 
         for i in 0..spawn_count {
             // Distribute directions using golden angle for even spread

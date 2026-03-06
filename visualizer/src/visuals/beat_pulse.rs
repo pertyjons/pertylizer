@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+use super::telemetry_color;
 use super::theme::ThemeRuntime;
 use crate::telemetry::SynthTelemetry;
 
@@ -67,10 +68,21 @@ pub fn update(
         return;
     }
 
+    // Peak transient adds extra intensity
+    let peak_boost = if telemetry_color::peak_exceeds_threshold(
+        telemetry.peak[0],
+        telemetry.peak[1],
+        0.85,
+    ) {
+        0.3
+    } else {
+        0.0
+    };
+
     // Pulse ambient light brightness using the active theme's base ambient brightness
     let base_brightness = runtime.ambient_brightness;
     for mut ambient_light in &mut ambient {
-        let pulse_boost = state.intensity * 80.0;
+        let pulse_boost = (state.intensity + peak_boost) * 80.0;
         ambient_light.brightness = base_brightness + pulse_boost;
     }
 }

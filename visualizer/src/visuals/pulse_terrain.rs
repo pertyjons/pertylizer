@@ -78,7 +78,9 @@ pub fn update(
     policy: Res<ThemeMaterialPolicy>,
     mut query: Query<(&TerrainTile, &mut Transform)>,
 ) {
-    let t = time.elapsed_secs();
+    // Transport stopped → slow down ripple animation
+    let time_scale = if telemetry.playing { 1.0 } else { 0.15 };
+    let t = time.elapsed_secs() * time_scale;
     let fade = effect_state.fade;
 
     // Use lower FFT bands to drive the terrain height
@@ -92,6 +94,19 @@ pub fn update(
     let rms_mono = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
 
+    // Recent velocity boosts ground intensity
+    let velocity_boost = if telemetry.note_age_frames < 6 {
+        if let Some(note) = telemetry.last_note_on {
+            let vel_norm = note.velocity as f32 / 127.0;
+            let age_decay = 1.0 - (telemetry.note_age_frames as f32 / 6.0);
+            vel_norm * age_decay
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
     for (tile, mut transform) in &mut query {
         // Create an expanding ripple effect using distance from center
         let ripple = ((tile.dist_from_center * 0.5) - t * 5.0).sin();
@@ -103,7 +118,7 @@ pub fn update(
         let target_y = tile.base_y
             + noise
             + (ripple * (rms_mono + beat_pulse * 0.3) * 10.0)
-            + (bass * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
+            + (bass * (1.0 + velocity_boost) * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
 
         transform.translation.y = target_y * fade;
 

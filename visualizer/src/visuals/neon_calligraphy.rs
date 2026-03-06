@@ -137,8 +137,14 @@ pub fn update(
             0.0
         };
 
+        // Aftertouch widens strokes, pitch bend adds horizontal stretch
+        let aftertouch_scale = 1.0 + telemetry.aftertouch * 0.5;
+        let bend_stretch = 1.0 + telemetry.pitch_bend.abs() * 0.3;
+
         let target_scale = life_pct;
         transform.scale.y += (target_scale - transform.scale.y) * 10.0 * dt;
+        transform.scale.x = aftertouch_scale * bend_stretch;
+        transform.scale.z = aftertouch_scale;
 
         // Clamp to minimum
         if transform.scale.y < 0.01 {
