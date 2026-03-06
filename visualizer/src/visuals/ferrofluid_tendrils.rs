@@ -110,6 +110,7 @@ pub fn update(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_material(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
@@ -139,8 +140,11 @@ pub fn update_material(
         let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
         let color = Color::hsl(hue, sat, lit * fade);
         material.base_color = color;
-        material.emissive =
-            LinearRgba::from(color) * EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost * fade;
+        material.emissive = LinearRgba::from(color)
+            * EMISSIVE_STRENGTH
+            * policy.emissive_multiplier
+            * flux_boost
+            * fade;
         material.metallic = policy.metallic;
         material.perceptual_roughness = policy.roughness;
     }

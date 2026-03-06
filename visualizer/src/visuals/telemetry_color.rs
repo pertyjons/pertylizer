@@ -46,8 +46,9 @@ pub fn beat_pulse_factor(beat_phase: f32, policy: &ThemeMaterialPolicy) -> f32 {
 /// Map RMS level to an emissive scale factor.
 ///
 /// Returns a multiplier around 1.0, ranging from ~0.5 (silence) to `rms_emissive_scale` (loud).
+#[cfg(test)]
 #[must_use]
-pub fn rms_to_emissive(rms_mono: f32, policy: &ThemeMaterialPolicy) -> f32 {
+fn rms_to_emissive(rms_mono: f32, policy: &ThemeMaterialPolicy) -> f32 {
     // RMS is linear amplitude 0.0-1.0 typically
     let t = rms_mono.clamp(0.0, 1.0);
     // Lerp from base (0.5) to theme's rms_emissive_scale
@@ -67,14 +68,14 @@ pub fn peak_exceeds_threshold(peak_l: f32, peak_r: f32, threshold: f32) -> bool 
 pub fn category_hue_offset(category: synth_osc_protocol::InstrumentCategory) -> f32 {
     use synth_osc_protocol::InstrumentCategory;
     match category {
-        InstrumentCategory::Drums => 0.0,          // red range
-        InstrumentCategory::Bass => 230.0,          // deep blue
-        InstrumentCategory::Pad => 280.0,           // purple
-        InstrumentCategory::Lead => 50.0,           // golden yellow
-        InstrumentCategory::Arp => 180.0,           // cyan
-        InstrumentCategory::Keys => 130.0,          // green
-        InstrumentCategory::FX => 30.0,             // orange
-        InstrumentCategory::Uncategorized => 0.0,   // no offset
+        InstrumentCategory::Drums => 0.0,         // red range
+        InstrumentCategory::Bass => 230.0,        // deep blue
+        InstrumentCategory::Pad => 280.0,         // purple
+        InstrumentCategory::Lead => 50.0,         // golden yellow
+        InstrumentCategory::Arp => 180.0,         // cyan
+        InstrumentCategory::Keys => 130.0,        // green
+        InstrumentCategory::FX => 30.0,           // orange
+        InstrumentCategory::Uncategorized => 0.0, // no offset
     }
 }
 
@@ -104,14 +105,20 @@ mod tests {
     fn test_centroid_to_hue_low() {
         let policy = neon_policy();
         let hue = centroid_to_hue(CENTROID_MIN, &policy);
-        assert!((hue - 270.0).abs() < 0.01, "Low centroid should map to hue_low");
+        assert!(
+            (hue - 270.0).abs() < 0.01,
+            "Low centroid should map to hue_low"
+        );
     }
 
     #[test]
     fn test_centroid_to_hue_high() {
         let policy = neon_policy();
         let hue = centroid_to_hue(CENTROID_MAX, &policy);
-        assert!((hue - 360.0).abs() < 0.01, "High centroid should map to hue_high");
+        assert!(
+            (hue - 360.0).abs() < 0.01,
+            "High centroid should map to hue_high"
+        );
     }
 
     #[test]
@@ -119,7 +126,10 @@ mod tests {
         let policy = neon_policy();
         let hue = centroid_to_hue((CENTROID_MIN + CENTROID_MAX) / 2.0, &policy);
         let expected = (270.0 + 360.0) / 2.0;
-        assert!((hue - expected).abs() < 0.01, "Mid centroid should map to midpoint");
+        assert!(
+            (hue - expected).abs() < 0.01,
+            "Mid centroid should map to midpoint"
+        );
     }
 
     #[test]
@@ -134,7 +144,10 @@ mod tests {
         let boost_default = flux_emissive_boost(1.0, &policy);
         policy.flux_intensity_scale = 3.0;
         let boost_high = flux_emissive_boost(1.0, &policy);
-        assert!(boost_high > boost_default, "Higher scale should give bigger boost");
+        assert!(
+            boost_high > boost_default,
+            "Higher scale should give bigger boost"
+        );
     }
 
     #[test]
@@ -162,7 +175,10 @@ mod tests {
     fn test_rms_to_emissive_loud() {
         let policy = neon_policy();
         let e = rms_to_emissive(1.0, &policy);
-        assert!((e - policy.rms_emissive_scale).abs() < 0.01, "Full RMS should give max scale");
+        assert!(
+            (e - policy.rms_emissive_scale).abs() < 0.01,
+            "Full RMS should give max scale"
+        );
     }
 
     #[test]
@@ -176,7 +192,10 @@ mod tests {
         use synth_osc_protocol::InstrumentCategory;
         let drums = category_hue_offset(InstrumentCategory::Drums);
         let bass = category_hue_offset(InstrumentCategory::Bass);
-        assert!((drums - bass).abs() > 100.0, "Different categories should have distinct hues");
+        assert!(
+            (drums - bass).abs() > 100.0,
+            "Different categories should have distinct hues"
+        );
     }
 
     #[test]
@@ -184,7 +203,10 @@ mod tests {
         let low = band_frequency_hue(0.0);
         let high = band_frequency_hue(1.0);
         assert!(low < 1.0, "Bass should map near 0° (red)");
-        assert!((high - 270.0).abs() < 0.01, "Treble should map near 270° (violet)");
+        assert!(
+            (high - 270.0).abs() < 0.01,
+            "Treble should map near 270° (violet)"
+        );
     }
 
     #[test]
@@ -192,6 +214,9 @@ mod tests {
         let mid_linear = band_frequency_hue(0.5);
         // With sqrt curve, mid should be > 135 (the linear midpoint)
         // sqrt(0.5) ≈ 0.707, so hue ≈ 191°
-        assert!(mid_linear > 135.0, "Nonlinear curve should give bass more hue space");
+        assert!(
+            mid_linear > 135.0,
+            "Nonlinear curve should give bass more hue space"
+        );
     }
 }

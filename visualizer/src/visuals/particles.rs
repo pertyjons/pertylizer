@@ -136,6 +136,7 @@ pub fn spawn(
 }
 
 /// Update particle positions, shrink, and despawn dead particles.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,

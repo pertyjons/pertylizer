@@ -101,6 +101,9 @@ pub mod addresses {
 
     /// Pong from visualizer — reply to indicate a client is connected.
     pub const VIZ_PONG: &str = "/viz/pong";
+
+    /// Select camera mode (string: "orbit", "top-down", "front", "fly-through", "free-orbit").
+    pub const VIZ_CAMERA_MODE: &str = "/viz/camera/mode";
 }
 
 // ---------------------------------------------------------------------------

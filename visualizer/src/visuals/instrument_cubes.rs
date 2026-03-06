@@ -207,6 +207,7 @@ pub fn spawn(
 }
 
 /// Update cube positions, rotation, shrink, and despawn.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,

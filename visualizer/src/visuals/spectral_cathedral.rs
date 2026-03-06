@@ -195,7 +195,9 @@ pub fn update(
 
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
-                let hue = (telemetry_color::band_frequency_hue(band as f32 / ARCH_BANDS as f32) + hue_offset) % 360.0;
+                let hue = (telemetry_color::band_frequency_hue(band as f32 / ARCH_BANDS as f32)
+                    + hue_offset)
+                    % 360.0;
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;

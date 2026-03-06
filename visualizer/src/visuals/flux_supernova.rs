@@ -113,8 +113,7 @@ pub fn update(
             if let Some(material) = materials.get_mut(&material_handle.0) {
                 // Base hue from theme's flux burst, shifting toward centroid on explosion
                 let base_hue = policy.flux_burst_hue;
-                let centroid_hue =
-                    telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+                let centroid_hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
                 let hue = base_hue + (state.explosion * (centroid_hue - base_hue) * 0.3);
                 let lightness = 0.5 + (state.explosion * 0.4);
                 let color = Color::hsl(hue, 0.9, lightness * fade);

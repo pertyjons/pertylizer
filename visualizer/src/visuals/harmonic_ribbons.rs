@@ -96,8 +96,7 @@ pub fn spawn_and_update(
             let cat_offset = telemetry_color::category_hue_offset(note_event.category);
             let shifted_note =
                 ((note_event.midi_note as f32 + cat_offset * 128.0 / 360.0) as usize) % 128;
-            let mat_idx =
-                (shifted_note * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
+            let mat_idx = (shifted_note * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
             let material = ribbon_materials.materials[mat_idx].clone();
 
             let mut segments = Vec::with_capacity(SEGMENTS_PER_RIBBON);

@@ -206,6 +206,7 @@ pub fn update(
 }
 
 /// Handles the global fade of the shared materials during crossfades
+#[allow(clippy::too_many_arguments)]
 pub fn update_materials(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
@@ -234,7 +235,9 @@ pub fn update_materials(
 
     for (band, handle) in waterfall_materials.materials.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
-            let hue = (telemetry_color::band_frequency_hue(band as f32 / BANDS as f32) + hue_offset) % 360.0;
+            let hue = (telemetry_color::band_frequency_hue(band as f32 / BANDS as f32)
+                + hue_offset)
+                % 360.0;
             let lightness = (0.5 + policy.lightness_offset).clamp(0.0, 1.0) * fade;
             let color = Color::hsl(hue, sat, lightness);
             material.base_color = color;

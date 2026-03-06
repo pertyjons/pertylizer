@@ -1,5 +1,12 @@
 # Version History
 
+## [0.225.0] - 2026-03-06
+### Screenshot, fullscreen, zoom, and keyboard shortcuts in debug HUD
+- **Screenshot** (P key) — saves PNG to working directory via Bevy's `Screenshot` + `save_to_disk`
+- **Fullscreen toggle** (F key) — switches between windowed and borderless fullscreen
+- **Camera zoom** (Up/Down arrows) — smooth zoom in/out (5–60 units), camera height scales with distance
+- **Shortcuts help in debug HUD** — F12 overlay now shows all keyboard shortcuts (Left/Right, Up/Down, R, T/Shift+T, F, P, F12)
+
 ## [0.224.0] - 2026-03-06
 ### Per-instrument colors and frequency-aware FFT hue mapping
 - **Per-instrument color layers** — `category_hue_offset()` helper maps `InstrumentCategory` to distinct hue offsets (Drums→red, Bass→blue, Lead→gold, etc.); applied to particles, velocity_meteors, and harmonic_ribbons so different instruments produce visually distinct colors
