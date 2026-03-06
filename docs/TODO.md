@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.214.0)
+# TODO - Pertylizer (v0.215.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -30,16 +30,16 @@
 - [x] Protocol version check — warn once on mismatch with `/synth/meta`
 - [x] Visualizer handles all Phase 3 telemetry streams (centroid, flux, phase, cc, drops, fft_freqs)
 - [x] Per-particle material mutations (up to 512/frame) — replaced with shared hue-bucketed materials across all effects
-- [ ] Configurable FFT bin count (64/128/256)
-- [ ] Extract shared OSC address constants — visualizer hardcodes `"/viz/pong"` instead of using `synth_osc::addresses::VIZ_PONG` (separate workspace can't depend on `synth_osc`, consider a shared `synth_osc_protocol` crate or constants file)
-- [ ] Replace `last_note_on: Option<(u8, u8, u8)>` with a named `NoteOnEvent` struct (fields: `note`, `velocity`, `channel`) — raw tuple used in telemetry + 3 visual consumers
+- [x] Configurable FFT bin count (64/128/256) — `MAX_FFT_BANDS` = 256, `fft_bin_count` adapts dynamically to received OSC data
+- [x] Extract shared OSC address constants — `synth_osc_protocol` crate with all address constants and `PROTOCOL_VERSION`, used by both `synth_osc` and visualizer
+- [x] Replace `last_note_on: Option<(u8, u8, u32, u8)>` with a named `NoteOnEvent` struct (fields: `midi_note`, `velocity`, `instrument_id`, `category`)
 
 ### 0.4 Visualizer effect system — DONE
 - [x] Effect rack with switchable visual layers (Left/Right arrows for prev/next, R for random)
 - [x] 2 additional effect modes: Waveform Ring (circular FFT) and Spectral Waterfall (scrolling 3D spectrogram)
 - [x] Fade-through-black crossfade between effects on switch
 - [x] Spectral waterfall: replace 2048-entity grid with texture-based approach (single quad + custom shader) for fewer draw calls (Implemented via shared materials and Y-scale scaling instead)
-- [ ] Replace per-effect `if active != MyEffect { return }` guards with Bevy run conditions — cleaner system signatures, skips dispatch entirely (matters when effect count grows)
+- [x] Replace per-effect `if active != MyEffect { return }` guards with Bevy run conditions — `effect_active()` and `effect_active_or_fading()` run condition factories, applied via `.run_if()` on all 24 systems
 
 ### 0.4b Visualizer performance optimization — DONE
 - [x] Disabled shadow maps on point light (was rendering 6 extra cube-face passes of the entire scene)
@@ -52,7 +52,21 @@
 - [x] Fixed velocity_meteors exponential shrink bug (`transform.scale *= scale` → `transform.scale = Vec3::splat(life_pct)`)
 - [x] Pre-allocated mesh resources for chord_bloom and harmonic_ribbons (avoid per-spawn mesh creation)
 
-### 0.5 Settings & control
+### 0.5 Utilize all telemetry data in effects
+- [ ] Audit every effect — map which telemetry fields each effect actually reads vs. ignores
+- [ ] Use spectral centroid to shift hue/color temperature (warm low, cool high) in all relevant effects
+- [ ] Use spectral flux for intensity spikes, burst triggers, and transition accents
+- [ ] Use beat phase for pulsing, scaling, rotation sync across all rhythmic effects
+- [ ] Use velocity to control brightness, size, and spawn intensity (not just meteors)
+- [ ] Use MIDI CC / pitch bend for continuous parameter modulation (e.g., filter sweep → visual sweep)
+- [ ] Use voice count to scale visual density/complexity (more voices → more geometry)
+- [ ] Use CPU usage for visual stress indicators (heat, distortion, glitch)
+- [ ] Use per-instrument note events for instrument-specific colors/layers
+- [ ] Use transport state (playing/stopped/position) for scene-level changes
+- [ ] Use peak levels for transient-driven flashes and camera shake
+- [ ] Use FFT band energy for per-frequency color mapping (bass → red, mids → green, highs → blue)
+
+### 0.6 Settings & control
 - [ ] OSC enable/disable toggle in Pertylizer settings GUI
 - [ ] `/viz/` OSC control endpoints (effect select, param set, scene load)
 - [ ] Support connecting multiple OSC clients simultaneously (e.g., via `send_to` and active client tracking)
@@ -172,3 +186,60 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [x] Phase Rings (Concentric rings expanding with the beat phase, driven by Beat Phase, Tempo)
 - [x] Centroid Nebula (Particle cloud shifting color/shape based on brightness, driven by Spectral Centroid, RMS)
 - [x] Velocity Meteors (Meteors falling with size based on impact, driven by Note-on, Velocity)
+
+### 5.6 Visualizer themes
+- [ ] Theme system — swap material palettes, lighting, and ground/sky across all effects
+- [ ] **Neon** — dark background, saturated emissive colors, heavy bloom
+- [ ] **Metal** — brushed steel materials, specular reflections, cool white lighting
+- [ ] **Glass** — translucent refractive materials, caustic-style highlights
+- [ ] **Space** — starfield skybox, deep blue/purple palette, nebula fog
+- [ ] **Synthwave** — grid floor, pink/cyan gradient sky, retro sun
+- [ ] **Ember** — warm orange/red palette, glowing particles, dark smoke fog
+- [ ] **Arctic** — icy blue/white palette, frosted materials, soft ambient light
+- [ ] **Void** — pure black background, minimal monochrome white, high contrast
+- [ ] Theme switching via keyboard shortcut (T) or OSC `/viz/theme/select`
+
+### 5.7 Post-processing & shader effects
+- [ ] Chromatic aberration — intensity scales with RMS level
+- [ ] Glitch/distortion effect — triggered by CPU spikes or spectral flux
+- [ ] Kaleidoscope mode — radial scene mirroring (configurable segment count)
+- [ ] CRT/VHS filter — scanlines, color bleed, static noise
+- [ ] Motion blur — strength synced to tempo
+
+### 5.8 Camera modes
+- [ ] Audio-reactive camera — shake on transients, dolly-zoom on bass drops
+- [ ] Multiple camera presets (first-person fly-through, top-down, fixed angles, free orbit)
+- [ ] Beat-synced camera cuts — VJ-style automatic camera switching on downbeats
+- [ ] Camera mode switching via keyboard shortcut (C) or OSC `/viz/camera/select`
+
+### 5.9 Multi-effect layering
+- [ ] Show 2–3 effects simultaneously instead of one at a time
+- [ ] Per-instrument visual layers — each instrument gets its own color/effect layer
+- [ ] Blending modes between layers (additive, multiply, screen)
+- [ ] Layer opacity control via OSC `/viz/layer/opacity`
+
+### 5.10 Reactive environment
+- [ ] Skybox that reacts to music — stars pulse with RMS, clouds move with tempo
+- [ ] Reactive ground — ripples on note-on, cracks on bass hits
+- [ ] Fog/mist density driven by reverb level or sustain
+- [ ] Day/night cycle driven by song position
+- [ ] Weather effects — rain on high spectral flux, lightning on transients
+
+### 5.11 Generative geometry
+- [ ] L-system trees — branches grow with incoming notes, wither during silence
+- [ ] Voronoi patterns — cells split/shatter with spectral flux
+- [ ] Reaction-diffusion patterns — driven by spectral centroid (warm ↔ cool)
+- [ ] Fractal terrain — landscape deforms in real-time with FFT bands
+
+### 5.12 Interaction & export
+- [ ] Video recording — render to MP4 or image sequence
+- [ ] Screenshot button (P key)
+- [ ] OSC parameter tweaking — live control of intensity, speed, scale per effect
+- [ ] Fullscreen toggle (F key)
+- [ ] Debug HUD overlay — FPS, telemetry values, active effect, draw calls
+
+### 5.13 Advanced simulations
+- [ ] Swarm/flock simulation — particles flock or scatter based on dynamics (loud = scatter, quiet = flock)
+- [ ] Cloth simulation — fabric that billows and ripples with FFT energy
+- [ ] Text/typography — display song title, BPM, key in stylized 3D text
+- [ ] AWE spatialization — if room data is available via OSC, visualize sound source position in 3D space

@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
-use crate::telemetry::SynthTelemetry;
+use crate::telemetry::{NoteOnEvent, SynthTelemetry};
 
 const MAX_BLOOMS: usize = 10;
 const BURST_LIFETIME: f32 = 1.5;
@@ -77,10 +77,6 @@ pub fn spawn_and_update(
     let is_active = effect_state.active.is_active(EffectId::ChordBloom);
     let fade = effect_state.fade;
 
-    if !is_active && fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // 1. Detect chords (multiple notes in the same telemetry frame)
@@ -100,7 +96,15 @@ pub fn spawn_and_update(
         // Reset so we only spawn one bloom per chord frame
         state.notes_this_frame = 0;
 
-        let note = telemetry.last_note_on.unwrap_or((60, 0, 0, 0)).0;
+        let note = telemetry
+            .last_note_on
+            .unwrap_or(NoteOnEvent {
+                midi_note: 60,
+                velocity: 0,
+                instrument_id: 0,
+                category: synth_osc_protocol::InstrumentCategory::default(),
+            })
+            .midi_note;
         let mat_idx = (note as usize * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
         let material = bloom_materials.materials[mat_idx].clone();
 

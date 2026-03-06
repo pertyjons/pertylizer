@@ -2446,7 +2446,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pertylizer"
-version = "0.213.0"
+version = "0.215.0"
 dependencies = [
  "cpal",
  "dirs",
@@ -3312,6 +3312,7 @@ dependencies = [
  "synth_core",
  "synth_dsp",
  "synth_modules",
+ "synth_osc_protocol",
  "synth_sequencer",
  "thiserror 2.0.18",
 ]
@@ -3351,6 +3352,14 @@ dependencies = [
  "synth_core",
  "synth_dsp",
  "synth_engine",
+ "synth_osc_protocol",
+]
+
+[[package]]
+name = "synth_osc_protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

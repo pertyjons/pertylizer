@@ -71,14 +71,9 @@ pub fn setup(
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
-    effect_state: Res<EffectState>,
     mut query: Query<(&NebulaParticle, &mut Transform)>,
     mut last_centroid: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::CentroidNebula) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let t = time.elapsed_secs();
 
     // Smooth the centroid value so it doesn't jitter violently
@@ -126,10 +121,6 @@ pub fn update_material(
     mut last_fade: Local<f32>,
 ) {
     let fade = effect_state.fade;
-
-    if !effect_state.active.is_active(EffectId::CentroidNebula) && fade == 0.0 {
-        return;
-    }
 
     let centroid = *last_centroid;
     let centroid_norm = ((centroid.max(1.0).log2() - 200.0_f32.log2())

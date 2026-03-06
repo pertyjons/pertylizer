@@ -3,7 +3,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{EffectId, EffectLayer};
 use crate::telemetry::SynthTelemetry;
 
 /// How fast the meteors fall.
@@ -59,28 +59,23 @@ pub fn setup(
 pub fn spawn(
     mut commands: Commands,
     telemetry: Res<SynthTelemetry>,
-    effect_state: Res<EffectState>,
     meteor_mesh: Res<MeteorMesh>,
     meteor_materials: Res<MeteorMaterials>,
 ) {
-    if !effect_state.active.is_active(EffectId::VelocityMeteors) {
-        return;
-    }
-
     if telemetry.note_age_frames >= 2 {
         return;
     }
-    let Some((note, velocity, _instrument_id, _category)) = telemetry.last_note_on else {
+    let Some(note_event) = telemetry.last_note_on else {
         return;
     };
 
-    let note_idx = (note as usize).min(127);
+    let note_idx = (note_event.midi_note as usize).min(127);
 
     // Scale by velocity (quieter notes are smaller)
-    let vel_scale = (velocity as f32 / 127.0).max(0.1);
+    let vel_scale = (note_event.velocity as f32 / 127.0).max(0.1);
 
     // Spread X based on note pitch (low notes left, high notes right)
-    let spread_x = ((note as f32 / 127.0) * 2.0 - 1.0) * 20.0;
+    let spread_x = ((note_event.midi_note as f32 / 127.0) * 2.0 - 1.0) * 20.0;
 
     // Randomize Z slightly for depth
     let spread_z = (std::time::SystemTime::now()
@@ -107,15 +102,9 @@ pub fn spawn(
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
-    effect_state: Res<EffectState>,
     mut query: Query<(Entity, &mut Meteor, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-
-    // Only process physics if active or crossfading out
-    if !effect_state.active.is_active(EffectId::VelocityMeteors) && effect_state.fade == 0.0 {
-        return;
-    }
 
     for (entity, mut meteor, mut transform) in &mut query {
         let fall_amt = FALL_SPEED * dt;

@@ -71,29 +71,25 @@ pub fn spawn_and_update(
     let is_active = effect_state.active.is_active(EffectId::HarmonicRibbons);
     let fade = effect_state.fade;
 
-    if !is_active && fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // 1. Spawn new ribbons on note on
     if is_active
         && telemetry.note_age_frames < 2
-        && let Some((note, velocity, _instrument_id, _category)) = telemetry.last_note_on
+        && let Some(note_event) = telemetry.last_note_on
     {
         // Count active ribbons to enforce cap
         let active_count = query.iter().count();
 
         if active_count < MAX_RIBBONS {
-            let vel_norm = velocity as f32 / 127.0;
+            let vel_norm = note_event.velocity as f32 / 127.0;
 
             // Map pitch to Y axis
-            let y = ((note as f32 / 127.0) * 20.0) - 5.0;
+            let y = ((note_event.midi_note as f32 / 127.0) * 20.0) - 5.0;
 
             // Pick shared material based on note
-            let mat_idx =
-                (note as usize * NUM_MATERIAL_BUCKETS / 128).min(NUM_MATERIAL_BUCKETS - 1);
+            let mat_idx = (note_event.midi_note as usize * NUM_MATERIAL_BUCKETS / 128)
+                .min(NUM_MATERIAL_BUCKETS - 1);
             let material = ribbon_materials.materials[mat_idx].clone();
 
             let mut segments = Vec::with_capacity(SEGMENTS_PER_RIBBON);

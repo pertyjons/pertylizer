@@ -1,12 +1,22 @@
 //! Shared telemetry resource updated by the OSC receiver.
 
 use bevy::prelude::*;
+use synth_osc_protocol::InstrumentCategory;
 
-/// Number of FFT bands received from the synth.
-pub const NUM_FFT_BANDS: usize = 128;
+/// Maximum number of FFT bands the arrays can hold.
+pub const MAX_FFT_BANDS: usize = synth_osc_protocol::MAX_FFT_BANDS;
 
 /// Expected protocol version — warn on mismatch.
-pub const EXPECTED_PROTOCOL_VERSION: i32 = 1;
+pub const EXPECTED_PROTOCOL_VERSION: i32 = synth_osc_protocol::PROTOCOL_VERSION;
+
+/// A single note-on event received from the synth.
+#[derive(Debug, Clone, Copy)]
+pub struct NoteOnEvent {
+    pub midi_note: u8,
+    pub velocity: u8,
+    pub instrument_id: u32,
+    pub category: InstrumentCategory,
+}
 
 /// All telemetry data received from the synth via OSC.
 #[derive(Resource)]
@@ -33,22 +43,24 @@ pub struct SynthTelemetry {
 
     // -- FFT spectrum --
     /// FFT magnitude bands, normalized 0.0-1.0.
-    pub fft: [f32; NUM_FFT_BANDS],
+    pub fft: [f32; MAX_FFT_BANDS],
     /// Spectral centroid in Hz (brightness indicator).
     pub centroid_hz: f32,
     /// Spectral flux (onset/change magnitude).
     pub flux: f32,
     /// FFT band center frequencies in Hz (from `/synth/meta/fft_freqs`).
-    pub fft_freqs: [f32; NUM_FFT_BANDS],
+    pub fft_freqs: [f32; MAX_FFT_BANDS],
+    /// Actual number of FFT bins in use (set from received OSC data).
+    pub fft_bin_count: usize,
 
     // -- Note events --
-    /// Most recent note-on: (midi_note, velocity, instrument_id, category).
-    pub last_note_on: Option<(u8, u8, u32, u8)>,
+    /// Most recent note-on event.
+    pub last_note_on: Option<NoteOnEvent>,
     /// Frame counter since last note-on (for decay).
     pub note_age_frames: u32,
-    /// Queued note-on events this frame: (midi_note, velocity, instrument_id, category).
+    /// Queued note-on events this frame.
     /// Consumed each frame by effects that need per-instrument events.
-    pub pending_note_events: Vec<(u8, u8, u32, u8)>,
+    pub pending_note_events: Vec<NoteOnEvent>,
 
     // -- Transport --
     /// Whether the sequencer is playing.
@@ -83,10 +95,11 @@ impl Default for SynthTelemetry {
             stale_frames: 0,
             rms: [0.0; 2],
             peak: [0.0; 2],
-            fft: [0.0; NUM_FFT_BANDS],
+            fft: [0.0; MAX_FFT_BANDS],
             centroid_hz: 0.0,
             flux: 0.0,
-            fft_freqs: [0.0; NUM_FFT_BANDS],
+            fft_freqs: [0.0; MAX_FFT_BANDS],
+            fft_bin_count: synth_osc_protocol::NUM_FFT_BANDS,
             last_note_on: None,
             note_age_frames: u32::MAX,
             pending_note_events: Vec::new(),

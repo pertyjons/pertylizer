@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
-use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
+use crate::telemetry::SynthTelemetry;
 
 /// We use a subset of bands for the arches so it's not too cluttered.
 const ARCH_BANDS: usize = 32;
@@ -96,17 +96,28 @@ pub fn setup(
     }
 }
 
-/// Downsample 128-band FFT to the number of arch bands.
-fn downsample_fft(fft: &[f32; NUM_FFT_BANDS]) -> [f32; ARCH_BANDS] {
+/// Downsample FFT bands to the number of arch bands.
+fn downsample_fft(fft: &[f32], bin_count: usize) -> [f32; ARCH_BANDS] {
     let mut out = [0.0; ARCH_BANDS];
-    let ratio = NUM_FFT_BANDS / ARCH_BANDS;
-    for (i, val) in out.iter_mut().enumerate() {
-        let start = i * ratio;
-        let mut sum = 0.0;
-        for j in 0..ratio {
-            sum += fft[start + j];
+    if bin_count == 0 {
+        return out;
+    }
+    let ratio = bin_count / ARCH_BANDS;
+    if ratio == 0 {
+        // Fewer bins than arch bands — map directly
+        for (i, val) in out.iter_mut().enumerate() {
+            let src = i * bin_count / ARCH_BANDS;
+            *val = fft.get(src).copied().unwrap_or(0.0);
         }
-        *val = sum / ratio as f32;
+    } else {
+        for (i, val) in out.iter_mut().enumerate() {
+            let start = i * ratio;
+            let mut sum = 0.0;
+            for j in 0..ratio {
+                sum += fft.get(start + j).copied().unwrap_or(0.0);
+            }
+            *val = sum / ratio as f32;
+        }
     }
     out
 }
@@ -126,11 +137,8 @@ pub fn update(
 ) {
     let fade = effect_state.fade;
 
-    if !effect_state.active.is_active(EffectId::SpectralCathedral) && fade == 0.0 {
-        return;
-    }
-
-    let fft_downsampled = downsample_fft(&telemetry.fft);
+    let bin_count = telemetry.fft_bin_count;
+    let fft_downsampled = downsample_fft(&telemetry.fft[..bin_count], bin_count);
     let rms_mono = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
 
     // RMS creates a global "breathing" expansion

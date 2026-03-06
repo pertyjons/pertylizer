@@ -84,10 +84,6 @@ pub fn spawn_and_update(
     let is_active = effect_state.active.is_active(EffectId::PhaseRings);
     let fade = effect_state.fade;
 
-    if !is_active && fade == 0.0 {
-        return;
-    }
-
     if telemetry.playing {
         let current_beat_index = telemetry.beat_position.floor() as i32;
 

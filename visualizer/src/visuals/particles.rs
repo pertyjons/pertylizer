@@ -7,7 +7,6 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectState};
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum live particles to prevent unbounded growth.
@@ -79,20 +78,15 @@ pub fn setup(
 pub fn spawn(
     mut commands: Commands,
     telemetry: Res<SynthTelemetry>,
-    effect_state: Res<EffectState>,
     particle_mesh: Res<ParticleMesh>,
     particle_materials: Res<ParticleMaterials>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
-    if !effect_state.active.is_active(EffectId::NoteParticles) {
-        return;
-    }
-
     // Only trigger on fresh note-on
     if telemetry.note_age_frames >= 2 {
         return;
     }
-    let Some((note, velocity, _instrument_id, _category)) = telemetry.last_note_on else {
+    let Some(note_event) = telemetry.last_note_on else {
         return;
     };
 
@@ -101,8 +95,8 @@ pub fn spawn(
         return;
     }
 
-    let note_idx = (note as usize).min(127);
-    let speed = 2.0 + (velocity as f32 / 127.0) * 6.0;
+    let note_idx = (note_event.midi_note as usize).min(127);
+    let speed = 2.0 + (note_event.velocity as f32 / 127.0) * 6.0;
 
     let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
 

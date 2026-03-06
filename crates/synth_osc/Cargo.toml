@@ -16,4 +16,5 @@ rosc = { workspace = true }
 ringbuf = { workspace = true }
 synth_engine = { path = "../synth_engine" }
 synth_core = { path = "../synth_core" }
+synth_osc_protocol = { path = "../synth_osc_protocol" }
 synth_dsp = { path = "../synth_dsp" }

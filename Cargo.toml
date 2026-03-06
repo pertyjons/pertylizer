@@ -9,6 +9,7 @@ members = [
     "crates/synth_engine",
     "crates/synth_mcp",
     "crates/synth_osc",
+    "crates/synth_osc_protocol",
     "crates/pertylizer",
 ]
 exclude = ["visualizer"]

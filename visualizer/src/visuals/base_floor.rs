@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{EffectId, EffectLayer};
 
 #[derive(Component)]
 pub struct BaseFloor;
@@ -35,14 +35,7 @@ pub fn setup(
     ));
 }
 
-pub fn update(effect_state: Res<EffectState>, mut query: Query<&mut Transform, With<BaseFloor>>) {
-    if !effect_state.active.is_active(EffectId::BaseFloor) && effect_state.fade == 0.0 {
-        return;
-    }
-
-    // Since the floor has no animation, we just optionally scale it or fade it if we want,
-    // but a static floor doesn't even need to move. We leave this empty or apply fade scaling if needed.
-
+pub fn update(mut query: Query<&mut Transform, With<BaseFloor>>) {
     for _transform in &mut query {
         // Floor is completely static
     }

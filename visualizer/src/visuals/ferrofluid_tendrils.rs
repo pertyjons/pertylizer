@@ -77,10 +77,6 @@ pub fn update(
     effect_state: Res<EffectState>,
     mut query: Query<(&mut Tendril, &mut Transform)>,
 ) {
-    if !effect_state.active.is_active(EffectId::FerrofluidTendrils) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
     let fade = effect_state.fade;
 
@@ -121,10 +117,6 @@ pub fn update_material(
     mut last_fade: Local<f32>,
 ) {
     let fade = effect_state.fade;
-
-    if !effect_state.active.is_active(EffectId::FerrofluidTendrils) && fade == 0.0 {
-        return;
-    }
 
     let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
 

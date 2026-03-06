@@ -70,10 +70,6 @@ pub fn update(
     effect_state: Res<EffectState>,
     mut query: Query<(&OrigamiFold, &mut Transform)>,
 ) {
-    if !effect_state.active.is_active(EffectId::SpectralOrigami) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let t = time.elapsed_secs();
     let fade = effect_state.fade;
 
@@ -109,10 +105,6 @@ pub fn update_material(
     mut frame_counter: Local<u32>,
 ) {
     let fade = effect_state.fade;
-
-    if !effect_state.active.is_active(EffectId::SpectralOrigami) && fade == 0.0 {
-        return;
-    }
 
     // Shift hue slowly over time, bumped by centroid
     let centroid_norm = (telemetry.centroid_hz / 5000.0).clamp(0.0, 1.0);
