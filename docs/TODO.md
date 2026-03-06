@@ -2,8 +2,6 @@
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
-> Full plan: [osc-telemetry-plan.md](osc-telemetry-plan.md)
-
 ### 0.1 OSC idle mode (`synth_osc`) — DONE
 - [x] Skip FFT computation and UDP sends when no visualizer is connected
 - [x] `/viz/ping`↔`/viz/pong` handshake: sender includes `/viz/ping` in meta bundles, visualizer replies with `/viz/pong` every 2s
@@ -52,8 +50,7 @@
 - [x] Fixed velocity_meteors exponential shrink bug (`transform.scale *= scale` → `transform.scale = Vec3::splat(life_pct)`)
 - [x] Pre-allocated mesh resources for chord_bloom and harmonic_ribbons (avoid per-spawn mesh creation)
 
-### 0.5 Utilize all telemetry data in effects
-> Full plan: [telemetry-effects-plan.md](telemetry-effects-plan.md)
+### 0.5 Utilize all telemetry data in effects — DONE
 - [x] Audit every effect — map which telemetry fields each effect actually reads vs. ignores
 - [x] Extend ThemeConfig/ThemeMaterialPolicy with telemetry-reactive parameters (centroid hue range, flux burst hue, beat pulse strength, peak flash hue, rms emissive scale)
 - [x] Store CC/Pitch bend/Aftertouch in SynthTelemetry (was received but discarded)
