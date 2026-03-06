@@ -1484,7 +1484,8 @@ impl SynthMcpServer {
             params.0.velocity,
             params.0.instrument_id,
         ) {
-            Ok(id) => format!("OK: added note {id} to pattern {}", params.0.pattern_id),
+            Ok(info) => serde_json::to_string_pretty(&info)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1515,10 +1516,8 @@ impl SynthMcpServer {
             params.0.duration_beats,
             params.0.velocity,
         ) {
-            Ok(()) => format!(
-                "OK: updated note {} in pattern {}",
-                params.0.note_id, params.0.pattern_id
-            ),
+            Ok(info) => serde_json::to_string_pretty(&info)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
             Err(e) => format!("Error: {e}"),
         }
     }

@@ -315,7 +315,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// List all notes in a pattern.
     fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
 
-    /// Add a note to a pattern. Returns the new note ID.
+    /// Add a note to a pattern. Returns the created note info.
     /// `instrument_id` defaults to 0 if None. Track instrument overrides during playback.
     fn add_note(
         &self,
@@ -325,12 +325,12 @@ pub trait SynthBridge: Send + Sync + 'static {
         duration_beats: f32,
         velocity: u8,
         instrument_id: Option<u16>,
-    ) -> Result<u64, McpBridgeError>;
+    ) -> Result<NoteInfo, McpBridgeError>;
 
     /// Remove a note from a pattern.
     fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError>;
 
-    /// Update a note's properties (only provided fields are changed).
+    /// Update a note's properties (only provided fields are changed). Returns updated note info.
     fn update_note(
         &self,
         pattern_id: u32,
@@ -339,7 +339,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         start_beat: Option<f32>,
         duration_beats: Option<f32>,
         velocity: Option<u8>,
-    ) -> Result<(), McpBridgeError>;
+    ) -> Result<NoteInfo, McpBridgeError>;
 
     // === Sequencer: Tracks ===
 

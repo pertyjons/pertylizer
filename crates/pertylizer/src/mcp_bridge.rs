@@ -959,6 +959,11 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn create_pattern(&self, name: &str, length_beats: f32) -> Result<u32, McpBridgeError> {
+        if length_beats <= 0.0 {
+            return Err(McpBridgeError::Other(format!(
+                "length_beats must be positive, got {length_beats}"
+            )));
+        }
         let mut song = self
             .shared
             .song
@@ -1018,7 +1023,17 @@ impl SynthBridge for AppSynthBridge {
         duration_beats: f32,
         velocity: u8,
         instrument_id: Option<u16>,
-    ) -> Result<u64, McpBridgeError> {
+    ) -> Result<NoteInfo, McpBridgeError> {
+        if start_beat < 0.0 {
+            return Err(McpBridgeError::Other(format!(
+                "start_beat must be >= 0, got {start_beat}"
+            )));
+        }
+        if duration_beats <= 0.0 {
+            return Err(McpBridgeError::Other(format!(
+                "duration_beats must be positive, got {duration_beats}"
+            )));
+        }
         let mut song = self
             .shared
             .song
@@ -1029,7 +1044,9 @@ impl SynthBridge for AppSynthBridge {
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let p = synth_sequencer::Pitch::new(pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
+        let p = synth_sequencer::Pitch::new(pitch).ok_or_else(|| {
+            McpBridgeError::Other(format!("invalid pitch {pitch}, must be 0-127"))
+        })?;
         let start = synth_sequencer::PatternTick(beats_to_ticks(start_beat));
         let vel = synth_core::Velocity::from_midi(velocity);
         let instrument = synth_sequencer::SeqInstrumentId(instrument_id.unwrap_or(0));
@@ -1044,7 +1061,26 @@ impl SynthBridge for AppSynthBridge {
         .with_duration(synth_sequencer::Duration(beats_to_ticks(duration_beats)));
 
         let note_id = pattern.insert_note(note);
-        Ok(note_id.0)
+        // Read back the inserted note to return full info
+        let inserted = pattern.note(note_id);
+        Ok(inserted.map_or_else(
+            || NoteInfo {
+                id: note_id.0,
+                pitch,
+                pitch_name: p.to_string(),
+                start_beat,
+                duration_beats,
+                velocity,
+            },
+            |n| NoteInfo {
+                id: n.id.0,
+                pitch: n.pitch.as_midi(),
+                pitch_name: n.pitch.to_string(),
+                start_beat: ticks_to_beats(n.start.0),
+                duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
+                velocity: synth_core::Velocity::to_midi(n.velocity),
+            },
+        ))
     }
 
     fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError> {
@@ -1072,7 +1108,21 @@ impl SynthBridge for AppSynthBridge {
         start_beat: Option<f32>,
         duration_beats: Option<f32>,
         velocity: Option<u8>,
-    ) -> Result<(), McpBridgeError> {
+    ) -> Result<NoteInfo, McpBridgeError> {
+        if let Some(s) = start_beat
+            && s < 0.0
+        {
+            return Err(McpBridgeError::Other(format!(
+                "start_beat must be >= 0, got {s}"
+            )));
+        }
+        if let Some(d) = duration_beats
+            && d <= 0.0
+        {
+            return Err(McpBridgeError::Other(format!(
+                "duration_beats must be positive, got {d}"
+            )));
+        }
         let mut song = self
             .shared
             .song
@@ -1087,10 +1137,14 @@ impl SynthBridge for AppSynthBridge {
             .note_mut(nid)
             .ok_or(McpBridgeError::NoteNotFound(note_id))?;
 
-        if let Some(p) = pitch
-            && let Some(new_pitch) = synth_sequencer::Pitch::new(p)
-        {
-            note.pitch = new_pitch;
+        if let Some(p) = pitch {
+            if let Some(new_pitch) = synth_sequencer::Pitch::new(p) {
+                note.pitch = new_pitch;
+            } else {
+                return Err(McpBridgeError::Other(format!(
+                    "invalid pitch {p}, must be 0-127"
+                )));
+            }
         }
         if let Some(s) = start_beat {
             note.start = synth_sequencer::PatternTick(beats_to_ticks(s));
@@ -1101,7 +1155,15 @@ impl SynthBridge for AppSynthBridge {
         if let Some(v) = velocity {
             note.velocity = synth_core::Velocity::from_midi(v);
         }
-        Ok(())
+
+        Ok(NoteInfo {
+            id: note.id.0,
+            pitch: note.pitch.as_midi(),
+            pitch_name: note.pitch.to_string(),
+            start_beat: ticks_to_beats(note.start.0),
+            duration_beats: note.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
+            velocity: synth_core::Velocity::to_midi(note.velocity),
+        })
     }
 
     // === Sequencer: Tracks ===
