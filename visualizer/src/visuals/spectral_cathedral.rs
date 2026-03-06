@@ -131,6 +131,7 @@ fn downsample_fft(fft: &[f32], bin_count: usize) -> [f32; ARCH_BANDS] {
 #[derive(Resource, Default)]
 pub struct CathedralState {
     last_fade: f32,
+    last_policy_version: u64,
 }
 
 pub fn update(
@@ -164,10 +165,12 @@ pub fn update(
     }
 
     // Handle crossfade material updating
-    if (fade - state.last_fade).abs() > 0.001 {
+    if (fade - state.last_fade).abs() > 0.001 || state.last_policy_version != policy.version {
         let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+        let metallic = policy.metallic;
+        let roughness = policy.roughness;
 
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
@@ -175,8 +178,11 @@ pub fn update(
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;
+                material.metallic = metallic;
+                material.perceptual_roughness = roughness;
             }
         }
         state.last_fade = fade;
+        state.last_policy_version = policy.version;
     }
 }

@@ -115,12 +115,14 @@ pub fn update_material(
     terrain_material: Res<TerrainMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
     // Only update material when fade actually changes
-    if (fade - *last_fade).abs() < effects::FADE_EPSILON {
+    if (fade - *last_fade).abs() < effects::FADE_EPSILON && *last_policy_version == policy.version
+    {
         return;
     }
 
@@ -132,6 +134,9 @@ pub fn update_material(
         let color = Color::hsl(140.0, sat, lit * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * emissive * fade;
+        material.metallic = policy.metallic;
+        material.perceptual_roughness = policy.roughness;
     }
     *last_fade = fade;
+    *last_policy_version = policy.version;
 }

@@ -121,10 +121,14 @@ pub fn update_material(
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let metallic = policy.metallic;
+    let roughness = policy.roughness;
 
     if let Some(material) = materials.get_mut(&origami_material.0) {
         let color = Color::hsl(*last_hue, sat, lit * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * emissive * fade;
+        material.metallic = metallic;
+        material.perceptual_roughness = roughness;
     }
 }

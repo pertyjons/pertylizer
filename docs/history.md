@@ -1,5 +1,13 @@
 # Version History
 
+## [0.221.0] - 2026-03-06
+### Theme material polish — metallic/roughness and ThemeRuntime
+- **ThemeRuntime resource** — cached per-frame ambient brightness and key light intensity, replacing per-frame theme registry lookups in `beat_pulse` and `rms_light`
+- **Metallic/roughness in ThemeMaterialPolicy** — themes now drive metallic and roughness on all hue-bucketed materials, floor, particles, and instrument cubes
+- **Version-tracked policy updates** — `ThemeMaterialPolicy.version` counter bumped only on meaningful changes; all 15 effect material update systems skip work when policy is unchanged
+- **`update_hue_materials_for_fade`** — accepts `last_policy_version` to trigger material refresh on theme transitions (not just fade changes)
+- **Floor material** — metallic and roughness now lerped during theme transitions alongside color
+
 ## [0.220.0] - 2026-03-06
 ### Visualizer theme system
 - **Theme system** -- 8 visual themes (Neon, Metal, Glass, Space, Synthwave, Ember, Arctic, Void) that swap lighting, bloom, material properties, and floor color

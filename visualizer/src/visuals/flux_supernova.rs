@@ -33,6 +33,8 @@ pub struct SupernovaState {
     pub prev_flux: f32,
     /// Has material been fully restored to idle state
     pub is_idle: bool,
+    /// Last applied theme policy version.
+    pub last_policy_version: u64,
 }
 
 pub fn setup(
@@ -93,14 +95,20 @@ pub fn update(
 
     let fade = effect_state.fade;
 
+    let policy_changed = state.last_policy_version != policy.version;
+    if policy_changed {
+        state.last_policy_version = policy.version;
+        state.is_idle = false;
+    }
+
     for (mut transform, material_handle) in &mut query {
         transform.scale = Vec3::splat(scale);
         // Slowly rotate
         transform.rotate_local_y(0.2 * dt);
         transform.rotate_local_x(0.1 * dt);
 
-        // Only mutate material if exploding, fading, or just entered idle state
-        if state.explosion > 0.0 || fade < 1.0 || !state.is_idle {
+        // Only mutate material if exploding, fading, theme changed, or just entered idle state
+        if state.explosion > 0.0 || fade < 1.0 || policy_changed || !state.is_idle {
             if let Some(material) = materials.get_mut(&material_handle.0) {
                 // Color shifts from orange/red to bright yellow/white on explosion
                 let hue = 15.0 + (state.explosion * 45.0);
@@ -113,6 +121,8 @@ pub fn update(
 
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive_strength * fade;
+                material.metallic = policy.metallic;
+                material.perceptual_roughness = policy.roughness;
             }
 
             if state.explosion == 0.0 && fade == 1.0 {

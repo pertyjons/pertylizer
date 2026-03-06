@@ -349,6 +349,9 @@ pub struct ThemeMaterialPolicy {
     pub emissive_multiplier: f32,
     pub saturation_offset: f32,
     pub lightness_offset: f32,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub version: u64,
 }
 
 impl Default for ThemeMaterialPolicy {
@@ -358,6 +361,57 @@ impl Default for ThemeMaterialPolicy {
             emissive_multiplier: 1.2,
             saturation_offset: 0.1,
             lightness_offset: 0.0,
+            metallic: 0.0,
+            roughness: 0.5,
+            version: 0,
+        }
+    }
+}
+
+impl ThemeMaterialPolicy {
+    /// Update values and bump version if anything changed meaningfully.
+    fn update_if_changed(
+        &mut self,
+        emissive: f32,
+        sat_offset: f32,
+        lit_offset: f32,
+        metallic: f32,
+        roughness: f32,
+    ) {
+        const EPS: f32 = 0.0001;
+        if (self.emissive_multiplier - emissive).abs() > EPS
+            || (self.saturation_offset - sat_offset).abs() > EPS
+            || (self.lightness_offset - lit_offset).abs() > EPS
+            || (self.metallic - metallic).abs() > EPS
+            || (self.roughness - roughness).abs() > EPS
+        {
+            self.emissive_multiplier = emissive;
+            self.saturation_offset = sat_offset;
+            self.lightness_offset = lit_offset;
+            self.metallic = metallic;
+            self.roughness = roughness;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ThemeRuntime
+// ---------------------------------------------------------------------------
+
+/// Runtime theme values (lerped during transitions) for systems that need them per-frame.
+#[derive(Resource)]
+pub struct ThemeRuntime {
+    pub ambient_brightness: f32,
+    pub key_light_intensity: f32,
+}
+
+impl Default for ThemeRuntime {
+    fn default() -> Self {
+        // Matches Neon defaults
+        Self {
+            ambient_brightness: 30.0,
+            key_light_intensity: 250_000.0,
         }
     }
 }
@@ -428,6 +482,7 @@ pub fn apply_theme(
     state: Res<ThemeState>,
     registry: Res<ThemeRegistry>,
     mut policy: ResMut<ThemeMaterialPolicy>,
+    mut runtime: ResMut<ThemeRuntime>,
     mut ambient_query: Query<&mut AmbientLight>,
     mut key_light_query: Query<&mut PointLight, (With<RmsLight>, Without<RimLight>)>,
     mut rim_light_query: Query<&mut PointLight, (With<RimLight>, Without<RmsLight>)>,
@@ -443,16 +498,23 @@ pub fn apply_theme(
         let t = smooth_step(state.transition);
 
         // Ambient light
+        let ambient_brightness = lerp_f32(
+            current_cfg.ambient_brightness,
+            target_cfg.ambient_brightness,
+            t,
+        );
+        runtime.ambient_brightness = ambient_brightness;
         for mut ambient in &mut ambient_query {
             ambient.color = lerp_color(current_cfg.ambient_color, target_cfg.ambient_color, t);
-            ambient.brightness = lerp_f32(
-                current_cfg.ambient_brightness,
-                target_cfg.ambient_brightness,
-                t,
-            );
+            ambient.brightness = ambient_brightness;
         }
 
         // Key light (RMS-driven) — we set the color; intensity is handled by rms_light system
+        runtime.key_light_intensity = lerp_f32(
+            current_cfg.key_light_intensity,
+            target_cfg.key_light_intensity,
+            t,
+        );
         for mut light in &mut key_light_query {
             light.color = lerp_color(current_cfg.key_light_color, target_cfg.key_light_color, t);
         }
@@ -482,29 +544,36 @@ pub fn apply_theme(
             if let Some(material) = materials.get_mut(&mat_handle.0) {
                 material.base_color =
                     lerp_color(current_cfg.floor_color, target_cfg.floor_color, t);
+                material.metallic =
+                    lerp_f32(current_cfg.metallic, target_cfg.metallic, t).clamp(0.0, 1.0);
+                material.perceptual_roughness =
+                    lerp_f32(current_cfg.roughness, target_cfg.roughness, t).clamp(0.0, 1.0);
             }
         }
 
         // Material policy (lerped)
-        policy.emissive_multiplier = lerp_f32(
+        let emissive = lerp_f32(
             current_cfg.emissive_multiplier,
             target_cfg.emissive_multiplier,
             t,
         );
-        policy.saturation_offset = lerp_f32(
-            current_cfg.saturation_offset,
-            target_cfg.saturation_offset,
-            t,
-        );
-        policy.lightness_offset =
+        let sat_offset =
+            lerp_f32(current_cfg.saturation_offset, target_cfg.saturation_offset, t);
+        let lit_offset =
             lerp_f32(current_cfg.lightness_offset, target_cfg.lightness_offset, t);
+        let metallic = lerp_f32(current_cfg.metallic, target_cfg.metallic, t).clamp(0.0, 1.0);
+        let roughness =
+            lerp_f32(current_cfg.roughness, target_cfg.roughness, t).clamp(0.0, 1.0);
+        policy.update_if_changed(emissive, sat_offset, lit_offset, metallic, roughness);
     } else {
         // No transition — just apply the current theme directly
+        runtime.ambient_brightness = current_cfg.ambient_brightness;
         for mut ambient in &mut ambient_query {
             ambient.color = current_cfg.ambient_color;
             ambient.brightness = current_cfg.ambient_brightness;
         }
 
+        runtime.key_light_intensity = current_cfg.key_light_intensity;
         for mut light in &mut key_light_query {
             light.color = current_cfg.key_light_color;
         }
@@ -522,12 +591,18 @@ pub fn apply_theme(
         for mat_handle in &mut floor_query {
             if let Some(material) = materials.get_mut(&mat_handle.0) {
                 material.base_color = current_cfg.floor_color;
+                material.metallic = current_cfg.metallic.clamp(0.0, 1.0);
+                material.perceptual_roughness = current_cfg.roughness.clamp(0.0, 1.0);
             }
         }
 
-        policy.emissive_multiplier = current_cfg.emissive_multiplier;
-        policy.saturation_offset = current_cfg.saturation_offset;
-        policy.lightness_offset = current_cfg.lightness_offset;
+        policy.update_if_changed(
+            current_cfg.emissive_multiplier,
+            current_cfg.saturation_offset,
+            current_cfg.lightness_offset,
+            current_cfg.metallic.clamp(0.0, 1.0),
+            current_cfg.roughness.clamp(0.0, 1.0),
+        );
     }
 }
 

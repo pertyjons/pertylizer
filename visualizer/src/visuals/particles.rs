@@ -131,10 +131,32 @@ pub fn spawn(
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
+    particle_materials: Res<ParticleMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
+    mut last_policy_version: Local<u64>,
     mut query: Query<(Entity, &mut NoteParticle, &mut Transform)>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
     let dt = time.delta_secs();
+
+    if *last_policy_version != policy.version {
+        let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
+        for (note, handle) in particle_materials.materials.iter().enumerate() {
+            if let Some(material) = materials.get_mut(handle) {
+                let hue = (note as f32 / 127.0) * 360.0;
+                let color = Color::hsl(hue, sat, lit);
+                material.base_color = color;
+                material.emissive = LinearRgba::from(color) * emissive;
+                material.metallic = policy.metallic;
+                material.perceptual_roughness = policy.roughness;
+            }
+        }
+        *last_policy_version = policy.version;
+    }
 
     for (entity, mut particle, mut transform) in &mut query {
         particle.life -= dt;

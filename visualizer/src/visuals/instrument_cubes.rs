@@ -210,10 +210,31 @@ pub fn spawn(
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
+    cube_materials: Res<CubeMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
+    mut last_policy_version: Local<u64>,
     mut query: Query<(Entity, &mut InstrumentCube, &mut Transform)>,
     mut cube_count: ResMut<CubeCount>,
 ) {
     let dt = time.delta_secs();
+
+    if *last_policy_version != policy.version {
+        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+        for (cat, handle) in cube_materials.materials.iter().enumerate() {
+            if let Some(material) = materials.get_mut(handle) {
+                let (hue, base_sat, base_lit) = category_hsl(cat as u8);
+                let sat = (base_sat + policy.saturation_offset).clamp(0.0, 1.0);
+                let lit = (base_lit + policy.lightness_offset).clamp(0.0, 1.0);
+                let color = Color::hsl(hue, sat, lit);
+                material.base_color = color;
+                material.emissive = LinearRgba::from(color) * emissive;
+                material.metallic = policy.metallic;
+                material.perceptual_roughness = policy.roughness;
+            }
+        }
+        *last_policy_version = policy.version;
+    }
 
     for (entity, mut cube, mut transform) in &mut query {
         cube.life -= dt;

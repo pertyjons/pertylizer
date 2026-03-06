@@ -86,6 +86,7 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
+    mut last_policy_version: Local<u64>,
 ) {
     let bin_count = telemetry.fft_bin_count;
     let is_active = effect_state.active.is_active(EffectId::WaveformRing);
@@ -132,5 +133,6 @@ pub fn update(
         &policy,
         effect_state.fade,
         &mut last_fade,
+        &mut last_policy_version,
     );
 }
