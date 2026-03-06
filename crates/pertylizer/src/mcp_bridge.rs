@@ -187,12 +187,11 @@ impl SynthBridge for AppSynthBridge {
                             };
                             // Enrich with range from descriptor
                             if let Some(ref desc) = descriptor {
-                                let normalize = |s: &str| s.to_lowercase().replace('_', " ");
-                                let needle = normalize(&name);
+                                let needle = normalize_param_name(&name);
                                 if let Some(pd) = desc
                                     .parameters
                                     .iter()
-                                    .find(|pd| normalize(&pd.name) == needle)
+                                    .find(|pd| normalize_param_name(&pd.name) == needle)
                                 {
                                     info.min = Some(pd.range.min);
                                     info.max = Some(pd.range.max);
@@ -549,14 +548,13 @@ impl SynthBridge for AppSynthBridge {
             })?;
 
         // Read back the actual value directly from the descriptor (avoids listing all modules)
-        let normalize = |s: &str| s.to_lowercase().replace('_', " ");
-        let needle = normalize(param_name);
+        let needle = normalize_param_name(param_name);
         let descriptor = self.session.module_descriptor(inst_id, mid);
         if let Some(desc) = descriptor
             && let Some(pd) = desc
                 .parameters
                 .iter()
-                .find(|pd| normalize(&pd.name) == needle)
+                .find(|pd| normalize_param_name(&pd.name) == needle)
         {
             return Ok(ParameterInfo {
                 name: pd.name.clone(),
@@ -2473,6 +2471,11 @@ fn beats_to_ticks(beats: f32) -> u32 {
 #[allow(clippy::cast_precision_loss)]
 fn ticks_to_beats(ticks: u32) -> f32 {
     ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
+}
+
+/// Normalize a parameter name for fuzzy matching (lowercase, underscores → spaces).
+fn normalize_param_name(s: &str) -> String {
+    s.to_lowercase().replace('_', " ")
 }
 
 /// Convert a sequencer `Note` to MCP `NoteInfo`.
