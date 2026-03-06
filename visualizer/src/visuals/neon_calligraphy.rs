@@ -97,18 +97,17 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::NeonCalligraphy) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // Check for note on
     let mut triggered_note = None;
     if telemetry.note_age_frames < 2
-        && let Some((note, velocity, _instrument_id, _category)) = telemetry.last_note_on
+        && let Some(note_event) = telemetry.last_note_on
     {
-        triggered_note = Some((note as usize, velocity as f32 / 127.0));
+        triggered_note = Some((
+            note_event.midi_note as usize,
+            note_event.velocity as f32 / 127.0,
+        ));
     }
 
     for (mut stroke, mut transform) in &mut query {

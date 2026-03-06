@@ -85,35 +85,79 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
-                    base_floor::update,
-                    fft_bars::update,
-                    waveform_ring::update,
-                    spectral_waterfall::update,
-                    spectral_waterfall::update_materials,
-                    velocity_meteors::spawn,
-                    velocity_meteors::update,
-                    phase_rings::spawn_and_update,
-                    centroid_nebula::update,
-                    centroid_nebula::update_material,
-                    flux_supernova::update,
-                    cpu_overdrive::update,
-                    fractal_pulse::update,
+                    base_floor::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::BaseFloor,
+                    )),
+                    fft_bars::update
+                        .run_if(effects::effect_active_or_fading(effects::EffectId::FftBars)),
+                    waveform_ring::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::WaveformRing,
+                    )),
+                    spectral_waterfall::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::SpectralWaterfall,
+                    )),
+                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::SpectralWaterfall,
+                    )),
+                    velocity_meteors::spawn
+                        .run_if(effects::effect_active(effects::EffectId::VelocityMeteors)),
+                    velocity_meteors::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::VelocityMeteors,
+                    )),
+                    phase_rings::spawn_and_update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::PhaseRings,
+                    )),
+                    centroid_nebula::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::CentroidNebula,
+                    )),
+                    centroid_nebula::update_material.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::CentroidNebula,
+                    )),
+                    flux_supernova::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::FluxSupernova,
+                    )),
+                    cpu_overdrive::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::CpuOverdriveCore,
+                    )),
+                    fractal_pulse::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::FractalPulse,
+                    )),
                 )
                     .after(EffectSwitch),
             )
             .add_systems(
                 Update,
                 (
-                    spectral_cathedral::update,
-                    harmonic_ribbons::spawn_and_update,
-                    chord_bloom::spawn_and_update,
-                    pulse_terrain::update,
-                    pulse_terrain::update_material,
-                    spectral_origami::update,
-                    spectral_origami::update_material,
-                    ferrofluid_tendrils::update,
-                    ferrofluid_tendrils::update_material,
-                    neon_calligraphy::update,
+                    spectral_cathedral::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::SpectralCathedral,
+                    )),
+                    harmonic_ribbons::spawn_and_update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::HarmonicRibbons,
+                    )),
+                    chord_bloom::spawn_and_update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::ChordBloom,
+                    )),
+                    pulse_terrain::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::PulseTerrain,
+                    )),
+                    pulse_terrain::update_material.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::PulseTerrain,
+                    )),
+                    spectral_origami::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::SpectralOrigami,
+                    )),
+                    spectral_origami::update_material.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::SpectralOrigami,
+                    )),
+                    ferrofluid_tendrils::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::FerrofluidTendrils,
+                    )),
+                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::FerrofluidTendrils,
+                    )),
+                    neon_calligraphy::update.run_if(effects::effect_active_or_fading(
+                        effects::EffectId::NeonCalligraphy,
+                    )),
                 )
                     .after(EffectSwitch),
             )
@@ -123,9 +167,11 @@ impl Plugin for VisualsPlugin {
                     rms_light::update,
                     beat_pulse::update,
                     camera::orbit,
-                    particles::spawn,
+                    particles::spawn
+                        .run_if(effects::effect_active(effects::EffectId::NoteParticles)),
                     particles::update,
-                    instrument_cubes::spawn,
+                    instrument_cubes::spawn
+                        .run_if(effects::effect_active(effects::EffectId::InstrumentCubes)),
                     instrument_cubes::update,
                     waiting_indicator::update,
                 )

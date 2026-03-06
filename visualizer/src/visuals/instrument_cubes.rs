@@ -7,7 +7,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{EffectId, EffectLayer};
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum live cubes across all instruments.
@@ -141,24 +141,19 @@ pub fn setup(
 pub fn spawn(
     mut commands: Commands,
     telemetry: Res<SynthTelemetry>,
-    effect_state: Res<EffectState>,
     cube_mesh: Res<CubeMesh>,
     cube_materials: Res<CubeMaterials>,
     mut emitters: ResMut<EmitterRegistry>,
     mut cube_count: ResMut<CubeCount>,
 ) {
-    if !effect_state.active.is_active(EffectId::InstrumentCubes) {
-        return;
-    }
-
-    for &(note, velocity, instrument_id, cat) in &telemetry.pending_note_events {
+    for &event in &telemetry.pending_note_events {
         if cube_count.count >= MAX_CUBES {
             break;
         }
 
-        let origin = emitters.position_for(instrument_id);
-        let speed = 1.5 + (velocity as f32 / 127.0) * 4.0;
-        let mat_idx = (cat as usize).min(cube_materials.materials.len() - 1);
+        let origin = emitters.position_for(event.instrument_id);
+        let speed = 1.5 + (event.velocity as f32 / 127.0) * 4.0;
+        let mat_idx = (event.category.as_u8() as usize).min(cube_materials.materials.len() - 1);
         let material = cube_materials.materials[mat_idx].clone();
 
         let spawn_count = CUBES_PER_NOTE.min(MAX_CUBES - cube_count.count);
@@ -174,7 +169,7 @@ pub fn spawn(
             let speed_var = speed * (0.7 + 0.6 * ((i * 7 + 3) % 10) as f32 / 10.0);
 
             // Vary initial rotation and spin based on note + index
-            let seed = (note as f32 * 0.1 + i as f32 * 0.7).sin();
+            let seed = (event.midi_note as f32 * 0.1 + i as f32 * 0.7).sin();
             let spin = Vec3::new(
                 seed * 4.0,
                 (seed * 1.3).cos() * 3.0,

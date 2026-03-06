@@ -10,7 +10,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
-use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
+use crate::telemetry::SynthTelemetry;
 
 /// Number of frequency bands per row (half of full FFT for manageable entity count).
 const BANDS: usize = 64;
@@ -111,17 +111,28 @@ pub fn setup(
     }
 }
 
-/// Downsample 128-band FFT to 64 bands by averaging pairs.
-fn downsample_fft(fft: &[f32; NUM_FFT_BANDS]) -> [f32; BANDS] {
+/// Downsample FFT bands to the waterfall band count.
+fn downsample_fft(fft: &[f32], bin_count: usize) -> [f32; BANDS] {
     let mut out = [0.0; BANDS];
-    let ratio = NUM_FFT_BANDS / BANDS;
-    for (i, val) in out.iter_mut().enumerate() {
-        let start = i * ratio;
-        let mut sum = 0.0;
-        for j in 0..ratio {
-            sum += fft[start + j];
+    if bin_count == 0 {
+        return out;
+    }
+    let ratio = bin_count / BANDS;
+    if ratio == 0 {
+        // Fewer bins than waterfall bands — map directly
+        for (i, val) in out.iter_mut().enumerate() {
+            let src = i * bin_count / BANDS;
+            *val = fft.get(src).copied().unwrap_or(0.0);
         }
-        *val = sum / ratio as f32;
+    } else {
+        for (i, val) in out.iter_mut().enumerate() {
+            let start = i * ratio;
+            let mut sum = 0.0;
+            for j in 0..ratio {
+                sum += fft.get(start + j).copied().unwrap_or(0.0);
+            }
+            *val = sum / ratio as f32;
+        }
     }
     out
 }
@@ -134,10 +145,6 @@ pub fn update(
     mut state: ResMut<WaterfallState>,
     mut query: Query<(&WaterfallCell, &mut Transform)>,
 ) {
-    if !effect_state.active.is_active(EffectId::SpectralWaterfall) && effect_state.fade == 0.0 {
-        return;
-    }
-
     // Advance scroll on timer
     state.timer += time.delta_secs();
     let mut scrolled = false;
@@ -150,7 +157,8 @@ pub fn update(
 
         // Write new FFT data to the new front row
         let front = state.front_row;
-        state.history[front] = downsample_fft(&telemetry.fft);
+        let bin_count = telemetry.fft_bin_count;
+        state.history[front] = downsample_fft(&telemetry.fft[..bin_count], bin_count);
         scrolled = true;
     }
 
@@ -196,10 +204,6 @@ pub fn update_materials(
     waterfall_materials: Res<WaterfallMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !effect_state.active.is_active(EffectId::SpectralWaterfall) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let fade = effect_state.fade;
 
     // Only update materials if fade is active

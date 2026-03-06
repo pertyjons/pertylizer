@@ -82,10 +82,6 @@ pub fn update(
     )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !effect_state.active.is_active(EffectId::FractalPulse) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // Energy drives scale pulsing

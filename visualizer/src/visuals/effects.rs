@@ -93,6 +93,16 @@ impl SceneConfig {
     }
 }
 
+/// Run condition: returns true when the given effect is active in the current scene.
+pub fn effect_active(effect: EffectId) -> impl Fn(Res<EffectState>) -> bool + Clone {
+    move |state: Res<EffectState>| state.active.is_active(effect)
+}
+
+/// Run condition: returns true when the given effect is active OR a crossfade is in progress.
+pub fn effect_active_or_fading(effect: EffectId) -> impl Fn(Res<EffectState>) -> bool + Clone {
+    move |state: Res<EffectState>| state.active.is_active(effect) || state.fade > 0.0
+}
+
 /// Marker component linking an entity to a specific effect layer.
 #[derive(Component)]
 pub struct EffectLayer(pub EffectId);

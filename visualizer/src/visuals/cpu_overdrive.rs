@@ -62,10 +62,6 @@ pub fn update(
     mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<CpuCore>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !effect_state.active.is_active(EffectId::CpuOverdriveCore) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // CPU is 0.0 - 100.0, normalize to 0.0 - 1.0

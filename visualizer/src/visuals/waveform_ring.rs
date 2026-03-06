@@ -1,12 +1,13 @@
 //! Waveform ring — FFT bands arranged in a circle.
 //!
-//! 128 thin bars positioned on a ring, with height driven by FFT magnitude.
+//! Up to `MAX_FFT_BANDS` thin bars positioned on a ring, with height driven by FFT magnitude.
+//! Only the first `fft_bin_count` bars are visible.
 //! Uses shared materials per hue-group to allow Bevy batching.
 
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
-use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
+use crate::telemetry::{MAX_FFT_BANDS, SynthTelemetry};
 
 /// Marker with FFT band index.
 #[derive(Component)]
@@ -40,7 +41,7 @@ pub struct RingBarMaterials {
     materials: Vec<Handle<StandardMaterial>>,
 }
 
-/// Spawn 128 bars arranged in a circle (initially hidden).
+/// Spawn `MAX_FFT_BANDS` bars arranged in a circle (initially hidden).
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -54,19 +55,13 @@ pub fn setup(
         materials: shared_mats.clone(),
     });
 
-    for i in 0..NUM_FFT_BANDS {
-        let angle = (i as f32 / NUM_FFT_BANDS as f32) * std::f32::consts::TAU;
-        let x = angle.cos() * RING_RADIUS;
-        let z = angle.sin() * RING_RADIUS;
-
-        let bucket = (i * NUM_MATERIAL_BUCKETS / NUM_FFT_BANDS).min(NUM_MATERIAL_BUCKETS - 1);
+    for i in 0..MAX_FFT_BANDS {
+        let bucket = (i * NUM_MATERIAL_BUCKETS / MAX_FFT_BANDS).min(NUM_MATERIAL_BUCKETS - 1);
 
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(shared_mats[bucket].clone()),
-            Transform::from_xyz(x, 0.0, z)
-                .with_scale(Vec3::new(1.0, 0.01, 1.0))
-                .with_rotation(Quat::from_rotation_y(-angle)),
+            Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),
             Visibility::Hidden,
             RingBar(i),
             EffectLayer(EffectId::WaveformRing),
@@ -74,20 +69,32 @@ pub fn setup(
     }
 }
 
-/// Update ring bar heights from FFT.
+/// Update ring bar heights and positions from FFT.
 pub fn update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
-    mut query: Query<(&mut Transform, &RingBar)>,
+    mut query: Query<(&mut Transform, &mut Visibility, &RingBar)>,
     ring_materials: Res<RingBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::WaveformRing) {
-        return;
-    }
+    let bin_count = telemetry.fft_bin_count;
 
-    for (mut transform, bar) in &mut query {
+    for (mut transform, mut vis, bar) in &mut query {
+        if bar.0 >= bin_count {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Hidden; // EffectLayer handles actual visibility
+
+        // Reposition on the ring based on active bin count
+        let angle = (bar.0 as f32 / bin_count as f32) * std::f32::consts::TAU;
+        let x = angle.cos() * RING_RADIUS;
+        let z = angle.sin() * RING_RADIUS;
+        transform.translation.x = x;
+        transform.translation.z = z;
+        transform.rotation = Quat::from_rotation_y(-angle);
+
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
         // Smooth lerp

@@ -9,10 +9,12 @@ use std::time::Instant;
 use bevy::prelude::*;
 use rosc::{OscMessage, OscPacket, OscType, encoder};
 
-use crate::telemetry::{EXPECTED_PROTOCOL_VERSION, NUM_FFT_BANDS, SynthTelemetry};
+use synth_osc_protocol::addresses;
+
+use crate::telemetry::{EXPECTED_PROTOCOL_VERSION, MAX_FFT_BANDS, NoteOnEvent, SynthTelemetry};
 
 /// How often to send `/viz/pong` back to the sender.
-const PONG_INTERVAL_SECS: f32 = 2.0;
+const PONG_INTERVAL_SECS: f32 = synth_osc_protocol::PONG_REPLY_INTERVAL_SECS;
 
 /// UDP socket resource for receiving OSC packets.
 #[derive(Resource)]
@@ -36,12 +38,18 @@ impl Plugin for OscReceiverPlugin {
 }
 
 fn setup_osc_socket(mut commands: Commands) {
-    let socket = UdpSocket::bind("0.0.0.0:9000").expect("Failed to bind OSC port 9000");
+    let bind_addr = format!("0.0.0.0:{}", synth_osc_protocol::DEFAULT_OSC_PORT);
+    let socket = UdpSocket::bind(&bind_addr).unwrap_or_else(|e| {
+        panic!(
+            "Failed to bind OSC port {}: {e}",
+            synth_osc_protocol::DEFAULT_OSC_PORT
+        )
+    });
     socket
         .set_nonblocking(true)
         .expect("Failed to set non-blocking");
 
-    println!("OSC receiver: listening on 0.0.0.0:9000");
+    println!("OSC receiver: listening on {bind_addr}");
 
     commands.insert_resource(OscSocket {
         socket,
@@ -89,7 +97,7 @@ fn receive_osc(mut socket: ResMut<OscSocket>, mut telemetry: ResMut<SynthTelemet
 /// Send a `/viz/pong` reply to the sender.
 fn send_pong(socket: &UdpSocket, addr: SocketAddr) {
     let packet = OscPacket::Message(OscMessage {
-        addr: "/viz/pong".to_owned(),
+        addr: addresses::VIZ_PONG.to_owned(),
         args: vec![],
     });
     if let Ok(bytes) = encoder::encode(&packet) {
@@ -110,7 +118,7 @@ fn handle_packet(packet: &OscPacket, telemetry: &mut SynthTelemetry) {
 
 fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
     match msg.addr.as_str() {
-        "/synth/meta" => {
+        addresses::META => {
             if let [
                 OscType::Int(version),
                 OscType::Float(sr),
@@ -132,55 +140,61 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
             }
         }
 
-        "/synth/meta/seq" => {
+        addresses::META_SEQ => {
             if let Some(OscType::Int(seq)) = msg.args.first() {
                 telemetry.seq = *seq;
             }
         }
 
-        "/synth/meta/fft_freqs" => {
-            let count = msg.args.len().min(NUM_FFT_BANDS);
+        addresses::META_FFT_FREQS => {
+            let count = msg.args.len().min(MAX_FFT_BANDS);
             for (i, arg) in msg.args.iter().enumerate().take(count) {
                 if let OscType::Float(v) = arg {
                     telemetry.fft_freqs[i] = *v;
                 }
             }
+            telemetry.fft_bin_count = count;
         }
 
-        "/synth/audio/rms" => {
+        addresses::AUDIO_RMS => {
             if let [OscType::Float(l), OscType::Float(r)] = msg.args.as_slice() {
                 telemetry.rms = [*l, *r];
             }
         }
 
-        "/synth/audio/peak" => {
+        addresses::AUDIO_PEAK => {
             if let [OscType::Float(l), OscType::Float(r)] = msg.args.as_slice() {
                 telemetry.peak = [*l, *r];
             }
         }
 
-        "/synth/audio/fft" => {
-            let count = msg.args.len().min(NUM_FFT_BANDS);
+        addresses::AUDIO_FFT => {
+            let count = msg.args.len().min(MAX_FFT_BANDS);
             for (i, arg) in msg.args.iter().enumerate().take(count) {
                 if let OscType::Float(v) = arg {
                     telemetry.fft[i] = *v;
                 }
             }
+            // Clear any leftover bins beyond received count
+            for bin in &mut telemetry.fft[count..MAX_FFT_BANDS] {
+                *bin = 0.0;
+            }
+            telemetry.fft_bin_count = count;
         }
 
-        "/synth/audio/centroid" => {
+        addresses::AUDIO_CENTROID => {
             if let Some(OscType::Float(v)) = msg.args.first() {
                 telemetry.centroid_hz = *v;
             }
         }
 
-        "/synth/audio/flux" => {
+        addresses::AUDIO_FLUX => {
             if let Some(OscType::Float(v)) = msg.args.first() {
                 telemetry.flux = *v;
             }
         }
 
-        "/synth/event/note_on" => {
+        addresses::EVENT_NOTE_ON => {
             if let [
                 OscType::Int(note),
                 OscType::Int(vel),
@@ -188,27 +202,27 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
                 OscType::Int(category),
             ] = msg.args.as_slice()
             {
-                let event = (
-                    *note as u8,
-                    *vel as u8,
-                    *instrument_id as u32,
-                    *category as u8,
-                );
+                let event = NoteOnEvent {
+                    midi_note: *note as u8,
+                    velocity: *vel as u8,
+                    instrument_id: *instrument_id as u32,
+                    category: synth_osc_protocol::InstrumentCategory::from_u8(*category as u8),
+                };
                 telemetry.last_note_on = Some(event);
                 telemetry.note_age_frames = 0;
                 telemetry.pending_note_events.push(event);
             }
         }
 
-        "/synth/event/note_off" => {
+        addresses::EVENT_NOTE_OFF => {
             // Could track note-off for sustained visuals; for now just ignore
         }
 
-        "/synth/event/cc" => {
+        addresses::EVENT_CC => {
             // CC events available for future visual effects
         }
 
-        "/synth/transport/state" => {
+        addresses::TRANSPORT_STATE => {
             if let [
                 OscType::Int(playing),
                 OscType::Float(tempo),
@@ -221,25 +235,25 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
             }
         }
 
-        "/synth/transport/phase" => {
+        addresses::TRANSPORT_PHASE => {
             if let Some(OscType::Float(phase)) = msg.args.first() {
                 telemetry.beat_phase = *phase;
             }
         }
 
-        "/synth/engine/voice_count" => {
+        addresses::ENGINE_VOICE_COUNT => {
             if let Some(OscType::Int(count)) = msg.args.first() {
                 telemetry.voice_count = *count as u32;
             }
         }
 
-        "/synth/engine/cpu" => {
+        addresses::ENGINE_CPU => {
             if let Some(OscType::Float(cpu)) = msg.args.first() {
                 telemetry.cpu = *cpu;
             }
         }
 
-        "/synth/engine/event_drops" => {
+        addresses::ENGINE_EVENT_DROPS => {
             if let Some(OscType::Int(drops)) = msg.args.first() {
                 telemetry.event_drops = *drops as u32;
             }

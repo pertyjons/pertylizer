@@ -1,0 +1,17 @@
+[package]
+name = "synth_osc_protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared OSC protocol constants for Pertylizer"
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }

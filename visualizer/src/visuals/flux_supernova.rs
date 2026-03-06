@@ -66,10 +66,6 @@ pub fn update(
     mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<SupernovaCore>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !effect_state.active.is_active(EffectId::FluxSupernova) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let dt = time.delta_secs();
 
     // Detect flux spike (sudden onset)

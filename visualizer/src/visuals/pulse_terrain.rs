@@ -70,10 +70,6 @@ pub fn update(
     effect_state: Res<EffectState>,
     mut query: Query<(&TerrainTile, &mut Transform)>,
 ) {
-    if !effect_state.active.is_active(EffectId::PulseTerrain) && effect_state.fade == 0.0 {
-        return;
-    }
-
     let t = time.elapsed_secs();
     let fade = effect_state.fade;
 
@@ -115,10 +111,6 @@ pub fn update_material(
     mut last_fade: Local<f32>,
 ) {
     let fade = effect_state.fade;
-
-    if !effect_state.active.is_active(EffectId::PulseTerrain) && fade == 0.0 {
-        return;
-    }
 
     // Only update material when fade actually changes
     if (fade - *last_fade).abs() < effects::FADE_EPSILON {

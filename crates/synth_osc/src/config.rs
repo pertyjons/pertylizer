@@ -18,12 +18,10 @@ pub struct OscConfig {
 impl Default for OscConfig {
     fn default() -> Self {
         Self {
-            target: "127.0.0.1:9000"
-                .parse()
-                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 9000))),
-            update_rate_hz: 30.0,
-            meta_interval_secs: 5.0,
-            idle_timeout_secs: 5.0,
+            target: SocketAddr::from(([127, 0, 0, 1], synth_osc_protocol::DEFAULT_OSC_PORT)),
+            update_rate_hz: synth_osc_protocol::DEFAULT_UPDATE_RATE_HZ,
+            meta_interval_secs: synth_osc_protocol::DEFAULT_META_INTERVAL_SECS,
+            idle_timeout_secs: synth_osc_protocol::DEFAULT_IDLE_TIMEOUT_SECS,
         }
     }
 }

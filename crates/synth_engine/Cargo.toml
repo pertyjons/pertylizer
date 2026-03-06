@@ -16,6 +16,7 @@ synth_dsp = { path = "../synth_dsp" }
 synth_modules = { path = "../synth_modules" }
 synth_awe = { path = "../synth_awe" }
 synth_sequencer = { path = "../synth_sequencer" }
+synth_osc_protocol = { path = "../synth_osc_protocol", features = ["serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }

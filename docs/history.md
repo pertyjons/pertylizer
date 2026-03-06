@@ -1,5 +1,12 @@
 # Version History
 
+## [0.215.0] - 2026-03-06
+### Shared OSC protocol constants
+- **New crate `synth_osc_protocol`** — minimal zero-dependency crate containing all OSC address constants and `PROTOCOL_VERSION`
+- **`synth_osc` re-exports** — `addresses.rs` now re-exports from `synth_osc_protocol`, eliminating duplication
+- **Visualizer uses shared constants** — `osc_receiver.rs` replaces 17 hardcoded address strings with `synth_osc_protocol::addresses::*`
+- **Shared protocol version** — both sender (`synth_osc`) and receiver (visualizer) reference `synth_osc_protocol::PROTOCOL_VERSION`
+
 ## [0.214.0] - 2026-03-06
 ### Visualizer performance optimization
 - **Disabled shadow maps** — removed point light shadow rendering (6 extra cube-face passes per frame)

@@ -1,11 +1,12 @@
-//! FFT bar visualization — 128 cubes driven by frequency band magnitudes.
+//! FFT bar visualization — cubes driven by frequency band magnitudes.
 //!
+//! Spawns up to `MAX_FFT_BANDS` bars; only the first `fft_bin_count` are visible.
 //! Uses shared materials per hue-group to allow Bevy batching.
 
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
-use crate::telemetry::{NUM_FFT_BANDS, SynthTelemetry};
+use crate::telemetry::{MAX_FFT_BANDS, SynthTelemetry};
 
 /// Marker component with the FFT band index.
 #[derive(Component)]
@@ -14,8 +15,8 @@ pub struct FftBar(pub usize);
 /// Total width of the bar array.
 const TOTAL_WIDTH: f32 = 30.0;
 
-/// Spacing between bars.
-const BAR_WIDTH: f32 = TOTAL_WIDTH / NUM_FFT_BANDS as f32;
+/// Bar width at maximum bin count (used for mesh sizing).
+const MIN_BAR_WIDTH: f32 = TOTAL_WIDTH / MAX_FFT_BANDS as f32;
 
 /// Maximum bar height.
 const MAX_HEIGHT: f32 = 8.0;
@@ -39,13 +40,13 @@ pub struct FftBarMaterials {
     materials: Vec<Handle<StandardMaterial>>,
 }
 
-/// Spawn 128 cubes spread along the X axis.
+/// Spawn `MAX_FFT_BANDS` cubes spread along the X axis.
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Cuboid::new(BAR_WIDTH * 0.85, 1.0, BAR_WIDTH * 0.85));
+    let mesh = meshes.add(Cuboid::new(MIN_BAR_WIDTH * 0.85, 1.0, MIN_BAR_WIDTH * 0.85));
 
     let shared_mats =
         effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
@@ -53,14 +54,13 @@ pub fn setup(
         materials: shared_mats.clone(),
     });
 
-    for i in 0..NUM_FFT_BANDS {
-        let x = (i as f32 - NUM_FFT_BANDS as f32 / 2.0) * BAR_WIDTH;
-        let bucket = (i * NUM_MATERIAL_BUCKETS / NUM_FFT_BANDS).min(NUM_MATERIAL_BUCKETS - 1);
+    for i in 0..MAX_FFT_BANDS {
+        let bucket = (i * NUM_MATERIAL_BUCKETS / MAX_FFT_BANDS).min(NUM_MATERIAL_BUCKETS - 1);
 
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(shared_mats[bucket].clone()),
-            Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),
+            Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),
             FftBar(i),
             Visibility::Inherited,
             EffectLayer(EffectId::FftBars),
@@ -68,22 +68,34 @@ pub fn setup(
     }
 }
 
-/// Update bar heights from FFT telemetry with smooth lerp.
+/// Update bar heights and positions from FFT telemetry with smooth lerp.
 pub fn update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
-    mut query: Query<(&mut Transform, &FftBar)>,
+    mut query: Query<(&mut Transform, &mut Visibility, &FftBar)>,
     fft_materials: Res<FftBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
 ) {
-    if !effect_state.active.is_active(EffectId::FftBars) {
-        return;
-    }
+    let bin_count = telemetry.fft_bin_count;
+    let bar_width = TOTAL_WIDTH / bin_count.max(1) as f32;
 
-    for (mut transform, bar) in &mut query {
-        let target_height = telemetry.fft[bar.0] * MAX_HEIGHT;
-        let target_height = target_height.max(0.01); // Minimum visible height
+    for (mut transform, mut vis, bar) in &mut query {
+        if bar.0 >= bin_count {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Inherited;
+
+        // Reposition based on active bin count
+        let x = (bar.0 as f32 - bin_count as f32 / 2.0) * bar_width;
+        transform.translation.x = x;
+        // Scale width to match current bin count spacing
+        let width_scale = bar_width / MIN_BAR_WIDTH;
+        transform.scale.x = width_scale;
+        transform.scale.z = width_scale;
+
+        let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
         // Smooth lerp — fast attack, slow decay
         let current = transform.scale.y;

@@ -12,3 +12,4 @@ repository = "https://github.com/pertyjons/pertylizer"
 bevy = "0.18.1"
 rand = "0.8"
 rosc = "0.11.4"
+synth_osc_protocol = { path = "../crates/synth_osc_protocol" }

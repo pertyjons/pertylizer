@@ -19,13 +19,13 @@ use crate::addresses;
 use crate::config::OscConfig;
 
 /// Protocol version for `/synth/meta`.
-const PROTOCOL_VERSION: i32 = 1;
+const PROTOCOL_VERSION: i32 = synth_osc_protocol::PROTOCOL_VERSION;
 
 /// FFT size for spectrum analysis.
 const FFT_SIZE: usize = 2048;
 
 /// Number of output bands sent via OSC (log-grouped from FFT bins).
-const NUM_BANDS: usize = 128;
+const NUM_BANDS: usize = synth_osc_protocol::NUM_FFT_BANDS;
 
 /// Pre-allocated FFT state, reused across ticks.
 struct SpectrumState {
