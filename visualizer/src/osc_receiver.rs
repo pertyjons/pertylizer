@@ -226,7 +226,17 @@ fn handle_message(msg: &OscMessage, telemetry: &mut SynthTelemetry) {
         }
 
         addresses::EVENT_CC => {
-            // CC events available for future visual effects
+            if let [OscType::Int(cc), OscType::Float(value), OscType::Int(channel)] =
+                msg.args.as_slice()
+            {
+                let cc_num = *cc as u8;
+                // Pitch bend is sent as CC 128, aftertouch as CC 129
+                match cc_num {
+                    128 => telemetry.pitch_bend = (*value * 2.0 - 1.0).clamp(-1.0, 1.0),
+                    129 => telemetry.aftertouch = value.clamp(0.0, 1.0),
+                    _ => telemetry.last_cc = Some((cc_num, *value, *channel as u8)),
+                }
+            }
         }
 
         addresses::TRANSPORT_STATE => {

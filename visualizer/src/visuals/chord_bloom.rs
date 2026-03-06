@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::{NoteOnEvent, SynthTelemetry};
 
@@ -75,8 +76,7 @@ pub fn spawn_and_update(
     bloom_materials: Res<BloomMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
-    mut last_fade: Local<f32>,
-    mut last_policy_version: Local<u64>,
+    mut tracker: Local<effects::HueMaterialTracker>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::ChordBloom);
     let fade = effect_state.fade;
@@ -163,13 +163,16 @@ pub fn spawn_and_update(
         }
     }
 
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let emissive_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     effects::update_hue_materials_for_fade(
         &mut materials,
         &bloom_materials.materials,
         &MAT_CONFIG,
         &policy,
         fade,
-        &mut last_fade,
-        &mut last_policy_version,
+        hue_offset,
+        emissive_boost,
+        &mut tracker,
     );
 }

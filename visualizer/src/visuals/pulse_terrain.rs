@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -74,6 +75,7 @@ pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
+    policy: Res<ThemeMaterialPolicy>,
     mut query: Query<(&TerrainTile, &mut Transform)>,
 ) {
     let t = time.elapsed_secs();
@@ -86,8 +88,9 @@ pub fn update(
     }
     bass = (bass / 10.0) * 15.0;
 
-    // Use RMS for global wave
+    // Use RMS + beat phase for global wave
     let rms_mono = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
+    let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
 
     for (tile, mut transform) in &mut query {
         // Create an expanding ripple effect using distance from center
@@ -96,10 +99,10 @@ pub fn update(
         // Add some noise based on X/Z coordinates
         let noise = ((tile.x as f32 * 0.3 + t).sin() * (tile.z as f32 * 0.3 + t).cos()) * 2.0;
 
-        // Height is a combination of base wave, ripple driven by RMS, and global bass pump
+        // Height is a combination of base wave, ripple driven by RMS, bass pump, and beat phase
         let target_y = tile.base_y
             + noise
-            + (ripple * rms_mono * 10.0)
+            + (ripple * (rms_mono + beat_pulse * 0.3) * 10.0)
             + (bass * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
 
         transform.translation.y = target_y * fade;
@@ -112,31 +115,37 @@ pub fn update(
 
 pub fn update_material(
     effect_state: Res<EffectState>,
+    telemetry: Res<SynthTelemetry>,
     terrain_material: Res<TerrainMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
+    mut last_hue: Local<f32>,
     mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
+    let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
 
-    // Only update material when fade actually changes
-    if (fade - *last_fade).abs() < effects::FADE_EPSILON && *last_policy_version == policy.version
+    if (fade - *last_fade).abs() < effects::FADE_EPSILON
+        && (hue - *last_hue).abs() < 1.0
+        && *last_policy_version == policy.version
     {
         return;
     }
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
 
     if let Some(material) = materials.get_mut(&terrain_material.0) {
-        let color = Color::hsl(140.0, sat, lit * fade);
+        let color = Color::hsl(hue, sat, lit * fade);
         material.base_color = color;
         material.emissive = LinearRgba::from(color) * emissive * fade;
         material.metallic = policy.metallic;
         material.perceptual_roughness = policy.roughness;
     }
     *last_fade = fade;
+    *last_hue = hue;
     *last_policy_version = policy.version;
 }

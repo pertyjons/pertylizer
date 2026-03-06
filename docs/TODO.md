@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.221.0)
+# TODO - Pertylizer (v0.222.0)
 
 ## Priority 0 — OSC & Visualizer: Phase 3 (Polish & Extend)
 
@@ -53,10 +53,14 @@
 - [x] Pre-allocated mesh resources for chord_bloom and harmonic_ribbons (avoid per-spawn mesh creation)
 
 ### 0.5 Utilize all telemetry data in effects
-- [ ] Audit every effect — map which telemetry fields each effect actually reads vs. ignores
-- [ ] Use spectral centroid to shift hue/color temperature (warm low, cool high) in all relevant effects
-- [ ] Use spectral flux for intensity spikes, burst triggers, and transition accents
-- [ ] Use beat phase for pulsing, scaling, rotation sync across all rhythmic effects
+> Full plan: [telemetry-effects-plan.md](telemetry-effects-plan.md)
+- [x] Audit every effect — map which telemetry fields each effect actually reads vs. ignores
+- [x] Extend ThemeConfig/ThemeMaterialPolicy with telemetry-reactive parameters (centroid hue range, flux burst hue, beat pulse strength, peak flash hue, rms emissive scale)
+- [x] Store CC/Pitch bend/Aftertouch in SynthTelemetry (was received but discarded)
+- [x] Create shared telemetry_color helpers (centroid_to_hue, flux_emissive_boost, beat_pulse_factor, rms_to_emissive, peak_exceeds_threshold)
+- [x] Use spectral centroid to shift hue/color temperature (warm low, cool high) in 16 effects — theme-aware hue range per theme
+- [x] Use spectral flux for intensity spikes, burst triggers, and transition accents in 12 effects + rms_light + beat_pulse
+- [x] Use beat phase for pulsing, scaling, rotation sync across rhythmic effects (fft_bars, fractal_pulse, spectral_cathedral, pulse_terrain)
 - [ ] Use velocity to control brightness, size, and spawn intensity (not just meteors)
 - [ ] Use MIDI CC / pitch bend for continuous parameter modulation (e.g., filter sweep → visual sweep)
 - [ ] Use voice count to scale visual density/complexity (more voices → more geometry)

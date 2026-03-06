@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -131,6 +132,7 @@ fn downsample_fft(fft: &[f32], bin_count: usize) -> [f32; ARCH_BANDS] {
 #[derive(Resource, Default)]
 pub struct CathedralState {
     last_fade: f32,
+    last_hue_offset: f32,
     last_policy_version: u64,
 }
 
@@ -149,8 +151,9 @@ pub fn update(
     let fft_downsampled = downsample_fft(&telemetry.fft[..bin_count], bin_count);
     let rms_mono = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
 
-    // RMS creates a global "breathing" expansion
-    let breathe = rms_mono * 2.0;
+    // RMS + beat phase create a global "breathing" expansion
+    let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
+    let breathe = rms_mono * 2.0 + beat_pulse * 1.5;
 
     for (seg, mut transform) in &mut query {
         let mag = fft_downsampled[seg.band_index];
@@ -164,8 +167,12 @@ pub fn update(
         transform.scale = Vec3::new(thickness, thickness, thickness * 2.0);
     }
 
-    // Handle crossfade material updating
-    if (fade - state.last_fade).abs() > 0.001 || state.last_policy_version != policy.version {
+    // Handle crossfade and centroid-driven material updating
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    if (fade - state.last_fade).abs() > 0.001
+        || state.last_policy_version != policy.version
+        || (hue_offset - state.last_hue_offset).abs() > 1.0
+    {
         let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
@@ -174,7 +181,7 @@ pub fn update(
 
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
-                let hue = (band as f32 / ARCH_BANDS as f32) * 300.0;
+                let hue = ((band as f32 / ARCH_BANDS as f32) * 300.0 + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;
@@ -183,6 +190,7 @@ pub fn update(
             }
         }
         state.last_fade = fade;
+        state.last_hue_offset = hue_offset;
         state.last_policy_version = policy.version;
     }
 }

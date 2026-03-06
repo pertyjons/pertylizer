@@ -325,11 +325,23 @@ use super::theme::ThemeMaterialPolicy;
 ///
 /// The `ThemeMaterialPolicy` offsets are applied to saturation, lightness,
 /// and emissive strength so that themes can shift the overall look.
+/// `hue_offset` shifts the entire hue palette (e.g., from centroid mapping).
 pub fn create_hue_materials(
     materials: &mut Assets<StandardMaterial>,
     num_buckets: usize,
     config: &HueMaterialConfig,
     policy: &ThemeMaterialPolicy,
+) -> Vec<Handle<StandardMaterial>> {
+    create_hue_materials_with_offset(materials, num_buckets, config, policy, 0.0)
+}
+
+/// Like [`create_hue_materials`] but with an explicit hue offset.
+pub fn create_hue_materials_with_offset(
+    materials: &mut Assets<StandardMaterial>,
+    num_buckets: usize,
+    config: &HueMaterialConfig,
+    policy: &ThemeMaterialPolicy,
+    hue_offset: f32,
 ) -> Vec<Handle<StandardMaterial>> {
     let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
@@ -340,7 +352,7 @@ pub fn create_hue_materials(
     let mut result = Vec::with_capacity(num_buckets);
     for bucket in 0..num_buckets {
         #[allow(clippy::cast_precision_loss)]
-        let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
+        let hue = ((bucket as f32 / num_buckets as f32) * config.hue_range + hue_offset) % 360.0;
         let color = Color::hsl(hue, sat, lit);
         result.push(materials.add(StandardMaterial {
             base_color: color,
@@ -353,25 +365,51 @@ pub fn create_hue_materials(
     result
 }
 
-/// Update hue-bucketed shared materials for crossfade.
+/// Tracked state for `update_hue_materials_for_fade` to avoid redundant GPU re-uploads.
+pub struct HueMaterialTracker {
+    pub last_fade: f32,
+    pub last_hue_offset: f32,
+    pub last_emissive_boost: f32,
+    pub last_policy_version: u64,
+}
+
+impl Default for HueMaterialTracker {
+    fn default() -> Self {
+        Self {
+            last_fade: 0.0,
+            last_hue_offset: 0.0,
+            last_emissive_boost: 1.0,
+            last_policy_version: 0,
+        }
+    }
+}
+
+/// Update hue-bucketed shared materials for crossfade, telemetry-driven hue shifts,
+/// and emissive boost (e.g., from spectral flux).
 ///
-/// Applies `ThemeMaterialPolicy` offsets to saturation, lightness, and emissive strength.
+/// `hue_offset` shifts the entire palette (e.g., centroid-driven).
+/// `emissive_boost` multiplies emissive (1.0 = no change, >1.0 = brighter on flux spikes).
 pub fn update_hue_materials_for_fade(
     materials: &mut Assets<StandardMaterial>,
     handles: &[Handle<StandardMaterial>],
     config: &HueMaterialConfig,
     policy: &ThemeMaterialPolicy,
     fade: f32,
-    last_fade: &mut f32,
-    last_policy_version: &mut u64,
+    hue_offset: f32,
+    emissive_boost: f32,
+    tracker: &mut HueMaterialTracker,
 ) {
-    if (fade - *last_fade).abs() < FADE_EPSILON && *last_policy_version == policy.version {
+    if (fade - tracker.last_fade).abs() < FADE_EPSILON
+        && (hue_offset - tracker.last_hue_offset).abs() < 1.0
+        && (emissive_boost - tracker.last_emissive_boost).abs() < 0.05
+        && tracker.last_policy_version == policy.version
+    {
         return;
     }
 
     let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = config.emissive_strength * policy.emissive_multiplier;
+    let emissive = config.emissive_strength * policy.emissive_multiplier * emissive_boost;
     let metallic = policy.metallic;
     let roughness = policy.roughness;
 
@@ -379,7 +417,8 @@ pub fn update_hue_materials_for_fade(
     for (bucket, handle) in handles.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
             #[allow(clippy::cast_precision_loss)]
-            let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
+            let hue =
+                ((bucket as f32 / num_buckets as f32) * config.hue_range + hue_offset) % 360.0;
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
@@ -387,6 +426,8 @@ pub fn update_hue_materials_for_fade(
             material.perceptual_roughness = roughness;
         }
     }
-    *last_fade = fade;
-    *last_policy_version = policy.version;
+    tracker.last_fade = fade;
+    tracker.last_hue_offset = hue_offset;
+    tracker.last_emissive_boost = emissive_boost;
+    tracker.last_policy_version = policy.version;
 }

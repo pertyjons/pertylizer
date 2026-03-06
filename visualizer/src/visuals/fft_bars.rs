@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::{MAX_FFT_BANDS, SynthTelemetry};
 
@@ -84,8 +85,7 @@ pub fn update(
     fft_materials: Res<FftBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
-    mut last_fade: Local<f32>,
-    mut last_policy_version: Local<u64>,
+    mut tracker: Local<effects::HueMaterialTracker>,
 ) {
     let bin_count = telemetry.fft_bin_count;
     let bar_width = TOTAL_WIDTH / bin_count.max(1) as f32;
@@ -106,7 +106,9 @@ pub fn update(
         transform.scale.x = width_scale;
         transform.scale.z = width_scale;
 
-        let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
+        // Beat phase adds a subtle height pulse on downbeats
+        let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
+        let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT * (1.0 + beat_pulse * 0.15)).max(0.01);
 
         // Smooth lerp — fast attack, slow decay (time-based)
         let current = transform.scale.y;
@@ -123,13 +125,16 @@ pub fn update(
         transform.translation.y = new_height / 2.0;
     }
 
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let emissive_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     effects::update_hue_materials_for_fade(
         &mut materials,
         &fft_materials.materials,
         &MAT_CONFIG,
         &policy,
         effect_state.fade,
-        &mut last_fade,
-        &mut last_policy_version,
+        hue_offset,
+        emissive_boost,
+        &mut tracker,
     );
 }

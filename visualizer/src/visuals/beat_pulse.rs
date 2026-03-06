@@ -49,7 +49,10 @@ pub fn update(
         if current_beat != prev_beat {
             // Stronger pulse on downbeats (beat 0 of each bar, assuming 4/4)
             let beat_in_bar = current_beat.rem_euclid(4);
-            state.intensity = if beat_in_bar == 0 { 1.0 } else { 0.6 };
+            let base = if beat_in_bar == 0 { 1.0 } else { 0.6 };
+            // Flux boosts the beat pulse on spectral changes
+            let flux_boost = 1.0 + telemetry.flux.clamp(0.0, 2.0) * 0.3;
+            state.intensity = (base * flux_boost).min(1.5);
         }
 
         state.prev_beat = telemetry.beat_position;

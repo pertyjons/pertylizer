@@ -10,6 +10,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -206,16 +207,22 @@ pub fn update(
 /// Handles the global fade of the shared materials during crossfades
 pub fn update_materials(
     effect_state: Res<EffectState>,
+    telemetry: Res<SynthTelemetry>,
     state: Res<WaterfallState>,
     waterfall_materials: Res<WaterfallMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_policy_version: Local<u64>,
+    mut last_hue_offset: Local<f32>,
 ) {
     let fade = effect_state.fade;
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
 
-    // Only update materials if fade is active
-    if fade == 1.0 && !state.full_update_needed && *last_policy_version == policy.version {
+    if fade == 1.0
+        && !state.full_update_needed
+        && *last_policy_version == policy.version
+        && (hue_offset - *last_hue_offset).abs() < 1.0
+    {
         return;
     }
 
@@ -224,10 +231,9 @@ pub fn update_materials(
     let metallic = policy.metallic;
     let roughness = policy.roughness;
 
-    // Update the 64 shared materials once per frame during crossfade
     for (band, handle) in waterfall_materials.materials.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
-            let hue = (band as f32 / BANDS as f32) * 270.0;
+            let hue = ((band as f32 / BANDS as f32) * 270.0 + hue_offset) % 360.0;
             let lightness = (0.5 + policy.lightness_offset).clamp(0.0, 1.0) * fade;
             let color = Color::hsl(hue, sat, lightness);
             material.base_color = color;
@@ -237,4 +243,5 @@ pub fn update_materials(
         }
     }
     *last_policy_version = policy.version;
+    *last_hue_offset = hue_offset;
 }

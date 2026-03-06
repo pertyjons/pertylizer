@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -116,30 +117,36 @@ pub fn update_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_energy: Local<f32>,
     mut last_fade: Local<f32>,
+    mut last_hue: Local<f32>,
     mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
-
     let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
+    let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
 
-    // Only update material when energy or fade changes meaningfully
     if (energy - *last_energy).abs() < 0.02
         && (fade - *last_fade).abs() < effects::FADE_EPSILON
+        && (hue - *last_hue).abs() < 1.0
         && *last_policy_version == policy.version
     {
         return;
     }
 
     if let Some(material) = materials.get_mut(&material_res.0) {
-        let color = Color::srgb(0.1, 0.2 + energy * 0.5, 0.5 + energy * 0.5);
+        let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (0.3 + energy * 0.3 + policy.lightness_offset).clamp(0.0, 1.0);
+        let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+        let color = Color::hsl(hue, sat, lit * fade);
+        material.base_color = color;
         material.emissive =
-            LinearRgba::from(color) * EMISSIVE_STRENGTH * policy.emissive_multiplier * fade;
+            LinearRgba::from(color) * EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost * fade;
         material.metallic = policy.metallic;
         material.perceptual_roughness = policy.roughness;
     }
 
     *last_energy = energy;
     *last_fade = fade;
+    *last_hue = hue;
     *last_policy_version = policy.version;
 }

@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -85,6 +86,7 @@ pub fn spawn_and_update(
     mut state: ResMut<RingState>,
     mut query: Query<(Entity, &PhaseRing, &mut Transform)>,
     mut last_fade: Local<f32>,
+    mut last_hue_offset: Local<f32>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_policy_version: Local<u64>,
@@ -140,19 +142,25 @@ pub fn spawn_and_update(
         transform.scale = Vec3::new(radius, life_pct * fade, radius);
     }
 
-    // Only update the 2 shared materials during crossfade
-    if (fade - *last_fade).abs() > effects::FADE_EPSILON || *last_policy_version != policy.version {
+    // Update the 2 shared materials during crossfade or centroid change
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    if (fade - *last_fade).abs() > effects::FADE_EPSILON
+        || *last_policy_version != policy.version
+        || (hue_offset - *last_hue_offset).abs() > 1.0
+    {
         let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+        let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
         let metallic = policy.metallic;
         let roughness = policy.roughness;
 
-        for (handle, hue) in [
+        for (handle, base_hue) in [
             (&ring_materials.downbeat, 200.0),
             (&ring_materials.offbeat, 320.0),
         ] {
             if let Some(material) = materials.get_mut(handle) {
+                let hue = (base_hue + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;
@@ -161,6 +169,7 @@ pub fn spawn_and_update(
             }
         }
         *last_fade = fade;
+        *last_hue_offset = hue_offset;
         *last_policy_version = policy.version;
     }
 }
