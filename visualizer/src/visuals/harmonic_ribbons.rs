@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 const MAX_RIBBONS: usize = 32;
@@ -45,11 +46,12 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     commands.insert_resource(RibbonMesh(meshes.add(Cuboid::new(0.5, 0.2, 2.0))));
 
     let shared_mats =
-        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
     commands.insert_resource(RibbonMaterials {
         materials: shared_mats,
     });
@@ -66,6 +68,7 @@ pub fn spawn_and_update(
     ribbon_mesh: Res<RibbonMesh>,
     ribbon_materials: Res<RibbonMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::HarmonicRibbons);
@@ -162,6 +165,7 @@ pub fn spawn_and_update(
         &mut materials,
         &ribbon_materials.materials,
         &MAT_CONFIG,
+        &policy,
         fade,
         &mut last_fade,
     );

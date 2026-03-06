@@ -6,6 +6,7 @@ pub mod camera;
 pub mod centroid_nebula;
 pub mod chord_bloom;
 pub mod cpu_overdrive;
+pub mod debug_hud;
 pub mod effects;
 pub mod ferrofluid_tendrils;
 pub mod fft_bars;
@@ -21,10 +22,12 @@ pub mod rms_light;
 pub mod spectral_cathedral;
 pub mod spectral_origami;
 pub mod spectral_waterfall;
+pub mod theme;
 pub mod velocity_meteors;
 pub mod waiting_indicator;
 pub mod waveform_ring;
 
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
@@ -32,18 +35,27 @@ use bevy::prelude::*;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 struct EffectSwitch;
 
+/// System set for theme updates (runs after effect switching, before visual updates).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct ThemeUpdate;
+
 /// Plugin that registers all visual systems.
 pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<beat_pulse::BeatPulseState>()
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .init_resource::<debug_hud::DebugHudState>()
+            .init_resource::<beat_pulse::BeatPulseState>()
             .init_resource::<particles::ParticleCount>()
             .init_resource::<effects::EffectState>()
             .init_resource::<spectral_waterfall::WaterfallState>()
             .init_resource::<phase_rings::RingState>()
             .init_resource::<flux_supernova::SupernovaState>()
             .init_resource::<instrument_cubes::CubeCount>()
+            .init_resource::<theme::ThemeState>()
+            .init_resource::<theme::ThemeRegistry>()
+            .init_resource::<theme::ThemeMaterialPolicy>()
             .add_systems(
                 Startup,
                 (
@@ -73,6 +85,7 @@ impl Plugin for VisualsPlugin {
                     neon_calligraphy::setup,
                     instrument_cubes::setup,
                     waiting_indicator::setup,
+                    debug_hud::setup,
                 ),
             )
             // Effect input → crossfade must run before effect updates
@@ -82,14 +95,27 @@ impl Plugin for VisualsPlugin {
                     .chain()
                     .in_set(EffectSwitch),
             )
+            // Theme input → transition → apply must run after effect switch
+            .add_systems(
+                Update,
+                (
+                    theme::theme_input,
+                    theme::theme_transition,
+                    theme::apply_theme,
+                )
+                    .chain()
+                    .in_set(ThemeUpdate)
+                    .after(EffectSwitch),
+            )
             .add_systems(
                 Update,
                 (
                     base_floor::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::BaseFloor,
                     )),
-                    fft_bars::update
-                        .run_if(effects::effect_active_or_pending(effects::EffectId::FftBars)),
+                    fft_bars::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::FftBars,
+                    )),
                     waveform_ring::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::WaveformRing,
                     )),
@@ -119,7 +145,7 @@ impl Plugin for VisualsPlugin {
                         effects::EffectId::FractalPulse,
                     )),
                 )
-                    .after(EffectSwitch),
+                    .after(ThemeUpdate),
             )
             .add_systems(
                 Update,
@@ -151,7 +177,7 @@ impl Plugin for VisualsPlugin {
                         effects::EffectId::NeonCalligraphy,
                     )),
                 )
-                    .after(EffectSwitch),
+                    .after(ThemeUpdate),
             )
             .add_systems(
                 Update,
@@ -166,8 +192,10 @@ impl Plugin for VisualsPlugin {
                         .run_if(effects::effect_active(effects::EffectId::InstrumentCubes)),
                     instrument_cubes::update,
                     waiting_indicator::update,
+                    debug_hud::toggle,
+                    debug_hud::update,
                 )
-                    .after(EffectSwitch),
+                    .after(ThemeUpdate),
             );
     }
 }
@@ -177,20 +205,22 @@ impl Plugin for VisualsPlugin {
 pub struct RmsLight;
 
 /// Set up the base scene: ground plane, camera, lights.
+///
+/// Initial values match the default Neon theme.
 fn setup_scene(mut commands: Commands) {
-    // Ambient light
+    // Ambient light (Neon theme defaults)
     commands.spawn(AmbientLight {
-        color: Color::srgb(0.3, 0.3, 0.4),
-        brightness: beat_pulse::BASE_AMBIENT_BRIGHTNESS,
+        color: Color::srgb(0.05, 0.02, 0.1),
+        brightness: 30.0,
         ..default()
     });
 
-    // RMS-driven point light
+    // RMS-driven point light (Neon theme defaults)
     commands.spawn((
         PointLight {
             intensity: 0.0,
             range: 40.0,
-            color: Color::srgb(1.0, 0.8, 0.5),
+            color: Color::srgb(1.0, 0.9, 0.8),
             shadows_enabled: false,
             ..default()
         },
@@ -198,19 +228,20 @@ fn setup_scene(mut commands: Commands) {
         RmsLight,
     ));
 
-    // Soft rim light to give depth to silhouettes
+    // Soft rim light to give depth to silhouettes (Neon theme defaults)
     commands.spawn((
         PointLight {
-            intensity: 30_000.0,
+            intensity: 40_000.0,
             range: 80.0,
-            color: Color::srgb(0.3, 0.5, 0.9),
+            color: Color::srgb(0.2, 0.4, 1.0),
             shadows_enabled: false,
             ..default()
         },
         Transform::from_xyz(-20.0, 18.0, -15.0),
+        theme::RimLight,
     ));
 
-    // Camera with bloom post-processing
+    // Camera with bloom post-processing (Neon theme defaults)
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 12.0, 25.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
@@ -219,8 +250,8 @@ fn setup_scene(mut commands: Commands) {
             angle: 0.0,
         },
         Bloom {
-            intensity: 0.3,
-            low_frequency_boost: 0.5,
+            intensity: 0.4,
+            low_frequency_boost: 0.6,
             low_frequency_boost_curvature: 0.5,
             high_pass_frequency: 0.7,
             ..default()

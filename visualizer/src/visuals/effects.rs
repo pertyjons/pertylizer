@@ -106,7 +106,7 @@ pub fn effect_active_or_pending(effect: EffectId) -> impl Fn(Res<EffectState>) -
             || state
                 .pending
                 .as_ref()
-                .map_or(false, |scene| scene.is_active(effect))
+                .is_some_and(|scene| scene.is_active(effect))
     }
 }
 
@@ -319,19 +319,30 @@ pub struct HueMaterialConfig {
     pub emissive_strength: f32,
 }
 
+use super::theme::ThemeMaterialPolicy;
+
 /// Create a set of hue-bucketed `StandardMaterial`s for use as shared materials.
+///
+/// The `ThemeMaterialPolicy` offsets are applied to saturation, lightness,
+/// and emissive strength so that themes can shift the overall look.
 pub fn create_hue_materials(
     materials: &mut Assets<StandardMaterial>,
     num_buckets: usize,
     config: &HueMaterialConfig,
+    policy: &ThemeMaterialPolicy,
 ) -> Vec<Handle<StandardMaterial>> {
+    let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = config.emissive_strength * policy.emissive_multiplier;
+
     let mut result = Vec::with_capacity(num_buckets);
     for bucket in 0..num_buckets {
+        #[allow(clippy::cast_precision_loss)]
         let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
-        let color = Color::hsl(hue, config.saturation, config.lightness);
+        let color = Color::hsl(hue, sat, lit);
         result.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * config.emissive_strength,
+            emissive: LinearRgba::from(color) * emissive,
             ..default()
         }));
     }
@@ -339,10 +350,13 @@ pub fn create_hue_materials(
 }
 
 /// Update hue-bucketed shared materials for crossfade.
+///
+/// Applies `ThemeMaterialPolicy` offsets to saturation, lightness, and emissive strength.
 pub fn update_hue_materials_for_fade(
     materials: &mut Assets<StandardMaterial>,
     handles: &[Handle<StandardMaterial>],
     config: &HueMaterialConfig,
+    policy: &ThemeMaterialPolicy,
     fade: f32,
     last_fade: &mut f32,
 ) {
@@ -350,13 +364,18 @@ pub fn update_hue_materials_for_fade(
         return;
     }
 
+    let sat = (config.saturation + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (config.lightness + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = config.emissive_strength * policy.emissive_multiplier;
+
     let num_buckets = handles.len();
     for (bucket, handle) in handles.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
+            #[allow(clippy::cast_precision_loss)]
             let hue = (bucket as f32 / num_buckets as f32) * config.hue_range;
-            let color = Color::hsl(hue, config.saturation, config.lightness * fade);
+            let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
-            material.emissive = LinearRgba::from(color) * config.emissive_strength * fade;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
         }
     }
     *last_fade = fade;

@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::{MAX_FFT_BANDS, SynthTelemetry};
 
 /// Marker with FFT band index.
@@ -50,11 +51,12 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(BAR_THICKNESS, 1.0, BAR_THICKNESS));
 
     let shared_mats =
-        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG);
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
     commands.insert_resource(RingBarMaterials {
         materials: shared_mats.clone(),
     });
@@ -74,6 +76,7 @@ pub fn setup(
 }
 
 /// Update ring bar heights and positions from FFT.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
@@ -81,6 +84,7 @@ pub fn update(
     mut query: Query<(&mut Transform, &mut Visibility, &RingBar)>,
     ring_materials: Res<RingBarMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
     mut last_fade: Local<f32>,
 ) {
     let bin_count = telemetry.fft_bin_count;
@@ -125,6 +129,7 @@ pub fn update(
         &mut materials,
         &ring_materials.materials,
         &MAT_CONFIG,
+        &policy,
         effect_state.fade,
         &mut last_fade,
     );

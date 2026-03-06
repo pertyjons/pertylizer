@@ -1,5 +1,19 @@
 # Version History
 
+## [0.220.0] - 2026-03-06
+### Visualizer theme system
+- **Theme system** -- 8 visual themes (Neon, Metal, Glass, Space, Synthwave, Ember, Arctic, Void) that swap lighting, bloom, material properties, and floor color
+- **ThemeId enum** -- with `ALL` array, `next()`/`prev()` cycling, `name()` method
+- **ThemeConfig** -- per-theme configuration for ambient/key/rim light, bloom, emissive multiplier, saturation/lightness offsets, metallic/roughness, floor color
+- **ThemeRegistry resource** -- stores all theme configs; `ThemeState` resource tracks active theme and transition progress
+- **ThemeMaterialPolicy resource** -- drives hue-bucketed material creation with theme-aware saturation, lightness, and emissive offsets
+- **Smooth transitions** -- smoothstep-interpolated crossfade at 3 units/sec for all visual properties (lighting, bloom, materials, floor color)
+- **Keyboard controls** -- `T` for next theme, `Shift+T` for previous theme
+- **RmsLight theme integration** -- key light intensity multiplier from active theme instead of hardcoded 200,000
+- **BeatPulse theme integration** -- base ambient brightness from active theme instead of hardcoded constant
+- **FloorEntity / RimLight markers** -- component markers for theme system to update floor material and rim light
+- **`create_hue_materials` / `update_hue_materials_for_fade`** -- now accept `ThemeMaterialPolicy` for theme-aware material offsets
+
 ## [0.219.0] - 2026-03-06
 ### Recent projects and dirty state tracking
 - **Recent projects** -- `AppSettings` stores last 10 opened project paths; File > Recent Projects submenu with click-to-load and Clear Recent
