@@ -19,10 +19,10 @@ use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchItemResult, BatchResult,
     BuildInstrumentResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParameterInfo,
-    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
-    UiSnapshot,
+    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, ParamTypeInfo,
+    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
+    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -65,9 +65,16 @@ impl AppSynthBridge {
             .any(|p| p.name == port && p.direction == direction);
 
         if !has_port {
+            let available: Vec<&str> = descriptor
+                .ports
+                .iter()
+                .filter(|p| p.direction == direction)
+                .map(|p| p.name.as_str())
+                .collect();
             return Err(McpBridgeError::PortNotFound {
                 module: module_str.to_string(),
                 port: port.to_string(),
+                available: format!("{available:?}"),
             });
         }
 
@@ -156,18 +163,47 @@ impl SynthBridge for AppSynthBridge {
                     }
                 }
 
+                // Get descriptor for parameter ranges
+                let descriptor = self.session.module_descriptor(inst_id, m.id);
+
                 ModuleInfo {
                     id: id_str,
                     module_type: m.module_type.name().to_string(),
-                    name: m.name,
+                    name: m.name.clone(),
                     bypassed: m.bypass_state == synth_core::BypassState::Bypassed,
                     parameters: m
                         .parameters
                         .iter()
-                        .map(|p| ParameterInfo {
-                            name: p.name().to_string(),
-                            value: p.as_f32(),
-                            display: format_param_display(p),
+                        .map(|p| {
+                            let name = p.name().to_string();
+                            let mut info = ParameterInfo {
+                                name: name.clone(),
+                                value: p.as_f32(),
+                                display: format_param_display(p),
+                                min: None,
+                                max: None,
+                                default: None,
+                                choices: None,
+                            };
+                            // Enrich with range from descriptor
+                            if let Some(ref desc) = descriptor {
+                                let normalize = |s: &str| s.to_lowercase().replace('_', " ");
+                                let needle = normalize(&name);
+                                if let Some(pd) = desc
+                                    .parameters
+                                    .iter()
+                                    .find(|pd| normalize(&pd.name) == needle)
+                                {
+                                    info.min = Some(pd.range.min);
+                                    info.max = Some(pd.range.max);
+                                    info.default = Some(pd.range.default);
+                                    info.choices = pd
+                                        .choices
+                                        .as_ref()
+                                        .map(|c| c.iter().map(|ch| ch.name.clone()).collect());
+                                }
+                            }
+                            info
                         })
                         .collect(),
                     input_ports: inputs,
@@ -215,11 +251,16 @@ impl SynthBridge for AppSynthBridge {
         param_name: &str,
     ) -> Result<ParameterInfo, McpBridgeError> {
         let module = self.get_module_info(instrument_id, module_id)?;
+        let available: Vec<String> = module.parameters.iter().map(|p| p.name.clone()).collect();
         module
             .parameters
             .into_iter()
             .find(|p| p.name == param_name)
-            .ok_or_else(|| McpBridgeError::ParameterNotFound(param_name.to_string()))
+            .ok_or_else(|| {
+                McpBridgeError::ParameterNotFound(format!(
+                    "'{param_name}' not found, available: {available:?}"
+                ))
+            })
     }
 
     fn get_engine_status(&self) -> Result<EngineStatus, McpBridgeError> {
@@ -263,13 +304,58 @@ impl SynthBridge for AppSynthBridge {
             return Ok(diagnostics);
         }
 
+        // Check for essential module types
+        let has_sound_source = modules.iter().any(|m| {
+            matches!(
+                m.id.module_type,
+                synth_core::ModuleType::Oscillator
+                    | synth_core::ModuleType::MathOscillator
+                    | synth_core::ModuleType::SubOscillator
+                    | synth_core::ModuleType::Noise
+                    | synth_core::ModuleType::WavetableOsc
+                    | synth_core::ModuleType::AdditiveOsc
+                    | synth_core::ModuleType::GranularOsc
+                    | synth_core::ModuleType::FractalOsc
+                    | synth_core::ModuleType::LaSynth
+            )
+        });
+        let has_output = modules
+            .iter()
+            .any(|m| m.id.module_type == synth_core::ModuleType::StereoOutput);
+        let has_envelope = modules
+            .iter()
+            .any(|m| m.id.module_type == synth_core::ModuleType::Envelope);
+
+        if !has_sound_source {
+            diagnostics.push(GraphDiagnostic {
+                severity: DiagnosticSeverity::Error,
+                module_id: None,
+                message: "No sound source (oscillator/noise/granular) — instrument will be silent"
+                    .to_string(),
+            });
+        }
+        if !has_output {
+            diagnostics.push(GraphDiagnostic {
+                severity: DiagnosticSeverity::Error,
+                module_id: None,
+                message: "No stereo_output module — audio cannot reach the mixer".to_string(),
+            });
+        }
+        if !has_envelope && has_sound_source {
+            diagnostics.push(GraphDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                module_id: None,
+                message: "No envelope — notes will have no attack/release shaping".to_string(),
+            });
+        }
+
         // Check for disconnected modules
         for module in &modules {
             let id_str = module.id.to_string();
             let has_input = connections
                 .iter()
                 .any(|c| c.to_module.to_string() == id_str);
-            let has_output = connections
+            let has_output_conn = connections
                 .iter()
                 .any(|c| c.from_module.to_string() == id_str);
 
@@ -279,13 +365,13 @@ impl SynthBridge for AppSynthBridge {
                 synth_core::ModuleType::ModMatrix | synth_core::ModuleType::KineticModulator
             );
 
-            if !has_input && !has_output && !works_via_params {
+            if !has_input && !has_output_conn && !works_via_params {
                 diagnostics.push(GraphDiagnostic {
                     severity: DiagnosticSeverity::Warning,
                     module_id: Some(id_str.clone()),
                     message: format!("Module {} ({}) has no connections", id_str, module.name),
                 });
-            } else if !has_output
+            } else if !has_output_conn
                 && module.id.module_type != synth_core::ModuleType::StereoOutput
                 && module.id.module_type != synth_core::ModuleType::Amplifier
             {
@@ -398,7 +484,9 @@ impl SynthBridge for AppSynthBridge {
         channel: u8,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
+        let midi_channel = MidiChannel::from_one_indexed(channel).ok_or_else(|| {
+            McpBridgeError::Other(format!("invalid MIDI channel {channel}, must be 1-16"))
+        })?;
         self.session
             .set_instrument_midi_channel(InstrumentId::new(instrument_id), midi_channel)
             .map_err(|_| McpBridgeError::CommandSendFailed)
@@ -434,7 +522,7 @@ impl SynthBridge for AppSynthBridge {
         module_id: &str,
         param_name: &str,
         value: f32,
-    ) -> Result<(), McpBridgeError> {
+    ) -> Result<ParameterInfo, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let inst_id = InstrumentId::new(instrument_id);
@@ -458,7 +546,26 @@ impl SynthBridge for AppSynthBridge {
                     McpBridgeError::ParameterNotFound(s)
                 }
                 _ => McpBridgeError::CommandSendFailed,
-            })
+            })?;
+
+        // Read back the actual value (may differ from requested due to clamping)
+        // list_modules / get_module_info already enriches with range info
+        let module = self.get_module_info(instrument_id, module_id)?;
+        let normalize = |s: &str| s.to_lowercase().replace('_', " ");
+        let needle = normalize(param_name);
+        Ok(module
+            .parameters
+            .into_iter()
+            .find(|p| normalize(&p.name) == needle)
+            .unwrap_or(ParameterInfo {
+                name: param_name.to_string(),
+                value,
+                display: format!("{value}"),
+                min: None,
+                max: None,
+                default: None,
+                choices: None,
+            }))
     }
 
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
@@ -660,7 +767,17 @@ impl SynthBridge for AppSynthBridge {
                     .filter(|p| p.direction == PortDirection::Output)
                     .map(|p| p.name.to_string())
                     .collect();
-                let parameters = desc.parameters.iter().map(|p| p.name.clone()).collect();
+                let parameters = desc
+                    .parameters
+                    .iter()
+                    .map(|p| ParamTypeInfo {
+                        name: p.name.clone(),
+                        choices: p
+                            .choices
+                            .as_ref()
+                            .map(|opts| opts.iter().map(|c| c.id.clone()).collect()),
+                    })
+                    .collect();
 
                 result.push(ModuleTypeInfo {
                     type_key: mt.prefix().to_string(),
@@ -1504,11 +1621,24 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<BuildInstrumentResult, McpBridgeError> {
         use crate::patch::ParamValue;
 
-        // 1. Create instrument
-        let inst_id = self
-            .session
-            .add_instrument(&spec.name)
-            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        // 1. Create or reuse instrument
+        let inst_id = if let Some(id) = spec.instrument_id {
+            let iid = InstrumentId::new(id);
+            if !self.session.instrument_exists(iid) {
+                return Err(McpBridgeError::InstrumentNotFound(id));
+            }
+            // Clear existing graph before rebuilding
+            self.session
+                .clear_graph(iid)
+                .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+            // Rename
+            let _ = self.session.rename_instrument(iid, &spec.name);
+            iid
+        } else {
+            self.session
+                .add_instrument(&spec.name)
+                .map_err(|e| McpBridgeError::Other(e.to_string()))?
+        };
 
         let mut errors = Vec::new();
 
@@ -1535,9 +1665,11 @@ impl SynthBridge for AppSynthBridge {
                 .map_err(|e| errors.push(format!("pan: {e}")));
         }
 
-        // 3. Add modules
+        // 3. Add modules (keep descriptors for port validation)
         let mut module_ids: Vec<Option<ModuleId>> = Vec::with_capacity(spec.modules.len());
         let mut module_id_strings: Vec<String> = Vec::with_capacity(spec.modules.len());
+        let mut module_descriptors: Vec<Option<synth_core::ModuleDescriptor>> =
+            Vec::with_capacity(spec.modules.len());
 
         for module_def in &spec.modules {
             let mt = match synth_core::ModuleType::from_prefix(&module_def.module_type) {
@@ -1546,12 +1678,13 @@ impl SynthBridge for AppSynthBridge {
                     errors.push(format!("invalid module type: {}", module_def.module_type));
                     module_ids.push(None);
                     module_id_strings.push(String::new());
+                    module_descriptors.push(None);
                     continue;
                 }
             };
 
             match self.session.add_module(inst_id, mt) {
-                Ok((mid, _descriptor)) => {
+                Ok((mid, descriptor)) => {
                     let mid_str = mid.to_string();
 
                     // Set parameters
@@ -1568,16 +1701,18 @@ impl SynthBridge for AppSynthBridge {
 
                     module_ids.push(Some(mid));
                     module_id_strings.push(mid_str);
+                    module_descriptors.push(Some(descriptor));
                 }
                 Err(e) => {
                     errors.push(format!("add module '{}': {e}", module_def.module_type));
                     module_ids.push(None);
                     module_id_strings.push(String::new());
+                    module_descriptors.push(None);
                 }
             }
         }
 
-        // 4. Wire connections
+        // 4. Wire connections (with port validation)
         let mut connection_count = 0;
         for conn in &spec.connections {
             let from_mid = match module_ids.get(conn.from_index).and_then(|m| *m) {
@@ -1601,6 +1736,48 @@ impl SynthBridge for AppSynthBridge {
                 }
             };
 
+            // Validate source port exists and is an output
+            if let Some(Some(desc)) = module_descriptors.get(conn.from_index) {
+                let has_output = desc.ports.iter().any(|p| {
+                    p.name.as_str() == conn.from_port
+                        && p.direction == synth_core::PortDirection::Output
+                });
+                if !has_output {
+                    let available: Vec<&str> = desc
+                        .ports
+                        .iter()
+                        .filter(|p| p.direction == synth_core::PortDirection::Output)
+                        .map(|p| p.name.as_str())
+                        .collect();
+                    errors.push(format!(
+                        "{from_mid} has no output port '{}', available: {available:?}",
+                        conn.from_port
+                    ));
+                    continue;
+                }
+            }
+
+            // Validate destination port exists and is an input
+            if let Some(Some(desc)) = module_descriptors.get(conn.to_index) {
+                let has_input = desc.ports.iter().any(|p| {
+                    p.name.as_str() == conn.to_port
+                        && p.direction == synth_core::PortDirection::Input
+                });
+                if !has_input {
+                    let available: Vec<&str> = desc
+                        .ports
+                        .iter()
+                        .filter(|p| p.direction == synth_core::PortDirection::Input)
+                        .map(|p| p.name.as_str())
+                        .collect();
+                    errors.push(format!(
+                        "{to_mid} has no input port '{}', available: {available:?}",
+                        conn.to_port
+                    ));
+                    continue;
+                }
+            }
+
             match self.session.connect(
                 inst_id,
                 from_mid,
@@ -1621,6 +1798,10 @@ impl SynthBridge for AppSynthBridge {
             module_ids: module_id_strings,
             connection_count,
             errors,
+            hint: Some(format!(
+                "Run get_graph_diagnostics(instrument_id: {}) to validate the instrument",
+                inst_id.as_u64()
+            )),
         })
     }
 
@@ -1927,6 +2108,24 @@ impl SynthBridge for AppSynthBridge {
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         track.solo = solo;
+        Ok(())
+    }
+
+    fn set_track_instrument(
+        &self,
+        track_id: u16,
+        instrument_id: Option<u16>,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self
+            .shared
+            .song
+            .write()
+            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.instrument = instrument_id.map(synth_sequencer::SeqInstrumentId);
         Ok(())
     }
 

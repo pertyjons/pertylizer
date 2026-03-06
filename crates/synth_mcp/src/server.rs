@@ -108,6 +108,27 @@ pub struct ConnectParam {
     pub to_port: String,
 }
 
+/// A single connection in a batch connect call.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectionInput {
+    #[schemars(description = "Source module ID, e.g. 'osc-1'")]
+    pub from_module: String,
+    #[schemars(description = "Source port name, e.g. 'out'")]
+    pub from_port: String,
+    #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
+    pub to_module: String,
+    #[schemars(description = "Destination port name, e.g. 'input'")]
+    pub to_port: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectMultipleParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Array of connections to make")]
+    pub connections: Vec<ConnectionInput>,
+}
+
 // === Instrument lifecycle parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -430,6 +451,16 @@ pub struct SetTrackSoloParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackInstrumentParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(
+        description = "Instrument ID to assign to this track. Omit or set to null to unassign."
+    )]
+    pub instrument_id: Option<u16>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameTrackParam {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
@@ -650,6 +681,10 @@ pub struct ConnectionDefInput {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct BuildInstrumentParam {
+    #[schemars(
+        description = "Existing instrument ID to update. If provided, clears the instrument's graph and rebuilds it. If omitted, creates a new instrument."
+    )]
+    pub instrument_id: Option<u64>,
     #[schemars(description = "Instrument name")]
     pub name: String,
     #[schemars(description = "MIDI channel (1-16, optional)")]
@@ -671,6 +706,10 @@ pub struct BuildInstrumentParam {
 /// Single instrument definition for batch build.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentDefInput {
+    #[schemars(
+        description = "Existing instrument ID to update. If omitted, creates a new instrument."
+    )]
+    pub instrument_id: Option<u64>,
     #[schemars(description = "Instrument name")]
     pub name: String,
     #[schemars(description = "MIDI channel (1-16, optional)")]
@@ -1004,7 +1043,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set a module parameter to a new value. Use list_modules and get_module_info to discover available parameters."
+        description = "Set a module parameter to a new value. Returns the parameter info with the actual value set (may differ from requested due to clamping). Use list_modules and get_module_info to discover available parameters."
     )]
     async fn set_parameter(&self, params: Parameters<SetParameterParam>) -> String {
         match self.bridge.set_parameter(
@@ -1013,7 +1052,8 @@ impl SynthMcpServer {
             &params.0.param_name,
             params.0.value,
         ) {
-            Ok(()) => "OK".to_string(),
+            Ok(info) => serde_json::to_string_pretty(&info)
+                .unwrap_or_else(|e| format!("Serialization error: {e}")),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1139,6 +1179,39 @@ impl SynthMcpServer {
                 params.0.from_module, params.0.from_port, params.0.to_module, params.0.to_port
             ),
             Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Connect multiple module ports in one call. Returns the number of successful connections and any errors. \
+                       Each connection specifies from_module:from_port → to_module:to_port."
+    )]
+    async fn connect_multiple(&self, params: Parameters<ConnectMultipleParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for c in &params.0.connections {
+            match self.bridge.connect(
+                params.0.instrument_id,
+                &c.from_module,
+                &c.from_port,
+                &c.to_module,
+                &c.to_port,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "{}:{} → {}:{}: {e}",
+                    c.from_module, c.from_port, c.to_module, c.to_port
+                )),
+            }
+        }
+        if errors.is_empty() {
+            format!("OK: {ok_count} connections made")
+        } else {
+            format!(
+                "OK: {ok_count} connections made, {} errors: {}",
+                errors.len(),
+                errors.join("; ")
+            )
         }
     }
 
@@ -1732,6 +1805,26 @@ impl SynthMcpServer {
         }
     }
 
+    #[tool(
+        description = "Set the instrument assigned to a track. All notes on this track will play through the assigned instrument. \
+                       Set instrument_id to null to unassign."
+    )]
+    async fn set_track_instrument(&self, params: Parameters<SetTrackInstrumentParam>) -> String {
+        match self
+            .bridge
+            .set_track_instrument(params.0.track_id, params.0.instrument_id)
+        {
+            Ok(()) => {
+                let inst = params
+                    .0
+                    .instrument_id
+                    .map_or_else(|| "none".to_string(), |id| id.to_string());
+                format!("OK: track {} instrument set to {inst}", params.0.track_id)
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
     #[tool(description = "Rename a track.")]
     async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
         match self.bridge.rename_track(params.0.track_id, &params.0.name) {
@@ -2009,6 +2102,7 @@ impl SynthMcpServer {
     async fn build_instrument(&self, params: Parameters<BuildInstrumentParam>) -> String {
         let p = params.0;
         let spec = convert_instrument_def(
+            p.instrument_id,
             p.name,
             p.midi_channel,
             p.volume,
@@ -2034,6 +2128,7 @@ impl SynthMcpServer {
             .into_iter()
             .map(|i| {
                 convert_instrument_def(
+                    i.instrument_id,
                     i.name,
                     i.midi_channel,
                     i.volume,
@@ -2099,6 +2194,7 @@ impl SynthMcpServer {
 
 /// Convert input structs to bridge-level types.
 fn convert_instrument_def(
+    instrument_id: Option<u64>,
     name: String,
     midi_channel: Option<u8>,
     volume: Option<f32>,
@@ -2142,6 +2238,7 @@ fn convert_instrument_def(
         .collect();
 
     BridgeInstrumentDef {
+        instrument_id,
         name,
         midi_channel,
         volume,

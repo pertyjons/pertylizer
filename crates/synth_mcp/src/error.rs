@@ -28,8 +28,12 @@ pub enum McpBridgeError {
     InvalidModuleType(String),
 
     /// Port not found on module.
-    #[error("port not found: {port} on module {module}")]
-    PortNotFound { module: String, port: String },
+    #[error("port '{port}' not found on module '{module}', available: {available}")]
+    PortNotFound {
+        module: String,
+        port: String,
+        available: String,
+    },
 
     /// Pattern not found.
     #[error("pattern not found: {0}")]

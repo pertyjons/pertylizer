@@ -57,6 +57,18 @@ pub struct ParameterInfo {
     pub value: f32,
     /// Human-readable display value (e.g. "440.0 Hz").
     pub display: String,
+    /// Minimum allowed value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f32>,
+    /// Maximum allowed value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f32>,
+    /// Default value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<f32>,
+    /// Allowed choices (for choice/enum parameters).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub choices: Option<Vec<String>>,
 }
 
 /// Information about a connection between modules.
@@ -181,6 +193,16 @@ pub struct UiConnectionInfo {
     pub to_port: String,
 }
 
+/// Information about a module parameter.
+#[derive(Debug, Clone, Serialize)]
+pub struct ParamTypeInfo {
+    /// Parameter name.
+    pub name: String,
+    /// Allowed choices (only for choice/enum parameters).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub choices: Option<Vec<String>>,
+}
+
 /// Information about an available module type.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModuleTypeInfo {
@@ -194,8 +216,8 @@ pub struct ModuleTypeInfo {
     pub input_ports: Vec<String>,
     /// Output port names (from descriptor).
     pub output_ports: Vec<String>,
-    /// Parameter names (from descriptor).
-    pub parameters: Vec<String>,
+    /// Parameters with optional choice values.
+    pub parameters: Vec<ParamTypeInfo>,
 }
 
 /// Two modules that overlap in the UI.
@@ -269,6 +291,9 @@ pub struct BuildInstrumentResult {
     pub connection_count: usize,
     /// Non-fatal errors encountered.
     pub errors: Vec<String>,
+    /// Hint for the caller.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// Result of applying an example patch via `apply_example_patch`.

@@ -108,3 +108,13 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
 ### 4.6 Video export
 - [ ] Video recording — render to MP4 or image sequence
+
+---
+
+## 5. AI & Automation
+
+### 5.1 MCP & AI Interaction
+- [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
+- [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
+- [ ] Support batching of MCP commands to reduce latency and overhead during complex generations
+- [ ] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges

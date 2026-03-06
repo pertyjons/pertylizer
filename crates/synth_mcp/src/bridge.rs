@@ -117,6 +117,8 @@ pub struct BridgeConnectionDef {
 
 /// Complete instrument definition for `build_instrument`.
 pub struct BridgeInstrumentDef {
+    /// Optional existing instrument ID to update (clears graph and rebuilds).
+    pub instrument_id: Option<u64>,
     /// Instrument name.
     pub name: String,
     /// Optional MIDI channel (1-16).
@@ -220,14 +222,14 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     // === Write operations ===
 
-    /// Set a module parameter by name.
+    /// Set a module parameter by name. Returns the parameter info with the actual value set.
     fn set_parameter(
         &self,
         instrument_id: u64,
         module_id: &str,
         param_name: &str,
         value: f32,
-    ) -> Result<(), McpBridgeError>;
+    ) -> Result<ParameterInfo, McpBridgeError>;
 
     /// Send a MIDI note on.
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError>;
@@ -506,6 +508,13 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Solo or unsolo a track.
     fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError>;
+
+    /// Set the instrument assigned to a track (None to unassign).
+    fn set_track_instrument(
+        &self,
+        track_id: u16,
+        instrument_id: Option<u16>,
+    ) -> Result<(), McpBridgeError>;
 
     /// Rename a track.
     fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError>;
