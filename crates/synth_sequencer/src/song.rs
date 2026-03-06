@@ -458,6 +458,66 @@ impl Song {
         Tick(current_tick.0 + remaining_ticks)
     }
 
+    /// Remove patterns and tracks not referenced by any arrangement placement.
+    /// Returns `(removed_pattern_names, removed_track_names, used_instrument_ids)`.
+    /// The caller is responsible for removing unused instruments from the engine.
+    pub fn remove_unused(&mut self) -> (Vec<String>, Vec<String>, std::collections::HashSet<u16>) {
+        use std::collections::HashSet;
+
+        // Find used patterns and tracks from arrangement
+        let mut used_patterns = HashSet::new();
+        let mut used_tracks = HashSet::new();
+        for p in &self.arrangement {
+            used_patterns.insert(p.pattern_id);
+            used_tracks.insert(p.track_id);
+        }
+
+        // Remove unused patterns
+        let unused_pids: Vec<_> = self
+            .patterns
+            .keys()
+            .filter(|id| !used_patterns.contains(id))
+            .copied()
+            .collect();
+        let removed_patterns: Vec<String> = unused_pids
+            .iter()
+            .filter_map(|id| self.patterns.get(id).map(|p| p.name.clone()))
+            .collect();
+        for pid in unused_pids {
+            self.patterns.remove(&pid);
+        }
+
+        // Remove unused tracks
+        let unused_tids: Vec<_> = self
+            .tracks
+            .keys()
+            .filter(|id| !used_tracks.contains(id))
+            .copied()
+            .collect();
+        let removed_tracks: Vec<String> = unused_tids
+            .iter()
+            .filter_map(|id| self.tracks.get(id).map(|t| t.name.clone()))
+            .collect();
+        for tid in unused_tids {
+            self.tracks.remove(&tid);
+        }
+
+        // Collect instrument IDs still in use (from tracks and notes)
+        let mut used_instruments = HashSet::new();
+        for track in self.tracks.values() {
+            if let Some(inst) = track.instrument {
+                used_instruments.insert(inst.0);
+            }
+        }
+        for pattern in self.patterns.values() {
+            for note in pattern.notes() {
+                used_instruments.insert(note.instrument.0);
+            }
+        }
+
+        (removed_patterns, removed_tracks, used_instruments)
+    }
+
     /// Calculate total length based on arrangement.
     pub fn calculate_length(&self) -> Tick {
         self.arrangement

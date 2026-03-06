@@ -548,24 +548,38 @@ impl SynthBridge for AppSynthBridge {
                 _ => McpBridgeError::CommandSendFailed,
             })?;
 
-        // Read back the actual value (may differ from requested due to clamping)
-        // list_modules / get_module_info already enriches with range info
-        let module = self.get_module_info(instrument_id, module_id)?;
+        // Read back the actual value directly from the descriptor (avoids listing all modules)
         let normalize = |s: &str| s.to_lowercase().replace('_', " ");
         let needle = normalize(param_name);
-        Ok(module
-            .parameters
-            .into_iter()
-            .find(|p| normalize(&p.name) == needle)
-            .unwrap_or(ParameterInfo {
-                name: param_name.to_string(),
-                value,
-                display: format!("{value}"),
-                min: None,
-                max: None,
-                default: None,
-                choices: None,
-            }))
+        let descriptor = self.session.module_descriptor(inst_id, mid);
+        if let Some(desc) = descriptor
+            && let Some(pd) = desc
+                .parameters
+                .iter()
+                .find(|pd| normalize(&pd.name) == needle)
+        {
+            return Ok(ParameterInfo {
+                name: pd.name.clone(),
+                value: pd.id.as_f32(),
+                display: format_param_display(&pd.id),
+                min: Some(pd.range.min),
+                max: Some(pd.range.max),
+                default: Some(pd.range.default),
+                choices: pd
+                    .choices
+                    .as_ref()
+                    .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
+            });
+        }
+        Ok(ParameterInfo {
+            name: param_name.to_string(),
+            value,
+            display: format!("{value}"),
+            min: None,
+            max: None,
+            default: None,
+            choices: None,
+        })
     }
 
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
@@ -1001,18 +1015,7 @@ impl SynthBridge for AppSynthBridge {
         let pattern = song
             .pattern(id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        Ok(pattern
-            .notes()
-            .iter()
-            .map(|n| NoteInfo {
-                id: n.id.0,
-                pitch: n.pitch.as_midi(),
-                pitch_name: n.pitch.to_string(),
-                start_beat: ticks_to_beats(n.start.0),
-                duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
-                velocity: synth_core::Velocity::to_midi(n.velocity),
-            })
-            .collect())
+        Ok(pattern.notes().iter().map(note_to_info).collect())
     }
 
     fn add_note(
@@ -1062,25 +1065,14 @@ impl SynthBridge for AppSynthBridge {
 
         let note_id = pattern.insert_note(note);
         // Read back the inserted note to return full info
-        let inserted = pattern.note(note_id);
-        Ok(inserted.map_or_else(
-            || NoteInfo {
-                id: note_id.0,
-                pitch,
-                pitch_name: p.to_string(),
-                start_beat,
-                duration_beats,
-                velocity,
-            },
-            |n| NoteInfo {
-                id: n.id.0,
-                pitch: n.pitch.as_midi(),
-                pitch_name: n.pitch.to_string(),
-                start_beat: ticks_to_beats(n.start.0),
-                duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
-                velocity: synth_core::Velocity::to_midi(n.velocity),
-            },
-        ))
+        Ok(pattern.note(note_id).map(note_to_info).unwrap_or(NoteInfo {
+            id: note_id.0,
+            pitch,
+            pitch_name: p.to_string(),
+            start_beat,
+            duration_beats,
+            velocity,
+        }))
     }
 
     fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError> {
@@ -1156,14 +1148,7 @@ impl SynthBridge for AppSynthBridge {
             note.velocity = synth_core::Velocity::from_midi(v);
         }
 
-        Ok(NoteInfo {
-            id: note.id.0,
-            pitch: note.pitch.as_midi(),
-            pitch_name: note.pitch.to_string(),
-            start_beat: ticks_to_beats(note.start.0),
-            duration_beats: note.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
-            velocity: synth_core::Velocity::to_midi(note.velocity),
-        })
+        Ok(note_to_info(note))
     }
 
     // === Sequencer: Tracks ===
@@ -2373,103 +2358,22 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError> {
-        use std::collections::HashSet;
+        // Remove unused patterns and tracks from the song
+        let (removed_patterns, removed_tracks, used_instrument_ids) = {
+            let mut song = self
+                .shared
+                .song
+                .write()
+                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            song.remove_unused()
+        };
 
-        let mut removed_patterns = Vec::new();
-        let mut removed_tracks = Vec::new();
+        // Remove instruments not referenced by remaining tracks/notes
         let mut removed_instruments = Vec::new();
-
-        // --- Step 1: Find used patterns and tracks from arrangement ---
-        let mut used_pattern_ids = HashSet::new();
-        let mut used_track_ids = HashSet::new();
-        {
-            let song = self
-                .shared
-                .song
-                .read()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-
-            for placement in song.arrangement() {
-                used_pattern_ids.insert(placement.pattern_id);
-                used_track_ids.insert(placement.track_id);
-            }
-        }
-
-        // --- Step 2: Remove unused patterns ---
-        {
-            let song = self
-                .shared
-                .song
-                .read()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-            let all_patterns: Vec<_> = song.patterns().map(|p| (p.id, p.name.clone())).collect();
-            drop(song);
-
-            let mut song = self
-                .shared
-                .song
-                .write()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-            for (pid, name) in all_patterns {
-                if !used_pattern_ids.contains(&pid) {
-                    song.delete_pattern(pid);
-                    removed_patterns.push(name);
-                }
-            }
-        }
-
-        // --- Step 3: Remove unused tracks ---
-        {
-            let song = self
-                .shared
-                .song
-                .read()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-            let all_tracks: Vec<_> = song.tracks().map(|t| (t.id, t.name.clone())).collect();
-            drop(song);
-
-            let mut song = self
-                .shared
-                .song
-                .write()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-            for (tid, name) in all_tracks {
-                if !used_track_ids.contains(&tid) {
-                    song.delete_track(tid);
-                    removed_tracks.push(name);
-                }
-            }
-        }
-
-        // --- Step 4: Find used instruments (referenced by tracks or notes in used patterns) ---
-        let mut used_instrument_ids = HashSet::new();
-        {
-            let song = self
-                .shared
-                .song
-                .read()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
-
-            // From tracks
-            for track in song.tracks() {
-                if let Some(inst) = track.instrument {
-                    used_instrument_ids.insert(inst.0 as u64);
-                }
-            }
-
-            // From notes in remaining patterns
-            for pattern in song.patterns() {
-                for note in pattern.notes() {
-                    used_instrument_ids.insert(note.instrument.0 as u64);
-                }
-            }
-        }
-
-        // --- Step 5: Remove unused instruments ---
         let snapshots = self.session.list_instruments();
         for snap in &snapshots {
-            let id = snap.id.as_u64();
-            if !used_instrument_ids.contains(&id) {
+            #[allow(clippy::cast_possible_truncation)]
+            if !used_instrument_ids.contains(&(snap.id.as_u64() as u16)) {
                 removed_instruments.push(snap.name.clone());
                 let _ = self.session.remove_instrument(snap.id);
             }
@@ -2569,6 +2473,18 @@ fn beats_to_ticks(beats: f32) -> u32 {
 #[allow(clippy::cast_precision_loss)]
 fn ticks_to_beats(ticks: u32) -> f32 {
     ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
+}
+
+/// Convert a sequencer `Note` to MCP `NoteInfo`.
+fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
+    NoteInfo {
+        id: n.id.0,
+        pitch: n.pitch.as_midi(),
+        pitch_name: n.pitch.to_string(),
+        start_beat: ticks_to_beats(n.start.0),
+        duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
+        velocity: synth_core::Velocity::to_midi(n.velocity),
+    }
 }
 
 /// Convert ticks (u64) to beats (float).
