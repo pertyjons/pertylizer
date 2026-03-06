@@ -476,6 +476,7 @@ impl Clone for EngineCommand {
                 end: *end,
                 enabled: *enabled,
             },
+            Self::SetRepeat { enabled } => Self::SetRepeat { enabled: *enabled },
             Self::Reset => Self::Reset,
             Self::ClearAllModules => Self::ClearAllModules,
             Self::SetMasterVolume(v) => Self::SetMasterVolume(*v),

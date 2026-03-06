@@ -352,7 +352,8 @@ impl EngineHub {
             | EngineCommand::Seek { .. }
             | EngineCommand::PlayPattern { .. }
             | EngineCommand::PlayFromPattern { .. }
-            | EngineCommand::SetLoop { .. } => perms.can_control_transport,
+            | EngineCommand::SetLoop { .. }
+            | EngineCommand::SetRepeat { .. } => perms.can_control_transport,
 
             // Note events - require param permission
             EngineCommand::NoteOn { .. }

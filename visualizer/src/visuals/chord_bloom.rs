@@ -122,7 +122,7 @@ pub fn spawn_and_update(
                     Mesh3d(bloom_mesh.0.clone()),
                     MeshMaterial3d(material.clone()),
                     Transform::from_xyz(0.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(-angle)),
-                    Visibility::Hidden,
+                    Visibility::Inherited,
                     EffectLayer(EffectId::ChordBloom),
                 ))
                 .id();

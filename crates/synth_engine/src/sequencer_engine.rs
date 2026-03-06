@@ -177,6 +177,24 @@ impl SequencerEngine {
         self.looping
     }
 
+    /// Enable song repeat: sets loop from beginning to song end.
+    /// Disabling clears the loop.
+    pub fn set_repeat_song(&mut self, enabled: bool) {
+        if enabled {
+            let song_end = self
+                .song
+                .try_read()
+                .ok()
+                .map(|s| s.calculate_length())
+                .unwrap_or(Tick::ZERO);
+            if song_end > Tick::ZERO {
+                self.set_loop(Tick::ZERO, song_end, true);
+            }
+        } else {
+            self.set_loop(Tick::ZERO, Tick::ZERO, false);
+        }
+    }
+
     /// Get the loop start position.
     pub fn loop_start(&self) -> Tick {
         self.loop_start
@@ -229,6 +247,7 @@ impl SequencerEngine {
             if self.looping && self.current_tick >= self.loop_end {
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
+                self.last_automation_values.clear();
                 self.current_tick = self.loop_start;
             }
 
