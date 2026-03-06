@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -110,8 +111,11 @@ pub fn update(
         // Only mutate material if exploding, fading, theme changed, or just entered idle state
         if state.explosion > 0.0 || fade < 1.0 || policy_changed || !state.is_idle {
             if let Some(material) = materials.get_mut(&material_handle.0) {
-                // Color shifts from orange/red to bright yellow/white on explosion
-                let hue = 15.0 + (state.explosion * 45.0);
+                // Base hue from theme's flux burst, shifting toward centroid on explosion
+                let base_hue = policy.flux_burst_hue;
+                let centroid_hue =
+                    telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+                let hue = base_hue + (state.explosion * (centroid_hue - base_hue) * 0.3);
                 let lightness = 0.5 + (state.explosion * 0.4);
                 let color = Color::hsl(hue, 0.9, lightness * fade);
 

@@ -105,6 +105,22 @@ pub struct ThemeConfig {
     pub metallic: f32,
     pub roughness: f32,
 
+    // Telemetry-reactive parameters
+    /// Hue when spectral centroid is low (bass-heavy).
+    pub centroid_hue_low: f32,
+    /// Hue when spectral centroid is high (bright/treble).
+    pub centroid_hue_high: f32,
+    /// Hue for flux spike accents.
+    pub flux_burst_hue: f32,
+    /// How much flux amplifies emissive (1.0 = normal).
+    pub flux_intensity_scale: f32,
+    /// How much beat phase modulates brightness (0.0-1.0).
+    pub beat_pulse_strength: f32,
+    /// Hue for transient/peak flashes.
+    pub peak_flash_hue: f32,
+    /// How much RMS scales emissive (0.5-2.0).
+    pub rms_emissive_scale: f32,
+
     // Environment
     pub floor_color: Color,
 }
@@ -151,6 +167,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.0,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 270.0,
+                centroid_hue_high: 360.0,
+                flux_burst_hue: 60.0,
+                flux_intensity_scale: 1.5,
+                beat_pulse_strength: 0.8,
+                peak_flash_hue: 120.0,
+                rms_emissive_scale: 1.5,
                 floor_color: Color::srgb(0.02, 0.02, 0.05),
             },
         );
@@ -173,6 +196,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.1,
                 metallic: 0.9,
                 roughness: 0.2,
+                centroid_hue_low: 200.0,
+                centroid_hue_high: 260.0,
+                flux_burst_hue: 40.0,
+                flux_intensity_scale: 0.8,
+                beat_pulse_strength: 0.3,
+                peak_flash_hue: 0.0,
+                rms_emissive_scale: 0.8,
                 floor_color: Color::srgb(0.08, 0.08, 0.1),
             },
         );
@@ -195,6 +225,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.15,
                 metallic: 0.1,
                 roughness: 0.1,
+                centroid_hue_low: 180.0,
+                centroid_hue_high: 300.0,
+                flux_burst_hue: 200.0,
+                flux_intensity_scale: 1.0,
+                beat_pulse_strength: 0.5,
+                peak_flash_hue: 180.0,
+                rms_emissive_scale: 1.0,
                 floor_color: Color::srgb(0.05, 0.08, 0.1),
             },
         );
@@ -217,6 +254,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: -0.05,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 220.0,
+                centroid_hue_high: 280.0,
+                flux_burst_hue: 270.0,
+                flux_intensity_scale: 1.2,
+                beat_pulse_strength: 0.6,
+                peak_flash_hue: 60.0,
+                rms_emissive_scale: 1.2,
                 floor_color: Color::srgb(0.01, 0.01, 0.02),
             },
         );
@@ -239,6 +283,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.05,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 300.0,
+                centroid_hue_high: 360.0,
+                flux_burst_hue: 180.0,
+                flux_intensity_scale: 1.4,
+                beat_pulse_strength: 0.9,
+                peak_flash_hue: 300.0,
+                rms_emissive_scale: 1.4,
                 floor_color: Color::srgb(0.03, 0.01, 0.06),
             },
         );
@@ -261,6 +312,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: -0.05,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 0.0,
+                centroid_hue_high: 60.0,
+                flux_burst_hue: 30.0,
+                flux_intensity_scale: 1.6,
+                beat_pulse_strength: 0.7,
+                peak_flash_hue: 45.0,
+                rms_emissive_scale: 1.6,
                 floor_color: Color::srgb(0.04, 0.03, 0.02),
             },
         );
@@ -283,6 +341,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.2,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 180.0,
+                centroid_hue_high: 240.0,
+                flux_burst_hue: 200.0,
+                flux_intensity_scale: 0.7,
+                beat_pulse_strength: 0.4,
+                peak_flash_hue: 210.0,
+                rms_emissive_scale: 0.7,
                 floor_color: Color::srgb(0.15, 0.18, 0.22),
             },
         );
@@ -305,6 +370,13 @@ impl Default for ThemeRegistry {
                 lightness_offset: 0.0,
                 metallic: 0.0,
                 roughness: 0.5,
+                centroid_hue_low: 0.0,
+                centroid_hue_high: 0.0,
+                flux_burst_hue: 0.0,
+                flux_intensity_scale: 2.0,
+                beat_pulse_strength: 0.2,
+                peak_flash_hue: 0.0,
+                rms_emissive_scale: 2.0,
                 floor_color: Color::srgb(0.0, 0.0, 0.0),
             },
         );
@@ -351,6 +423,16 @@ pub struct ThemeMaterialPolicy {
     pub lightness_offset: f32,
     pub metallic: f32,
     pub roughness: f32,
+
+    // Telemetry-reactive parameters (lerped during transitions)
+    pub centroid_hue_low: f32,
+    pub centroid_hue_high: f32,
+    pub flux_burst_hue: f32,
+    pub flux_intensity_scale: f32,
+    pub beat_pulse_strength: f32,
+    pub peak_flash_hue: f32,
+    pub rms_emissive_scale: f32,
+
     pub version: u64,
 }
 
@@ -363,6 +445,13 @@ impl Default for ThemeMaterialPolicy {
             lightness_offset: 0.0,
             metallic: 0.0,
             roughness: 0.5,
+            centroid_hue_low: 270.0,
+            centroid_hue_high: 360.0,
+            flux_burst_hue: 60.0,
+            flux_intensity_scale: 1.5,
+            beat_pulse_strength: 0.8,
+            peak_flash_hue: 120.0,
+            rms_emissive_scale: 1.5,
             version: 0,
         }
     }
@@ -370,27 +459,87 @@ impl Default for ThemeMaterialPolicy {
 
 impl ThemeMaterialPolicy {
     /// Update values and bump version if anything changed meaningfully.
-    fn update_if_changed(
-        &mut self,
-        emissive: f32,
-        sat_offset: f32,
-        lit_offset: f32,
-        metallic: f32,
-        roughness: f32,
-    ) {
+    #[allow(clippy::too_many_arguments)]
+    fn update_from_config(&mut self, cfg: &ThemePolicySnapshot) {
         const EPS: f32 = 0.0001;
-        if (self.emissive_multiplier - emissive).abs() > EPS
-            || (self.saturation_offset - sat_offset).abs() > EPS
-            || (self.lightness_offset - lit_offset).abs() > EPS
-            || (self.metallic - metallic).abs() > EPS
-            || (self.roughness - roughness).abs() > EPS
+        if (self.emissive_multiplier - cfg.emissive_multiplier).abs() > EPS
+            || (self.saturation_offset - cfg.saturation_offset).abs() > EPS
+            || (self.lightness_offset - cfg.lightness_offset).abs() > EPS
+            || (self.metallic - cfg.metallic).abs() > EPS
+            || (self.roughness - cfg.roughness).abs() > EPS
+            || (self.centroid_hue_low - cfg.centroid_hue_low).abs() > EPS
+            || (self.centroid_hue_high - cfg.centroid_hue_high).abs() > EPS
+            || (self.flux_burst_hue - cfg.flux_burst_hue).abs() > EPS
+            || (self.flux_intensity_scale - cfg.flux_intensity_scale).abs() > EPS
+            || (self.beat_pulse_strength - cfg.beat_pulse_strength).abs() > EPS
+            || (self.peak_flash_hue - cfg.peak_flash_hue).abs() > EPS
+            || (self.rms_emissive_scale - cfg.rms_emissive_scale).abs() > EPS
         {
-            self.emissive_multiplier = emissive;
-            self.saturation_offset = sat_offset;
-            self.lightness_offset = lit_offset;
-            self.metallic = metallic;
-            self.roughness = roughness;
+            self.emissive_multiplier = cfg.emissive_multiplier;
+            self.saturation_offset = cfg.saturation_offset;
+            self.lightness_offset = cfg.lightness_offset;
+            self.metallic = cfg.metallic;
+            self.roughness = cfg.roughness;
+            self.centroid_hue_low = cfg.centroid_hue_low;
+            self.centroid_hue_high = cfg.centroid_hue_high;
+            self.flux_burst_hue = cfg.flux_burst_hue;
+            self.flux_intensity_scale = cfg.flux_intensity_scale;
+            self.beat_pulse_strength = cfg.beat_pulse_strength;
+            self.peak_flash_hue = cfg.peak_flash_hue;
+            self.rms_emissive_scale = cfg.rms_emissive_scale;
             self.version = self.version.wrapping_add(1);
+        }
+    }
+}
+
+/// Intermediate snapshot for computing lerped policy values.
+struct ThemePolicySnapshot {
+    emissive_multiplier: f32,
+    saturation_offset: f32,
+    lightness_offset: f32,
+    metallic: f32,
+    roughness: f32,
+    centroid_hue_low: f32,
+    centroid_hue_high: f32,
+    flux_burst_hue: f32,
+    flux_intensity_scale: f32,
+    beat_pulse_strength: f32,
+    peak_flash_hue: f32,
+    rms_emissive_scale: f32,
+}
+
+impl ThemePolicySnapshot {
+    fn from_config(cfg: &ThemeConfig) -> Self {
+        Self {
+            emissive_multiplier: cfg.emissive_multiplier,
+            saturation_offset: cfg.saturation_offset,
+            lightness_offset: cfg.lightness_offset,
+            metallic: cfg.metallic.clamp(0.0, 1.0),
+            roughness: cfg.roughness.clamp(0.0, 1.0),
+            centroid_hue_low: cfg.centroid_hue_low,
+            centroid_hue_high: cfg.centroid_hue_high,
+            flux_burst_hue: cfg.flux_burst_hue,
+            flux_intensity_scale: cfg.flux_intensity_scale,
+            beat_pulse_strength: cfg.beat_pulse_strength,
+            peak_flash_hue: cfg.peak_flash_hue,
+            rms_emissive_scale: cfg.rms_emissive_scale,
+        }
+    }
+
+    fn lerp(a: &ThemeConfig, b: &ThemeConfig, t: f32) -> Self {
+        Self {
+            emissive_multiplier: lerp_f32(a.emissive_multiplier, b.emissive_multiplier, t),
+            saturation_offset: lerp_f32(a.saturation_offset, b.saturation_offset, t),
+            lightness_offset: lerp_f32(a.lightness_offset, b.lightness_offset, t),
+            metallic: lerp_f32(a.metallic, b.metallic, t).clamp(0.0, 1.0),
+            roughness: lerp_f32(a.roughness, b.roughness, t).clamp(0.0, 1.0),
+            centroid_hue_low: lerp_f32(a.centroid_hue_low, b.centroid_hue_low, t),
+            centroid_hue_high: lerp_f32(a.centroid_hue_high, b.centroid_hue_high, t),
+            flux_burst_hue: lerp_f32(a.flux_burst_hue, b.flux_burst_hue, t),
+            flux_intensity_scale: lerp_f32(a.flux_intensity_scale, b.flux_intensity_scale, t),
+            beat_pulse_strength: lerp_f32(a.beat_pulse_strength, b.beat_pulse_strength, t),
+            peak_flash_hue: lerp_f32(a.peak_flash_hue, b.peak_flash_hue, t),
+            rms_emissive_scale: lerp_f32(a.rms_emissive_scale, b.rms_emissive_scale, t),
         }
     }
 }
@@ -552,19 +701,8 @@ pub fn apply_theme(
         }
 
         // Material policy (lerped)
-        let emissive = lerp_f32(
-            current_cfg.emissive_multiplier,
-            target_cfg.emissive_multiplier,
-            t,
-        );
-        let sat_offset =
-            lerp_f32(current_cfg.saturation_offset, target_cfg.saturation_offset, t);
-        let lit_offset =
-            lerp_f32(current_cfg.lightness_offset, target_cfg.lightness_offset, t);
-        let metallic = lerp_f32(current_cfg.metallic, target_cfg.metallic, t).clamp(0.0, 1.0);
-        let roughness =
-            lerp_f32(current_cfg.roughness, target_cfg.roughness, t).clamp(0.0, 1.0);
-        policy.update_if_changed(emissive, sat_offset, lit_offset, metallic, roughness);
+        let snapshot = ThemePolicySnapshot::lerp(current_cfg, target_cfg, t);
+        policy.update_from_config(&snapshot);
     } else {
         // No transition — just apply the current theme directly
         runtime.ambient_brightness = current_cfg.ambient_brightness;
@@ -596,13 +734,8 @@ pub fn apply_theme(
             }
         }
 
-        policy.update_if_changed(
-            current_cfg.emissive_multiplier,
-            current_cfg.saturation_offset,
-            current_cfg.lightness_offset,
-            current_cfg.metallic.clamp(0.0, 1.0),
-            current_cfg.roughness.clamp(0.0, 1.0),
-        );
+        let snapshot = ThemePolicySnapshot::from_config(current_cfg);
+        policy.update_from_config(&snapshot);
     }
 }
 

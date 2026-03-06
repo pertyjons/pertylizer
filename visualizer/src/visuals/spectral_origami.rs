@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -108,9 +109,9 @@ pub fn update_material(
 ) {
     let fade = effect_state.fade;
 
-    // Shift hue slowly over time, bumped by centroid
-    let centroid_norm = (telemetry.centroid_hz / 5000.0).clamp(0.0, 1.0);
-    *last_hue = (*last_hue + 0.5 + centroid_norm * 2.0) % 360.0;
+    // Base hue from centroid theme mapping, with slow drift over time
+    let base_hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    *last_hue = (base_hue + *frame_counter as f32 * 0.5) % 360.0;
 
     // Only update material every 3rd frame to reduce GPU re-uploads
     *frame_counter = frame_counter.wrapping_add(1);
@@ -120,7 +121,8 @@ pub fn update_material(
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
     let metallic = policy.metallic;
     let roughness = policy.roughness;
 

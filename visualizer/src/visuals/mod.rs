@@ -22,6 +22,7 @@ pub mod rms_light;
 pub mod spectral_cathedral;
 pub mod spectral_origami;
 pub mod spectral_waterfall;
+pub mod telemetry_color;
 pub mod theme;
 pub mod velocity_meteors;
 pub mod waiting_indicator;

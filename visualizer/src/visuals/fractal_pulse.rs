@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -116,8 +117,10 @@ pub fn update(
         // Always rotate slowly on Y as well for global movement
         transform.rotate_local_y(0.2 * tempo_mult * dt);
 
-        // Pulse scale based on energy, more pronounced on inner rings
-        let pulse_amount = energy * (1.0 - (ring.index as f32 / NUM_RINGS as f32) * 0.5);
+        // Pulse scale based on energy + beat phase, more pronounced on inner rings
+        let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
+        let pulse_amount =
+            (energy + beat_pulse * 0.5) * (1.0 - (ring.index as f32 / NUM_RINGS as f32) * 0.5);
         let base_scale = 1.0 + ring.index as f32 * SCALE_STEP;
         transform.scale = Vec3::splat(base_scale + pulse_amount * 2.0);
 
@@ -129,7 +132,8 @@ pub fn update(
             let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
             let metallic = policy.metallic;
             let roughness = policy.roughness;
-            let hue = (ring.index as f32 / NUM_RINGS as f32) * 360.0;
+            let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+            let hue = ((ring.index as f32 / NUM_RINGS as f32) * 360.0 + hue_offset) % 360.0;
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;

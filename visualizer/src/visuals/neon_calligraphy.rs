@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -99,8 +100,7 @@ pub fn update(
     calligraphy_materials: Res<CalligraphyMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
-    mut last_fade: Local<f32>,
-    mut last_policy_version: Local<u64>,
+    mut tracker: Local<effects::HueMaterialTracker>,
 ) {
     let dt = time.delta_secs();
 
@@ -146,13 +146,16 @@ pub fn update(
         }
     }
 
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let emissive_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     effects::update_hue_materials_for_fade(
         &mut materials,
         &calligraphy_materials.materials,
         &MAT_CONFIG,
         &policy,
         effect_state.fade,
-        &mut last_fade,
-        &mut last_policy_version,
+        hue_offset,
+        emissive_boost,
+        &mut tracker,
     );
 }

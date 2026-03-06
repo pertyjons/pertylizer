@@ -4,6 +4,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -108,22 +109,25 @@ pub fn spawn(
 pub fn update(
     mut commands: Commands,
     time: Res<Time>,
+    telemetry: Res<SynthTelemetry>,
     meteor_materials: Res<MeteorMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_policy_version: Local<u64>,
+    mut last_hue_offset: Local<f32>,
     mut query: Query<(Entity, &mut Meteor, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
 
-    if *last_policy_version != policy.version {
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    if *last_policy_version != policy.version || (hue_offset - *last_hue_offset).abs() > 1.0 {
         let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.6 + policy.lightness_offset).clamp(0.0, 1.0);
         let emissive = 15.0 * policy.emissive_multiplier;
 
         for (note, handle) in meteor_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
-                let hue = (note as f32 / 127.0) * 360.0;
+                let hue = ((note as f32 / 127.0) * 360.0 + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive;
@@ -132,6 +136,7 @@ pub fn update(
             }
         }
         *last_policy_version = policy.version;
+        *last_hue_offset = hue_offset;
     }
 
     for (entity, mut meteor, mut transform) in &mut query {

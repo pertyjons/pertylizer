@@ -74,6 +74,14 @@ pub struct SynthTelemetry {
     /// Beat phase within current beat (0.0-1.0).
     pub beat_phase: f32,
 
+    // -- MIDI CC --
+    /// Most recent CC event: (cc_number, value 0.0-1.0, channel).
+    pub last_cc: Option<(u8, f32, u8)>,
+    /// Pitch bend, normalized -1.0 to 1.0.
+    pub pitch_bend: f32,
+    /// Aftertouch, normalized 0.0 to 1.0.
+    pub aftertouch: f32,
+
     // -- Engine --
     /// Active voice count.
     pub voice_count: u32,
@@ -110,6 +118,9 @@ impl Default for SynthTelemetry {
             tempo: 120.0,
             beat_position: 0.0,
             beat_phase: 0.0,
+            last_cc: None,
+            pitch_bend: 0.0,
+            aftertouch: 0.0,
             voice_count: 0,
             cpu: 0.0,
             event_drops: 0,

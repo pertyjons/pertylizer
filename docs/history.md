@@ -1,5 +1,15 @@
 # Version History
 
+## [0.222.0] - 2026-03-06
+### Telemetry-driven effects: centroid hue, flux spikes, beat phase
+- **Theme telemetry-reactive parameters** — ThemeConfig/ThemeMaterialPolicy extended with 7 new fields: centroid_hue_low/high, flux_burst_hue, flux_intensity_scale, beat_pulse_strength, peak_flash_hue, rms_emissive_scale — all lerped during theme transitions via ThemePolicySnapshot
+- **CC/Pitch bend/Aftertouch storage** — SynthTelemetry now stores MIDI CC events, pitch bend (-1..1), and aftertouch (0..1) from `/synth/event/cc` (previously discarded)
+- **telemetry_color helpers** — new `visuals/telemetry_color.rs` with `centroid_to_hue()`, `flux_emissive_boost()`, `beat_pulse_factor()`, `rms_to_emissive()`, `peak_exceeds_threshold()` + 10 unit tests
+- **Centroid → hue shift** in 16 effects — spectral centroid drives palette hue via theme-defined ranges (e.g., Ember 0°–60°, Arctic 180°–240°, Void monochrome)
+- **Flux → emissive spikes** in 12 material effects + rms_light + beat_pulse — spectral flux momentarily boosts emissive intensity, scaled by theme's flux_intensity_scale
+- **Beat phase → pulsing** in fft_bars (bar height), fractal_pulse (ring scale), spectral_cathedral (arch breathing), pulse_terrain (ripple amplitude) — all scaled by theme's beat_pulse_strength
+- **HueMaterialTracker** — replaces 3 separate Local params (last_fade, last_hue_offset, last_policy_version) with a single tracker struct including emissive_boost change detection
+
 ## [0.221.0] - 2026-03-06
 ### Theme material polish — metallic/roughness and ThemeRuntime
 - **ThemeRuntime resource** — cached per-frame ambient brightness and key light intensity, replacing per-frame theme registry lookups in `beat_pulse` and `rms_light`

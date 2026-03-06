@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
@@ -137,7 +138,7 @@ pub fn update_material(
         / (10000.0_f32.log2() - 200.0_f32.log2()))
     .clamp(0.0, 1.0);
 
-    let hue = 330.0 - (centroid_norm * 130.0);
+    let hue = telemetry_color::centroid_to_hue(centroid, &policy);
 
     // Only update material when hue or fade changes meaningfully
     if (hue - *last_hue).abs() < 1.0
@@ -149,7 +150,8 @@ pub fn update_material(
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
 
     if let Some(handle) = query.iter().next()
         && let Some(material) = materials.get_mut(&handle.0)
