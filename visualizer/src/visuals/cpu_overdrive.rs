@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// The base rotation speed when CPU is 0%.
@@ -61,6 +62,7 @@ pub fn update(
     mut state: Local<CpuState>,
     mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<CpuCore>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let dt = time.delta_secs();
 
@@ -99,7 +101,7 @@ pub fn update(
             let lightness = 0.5 + (strain * 0.3); // Gets brighter when hot
 
             let color = Color::hsl(hue, 0.9, lightness * fade);
-            let emissive_strength = BASE_EMISSIVE + (strain * 15.0);
+            let emissive_strength = (BASE_EMISSIVE + (strain * 15.0)) * policy.emissive_multiplier;
 
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive_strength * fade;

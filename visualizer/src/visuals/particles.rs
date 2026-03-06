@@ -7,6 +7,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum live particles to prevent unbounded growth.
@@ -56,16 +57,21 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     commands.insert_resource(ParticleMesh(meshes.add(Sphere::new(0.18))));
+
+    let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
     let mut shared_mats = Vec::with_capacity(128);
     for note in 0..128 {
         let hue = (note as f32 / 127.0) * 360.0;
-        let color = Color::hsl(hue, 0.9, 0.5);
+        let color = Color::hsl(hue, sat, lit);
         shared_mats.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            emissive: LinearRgba::from(color) * emissive,
             ..default()
         }));
     }

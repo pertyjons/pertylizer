@@ -8,6 +8,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum live cubes across all instruments.
@@ -97,17 +98,17 @@ impl EmitterRegistry {
     }
 }
 
-/// Returns the color for an instrument category.
-fn category_color(cat: u8) -> Color {
+/// Returns the (hue, base_saturation, base_lightness) for an instrument category.
+fn category_hsl(cat: u8) -> (f32, f32, f32) {
     match cat {
-        category::DRUMS => Color::hsl(0.0, 0.85, 0.45), // red
-        category::BASS => Color::hsl(230.0, 0.8, 0.35), // deep blue
-        category::PAD => Color::hsl(280.0, 0.7, 0.5),   // purple
-        category::LEAD => Color::hsl(50.0, 0.95, 0.55), // golden yellow
-        category::ARP => Color::hsl(180.0, 0.85, 0.5),  // cyan
-        category::KEYS => Color::hsl(130.0, 0.7, 0.45), // green
-        category::FX => Color::hsl(30.0, 0.9, 0.5),     // orange
-        _ => Color::hsl(0.0, 0.0, 0.6),                 // silver/gray for uncategorized
+        category::DRUMS => (0.0, 0.85, 0.45), // red
+        category::BASS => (230.0, 0.8, 0.35), // deep blue
+        category::PAD => (280.0, 0.7, 0.5),   // purple
+        category::LEAD => (50.0, 0.95, 0.55), // golden yellow
+        category::ARP => (180.0, 0.85, 0.5),  // cyan
+        category::KEYS => (130.0, 0.7, 0.45), // green
+        category::FX => (30.0, 0.9, 0.5),     // orange
+        _ => (0.0, 0.0, 0.6),                 // silver/gray for uncategorized
     }
 }
 
@@ -116,15 +117,21 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     commands.insert_resource(CubeMesh(meshes.add(Cuboid::new(0.12, 0.12, 0.12))));
 
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     let mut mats = Vec::with_capacity(8);
     for cat in 0..8u8 {
-        let color = category_color(cat);
+        let (hue, base_sat, base_lit) = category_hsl(cat);
+        let sat = (base_sat + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (base_lit + policy.lightness_offset).clamp(0.0, 1.0);
+        let color = Color::hsl(hue, sat, lit);
         mats.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            emissive: LinearRgba::from(color) * emissive,
             metallic: 0.95,
             perceptual_roughness: 0.15,
             reflectance: 0.8,
