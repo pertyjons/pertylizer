@@ -82,50 +82,43 @@ pub fn spawn(
     particle_materials: Res<ParticleMaterials>,
     mut particle_count: ResMut<ParticleCount>,
 ) {
-    // Only trigger on fresh note-on
-    if telemetry.note_age_frames >= 2 {
-        return;
+    for note_event in &telemetry.pending_note_events {
+        if particle_count.count >= MAX_PARTICLES {
+            break;
+        }
+
+        let note_idx = (note_event.midi_note as usize).min(127);
+        let speed = 2.0 + (note_event.velocity as f32 / 127.0) * 6.0;
+
+        let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
+
+        for i in 0..spawn_count {
+            // Distribute directions using golden angle for even spread
+            let theta = GOLDEN_ANGLE * i as f32;
+            let phi = (1.0 - 2.0 * (i as f32 + 0.5) / spawn_count as f32).acos();
+
+            let dir = Vec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos())
+                .normalize_or_zero();
+
+            // Slight randomization via index-based variation
+            let speed_var = speed * (0.8 + 0.4 * ((i * 7 + 3) % 10) as f32 / 10.0);
+
+            let material = particle_materials.materials[note_idx].clone();
+
+            commands.spawn((
+                Mesh3d(particle_mesh.0.clone()),
+                MeshMaterial3d(material),
+                Transform::from_xyz(0.0, 5.0, -5.0),
+                NoteParticle {
+                    velocity: dir * speed_var,
+                    life: LIFETIME,
+                    max_life: LIFETIME,
+                },
+            ));
+        }
+
+        particle_count.count += spawn_count;
     }
-    let Some(note_event) = telemetry.last_note_on else {
-        return;
-    };
-
-    // Respect particle cap
-    if particle_count.count >= MAX_PARTICLES {
-        return;
-    }
-
-    let note_idx = (note_event.midi_note as usize).min(127);
-    let speed = 2.0 + (note_event.velocity as f32 / 127.0) * 6.0;
-
-    let spawn_count = PARTICLES_PER_NOTE.min(MAX_PARTICLES - particle_count.count);
-
-    for i in 0..spawn_count {
-        // Distribute directions using golden angle for even spread
-        let theta = GOLDEN_ANGLE * i as f32;
-        let phi = (1.0 - 2.0 * (i as f32 + 0.5) / spawn_count as f32).acos();
-
-        let dir = Vec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos())
-            .normalize_or_zero();
-
-        // Slight randomization via index-based variation
-        let speed_var = speed * (0.8 + 0.4 * ((i * 7 + 3) % 10) as f32 / 10.0);
-
-        let material = particle_materials.materials[note_idx].clone();
-
-        commands.spawn((
-            Mesh3d(particle_mesh.0.clone()),
-            MeshMaterial3d(material),
-            Transform::from_xyz(0.0, 5.0, -5.0),
-            NoteParticle {
-                velocity: dir * speed_var,
-                life: LIFETIME,
-                max_life: LIFETIME,
-            },
-        ));
-    }
-
-    particle_count.count += spawn_count;
 }
 
 /// Update particle positions, shrink, and despawn dead particles.

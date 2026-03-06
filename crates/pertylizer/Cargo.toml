@@ -1,6 +1,6 @@
 [package]
 name = "pertylizer"
-version = "0.215.0"
+version = "0.219.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Pertylizer — a modular synthesizer"
@@ -39,6 +39,9 @@ parking_lot = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
+
+# WAV export
+hound = { workspace = true }
 
 # Fast random number generation
 fastrand = { workspace = true }

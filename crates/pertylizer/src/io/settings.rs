@@ -5,7 +5,7 @@
 //! - macOS: `~/Library/Application Support/pertylizer/settings.json`
 //! - Windows: `%APPDATA%\pertylizer\settings.json`
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,10 @@ pub struct AppSettings {
 
     /// Main window state.
     pub window: WindowSettings,
+
+    /// Recently opened project file paths (newest first, max 10).
+    #[serde(default)]
+    pub recent_projects: Vec<PathBuf>,
 }
 
 /// Directory preferences for file dialogs.
@@ -113,6 +117,28 @@ impl AppSettings {
         }
     }
 
+    /// Maximum number of recent projects to remember.
+    const MAX_RECENT_PROJECTS: usize = 10;
+
+    /// Add a project path to the front of the recent projects list.
+    ///
+    /// Deduplicates and caps at [`Self::MAX_RECENT_PROJECTS`].
+    pub fn add_recent_project(&mut self, path: PathBuf) {
+        self.recent_projects.retain(|p| p != &path);
+        self.recent_projects.insert(0, path);
+        self.recent_projects.truncate(Self::MAX_RECENT_PROJECTS);
+    }
+
+    /// Remove a stale entry from the recent projects list.
+    pub fn remove_recent_project(&mut self, path: &Path) {
+        self.recent_projects.retain(|p| p != path);
+    }
+
+    /// Clear all recent projects.
+    pub fn clear_recent_projects(&mut self) {
+        self.recent_projects.clear();
+    }
+
     /// Try to save settings to the config file.
     fn try_save(&self) -> Result<(), String> {
         let path = settings_path().map_err(|e| format!("no config dir: {e}"))?;
@@ -144,6 +170,52 @@ mod tests {
         assert_eq!(parsed.window.width, 1280);
         assert_eq!(parsed.window.height, 800);
         assert!(parsed.author.name.is_empty());
+    }
+
+    #[test]
+    fn test_recent_projects_add_dedup_cap() {
+        let mut settings = AppSettings::default();
+        assert!(settings.recent_projects.is_empty());
+
+        settings.add_recent_project(PathBuf::from("/a.json"));
+        settings.add_recent_project(PathBuf::from("/b.json"));
+        assert_eq!(settings.recent_projects.len(), 2);
+        assert_eq!(settings.recent_projects[0], PathBuf::from("/b.json"));
+
+        // Re-adding moves to front
+        settings.add_recent_project(PathBuf::from("/a.json"));
+        assert_eq!(settings.recent_projects.len(), 2);
+        assert_eq!(settings.recent_projects[0], PathBuf::from("/a.json"));
+
+        // Cap at MAX_RECENT_PROJECTS
+        for i in 0..15 {
+            settings.add_recent_project(PathBuf::from(format!("/proj_{i}.json")));
+        }
+        assert_eq!(
+            settings.recent_projects.len(),
+            AppSettings::MAX_RECENT_PROJECTS,
+        );
+    }
+
+    #[test]
+    fn test_recent_projects_remove_and_clear() {
+        let mut settings = AppSettings::default();
+        settings.add_recent_project(PathBuf::from("/a.json"));
+        settings.add_recent_project(PathBuf::from("/b.json"));
+        settings.remove_recent_project(Path::new("/a.json"));
+        assert_eq!(settings.recent_projects.len(), 1);
+        assert_eq!(settings.recent_projects[0], PathBuf::from("/b.json"));
+
+        settings.clear_recent_projects();
+        assert!(settings.recent_projects.is_empty());
+    }
+
+    #[test]
+    fn test_recent_projects_backward_compat() {
+        // Old JSON without recent_projects should deserialize fine
+        let json = r#"{"window": {"width": 800, "height": 600}}"#;
+        let parsed: AppSettings = serde_json::from_str(json).expect("deserialize");
+        assert!(parsed.recent_projects.is_empty());
     }
 
     #[test]

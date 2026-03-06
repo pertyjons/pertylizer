@@ -24,6 +24,10 @@ const MAX_HEIGHT: f32 = 8.0;
 /// Emissive intensity multiplier for bloom visibility.
 const EMISSIVE_STRENGTH: f32 = 5.0;
 
+/// Per-second smoothing rates (frame-rate independent).
+const ATTACK_RATE: f32 = 30.0;
+const DECAY_RATE: f32 = 6.0;
+
 /// Number of shared material buckets (bars grouped by hue).
 const NUM_MATERIAL_BUCKETS: usize = 16;
 
@@ -70,6 +74,7 @@ pub fn setup(
 
 /// Update bar heights and positions from FFT telemetry with smooth lerp.
 pub fn update(
+    time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     mut query: Query<(&mut Transform, &mut Visibility, &FftBar)>,
@@ -79,6 +84,7 @@ pub fn update(
 ) {
     let bin_count = telemetry.fft_bin_count;
     let bar_width = TOTAL_WIDTH / bin_count.max(1) as f32;
+    let dt = time.delta_secs();
 
     for (mut transform, mut vis, bar) in &mut query {
         if bar.0 >= bin_count {
@@ -97,10 +103,15 @@ pub fn update(
 
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
-        // Smooth lerp — fast attack, slow decay
+        // Smooth lerp — fast attack, slow decay (time-based)
         let current = transform.scale.y;
-        let speed = if target_height > current { 0.4 } else { 0.1 };
-        let new_height = current + (target_height - current) * speed;
+        let rate = if target_height > current {
+            ATTACK_RATE
+        } else {
+            DECAY_RATE
+        };
+        let alpha = 1.0 - (-rate * dt).exp();
+        let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
         // Move bar up so base stays on the ground

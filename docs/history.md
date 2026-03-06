@@ -1,5 +1,48 @@
 # Version History
 
+## [0.219.0] - 2026-03-06
+### Recent projects and dirty state tracking
+- **Recent projects** -- `AppSettings` stores last 10 opened project paths; File > Recent Projects submenu with click-to-load and Clear Recent
+- **Dirty state tracking** -- `dirty` flag set on module/connection/parameter/instrument/sequencer changes; cleared on save/load/new project
+- **Unsaved changes dialog** -- confirmation dialog (Save / Don't Save / Cancel) shown before New Project, Open Project, loading recent projects, and Quit when dirty
+- **Window title** -- shows `Pertylizer - <project> *` when unsaved changes exist
+- **Close intercept** -- window close event intercepted when dirty, showing confirmation dialog instead
+- **`PatchEditorResult::has_mutations()`** -- helper method for detecting any change in the patch editor result
+- **`InstrumentRackResult::mutated`** -- tracks instrument add/remove/volume/pan changes
+- **Settings backward compat** -- `recent_projects` field uses `#[serde(default)]` for seamless settings file upgrades
+
+## [0.218.0] - 2026-03-06
+### Undo/redo system
+- **UndoManager** — stack-based undo/redo system in new `undo.rs` module with 100-action history limit
+- **Sequencer note undo** — add, delete, move, transpose, resize, and paste operations are all undoable
+- **Connection undo** — add/remove connections in the patch editor are undoable
+- **Composite actions** — multi-note operations (transpose all selected, delete all selected, paste) grouped as single undo steps
+- **Keyboard shortcuts** — Ctrl+Z for undo, Ctrl+Shift+Z for redo (global, works in all views)
+- **Edit menu** — Undo/Redo menu items with greyed-out state when stacks are empty
+- **Module position undo** — MoveModule action variant with `set_module_position()` API on PatchEditor
+- **Inverse computation** — automatic inverse generation for all action types (add↔remove, old↔new values)
+
+## [0.217.0] - 2026-03-06
+### Offline WAV export
+- **Export WAV** — render entire project to WAV file, faster than realtime
+- **Export dialog** — File menu > Export WAV... with sample rate (44.1/48/96 kHz), bit depth (16/24/32-float), duration, and tail time settings
+- **Progress bar** — real-time progress display with cancel button during rendering
+- **Background rendering** — export runs in a separate thread, does not block the GUI or audio
+- **Standalone engine** — creates a fresh SynthEngine from the project snapshot, loads all instruments/modules/connections/AWE state
+- **`audio/export.rs`** — `ExportConfig`, `ExportProgress`, `start_export()`, `render_to_wav()` with hound WAV writer
+- **`gui/export_dialog.rs`** — egui dialog with settings grid, estimated file size, and progress UI
+
+## [0.216.0] - 2026-03-06
+### Module copy/paste
+- **Clipboard system** — new `gui/clipboard.rs` for in-memory module copy/paste
+- **Copy selected modules** (Ctrl+C) — captures module states with parameters and positions
+- **Paste modules** (Ctrl+V) — creates new instances with fresh IDs, applies stored parameters, remaps internal connections
+- **Duplicate modules** (Ctrl+D) — copy + paste at 50px offset in one step
+- **Multi-module support** — copies selection of modules and their internal connections (connections between selected modules are preserved)
+- **Edit menu** — Copy, Paste, Duplicate items with keyboard shortcut hints
+- **PatchEditor API** — `effective_selection()`, `extract_module_states()`, `internal_connections()`, `select_modules()`
+- **`paste_clipboard_modules()`** in `patch_bridge.rs` — handles all module types including visualizers (SignalMonitor, Oscilloscope, LevelMeter, SpectrumAnalyzer)
+
 ## [0.215.0] - 2026-03-06
 ### Shared OSC protocol constants
 - **New crate `synth_osc_protocol`** — minimal zero-dependency crate containing all OSC address constants and `PROTOCOL_VERSION`

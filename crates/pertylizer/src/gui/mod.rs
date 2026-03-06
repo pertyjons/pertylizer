@@ -30,6 +30,9 @@ pub mod theme;
 pub mod dialogs;
 
 #[cfg(feature = "gui-egui")]
+pub mod export_dialog;
+
+#[cfg(feature = "gui-egui")]
 pub mod patch_bridge;
 
 #[cfg(feature = "gui-egui")]
@@ -55,6 +58,9 @@ pub mod panels;
 
 #[cfg(feature = "gui-egui")]
 pub mod sequencer;
+
+#[cfg(feature = "gui-egui")]
+pub(crate) mod clipboard;
 
 use crate::audio::{AudioHostTrait, StreamConfig};
 use std::error::Error;

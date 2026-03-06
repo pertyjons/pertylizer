@@ -64,6 +64,7 @@
 //! ```
 
 pub mod backends;
+pub mod export;
 mod traits;
 mod types;
 

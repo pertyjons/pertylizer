@@ -251,3 +251,25 @@ At 30 Hz update rate (current implementation):
 | **Total**        |             |        | **~25 KB/s** |
 
 Well within localhost UDP capacity.
+
+---
+
+## Code Review Findings (2026-03-06)
+
+### Correctness / Bugs
+- `visualizer/src/visuals/waveform_ring.rs`: `update()` forces `Visibility::Hidden` for active bars, so the effect never becomes visible. Should set `Visibility::Inherited` for active bins and only hide bars beyond `fft_bin_count`.
+- `visualizer/src/visuals/centroid_nebula.rs`: `update_material()` uses a `Local<f32>` for `last_centroid` that is never updated, so hue never responds to the spectral centroid. Use `telemetry.centroid_hz` directly or store a shared smoothed centroid in a resource updated by `update()`.
+- `visualizer/src/visuals/velocity_meteors.rs`: size scaling based on velocity is overwritten each frame (`transform.scale = Vec3::splat(life_pct)`), so velocity only affects the first frame. Store a base scale per meteor and multiply by `life_pct`.
+- Transient effects freeze when deactivated because their update systems stop running, leaving stale entities hidden but alive (and they can “snap back” if the effect is re-enabled). Affects `harmonic_ribbons.rs`, `chord_bloom.rs`, `velocity_meteors.rs`, and `phase_rings.rs`. Consider always updating lifetimes even when inactive, or purge these entities when the effect is switched off.
+
+### Performance / Optimization
+- `visualizer/src/visuals/effects.rs`: `effect_active_or_fading()` makes *all* effect updates run during any crossfade (`fade > 0`). This can spike frame time on scene switches. Consider running updates only for effects in `active` or `pending` scenes, and keep crossfade-related material updates isolated.
+- `visualizer/src/visuals/effects.rs`: `get_presets()` allocates a `Vec` every frame inside `input()`. Make presets a `const`/`lazy_static` or store in a resource to avoid per-frame allocation.
+- `visualizer/src/visuals/centroid_nebula.rs`: uses `AlphaMode::Blend` for all 500 particles even though alpha isn’t animated. This disables batching and increases overdraw; use opaque materials unless actual transparency is needed.
+- `visualizer/src/osc_receiver.rs`: UDP receive buffer is fixed at 8192 bytes. Large bundles with many note events could overflow and drop packets. Consider a larger buffer (e.g., 64 KB) to be safe.
+- `visualizer/src/visuals/fft_bars.rs` and `visualizer/src/visuals/waveform_ring.rs`: bar smoothing uses a fixed per-frame lerp (frame-rate dependent). Use time-based smoothing (`1.0 - exp(-k*dt)`) for consistent motion.
+
+### Visual / UX Improvements
+- Many note-driven effects respond only to `last_note_on`. Using `pending_note_events` for `particles.rs` and `velocity_meteors.rs` would better reflect dense chords and improve visual richness.
+- `visualizer/src/visuals/waiting_indicator.rs`: staleness is measured in frames, so indicator timing changes with FPS. Track staleness in seconds for consistent UX across machines.
+- Consider adding subtle environment lighting or fog in `visualizer/src/visuals/mod.rs::setup_scene` (e.g., a dim directional rim light, haze, or sky gradient) to improve depth and reduce the “black void” look when effects fade.

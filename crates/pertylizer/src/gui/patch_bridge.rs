@@ -644,3 +644,150 @@ pub fn insert_group_template(
 
     Ok(group_id)
 }
+
+/// Paste modules from clipboard data into an instrument.
+///
+/// Creates new module instances with fresh IDs, applies stored parameters,
+/// remaps internal connections, and selects the newly pasted modules.
+///
+/// `paste_pos` is the target center position; modules are offset relative
+/// to the clipboard's reference position.
+///
+/// Returns the set of newly created module IDs.
+#[allow(clippy::too_many_arguments)]
+pub fn paste_clipboard_modules(
+    clipboard_modules: &[crate::patch::ModuleState],
+    clipboard_connections: &[crate::patch::ConnectionState],
+    reference_pos: (f32, f32),
+    paste_pos: (f32, f32),
+    patch_editor: &mut PatchEditor,
+    session: &crate::session::SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+) -> std::collections::HashSet<ModuleId> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut id_map: HashMap<String, ModuleId> = HashMap::new();
+    let mut new_ids: HashSet<ModuleId> = HashSet::new();
+
+    let offset_x = paste_pos.0 - reference_pos.0;
+    let offset_y = paste_pos.1 - reference_pos.1;
+
+    for module_state in clipboard_modules {
+        let module_type = module_state.module_type;
+
+        // Allocate a fresh ID via session counters
+        let module_id = {
+            let mut counters = session.counters_lock();
+            let counter = counters.entry((instrument_id, module_type)).or_insert(0);
+            *counter += 1;
+            ModuleId::new(module_type, *counter)
+        };
+
+        let position = Pos2::new(
+            module_state.position.0 + offset_x,
+            module_state.position.1 + offset_y,
+        );
+
+        let descriptor = match module_type {
+            ModuleType::SignalMonitor => {
+                let mut m = synth_modules::SignalMonitor::new();
+                let d = synth_core::Describable::descriptor(&m);
+                session.register_descriptor(instrument_id, module_id, d.clone());
+                patch_editor.add_module_at(module_id, d.clone(), position);
+
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                m.set_vis_sink(buffer);
+                handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    module: Box::new(m),
+                });
+                d
+            }
+            ModuleType::Oscilloscope => {
+                let descriptor = Oscilloscope::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::Oscilloscope,
+                    buffer,
+                });
+                descriptor
+            }
+            ModuleType::LevelMeter => {
+                let descriptor = LevelMeter::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::LevelMeter,
+                    buffer,
+                });
+                descriptor
+            }
+            ModuleType::SpectrumAnalyzer => {
+                let descriptor = SpectrumAnalyzer::new().descriptor();
+                patch_editor.add_module_at(module_id, descriptor.clone(), position);
+                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                handle.add_visualization_buffer(module_id, buffer.clone());
+                handle.send(EngineCommand::AddVisualizer {
+                    instrument_id: Some(instrument_id),
+                    id: module_id,
+                    visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                    buffer,
+                });
+                descriptor
+            }
+            _ => {
+                let Ok(d) = session.add_module_with_id(instrument_id, module_id, module_type)
+                else {
+                    continue;
+                };
+                patch_editor.add_module_at(module_id, d.clone(), position);
+                d
+            }
+        };
+
+        let effect_type = EffectType::from_module_type(module_type);
+        apply_module_parameters(
+            module_id,
+            &descriptor,
+            &module_state.parameters,
+            effect_type,
+            patch_editor,
+            handle,
+            instrument_id,
+        );
+
+        id_map.insert(module_state.id.clone(), module_id);
+        new_ids.insert(module_id);
+    }
+
+    // Remap and create connections
+    for conn in clipboard_connections {
+        let Some(from_id) = id_map.get(&conn.from.0) else {
+            continue;
+        };
+        let Some(to_id) = id_map.get(&conn.to.0) else {
+            continue;
+        };
+        let connection = Connection::new(*from_id, &*conn.from.1, *to_id, &*conn.to.1);
+        patch_editor.add_connection(connection);
+        let _ = session.connect(
+            instrument_id,
+            connection.from_module,
+            connection.from_port,
+            connection.to_module,
+            connection.to_port,
+        );
+    }
+
+    new_ids
+}

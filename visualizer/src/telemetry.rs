@@ -34,6 +34,8 @@ pub struct SynthTelemetry {
     pub seq: i32,
     /// Frames since last packet (stale detection).
     pub stale_frames: u32,
+    /// Seconds since last packet (stale detection, time-based).
+    pub stale_seconds: f32,
 
     // -- Audio levels --
     /// RMS levels (left, right), linear amplitude.
@@ -93,6 +95,7 @@ impl Default for SynthTelemetry {
             update_rate_hz: 0.0,
             seq: 0,
             stale_frames: 0,
+            stale_seconds: 0.0,
             rms: [0.0; 2],
             peak: [0.0; 2],
             fft: [0.0; MAX_FFT_BANDS],

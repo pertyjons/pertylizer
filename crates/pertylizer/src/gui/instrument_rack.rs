@@ -127,6 +127,8 @@ fn format_note_name(note: MidiNote) -> String {
 pub struct InstrumentRackResult {
     /// The newly selected active instrument, if changed.
     pub active_instrument_changed: Option<InstrumentId>,
+    /// Whether any mutation occurred (instrument added, removed, renamed, etc.).
+    pub mutated: bool,
 }
 
 /// Show the instrument rack panel.
@@ -309,6 +311,7 @@ pub fn show_instrument_rack(
                                         instrument_id,
                                         param: InstrumentParam::Volume(instruments[idx].volume),
                                     });
+                                    result.mutated = true;
                                 }
 
                                 // Pan knob (compact for rack)
@@ -327,6 +330,7 @@ pub fn show_instrument_rack(
                                         instrument_id,
                                         param: InstrumentParam::Pan(instruments[idx].pan),
                                     });
+                                    result.mutated = true;
                                 }
 
                                 // Solo button (non-toggleable: mutes all others)
@@ -584,6 +588,7 @@ pub fn show_instrument_rack(
             handle.send(EngineCommand::RemoveInstrument {
                 instrument_id: removed_instrument.id,
             });
+            result.mutated = true;
 
             // If we removed the active instrument, select the first one
             if removed_instrument.id == *active_instrument_id && !instruments.is_empty() {
@@ -627,6 +632,7 @@ pub fn show_instrument_rack(
             });
 
             instruments.push(new_ui_instrument);
+            result.mutated = true;
         }
     });
 

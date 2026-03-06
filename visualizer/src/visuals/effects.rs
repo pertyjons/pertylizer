@@ -10,6 +10,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 use rand::Rng;
 use rand::seq::SliceRandom;
+use std::sync::OnceLock;
 
 /// Available visual effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,9 +99,15 @@ pub fn effect_active(effect: EffectId) -> impl Fn(Res<EffectState>) -> bool + Cl
     move |state: Res<EffectState>| state.active.is_active(effect)
 }
 
-/// Run condition: returns true when the given effect is active OR a crossfade is in progress.
-pub fn effect_active_or_fading(effect: EffectId) -> impl Fn(Res<EffectState>) -> bool + Clone {
-    move |state: Res<EffectState>| state.active.is_active(effect) || state.fade > 0.0
+/// Run condition: returns true when the given effect is active OR pending during a crossfade.
+pub fn effect_active_or_pending(effect: EffectId) -> impl Fn(Res<EffectState>) -> bool + Clone {
+    move |state: Res<EffectState>| {
+        state.active.is_active(effect)
+            || state
+                .pending
+                .as_ref()
+                .map_or(false, |scene| scene.is_active(effect))
+    }
 }
 
 /// Marker component linking an entity to a specific effect layer.
@@ -148,52 +155,55 @@ impl Default for EffectState {
     }
 }
 
-/// Returns a few hand-crafted scenes.
-fn get_presets() -> Vec<SceneConfig> {
-    vec![
+/// Returns a cached list of hand-crafted scenes.
+fn presets() -> &'static [SceneConfig] {
+    static PRESETS: OnceLock<Vec<SceneConfig>> = OnceLock::new();
+    PRESETS.get_or_init(|| {
         // 0: Classic Pertylizer
-        SceneConfig {
-            terrain: Some(EffectId::SpectralWaterfall),
-            hero: None,
-            ambient: None,
-            transients: vec![EffectId::NoteParticles],
-        },
-        // 1: The Matrix
-        SceneConfig {
-            terrain: Some(EffectId::PulseTerrain),
-            hero: Some(EffectId::CpuOverdriveCore),
-            ambient: Some(EffectId::CentroidNebula),
-            transients: vec![EffectId::VelocityMeteors],
-        },
-        // 2: Sacred Geometry
-        SceneConfig {
-            terrain: Some(EffectId::SpectralOrigami),
-            hero: Some(EffectId::FractalPulse),
-            ambient: Some(EffectId::SpectralCathedral),
-            transients: vec![EffectId::ChordBloom],
-        },
-        // 3: Magnetic Storm
-        SceneConfig {
-            terrain: Some(EffectId::WaveformRing),
-            hero: Some(EffectId::FerrofluidTendrils),
-            ambient: Some(EffectId::CentroidNebula),
-            transients: vec![EffectId::PhaseRings, EffectId::HarmonicRibbons],
-        },
-        // 4: The Exploding Sun
-        SceneConfig {
-            terrain: Some(EffectId::FftBars),
-            hero: Some(EffectId::FluxSupernova),
-            ambient: None,
-            transients: vec![EffectId::NeonCalligraphy, EffectId::NoteParticles],
-        },
-        // 5: Metallic Orchestra
-        SceneConfig {
-            terrain: Some(EffectId::BaseFloor),
-            hero: Some(EffectId::FractalPulse),
-            ambient: Some(EffectId::CentroidNebula),
-            transients: vec![EffectId::InstrumentCubes],
-        },
-    ]
+        vec![
+            SceneConfig {
+                terrain: Some(EffectId::SpectralWaterfall),
+                hero: None,
+                ambient: None,
+                transients: vec![EffectId::NoteParticles],
+            },
+            // 1: The Matrix
+            SceneConfig {
+                terrain: Some(EffectId::PulseTerrain),
+                hero: Some(EffectId::CpuOverdriveCore),
+                ambient: Some(EffectId::CentroidNebula),
+                transients: vec![EffectId::VelocityMeteors],
+            },
+            // 2: Sacred Geometry
+            SceneConfig {
+                terrain: Some(EffectId::SpectralOrigami),
+                hero: Some(EffectId::FractalPulse),
+                ambient: Some(EffectId::SpectralCathedral),
+                transients: vec![EffectId::ChordBloom],
+            },
+            // 3: Magnetic Storm
+            SceneConfig {
+                terrain: Some(EffectId::WaveformRing),
+                hero: Some(EffectId::FerrofluidTendrils),
+                ambient: Some(EffectId::CentroidNebula),
+                transients: vec![EffectId::PhaseRings, EffectId::HarmonicRibbons],
+            },
+            // 4: The Exploding Sun
+            SceneConfig {
+                terrain: Some(EffectId::FftBars),
+                hero: Some(EffectId::FluxSupernova),
+                ambient: None,
+                transients: vec![EffectId::NeonCalligraphy, EffectId::NoteParticles],
+            },
+            // 5: Metallic Orchestra
+            SceneConfig {
+                terrain: Some(EffectId::BaseFloor),
+                hero: Some(EffectId::FractalPulse),
+                ambient: Some(EffectId::CentroidNebula),
+                transients: vec![EffectId::InstrumentCubes],
+            },
+        ]
+    })
 }
 
 /// Generate a completely random scene using the slot rules.
@@ -245,7 +255,7 @@ pub fn input(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<EffectState>) {
         return;
     }
 
-    let presets = get_presets();
+    let presets = presets();
 
     let mut next_scene = None;
 

@@ -1419,6 +1419,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2446,7 +2452,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pertylizer"
-version = "0.215.0"
+version = "0.219.0"
 dependencies = [
  "cpal",
  "dirs",
@@ -2456,6 +2462,7 @@ dependencies = [
  "egui-remixicon",
  "egui_extras",
  "fastrand",
+ "hound",
  "midir",
  "parking_lot",
  "ringbuf",

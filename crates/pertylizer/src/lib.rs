@@ -27,6 +27,7 @@ pub mod patch;
 pub mod patches;
 pub mod project;
 pub mod session;
+pub(crate) mod undo;
 
 // Re-export workspace crates
 pub use synth_core;

@@ -1200,6 +1200,13 @@ impl PatchEditor {
         }
     }
 
+    /// Set the position of a module in the rack view.
+    pub fn set_module_position(&mut self, module_id: ModuleId, position: Pos2) {
+        if let Some(panel) = self.panels.get_mut(&module_id) {
+            panel.position = position;
+        }
+    }
+
     /// Remove a connection.
     #[allow(dead_code)]
     pub fn remove_connection(&mut self, connection: &Connection) {
@@ -3540,6 +3547,63 @@ impl PatchEditor {
         self.selected_module
     }
 
+    /// Get the set of currently multi-selected modules.
+    pub fn selected_module_ids(&self) -> &HashSet<ModuleId> {
+        &self.selected_modules
+    }
+
+    /// Collect the effective selection: multi-selection if non-empty,
+    /// otherwise the single selected module (if any).
+    pub fn effective_selection(&self) -> HashSet<ModuleId> {
+        if !self.selected_modules.is_empty() {
+            self.selected_modules.clone()
+        } else if let Some(id) = self.selected_module {
+            let mut set = HashSet::new();
+            set.insert(id);
+            set
+        } else {
+            HashSet::new()
+        }
+    }
+
+    /// Extract `ModuleState` for each given module ID.
+    ///
+    /// Builds serializable module states from the current panel data,
+    /// suitable for clipboard storage.
+    pub fn extract_module_states(&self, ids: &HashSet<ModuleId>) -> Vec<ModuleState> {
+        let mut states = Vec::new();
+        for &id in ids {
+            if let Some((_desc, position, gui_params)) = self.get_module_data(id) {
+                let mut parameters = std::collections::HashMap::new();
+                for (name, value) in &gui_params {
+                    parameters.insert(name.clone(), ParamValue::Float(*value));
+                }
+                states.push(ModuleState {
+                    id: id.to_string(),
+                    module_type: id.module_type,
+                    position: (position.x, position.y),
+                    parameters,
+                });
+            }
+        }
+        states
+    }
+
+    /// Find all connections where both endpoints are in the given module set.
+    pub fn internal_connections(&self, ids: &HashSet<ModuleId>) -> Vec<ConnectionState> {
+        self.connections
+            .iter()
+            .filter(|c| ids.contains(&c.from_module) && ids.contains(&c.to_module))
+            .map(ConnectionState::from)
+            .collect()
+    }
+
+    /// Select a set of modules (replaces current multi-selection).
+    pub fn select_modules(&mut self, ids: &HashSet<ModuleId>) {
+        self.selected_modules = ids.clone();
+        self.selected_module = ids.iter().next().copied();
+    }
+
     /// Check if a module exists.
     #[allow(dead_code)]
     pub fn has_module(&self, id: ModuleId) -> bool {
@@ -3730,6 +3794,21 @@ pub struct PatchEditorResult {
     pub context_add: Option<(PaletteSelection, Pos2, Option<Connection>)>,
     /// Requests to open template browser or save group templates.
     pub group_template_action: Option<GroupTemplateAction>,
+}
+
+impl PatchEditorResult {
+    /// Returns true if any mutation occurred (parameter, module, or connection change).
+    #[must_use]
+    pub fn has_mutations(&self) -> bool {
+        !self.param_changes.is_empty()
+            || !self.modules_to_remove.is_empty()
+            || !self.connections_to_add.is_empty()
+            || !self.connections_to_remove.is_empty()
+            || !self.bypass_toggles.is_empty()
+            || !self.quick_add_requests.is_empty()
+            || self.context_add.is_some()
+            || !self.insert_signal_monitor_at.is_empty()
+    }
 }
 
 /// Simplified panel result for parameters only.

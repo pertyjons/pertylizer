@@ -85,41 +85,37 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
-                    base_floor::update.run_if(effects::effect_active_or_fading(
+                    base_floor::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::BaseFloor,
                     )),
                     fft_bars::update
-                        .run_if(effects::effect_active_or_fading(effects::EffectId::FftBars)),
-                    waveform_ring::update.run_if(effects::effect_active_or_fading(
+                        .run_if(effects::effect_active_or_pending(effects::EffectId::FftBars)),
+                    waveform_ring::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::WaveformRing,
                     )),
-                    spectral_waterfall::update.run_if(effects::effect_active_or_fading(
+                    spectral_waterfall::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralWaterfall,
                     )),
-                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_fading(
+                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralWaterfall,
                     )),
                     velocity_meteors::spawn
                         .run_if(effects::effect_active(effects::EffectId::VelocityMeteors)),
-                    velocity_meteors::update.run_if(effects::effect_active_or_fading(
-                        effects::EffectId::VelocityMeteors,
-                    )),
-                    phase_rings::spawn_and_update.run_if(effects::effect_active_or_fading(
-                        effects::EffectId::PhaseRings,
-                    )),
-                    centroid_nebula::update.run_if(effects::effect_active_or_fading(
+                    velocity_meteors::update,
+                    phase_rings::spawn_and_update,
+                    centroid_nebula::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::CentroidNebula,
                     )),
-                    centroid_nebula::update_material.run_if(effects::effect_active_or_fading(
+                    centroid_nebula::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::CentroidNebula,
                     )),
-                    flux_supernova::update.run_if(effects::effect_active_or_fading(
+                    flux_supernova::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FluxSupernova,
                     )),
-                    cpu_overdrive::update.run_if(effects::effect_active_or_fading(
+                    cpu_overdrive::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::CpuOverdriveCore,
                     )),
-                    fractal_pulse::update.run_if(effects::effect_active_or_fading(
+                    fractal_pulse::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FractalPulse,
                     )),
                 )
@@ -128,34 +124,30 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
-                    spectral_cathedral::update.run_if(effects::effect_active_or_fading(
+                    spectral_cathedral::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralCathedral,
                     )),
-                    harmonic_ribbons::spawn_and_update.run_if(effects::effect_active_or_fading(
-                        effects::EffectId::HarmonicRibbons,
-                    )),
-                    chord_bloom::spawn_and_update.run_if(effects::effect_active_or_fading(
-                        effects::EffectId::ChordBloom,
-                    )),
-                    pulse_terrain::update.run_if(effects::effect_active_or_fading(
+                    harmonic_ribbons::spawn_and_update,
+                    chord_bloom::spawn_and_update,
+                    pulse_terrain::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::PulseTerrain,
                     )),
-                    pulse_terrain::update_material.run_if(effects::effect_active_or_fading(
+                    pulse_terrain::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::PulseTerrain,
                     )),
-                    spectral_origami::update.run_if(effects::effect_active_or_fading(
+                    spectral_origami::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralOrigami,
                     )),
-                    spectral_origami::update_material.run_if(effects::effect_active_or_fading(
+                    spectral_origami::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralOrigami,
                     )),
-                    ferrofluid_tendrils::update.run_if(effects::effect_active_or_fading(
+                    ferrofluid_tendrils::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FerrofluidTendrils,
                     )),
-                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_fading(
+                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FerrofluidTendrils,
                     )),
-                    neon_calligraphy::update.run_if(effects::effect_active_or_fading(
+                    neon_calligraphy::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::NeonCalligraphy,
                     )),
                 )
@@ -204,6 +196,18 @@ fn setup_scene(mut commands: Commands) {
         },
         Transform::from_xyz(0.0, 10.0, 0.0),
         RmsLight,
+    ));
+
+    // Soft rim light to give depth to silhouettes
+    commands.spawn((
+        PointLight {
+            intensity: 30_000.0,
+            range: 80.0,
+            color: Color::srgb(0.3, 0.5, 0.9),
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(-20.0, 18.0, -15.0),
     ));
 
     // Camera with bloom post-processing

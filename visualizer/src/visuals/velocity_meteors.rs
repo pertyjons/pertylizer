@@ -20,6 +20,8 @@ const START_HEIGHT: f32 = 25.0;
 pub struct Meteor {
     /// Distance fallen so far.
     pub fallen: f32,
+    /// Base scale derived from velocity (preserved across frames).
+    pub base_scale: f32,
 }
 
 /// Cached mesh handle.
@@ -62,40 +64,38 @@ pub fn spawn(
     meteor_mesh: Res<MeteorMesh>,
     meteor_materials: Res<MeteorMaterials>,
 ) {
-    if telemetry.note_age_frames >= 2 {
-        return;
+    for note_event in &telemetry.pending_note_events {
+        let note_idx = (note_event.midi_note as usize).min(127);
+
+        // Scale by velocity (quieter notes are smaller)
+        let vel_scale = (note_event.velocity as f32 / 127.0).max(0.1);
+
+        // Spread X based on note pitch (low notes left, high notes right)
+        let spread_x = ((note_event.midi_note as f32 / 127.0) * 2.0 - 1.0) * 20.0;
+
+        // Randomize Z slightly for depth
+        let spread_z = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as f32
+            / 1_000_000_000.0)
+            * 10.0
+            - 10.0;
+
+        let material = meteor_materials.materials[note_idx].clone();
+
+        commands.spawn((
+            Mesh3d(meteor_mesh.0.clone()),
+            MeshMaterial3d(material),
+            Transform::from_xyz(spread_x, START_HEIGHT, spread_z)
+                .with_scale(Vec3::splat(vel_scale * 2.0)),
+            Meteor {
+                fallen: 0.0,
+                base_scale: vel_scale * 2.0,
+            },
+            EffectLayer(EffectId::VelocityMeteors),
+        ));
     }
-    let Some(note_event) = telemetry.last_note_on else {
-        return;
-    };
-
-    let note_idx = (note_event.midi_note as usize).min(127);
-
-    // Scale by velocity (quieter notes are smaller)
-    let vel_scale = (note_event.velocity as f32 / 127.0).max(0.1);
-
-    // Spread X based on note pitch (low notes left, high notes right)
-    let spread_x = ((note_event.midi_note as f32 / 127.0) * 2.0 - 1.0) * 20.0;
-
-    // Randomize Z slightly for depth
-    let spread_z = (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos() as f32
-        / 1_000_000_000.0)
-        * 10.0
-        - 10.0;
-
-    let material = meteor_materials.materials[note_idx].clone();
-
-    commands.spawn((
-        Mesh3d(meteor_mesh.0.clone()),
-        MeshMaterial3d(material),
-        Transform::from_xyz(spread_x, START_HEIGHT, spread_z)
-            .with_scale(Vec3::splat(vel_scale * 2.0)),
-        Meteor { fallen: 0.0 },
-        EffectLayer(EffectId::VelocityMeteors),
-    ));
 }
 
 /// Update falling and despawn when hitting bottom.
@@ -113,7 +113,7 @@ pub fn update(
 
         // Shrink as it falls, like it's burning up
         let life_pct = (1.0 - (meteor.fallen / FALL_DISTANCE)).max(0.01);
-        transform.scale = Vec3::splat(life_pct);
+        transform.scale = Vec3::splat((meteor.base_scale * life_pct).max(0.01));
 
         if meteor.fallen >= FALL_DISTANCE {
             commands.entity(entity).despawn();
