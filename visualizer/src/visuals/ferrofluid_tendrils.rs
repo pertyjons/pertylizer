@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 const NUM_TENDRILS: usize = 30;
@@ -115,6 +116,7 @@ pub fn update_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_energy: Local<f32>,
     mut last_fade: Local<f32>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -127,7 +129,8 @@ pub fn update_material(
 
     if let Some(material) = materials.get_mut(&material_res.0) {
         let color = Color::srgb(0.1, 0.2 + energy * 0.5, 0.5 + energy * 0.5);
-        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+        material.emissive =
+            LinearRgba::from(color) * EMISSIVE_STRENGTH * policy.emissive_multiplier * fade;
     }
 
     *last_energy = energy;

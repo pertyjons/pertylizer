@@ -10,6 +10,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Number of frequency bands per row (half of full FFT for manageable entity count).
@@ -75,17 +76,22 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.9, 1.0, ROW_DEPTH * 0.85));
+
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
     // Create 64 shared materials (one for each frequency band)
     let mut shared_mats = Vec::with_capacity(BANDS);
     for band in 0..BANDS {
         let hue = (band as f32 / BANDS as f32) * 270.0;
-        let color = Color::hsl(hue, 0.8, 0.5);
+        let color = Color::hsl(hue, sat, lit);
         shared_mats.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            emissive: LinearRgba::from(color) * emissive,
             ..default()
         }));
     }
@@ -203,6 +209,7 @@ pub fn update_materials(
     state: Res<WaterfallState>,
     waterfall_materials: Res<WaterfallMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -211,14 +218,17 @@ pub fn update_materials(
         return;
     }
 
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     // Update the 64 shared materials once per frame during crossfade
     for (band, handle) in waterfall_materials.materials.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
             let hue = (band as f32 / BANDS as f32) * 270.0;
-            let lightness = 0.5 * fade;
-            let color = Color::hsl(hue, 0.8, lightness);
+            let lightness = (0.5 + policy.lightness_offset).clamp(0.0, 1.0) * fade;
+            let color = Color::hsl(hue, sat, lightness);
             material.base_color = color;
-            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
         }
     }
 }

@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Number of concentric rings.
@@ -31,17 +32,22 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Torus::new(1.0, 0.05));
 
     // Create materials for each ring
+    let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     let mut ring_materials = Vec::new();
     for i in 0..NUM_RINGS {
         let hue = (i as f32 / NUM_RINGS as f32) * 360.0;
-        let color = Color::hsl(hue, 0.9, 0.5);
+        let color = Color::hsl(hue, sat, lit);
         ring_materials.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            emissive: LinearRgba::from(color) * emissive,
             ..default()
         }));
     }
@@ -81,6 +87,7 @@ pub fn update(
         &MeshMaterial3d<StandardMaterial>,
     )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let dt = time.delta_secs();
 
@@ -112,10 +119,13 @@ pub fn update(
         if (fade < 1.0 || state.full_update_needed)
             && let Some(material) = materials.get_mut(&material_handle.0)
         {
+            let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+            let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+            let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
             let hue = (ring.index as f32 / NUM_RINGS as f32) * 360.0;
-            let color = Color::hsl(hue, 0.9, 0.5 * fade);
+            let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
-            material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
         }
     }
 

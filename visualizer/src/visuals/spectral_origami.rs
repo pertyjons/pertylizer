@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 12;
@@ -103,6 +104,7 @@ pub fn update_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_hue: Local<f32>,
     mut frame_counter: Local<u32>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -116,9 +118,13 @@ pub fn update_material(
         return;
     }
 
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     if let Some(material) = materials.get_mut(&origami_material.0) {
-        let color = Color::hsl(*last_hue, 0.8, 0.5 * fade);
+        let color = Color::hsl(*last_hue, sat, lit * fade);
         material.base_color = color;
-        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+        material.emissive = LinearRgba::from(color) * emissive * fade;
     }
 }

@@ -6,6 +6,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Maximum radius a ring expands to before disappearing.
@@ -48,21 +49,26 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     // A Torus looks like a neon ring
     commands.insert_resource(RingMesh(meshes.add(Torus::new(1.0, RING_THICKNESS))));
 
-    let downbeat_color = Color::hsl(200.0, 0.9, 0.5);
-    let offbeat_color = Color::hsl(320.0, 0.9, 0.5);
+    let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
+    let downbeat_color = Color::hsl(200.0, sat, lit);
+    let offbeat_color = Color::hsl(320.0, sat, lit);
 
     let downbeat = materials.add(StandardMaterial {
         base_color: downbeat_color,
-        emissive: LinearRgba::from(downbeat_color) * EMISSIVE_STRENGTH,
+        emissive: LinearRgba::from(downbeat_color) * emissive,
         ..default()
     });
     let offbeat = materials.add(StandardMaterial {
         base_color: offbeat_color,
-        emissive: LinearRgba::from(offbeat_color) * EMISSIVE_STRENGTH,
+        emissive: LinearRgba::from(offbeat_color) * emissive,
         ..default()
     });
 
@@ -80,6 +86,7 @@ pub fn spawn_and_update(
     mut query: Query<(Entity, &PhaseRing, &mut Transform)>,
     mut last_fade: Local<f32>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let is_active = effect_state.active.is_active(EffectId::PhaseRings);
     let fade = effect_state.fade;
@@ -134,14 +141,18 @@ pub fn spawn_and_update(
 
     // Only update the 2 shared materials during crossfade
     if (fade - *last_fade).abs() > effects::FADE_EPSILON {
+        let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
         for (handle, hue) in [
             (&ring_materials.downbeat, 200.0),
             (&ring_materials.offbeat, 320.0),
         ] {
             if let Some(material) = materials.get_mut(handle) {
-                let color = Color::hsl(hue, 0.9, 0.5 * fade);
+                let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
-                material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+                material.emissive = LinearRgba::from(color) * emissive * fade;
             }
         }
         *last_fade = fade;

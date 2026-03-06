@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// The threshold of spectral flux to trigger an explosion.
@@ -65,6 +66,7 @@ pub fn update(
     mut state: ResMut<SupernovaState>,
     mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<SupernovaCore>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let dt = time.delta_secs();
 
@@ -105,8 +107,9 @@ pub fn update(
                 let lightness = 0.5 + (state.explosion * 0.4);
                 let color = Color::hsl(hue, 0.9, lightness * fade);
 
-                let emissive_strength =
-                    BASE_EMISSIVE + (state.explosion * (PEAK_EMISSIVE - BASE_EMISSIVE));
+                let emissive_strength = (BASE_EMISSIVE
+                    + (state.explosion * (PEAK_EMISSIVE - BASE_EMISSIVE)))
+                    * policy.emissive_multiplier;
 
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive_strength * fade;

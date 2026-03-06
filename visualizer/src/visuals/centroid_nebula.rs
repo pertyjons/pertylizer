@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Number of particles in the nebula (reduced from 2000 for performance).
@@ -111,6 +112,7 @@ pub fn update(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_material(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
@@ -119,6 +121,7 @@ pub fn update_material(
     mut last_centroid: Local<f32>,
     mut last_hue: Local<f32>,
     mut last_fade: Local<f32>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -140,12 +143,16 @@ pub fn update_material(
         return;
     }
 
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     if let Some(handle) = query.iter().next()
         && let Some(material) = materials.get_mut(&handle.0)
     {
-        let color = Color::hsl(hue, 0.8, 0.5 * fade);
+        let color = Color::hsl(hue, sat, lit * fade);
         material.base_color = color;
-        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+        material.emissive = LinearRgba::from(color) * emissive * fade;
     }
 
     *last_hue = hue;

@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// We use a subset of bands for the arches so it's not too cluttered.
@@ -45,18 +46,23 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(0.5, 0.5, 0.5));
+
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
     // Shared materials, one per band
     let mut shared_mats = Vec::with_capacity(ARCH_BANDS);
     for band in 0..ARCH_BANDS {
         // Hue goes from 0 (red/bass) at the front to 300 (purple/treble) at the back
         let hue = (band as f32 / ARCH_BANDS as f32) * 300.0;
-        let color = Color::hsl(hue, 0.8, 0.5);
+        let color = Color::hsl(hue, sat, lit);
         shared_mats.push(materials.add(StandardMaterial {
             base_color: color,
-            emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
+            emissive: LinearRgba::from(color) * emissive,
             ..default()
         }));
     }
@@ -134,6 +140,7 @@ pub fn update(
     mut query: Query<(&ArchSegment, &mut Transform)>,
     cathedral_materials: Res<CathedralMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -158,12 +165,16 @@ pub fn update(
 
     // Handle crossfade material updating
     if (fade - state.last_fade).abs() > 0.001 {
+        let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+        let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
                 let hue = (band as f32 / ARCH_BANDS as f32) * 300.0;
-                let color = Color::hsl(hue, 0.8, 0.5 * fade);
+                let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
-                material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+                material.emissive = LinearRgba::from(color) * emissive * fade;
             }
         }
         state.last_fade = fade;

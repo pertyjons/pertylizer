@@ -7,6 +7,7 @@ use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 20; // 20x20 grid
@@ -28,12 +29,17 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Cuboid::new(GRID_SPACING * 0.9, 0.5, GRID_SPACING * 0.9));
 
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let color = Color::hsl(140.0, sat, lit);
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.8, 0.4),
-        emissive: LinearRgba::from(Color::srgb(0.2, 0.8, 0.4)) * EMISSIVE_STRENGTH,
+        base_color: color,
+        emissive: LinearRgba::from(color) * emissive,
         ..default()
     });
 
@@ -109,6 +115,7 @@ pub fn update_material(
     terrain_material: Res<TerrainMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_fade: Local<f32>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
@@ -117,10 +124,14 @@ pub fn update_material(
         return;
     }
 
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
     if let Some(material) = materials.get_mut(&terrain_material.0) {
-        let color = Color::hsl(140.0, 0.8, 0.5 * fade);
+        let color = Color::hsl(140.0, sat, lit * fade);
         material.base_color = color;
-        material.emissive = LinearRgba::from(color) * EMISSIVE_STRENGTH * fade;
+        material.emissive = LinearRgba::from(color) * emissive * fade;
     }
     *last_fade = fade;
 }
