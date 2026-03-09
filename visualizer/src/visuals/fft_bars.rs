@@ -92,6 +92,13 @@ pub fn update(
     let bar_width = TOTAL_WIDTH / bin_count.max(1) as f32;
     let dt = time.delta_secs();
 
+    // Pre-compute values once instead of per-bar
+    let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
+    let height_scale = MAX_HEIGHT * (1.0 + beat_pulse * 0.15);
+    let width_scale = bar_width / MIN_BAR_WIDTH;
+    let attack_alpha = 1.0 - (-ATTACK_RATE * dt).exp();
+    let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
+
     for (mut transform, mut vis, bar) in &mut query {
         if bar.0 >= bin_count {
             *vis = Visibility::Hidden;
@@ -100,30 +107,22 @@ pub fn update(
         *vis = Visibility::Inherited;
 
         // Reposition based on active bin count
-        let x = (bar.0 as f32 - bin_count as f32 / 2.0) * bar_width;
-        transform.translation.x = x;
-        // Scale width to match current bin count spacing
-        let width_scale = bar_width / MIN_BAR_WIDTH;
+        transform.translation.x = (bar.0 as f32 - bin_count as f32 / 2.0) * bar_width;
         transform.scale.x = width_scale;
         transform.scale.z = width_scale;
 
-        // Beat phase adds a subtle height pulse on downbeats
-        let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
-        let target_height =
-            (telemetry.fft[bar.0] * MAX_HEIGHT * (1.0 + beat_pulse * 0.15)).max(0.01);
+        let target_height = (telemetry.fft[bar.0] * height_scale).max(0.01);
 
-        // Smooth lerp — fast attack, slow decay (time-based)
+        // Smooth lerp with pre-computed alpha
         let current = transform.scale.y;
-        let rate = if target_height > current {
-            ATTACK_RATE
+        let alpha = if target_height > current {
+            attack_alpha
         } else {
-            DECAY_RATE
+            decay_alpha
         };
-        let alpha = 1.0 - (-rate * dt).exp();
         let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
-        // Move bar up so base stays on the ground
         transform.translation.y = new_height / 2.0;
     }
 

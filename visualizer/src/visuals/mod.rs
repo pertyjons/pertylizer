@@ -51,6 +51,10 @@ struct EffectSwitch;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 struct ThemeUpdate;
 
+/// System set for material updates (runs after geometry updates to reduce lock contention).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct UpdateMaterials;
+
 /// Plugin that registers all visual systems.
 pub struct VisualsPlugin;
 
@@ -65,6 +69,7 @@ impl Plugin for VisualsPlugin {
             .init_resource::<phase_rings::RingState>()
             .init_resource::<flux_supernova::SupernovaState>()
             .init_resource::<instrument_cubes::CubeCount>()
+            .init_resource::<velocity_meteors::MeteorCount>()
             .init_resource::<theme::ThemeState>()
             .init_resource::<theme::ThemeRegistry>()
             .init_resource::<theme::ThemeMaterialPolicy>()
@@ -131,6 +136,7 @@ impl Plugin for VisualsPlugin {
                     .in_set(ThemeUpdate)
                     .after(EffectSwitch),
             )
+            // Geometry updates (no material writes — runs after ThemeUpdate)
             .add_systems(
                 Update,
                 (
@@ -146,17 +152,11 @@ impl Plugin for VisualsPlugin {
                     spectral_waterfall::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralWaterfall,
                     )),
-                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::SpectralWaterfall,
-                    )),
                     velocity_meteors::spawn
                         .run_if(effects::effect_active(effects::EffectId::VelocityMeteors)),
                     velocity_meteors::update,
                     phase_rings::spawn_and_update,
                     centroid_nebula::update.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::CentroidNebula,
-                    )),
-                    centroid_nebula::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::CentroidNebula,
                     )),
                     flux_supernova::update.run_if(effects::effect_active_or_pending(
@@ -182,19 +182,10 @@ impl Plugin for VisualsPlugin {
                     pulse_terrain::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::PulseTerrain,
                     )),
-                    pulse_terrain::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::PulseTerrain,
-                    )),
                     spectral_origami::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralOrigami,
                     )),
-                    spectral_origami::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::SpectralOrigami,
-                    )),
                     ferrofluid_tendrils::update.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::FerrofluidTendrils,
-                    )),
-                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FerrofluidTendrils,
                     )),
                     neon_calligraphy::update.run_if(effects::effect_active_or_pending(
@@ -209,9 +200,6 @@ impl Plugin for VisualsPlugin {
                     voronoi_shatter::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::VoronoiShatter,
                     )),
-                    voronoi_shatter::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::VoronoiShatter,
-                    )),
                     fft_terrain::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FftTerrain,
                     )),
@@ -222,6 +210,32 @@ impl Plugin for VisualsPlugin {
                         effects::EffectId::NoteTree,
                     )),
                 )
+                    .after(ThemeUpdate),
+            )
+            // Material updates — separated to reduce ResMut<Assets<StandardMaterial>> contention
+            .add_systems(
+                Update,
+                (
+                    spectral_waterfall::update_materials.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::SpectralWaterfall),
+                    ),
+                    centroid_nebula::update_material.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::CentroidNebula),
+                    ),
+                    pulse_terrain::update_material.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::PulseTerrain),
+                    ),
+                    spectral_origami::update_material.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::SpectralOrigami),
+                    ),
+                    ferrofluid_tendrils::update_material.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::FerrofluidTendrils),
+                    ),
+                    voronoi_shatter::update_material.run_if(
+                        effects::effect_active_or_pending(effects::EffectId::VoronoiShatter),
+                    ),
+                )
+                    .in_set(UpdateMaterials)
                     .after(ThemeUpdate),
             )
             .add_systems(

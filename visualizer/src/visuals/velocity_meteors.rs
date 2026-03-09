@@ -17,6 +17,9 @@ const FALL_DISTANCE: f32 = 40.0;
 /// Start height.
 const START_HEIGHT: f32 = 25.0;
 
+/// Maximum live meteors to prevent unbounded growth.
+const MAX_METEORS: usize = 256;
+
 /// A falling meteor.
 #[derive(Component)]
 pub struct Meteor {
@@ -64,14 +67,27 @@ pub fn setup(
     });
 }
 
+/// Tracks live meteor count to enforce the cap.
+#[derive(Resource, Default)]
+pub struct MeteorCount {
+    pub count: usize,
+}
+
 /// Spawn meteors on note-on.
 pub fn spawn(
     mut commands: Commands,
+    time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     meteor_mesh: Res<MeteorMesh>,
     meteor_materials: Res<MeteorMaterials>,
+    mut meteor_count: ResMut<MeteorCount>,
 ) {
+    let t = time.elapsed_secs();
+
     for note_event in &telemetry.pending_note_events {
+        if meteor_count.count >= MAX_METEORS {
+            break;
+        }
         // Offset material index by instrument category for per-instrument colors
         let cat_offset = telemetry_color::category_hue_offset(note_event.category);
         let base_idx = (note_event.midi_note as usize).min(127);
@@ -83,14 +99,8 @@ pub fn spawn(
         // Spread X based on note pitch (low notes left, high notes right)
         let spread_x = ((note_event.midi_note as f32 / 127.0) * 2.0 - 1.0) * 20.0;
 
-        // Randomize Z slightly for depth
-        let spread_z = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() as f32
-            / 1_000_000_000.0)
-            * 10.0
-            - 10.0;
+        // Vary Z depth using elapsed time and note pitch for pseudo-random spread
+        let spread_z = ((t * 7.3 + note_event.midi_note as f32 * 0.37).sin()) * 10.0;
 
         let material = meteor_materials.materials[note_idx].clone();
 
@@ -105,6 +115,7 @@ pub fn spawn(
             },
             EffectLayer(EffectId::VelocityMeteors),
         ));
+        meteor_count.count += 1;
     }
 }
 
@@ -120,6 +131,7 @@ pub fn update(
     mut last_policy_version: Local<u64>,
     mut last_hue_offset: Local<f32>,
     mut query: Query<(Entity, &mut Meteor, &mut Transform)>,
+    mut meteor_count: ResMut<MeteorCount>,
 ) {
     let dt = time.delta_secs();
 
@@ -154,6 +166,7 @@ pub fn update(
 
         if meteor.fallen >= FALL_DISTANCE {
             commands.entity(entity).despawn();
+            meteor_count.count = meteor_count.count.saturating_sub(1);
         }
     }
 }

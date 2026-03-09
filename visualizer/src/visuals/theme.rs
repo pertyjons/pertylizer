@@ -638,7 +638,18 @@ pub fn apply_theme(
     mut bloom_query: Query<&mut Bloom>,
     mut floor_query: Query<&MeshMaterial3d<StandardMaterial>, With<FloorEntity>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut last_applied: Local<Option<(ThemeId, bool)>>,
 ) {
+    // Skip if theme was already applied and we're not transitioning.
+    // The second tuple element tracks whether we were transitioning last frame,
+    // so we run once more after transition ends to apply final values.
+    let was_transitioning = last_applied.is_some_and(|(_, t)| t);
+    let already_applied = last_applied.is_some_and(|(id, _)| id == state.active);
+    if !state.transitioning && already_applied && !was_transitioning {
+        return;
+    }
+    *last_applied = Some((state.active, state.transitioning));
+
     let current_cfg = registry.get(state.active);
 
     if state.transitioning {

@@ -48,6 +48,15 @@ pub struct RingBarMaterials {
     materials: Vec<Handle<StandardMaterial>>,
 }
 
+/// Pre-computed ring positions and rotations per bin count, avoiding per-frame trig.
+#[derive(Resource, Default)]
+pub(crate) struct RingPositionCache {
+    /// The bin count these positions were computed for.
+    bin_count: usize,
+    /// (x, z, rotation_quat) for each bar index.
+    positions: Vec<(f32, f32, Quat)>,
+}
+
 /// Spawn `MAX_FFT_BANDS` bars arranged in a circle (initially hidden).
 pub fn setup(
     mut commands: Commands,
@@ -88,10 +97,30 @@ pub fn update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut tracker: Local<effects::HueMaterialTracker>,
+    mut pos_cache: Local<RingPositionCache>,
 ) {
     let bin_count = telemetry.fft_bin_count;
     let is_active = effect_state.active.is_active(EffectId::WaveformRing);
     let dt = time.delta_secs();
+
+    // Recompute ring positions only when bin count changes
+    if pos_cache.bin_count != bin_count {
+        pos_cache.bin_count = bin_count;
+        pos_cache.positions.clear();
+        let bc = bin_count.max(1) as f32;
+        for i in 0..MAX_FFT_BANDS {
+            let angle = (i as f32 / bc) * std::f32::consts::TAU;
+            pos_cache.positions.push((
+                angle.cos() * RING_RADIUS,
+                angle.sin() * RING_RADIUS,
+                Quat::from_rotation_y(-angle),
+            ));
+        }
+    }
+
+    // Pre-compute smoothing alphas once (same for all bars)
+    let attack_alpha = 1.0 - (-ATTACK_RATE * dt).exp();
+    let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
 
     for (mut transform, mut vis, bar) in &mut query {
         if bar.0 >= bin_count {
@@ -102,28 +131,24 @@ pub fn update(
             *vis = Visibility::Inherited;
         }
 
-        // Reposition on the ring based on active bin count
-        let angle = (bar.0 as f32 / bin_count as f32) * std::f32::consts::TAU;
-        let x = angle.cos() * RING_RADIUS;
-        let z = angle.sin() * RING_RADIUS;
+        // Use cached position/rotation (no per-frame trig)
+        let (x, z, rot) = pos_cache.positions[bar.0];
         transform.translation.x = x;
         transform.translation.z = z;
-        transform.rotation = Quat::from_rotation_y(-angle);
+        transform.rotation = rot;
 
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
-        // Smooth lerp (time-based)
+        // Smooth lerp with pre-computed alpha
         let current = transform.scale.y;
-        let rate = if target_height > current {
-            ATTACK_RATE
+        let alpha = if target_height > current {
+            attack_alpha
         } else {
-            DECAY_RATE
+            decay_alpha
         };
-        let alpha = 1.0 - (-rate * dt).exp();
         let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
-        // Keep bar base on the ground
         transform.translation.y = new_height / 2.0;
     }
 
