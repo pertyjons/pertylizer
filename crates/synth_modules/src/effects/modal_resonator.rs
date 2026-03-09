@@ -135,6 +135,7 @@ impl Describable for ModalResonator {
             .tag("modal")
             .parameter(
                 ParameterDescriptor::float(
+                    "base_note",
                     Param::ModalResonator(ModalResonatorParam::BaseNote(MidiNote::new(60))),
                     "Base Note",
                 )
@@ -145,6 +146,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "spread",
                     Param::ModalResonator(ModalResonatorParam::Spread(NormalizedValue::new(0.3))),
                     "Spread",
                 )
@@ -155,6 +157,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "modes",
                     Param::ModalResonator(ModalResonatorParam::Modes(VoiceCount::new(8))),
                     "Modes",
                 )
@@ -165,6 +168,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "decay",
                     Param::ModalResonator(ModalResonatorParam::Decay(NormalizedValue::new(0.6))),
                     "Decay",
                 )
@@ -175,6 +179,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "brightness",
                     Param::ModalResonator(ModalResonatorParam::Brightness(NormalizedValue::CENTER)),
                     "Brightness",
                 )
@@ -185,6 +190,7 @@ impl Describable for ModalResonator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::ModalResonator(ModalResonatorParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

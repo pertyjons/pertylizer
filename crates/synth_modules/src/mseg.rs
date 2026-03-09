@@ -383,15 +383,20 @@ impl Describable for Mseg {
             .tag("mseg")
             .tag("modulation")
             .parameter(
-                ParameterDescriptor::float(Param::Mseg(MsegParam::SegmentCount(4)), "Segments")
-                    .description("Number of active segments (1-16)")
-                    .range(1.0, 16.0)
-                    .default(4.0)
-                    .unit(ParameterUnit::None)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "segments",
+                    Param::Mseg(MsegParam::SegmentCount(4)),
+                    "Segments",
+                )
+                .description("Number of active segments (1-16)")
+                .range(1.0, 16.0)
+                .default(4.0)
+                .unit(ParameterUnit::None)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sustain_seg",
                     Param::Mseg(MsegParam::SustainSegment(2)),
                     "Sustain Seg",
                 )
@@ -402,15 +407,20 @@ impl Describable for Mseg {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Mseg(MsegParam::LoopEnabled(false)), "Loop")
-                    .description("Enable segment looping")
-                    .range(0.0, 1.0)
-                    .default(0.0)
-                    .unit(ParameterUnit::None)
-                    .widget(WidgetHint::Toggle),
+                ParameterDescriptor::float(
+                    "loop",
+                    Param::Mseg(MsegParam::LoopEnabled(false)),
+                    "Loop",
+                )
+                .description("Enable segment looping")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .unit(ParameterUnit::None)
+                .widget(WidgetHint::Toggle),
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "time_scale",
                     Param::Mseg(MsegParam::TimeScale(NormalizedValue::MAX)),
                     "Time Scale",
                 )

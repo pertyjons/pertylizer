@@ -111,6 +111,7 @@ impl Describable for Phaser {
             // To add CV modulation, this effect would need to use PolyModule instead.
             .parameter(
                 ParameterDescriptor::float(
+                    "rate",
                     Param::Phaser(PhaserParam::Rate(Hertz::new(0.5))),
                     "Rate",
                 )
@@ -122,6 +123,7 @@ impl Describable for Phaser {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "depth",
                     Param::Phaser(PhaserParam::Depth(NormalizedValue::new(0.7))),
                     "Depth",
                 )
@@ -132,6 +134,7 @@ impl Describable for Phaser {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "feedback",
                     Param::Phaser(PhaserParam::Feedback(BipolarValue::new(0.7))),
                     "Feedback",
                 )
@@ -142,6 +145,7 @@ impl Describable for Phaser {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "center_freq",
                     Param::Phaser(PhaserParam::CenterFreq(Hertz::new(1000.0))),
                     "Center Freq",
                 )
@@ -153,6 +157,7 @@ impl Describable for Phaser {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Phaser(PhaserParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )

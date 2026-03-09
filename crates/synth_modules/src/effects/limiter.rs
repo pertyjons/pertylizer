@@ -85,6 +85,7 @@ impl Describable for Limiter {
             .tag("effect")
             .parameter(
                 ParameterDescriptor::float(
+                    "ceiling",
                     Param::Limiter(LimiterParam::Ceiling(Decibels::new(-0.3))),
                     "Ceiling",
                 )
@@ -96,6 +97,7 @@ impl Describable for Limiter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "look_ahead",
                     Param::Limiter(LimiterParam::LookAhead(Milliseconds::new(3.0))),
                     "Look-Ahead",
                 )
@@ -107,6 +109,7 @@ impl Describable for Limiter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "release",
                     Param::Limiter(LimiterParam::Release(Milliseconds::new(100.0))),
                     "Release",
                 )
@@ -119,6 +122,7 @@ impl Describable for Limiter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Limiter(LimiterParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

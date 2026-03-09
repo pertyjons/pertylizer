@@ -182,6 +182,7 @@ impl Describable for Filter {
             .tag("svf")
             .parameter(
                 ParameterDescriptor::choice(
+                    "model",
                     Param::Filter(FilterParam::Model(FilterModel::Standard)),
                     "Model",
                     FilterModel::to_choices(),
@@ -190,6 +191,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "morph",
                     Param::Filter(FilterParam::Morph(NormalizedValue::MIN)),
                     "Morph",
                 )
@@ -200,6 +202,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "type",
                     Param::Filter(FilterParam::Mode(FilterMode::Lowpass)),
                     "Type",
                     FilterMode::to_choices(),
@@ -208,6 +211,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "cutoff",
                     Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0))),
                     "Cutoff",
                 )
@@ -220,6 +224,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "resonance",
                     Param::Filter(FilterParam::Resonance(NormalizedValue::MIN)),
                     "Resonance",
                 )
@@ -230,6 +235,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "key_track",
                     Param::Filter(FilterParam::KeyTracking(NormalizedValue::MIN)),
                     "Key Track",
                 )
@@ -241,6 +247,7 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "cv_amt",
                     Param::Filter(FilterParam::CutoffMod(BipolarValue::MAX)),
                     "CV Amt",
                 )
@@ -250,11 +257,15 @@ impl Describable for Filter {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Filter(FilterParam::Drive(Gain::UNITY)), "Drive")
-                    .description("Input gain with soft saturation (above 1.0)")
-                    .range(0.5, 4.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "drive",
+                    Param::Filter(FilterParam::Drive(Gain::UNITY)),
+                    "Drive",
+                )
+                .description("Input gain with soft saturation (above 1.0)")
+                .range(0.5, 4.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
             .port(
                 PortDescriptor::audio_input("in", "In").description(
@@ -479,6 +490,7 @@ impl Describable for LadderFilter {
             .tag("ladder")
             .parameter(
                 ParameterDescriptor::float(
+                    "cutoff",
                     Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0))),
                     "Cutoff",
                 )
@@ -491,6 +503,7 @@ impl Describable for LadderFilter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "resonance",
                     Param::Filter(FilterParam::Resonance(NormalizedValue::MIN)),
                     "Resonance",
                 )
@@ -500,12 +513,16 @@ impl Describable for LadderFilter {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Filter(FilterParam::Drive(Gain::UNITY)), "Drive")
-                    .description("Saturation amount (soft clipping above 1.0)")
-                    .range(0.5, 4.0)
-                    .default(1.0)
-                    .unit(ParameterUnit::None)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "drive",
+                    Param::Filter(FilterParam::Drive(Gain::UNITY)),
+                    "Drive",
+                )
+                .description("Saturation amount (soft clipping above 1.0)")
+                .range(0.5, 4.0)
+                .default(1.0)
+                .unit(ParameterUnit::None)
+                .widget(WidgetHint::Knob),
             )
             .port(
                 PortDescriptor::audio_input("in", "In")

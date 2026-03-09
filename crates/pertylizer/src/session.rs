@@ -570,7 +570,13 @@ impl SynthSession {
         let param_desc = descriptor
             .parameters
             .iter()
-            .find(|p| normalize(&p.name) == needle)
+            .find(|p| normalize(&p.type_id) == needle)
+            .or_else(|| {
+                descriptor
+                    .parameters
+                    .iter()
+                    .find(|p| normalize(&p.name) == needle)
+            })
             .ok_or_else(|| SessionError::ParameterNotFound(param_name.to_string()))?;
 
         let f32_value = match value {

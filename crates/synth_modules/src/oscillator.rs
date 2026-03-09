@@ -209,6 +209,7 @@ impl Describable for Oscillator {
             .tag("source")
             .parameter(
                 ParameterDescriptor::choice(
+                    "waveform",
                     Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)),
                     "Waveform",
                     Waveform::to_choices(),
@@ -218,6 +219,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "frequency",
                     Param::Oscillator(OscillatorParam::Frequency(Hertz::A4)),
                     "Frequency",
                 )
@@ -230,6 +232,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "detune",
                     Param::Oscillator(OscillatorParam::Detune(Cents::ZERO)),
                     "Detune",
                 )
@@ -241,6 +244,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pulse_width",
                     Param::Oscillator(OscillatorParam::PulseWidth(NormalizedValue::CENTER)),
                     "Pulse Width",
                 )
@@ -252,6 +256,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::Oscillator(OscillatorParam::Level(Gain::UNITY)),
                     "Level",
                 )
@@ -263,6 +268,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "fm_mode",
                     Param::Oscillator(OscillatorParam::FmMode(FmMode::Exponential)),
                     "FM Mode",
                     FmMode::to_choices(),
@@ -272,6 +278,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "fm_amt",
                     Param::Oscillator(OscillatorParam::FmAmount(BipolarValue::MAX)),
                     "FM Amt",
                 )
@@ -282,6 +289,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "unison",
                     Param::Oscillator(OscillatorParam::unison_voices_default()),
                     "Unison",
                 )
@@ -292,6 +300,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "uni_detune",
                     Param::Oscillator(OscillatorParam::unison_detune_default()),
                     "Uni Detune",
                 )
@@ -303,6 +312,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "uni_spread",
                     Param::Oscillator(OscillatorParam::unison_spread_default()),
                     "Uni Spread",
                 )
@@ -313,6 +323,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "uni_phase",
                     Param::Oscillator(OscillatorParam::unison_phase_random_default()),
                     "Uni Phase",
                 )
@@ -332,6 +343,7 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "x_mod",
                     Param::Oscillator(OscillatorParam::cross_mod_amount_default()),
                     "X-Mod",
                 )

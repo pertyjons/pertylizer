@@ -108,6 +108,7 @@ impl Describable for VectorMixer {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "x",
                     Param::VectorMixer(VectorMixerParam::X(BipolarValue::CENTER)),
                     "X",
                 )
@@ -118,6 +119,7 @@ impl Describable for VectorMixer {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "y",
                     Param::VectorMixer(VectorMixerParam::Y(BipolarValue::CENTER)),
                     "Y",
                 )

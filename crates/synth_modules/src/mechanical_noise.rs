@@ -149,6 +149,7 @@ impl Describable for MechanicalNoise {
             .tag("piano")
             .parameter(
                 ParameterDescriptor::choice(
+                    "type",
                     Param::MechanicalNoise(MechanicalNoiseParam::NoiseType(
                         MechanicalNoiseType::KeyDown,
                     )),
@@ -160,6 +161,7 @@ impl Describable for MechanicalNoise {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "duration",
                     Param::MechanicalNoise(MechanicalNoiseParam::Duration(Milliseconds::new(10.0))),
                     "Duration",
                 )
@@ -171,6 +173,7 @@ impl Describable for MechanicalNoise {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "cutoff",
                     Param::MechanicalNoise(MechanicalNoiseParam::Cutoff(Hertz::new(3000.0))),
                     "Cutoff",
                 )
@@ -183,6 +186,7 @@ impl Describable for MechanicalNoise {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "vel_sens",
                     Param::MechanicalNoise(MechanicalNoiseParam::VelocitySens(
                         NormalizedValue::new(0.5),
                     )),
@@ -196,6 +200,7 @@ impl Describable for MechanicalNoise {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::MechanicalNoise(MechanicalNoiseParam::Level(Gain::new(0.1))),
                     "Level",
                 )

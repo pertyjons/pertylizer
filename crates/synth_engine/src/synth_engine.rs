@@ -2073,10 +2073,6 @@ fn route_sequencer_events(
                 let vel = *velocity;
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
-                    eprintln!("[SEQ] NoteOn pitch={} vel={} seq_inst={} -> engine_inst={} (idx={}, modules={})",
-                        pitch.as_midi(), vel.as_f32(), instrument.0,
-                        instruments[idx].id().as_u64(), idx,
-                        instruments[idx].voice_graph().len());
                     instruments[idx].note_on(note, vel);
 
                     if note_event_producer

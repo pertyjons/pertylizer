@@ -171,6 +171,7 @@ impl Describable for FractalOscillator {
             .tag("stereo")
             .parameter(
                 ParameterDescriptor::float(
+                    "roughness",
                     Param::FractalOsc(FractalOscParam::Roughness(NormalizedValue::new(0.5))),
                     "Roughness",
                 )
@@ -181,6 +182,7 @@ impl Describable for FractalOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "spacing",
                     Param::FractalOsc(FractalOscParam::FractalSpacing(NormalizedValue::new(0.11))),
                     "Spacing",
                 )
@@ -191,6 +193,7 @@ impl Describable for FractalOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "dispersion",
                     Param::FractalOsc(FractalOscParam::Dispersion(NormalizedValue::MIN)),
                     "Dispersion",
                 )
@@ -201,6 +204,7 @@ impl Describable for FractalOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "spread",
                     Param::FractalOsc(FractalOscParam::Spread(NormalizedValue::new(0.5))),
                     "Spread",
                 )
@@ -211,6 +215,7 @@ impl Describable for FractalOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::FractalOsc(FractalOscParam::Level(NormalizedValue::MAX)),
                     "Level",
                 )

@@ -167,6 +167,7 @@ impl Describable for GranularFx {
             .tag("cloud")
             .parameter(
                 ParameterDescriptor::float(
+                    "buffer",
                     Param::GranularFx(GranularFxParam::BufferTime(Seconds::new(2.0))),
                     "Buffer",
                 )
@@ -178,6 +179,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "grain_size",
                     Param::GranularFx(GranularFxParam::GrainSize(Milliseconds::new(40.0))),
                     "Grain Size",
                 )
@@ -188,6 +190,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "density",
                     Param::GranularFx(GranularFxParam::Density(NormalizedValue::new(0.6))),
                     "Density",
                 )
@@ -197,6 +200,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "position",
                     Param::GranularFx(GranularFxParam::Position(NormalizedValue::CENTER)),
                     "Position",
                 )
@@ -206,6 +210,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pos_spread",
                     Param::GranularFx(GranularFxParam::PositionSpread(NormalizedValue::new(0.3))),
                     "Pos Spread",
                 )
@@ -215,6 +220,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pitch_spread",
                     Param::GranularFx(GranularFxParam::PitchSpread(NormalizedValue::new(0.2))),
                     "Pitch Spread",
                 )
@@ -224,6 +230,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pan_spread",
                     Param::GranularFx(GranularFxParam::PanSpread(NormalizedValue::CENTER)),
                     "Pan Spread",
                 )
@@ -233,6 +240,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "freeze",
                     Param::GranularFx(GranularFxParam::Freeze(false)),
                     "Freeze",
                 )
@@ -243,6 +251,7 @@ impl Describable for GranularFx {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::GranularFx(GranularFxParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

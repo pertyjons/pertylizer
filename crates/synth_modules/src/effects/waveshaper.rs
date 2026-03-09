@@ -133,6 +133,7 @@ impl Describable for Waveshaper {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::choice(
+                    "curve",
                     Param::Waveshaper(WaveshaperParam::Curve(WaveshaperCurve::SoftClip)),
                     "Curve",
                     WaveshaperCurve::to_choices(),
@@ -141,6 +142,7 @@ impl Describable for Waveshaper {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "drive",
                     Param::Waveshaper(WaveshaperParam::Drive(NormalizedValue::new(0.3))),
                     "Drive",
                 )
@@ -151,6 +153,7 @@ impl Describable for Waveshaper {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Waveshaper(WaveshaperParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
@@ -161,6 +164,7 @@ impl Describable for Waveshaper {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "bias",
                     Param::Waveshaper(WaveshaperParam::Bias(BipolarValue::CENTER)),
                     "Bias",
                 )
@@ -171,6 +175,7 @@ impl Describable for Waveshaper {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "symmetry",
                     Param::Waveshaper(WaveshaperParam::Symmetry(BipolarValue::CENTER)),
                     "Symmetry",
                 )

@@ -97,6 +97,7 @@ impl Describable for FrequencyShifter {
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .parameter(
                 ParameterDescriptor::float(
+                    "shift",
                     Param::FrequencyShifter(FrequencyShifterParam::Shift(Hertz::new(0.0))),
                     "Shift",
                 )
@@ -108,6 +109,7 @@ impl Describable for FrequencyShifter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::FrequencyShifter(FrequencyShifterParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
@@ -118,6 +120,7 @@ impl Describable for FrequencyShifter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mode",
                     Param::FrequencyShifter(FrequencyShifterParam::Mode(NormalizedValue::MIN)),
                     "Mode",
                 )

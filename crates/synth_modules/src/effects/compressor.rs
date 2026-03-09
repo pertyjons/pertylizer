@@ -108,6 +108,7 @@ impl Describable for Compressor {
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .parameter(
                 ParameterDescriptor::float(
+                    "threshold",
                     Param::Compressor(CompressorParam::Threshold(Decibels::new(-20.0))),
                     "Threshold",
                 )
@@ -119,6 +120,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "ratio",
                     Param::Compressor(CompressorParam::Ratio(Ratio::MEDIUM)),
                     "Ratio",
                 )
@@ -129,6 +131,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "attack",
                     Param::Compressor(CompressorParam::Attack(Milliseconds::new(10.0))),
                     "Attack",
                 )
@@ -140,6 +143,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "release",
                     Param::Compressor(CompressorParam::Release(Milliseconds::new(100.0))),
                     "Release",
                 )
@@ -151,6 +155,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "makeup",
                     Param::Compressor(CompressorParam::Makeup(Decibels::new(0.0))),
                     "Makeup",
                 )
@@ -162,6 +167,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Compressor(CompressorParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
@@ -172,6 +178,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sidechain",
                     Param::Compressor(CompressorParam::SidechainEnabled(false)),
                     "Sidechain",
                 )
@@ -182,6 +189,7 @@ impl Describable for Compressor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sc_filter",
                     Param::Compressor(CompressorParam::SidechainFilter(Hertz::new(80.0))),
                     "SC Filter",
                 )

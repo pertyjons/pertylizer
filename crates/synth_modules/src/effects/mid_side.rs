@@ -66,6 +66,7 @@ impl Describable for MidSide {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::float(
+                    "width",
                     Param::MidSide(MidSideParam::Width(Self::DEFAULT_WIDTH)),
                     "Width",
                 )
@@ -76,6 +77,7 @@ impl Describable for MidSide {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mid_gain",
                     Param::MidSide(MidSideParam::MidGain(Decibels::UNITY)),
                     "Mid Gain",
                 )
@@ -87,6 +89,7 @@ impl Describable for MidSide {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "side_gain",
                     Param::MidSide(MidSideParam::SideGain(Decibels::UNITY)),
                     "Side Gain",
                 )
@@ -98,6 +101,7 @@ impl Describable for MidSide {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::MidSide(MidSideParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

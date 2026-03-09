@@ -312,6 +312,7 @@ impl Describable for Envelope {
             .tag("adsr")
             .parameter(
                 ParameterDescriptor::float(
+                    "attack",
                     Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.01))),
                     "Attack",
                 )
@@ -323,6 +324,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "decay",
                     Param::Envelope(EnvelopeParam::Decay(Seconds::new(0.1))),
                     "Decay",
                 )
@@ -334,6 +336,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sustain",
                     Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.7))),
                     "Sustain",
                 )
@@ -344,6 +347,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "release",
                     Param::Envelope(EnvelopeParam::Release(Seconds::new(0.3))),
                     "Release",
                 )
@@ -355,6 +359,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "vel_sens",
                     Param::Envelope(EnvelopeParam::VelocitySensitivity(NormalizedValue::MAX)),
                     "Vel Sens",
                 )
@@ -364,6 +369,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "atk_curve",
                     Param::Envelope(EnvelopeParam::AttackCurve(BipolarValue::CENTER)),
                     "Atk Curve",
                 )
@@ -373,6 +379,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "dec_curve",
                     Param::Envelope(EnvelopeParam::DecayCurve(BipolarValue::CENTER)),
                     "Dec Curve",
                 )
@@ -382,6 +389,7 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "rel_curve",
                     Param::Envelope(EnvelopeParam::ReleaseCurve(BipolarValue::CENTER)),
                     "Rel Curve",
                 )

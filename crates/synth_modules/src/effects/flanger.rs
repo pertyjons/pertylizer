@@ -87,6 +87,7 @@ impl Describable for Flanger {
             // To add CV modulation, this effect would need to use PolyModule instead.
             .parameter(
                 ParameterDescriptor::float(
+                    "rate",
                     Param::Flanger(FlangerParam::Rate(Hertz::new(0.3))),
                     "Rate",
                 )
@@ -98,6 +99,7 @@ impl Describable for Flanger {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "depth",
                     Param::Flanger(FlangerParam::Depth(NormalizedValue::new(0.7))),
                     "Depth",
                 )
@@ -108,6 +110,7 @@ impl Describable for Flanger {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "feedback",
                     Param::Flanger(FlangerParam::Feedback(BipolarValue::new(0.7))),
                     "Feedback",
                 )
@@ -118,6 +121,7 @@ impl Describable for Flanger {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "delay",
                     Param::Flanger(FlangerParam::Delay(Milliseconds::new(2.0))),
                     "Delay",
                 )
@@ -129,6 +133,7 @@ impl Describable for Flanger {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Flanger(FlangerParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )

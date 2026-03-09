@@ -111,6 +111,7 @@ impl Describable for Delay {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::choice(
+                    "mode",
                     Param::Delay(DelayParam::Mode(DelayMode::Mono)),
                     "Mode",
                     DelayMode::to_choices(),
@@ -119,6 +120,7 @@ impl Describable for Delay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "time",
                     Param::Delay(DelayParam::Time(Seconds::new(0.375))),
                     "Time",
                 )
@@ -131,6 +133,7 @@ impl Describable for Delay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "feedback",
                     Param::Delay(DelayParam::Feedback(NormalizedValue::new(0.4))),
                     "Feedback",
                 )
@@ -141,6 +144,7 @@ impl Describable for Delay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Delay(DelayParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )
@@ -151,6 +155,7 @@ impl Describable for Delay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "tone",
                     Param::Delay(DelayParam::Damping(NormalizedValue::new(0.4))),
                     "Tone",
                 )

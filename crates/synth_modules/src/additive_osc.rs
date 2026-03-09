@@ -142,6 +142,7 @@ impl Describable for AdditiveOsc {
             .tag("spectral")
             .parameter(
                 ParameterDescriptor::float(
+                    "tilt",
                     Param::AdditiveOsc(AdditiveParam::Tilt(NormalizedValue::new(0.5))),
                     "Tilt",
                 )
@@ -152,6 +153,7 @@ impl Describable for AdditiveOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "odd_even",
                     Param::AdditiveOsc(AdditiveParam::OddEven(NormalizedValue::CENTER)),
                     "Odd/Even",
                 )
@@ -162,6 +164,7 @@ impl Describable for AdditiveOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "brightness",
                     Param::AdditiveOsc(AdditiveParam::Brightness(NormalizedValue::new(0.7))),
                     "Brightness",
                 )
@@ -172,6 +175,7 @@ impl Describable for AdditiveOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "stretch",
                     Param::AdditiveOsc(AdditiveParam::Stretch(NormalizedValue::MIN)),
                     "Stretch",
                 )
@@ -182,6 +186,7 @@ impl Describable for AdditiveOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "randomize",
                     Param::AdditiveOsc(AdditiveParam::Randomize(NormalizedValue::new(0.1))),
                     "Randomize",
                 )
@@ -192,6 +197,7 @@ impl Describable for AdditiveOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::AdditiveOsc(AdditiveParam::Level(NormalizedValue::MAX)),
                     "Level",
                 )

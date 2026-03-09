@@ -129,6 +129,7 @@ impl Describable for ModMatrix {
         // Grid size selector (first parameter)
         desc = desc.parameter(
             ParameterDescriptor::choice(
+                "grid_size",
                 Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::default())),
                 "Grid Size".to_string(),
                 ModMatrixGridSize::to_choices(),
@@ -143,6 +144,7 @@ impl Describable for ModMatrix {
 
             desc = desc.parameter(
                 ParameterDescriptor::choice(
+                    format!("slot_{slot_num}_source"),
                     Param::ModMatrix(ModMatrixParam::SlotSource(slot, ModSource::None)),
                     format!("Slot {slot_num} Source"),
                     ModSource::to_choices(),
@@ -152,6 +154,7 @@ impl Describable for ModMatrix {
 
             desc = desc.parameter(
                 ParameterDescriptor::choice(
+                    format!("slot_{slot_num}_dest"),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
                     format!("Slot {slot_num} Dest"),
                     ModDestination::to_choices(),
@@ -161,6 +164,7 @@ impl Describable for ModMatrix {
 
             desc = desc.parameter(
                 ParameterDescriptor::float(
+                    format!("slot_{slot_num}_amount"),
                     Param::ModMatrix(ModMatrixParam::SlotAmount(slot, BipolarValue::CENTER)),
                     format!("Slot {slot_num} Amount"),
                 )
@@ -172,6 +176,7 @@ impl Describable for ModMatrix {
 
             desc = desc.parameter(
                 ParameterDescriptor::float(
+                    format!("slot_{slot_num}_enabled"),
                     Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
                     format!("Slot {slot_num} Enabled"),
                 )

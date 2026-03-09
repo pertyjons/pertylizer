@@ -169,6 +169,7 @@ impl Describable for PhaseVocoder {
             .tag("freeze")
             .parameter(
                 ParameterDescriptor::float(
+                    "pitch_shift",
                     Param::PhaseVocoder(PhaseVocoderParam::PitchShift(Semitones(0.0))),
                     "Pitch Shift",
                 )
@@ -179,6 +180,7 @@ impl Describable for PhaseVocoder {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "freeze",
                     Param::PhaseVocoder(PhaseVocoderParam::Freeze(false)),
                     "Freeze",
                 )
@@ -187,6 +189,7 @@ impl Describable for PhaseVocoder {
                 .widget(WidgetHint::Toggle),
             )
             .parameter(ParameterDescriptor::choice(
+                "fft_size",
                 Param::PhaseVocoder(PhaseVocoderParam::FftSize(FftSizeOption::Fft1024)),
                 "FFT Size",
                 FftSizeOption::ALL
@@ -196,6 +199,7 @@ impl Describable for PhaseVocoder {
             ))
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::PhaseVocoder(PhaseVocoderParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

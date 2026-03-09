@@ -78,6 +78,7 @@ impl Describable for Chorus {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::float(
+                    "rate",
                     Param::Chorus(ChorusParam::Rate(Hertz::new(0.5))),
                     "Rate",
                 )
@@ -89,6 +90,7 @@ impl Describable for Chorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "depth",
                     Param::Chorus(ChorusParam::Depth(NormalizedValue::CENTER)),
                     "Depth",
                 )
@@ -99,6 +101,7 @@ impl Describable for Chorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Chorus(ChorusParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )
@@ -109,6 +112,7 @@ impl Describable for Chorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "voices",
                     Param::Chorus(ChorusParam::Voices(VoiceCount::DUAL)),
                     "Voices",
                 )

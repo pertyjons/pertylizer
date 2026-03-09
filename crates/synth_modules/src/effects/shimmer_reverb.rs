@@ -196,6 +196,7 @@ impl Describable for ShimmerReverb {
             .tag("shimmer")
             .parameter(
                 ParameterDescriptor::float(
+                    "room_size",
                     Param::ShimmerReverb(ShimmerReverbParam::RoomSize(NormalizedValue::new(0.6))),
                     "Room Size",
                 )
@@ -205,6 +206,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "decay",
                     Param::ShimmerReverb(ShimmerReverbParam::Decay(NormalizedValue::new(0.7))),
                     "Decay",
                 )
@@ -214,6 +216,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "damping",
                     Param::ShimmerReverb(ShimmerReverbParam::Damping(NormalizedValue::new(0.4))),
                     "Damping",
                 )
@@ -223,6 +226,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pre_delay",
                     Param::ShimmerReverb(ShimmerReverbParam::PreDelay(Seconds::ZERO)),
                     "Pre-Delay",
                 )
@@ -233,6 +237,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pitch",
                     Param::ShimmerReverb(ShimmerReverbParam::PitchSemitones(Semitones::new(12.0))),
                     "Pitch",
                 )
@@ -244,6 +249,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "shimmer",
                     Param::ShimmerReverb(ShimmerReverbParam::ShimmerMix(NormalizedValue::new(
                         0.35,
                     ))),
@@ -256,6 +262,7 @@ impl Describable for ShimmerReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::ShimmerReverb(ShimmerReverbParam::Mix(NormalizedValue::new(0.4))),
                     "Mix",
                 )

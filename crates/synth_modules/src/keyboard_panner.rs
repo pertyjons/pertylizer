@@ -105,6 +105,7 @@ impl Describable for KeyboardPanner {
             .tag("spatial")
             .parameter(
                 ParameterDescriptor::float(
+                    "spread",
                     Param::KeyboardPanner(KeyboardPannerParam::Spread(NormalizedValue::new(0.5))),
                     "Spread",
                 )
@@ -116,6 +117,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "center",
                     Param::KeyboardPanner(KeyboardPannerParam::CenterNote(MidiNote::C4)),
                     "Center",
                 )
@@ -127,6 +129,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "curve",
                     Param::KeyboardPanner(KeyboardPannerParam::Curve(BipolarValue::CENTER)),
                     "Curve",
                 )
@@ -138,6 +141,7 @@ impl Describable for KeyboardPanner {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "invert",
                     Param::KeyboardPanner(KeyboardPannerParam::Invert(Polarity::Normal)),
                     "Invert",
                 )

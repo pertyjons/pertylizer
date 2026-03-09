@@ -213,6 +213,7 @@ impl Describable for Eq {
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
             .parameter(
                 ParameterDescriptor::float(
+                    "low_freq",
                     Param::Eq(EqParam::LowFreq(Hertz::new(200.0))),
                     "Low Freq",
                 )
@@ -224,6 +225,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "low_gain",
                     Param::Eq(EqParam::LowGain(Decibels::new(0.0))),
                     "Low Gain",
                 )
@@ -235,6 +237,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mid_freq",
                     Param::Eq(EqParam::MidFreq(Hertz::new(1000.0))),
                     "Mid Freq",
                 )
@@ -246,6 +249,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mid_gain",
                     Param::Eq(EqParam::MidGain(Decibels::new(0.0))),
                     "Mid Gain",
                 )
@@ -257,6 +261,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mid_q",
                     Param::Eq(EqParam::MidQ(NormalizedValue::new(1.0))),
                     "Mid Q",
                 )
@@ -267,6 +272,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "high_freq",
                     Param::Eq(EqParam::HighFreq(Hertz::new(4000.0))),
                     "High Freq",
                 )
@@ -278,6 +284,7 @@ impl Describable for Eq {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "high_gain",
                     Param::Eq(EqParam::HighGain(Decibels::new(0.0))),
                     "High Gain",
                 )
@@ -288,11 +295,15 @@ impl Describable for Eq {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Eq(EqParam::Mix(NormalizedValue::MAX)), "Mix")
-                    .description("Dry/wet mix")
-                    .range(0.0, 1.0)
-                    .default(1.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "mix",
+                    Param::Eq(EqParam::Mix(NormalizedValue::MAX)),
+                    "Mix",
+                )
+                .description("Dry/wet mix")
+                .range(0.0, 1.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
             )
     }
 }

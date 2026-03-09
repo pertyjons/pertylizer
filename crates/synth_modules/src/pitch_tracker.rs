@@ -192,6 +192,7 @@ impl Describable for PitchTracker {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sensitivity",
                     Param::PitchTracker(PitchTrackerParam::Sensitivity(NormalizedValue::new(0.5))),
                     "Sensitivity",
                 )
@@ -202,6 +203,7 @@ impl Describable for PitchTracker {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "min_freq",
                     Param::PitchTracker(PitchTrackerParam::MinFreq(Hertz::new(50.0))),
                     "Min Freq",
                 )
@@ -213,6 +215,7 @@ impl Describable for PitchTracker {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "max_freq",
                     Param::PitchTracker(PitchTrackerParam::MaxFreq(Hertz::new(2000.0))),
                     "Max Freq",
                 )
@@ -224,6 +227,7 @@ impl Describable for PitchTracker {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "smoothing",
                     Param::PitchTracker(PitchTrackerParam::Smoothing(NormalizedValue::new(0.3))),
                     "Smoothing",
                 )

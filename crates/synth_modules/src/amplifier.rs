@@ -76,6 +76,7 @@ impl Describable for Amplifier {
             .tag("vca")
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::Amplifier(AmplifierParam::Level(Gain::UNITY)),
                     "Level",
                 )
@@ -85,6 +86,7 @@ impl Describable for Amplifier {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pan",
                     Param::Amplifier(AmplifierParam::Pan(BipolarValue::CENTER)),
                     "Pan",
                 )
@@ -94,6 +96,7 @@ impl Describable for Amplifier {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "cv_bipolar",
                     Param::Amplifier(AmplifierParam::CvBipolar(false)),
                     "CV Bipolar",
                 )
@@ -298,10 +301,14 @@ impl Describable for Mixer {
 
         // Master first (it's the master output level, not an input)
         desc = desc.parameter(
-            ParameterDescriptor::float(Param::Mixer(MixerParam::Master(Gain::UNITY)), "Master")
-                .range(0.0, 2.0)
-                .default(1.0)
-                .widget(WidgetHint::Slider),
+            ParameterDescriptor::float(
+                "master",
+                Param::Mixer(MixerParam::Master(Gain::UNITY)),
+                "Master",
+            )
+            .range(0.0, 2.0)
+            .default(1.0)
+            .widget(WidgetHint::Slider),
         );
 
         let input_params = [
@@ -324,10 +331,14 @@ impl Describable for Mixer {
                     ),
                 )
                 .parameter(
-                    ParameterDescriptor::float(Param::Mixer(param), format!("Input {n}"))
-                        .range(0.0, 2.0)
-                        .default(1.0)
-                        .widget(WidgetHint::Slider),
+                    ParameterDescriptor::float(
+                        format!("input_{n}"),
+                        Param::Mixer(param),
+                        format!("Input {n}"),
+                    )
+                    .range(0.0, 2.0)
+                    .default(1.0)
+                    .widget(WidgetHint::Slider),
                 );
         }
 

@@ -82,6 +82,7 @@ impl Describable for LevelMeter {
             .tag("level")
             .parameter(
                 ParameterDescriptor::float(
+                    "hold",
                     Param::LevelMeter(LevelMeterParam::PeakHold(Seconds::new(1.0))),
                     "Hold",
                 )

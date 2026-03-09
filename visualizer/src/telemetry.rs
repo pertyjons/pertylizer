@@ -90,9 +90,6 @@ pub struct SynthTelemetry {
     /// Event ring buffer drops since last report.
     pub event_drops: u32,
 
-    // -- Protocol state --
-    /// Whether a protocol version mismatch was already logged.
-    pub version_warned: bool,
 }
 
 impl Default for SynthTelemetry {
@@ -124,7 +121,6 @@ impl Default for SynthTelemetry {
             voice_count: 0,
             cpu: 0.0,
             event_drops: 0,
-            version_warned: false,
         }
     }
 }

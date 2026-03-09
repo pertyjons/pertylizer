@@ -537,10 +537,17 @@ fn apply_module_parameters(
     instrument_id: InstrumentId,
 ) {
     for (param_name, value) in parameters {
+        // Match on type_id first (stable JSON key), fall back to name for legacy files.
         let param_desc = descriptor
             .parameters
             .iter()
-            .find(|p| p.name.to_lowercase() == param_name.to_lowercase());
+            .find(|p| p.type_id.to_lowercase() == param_name.to_lowercase())
+            .or_else(|| {
+                descriptor
+                    .parameters
+                    .iter()
+                    .find(|p| p.name.to_lowercase() == param_name.to_lowercase())
+            });
 
         if let Some(param_desc) = param_desc {
             let f32_value = match value {

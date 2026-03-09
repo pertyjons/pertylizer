@@ -130,6 +130,7 @@ impl Describable for Distortion {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::choice(
+                    "type",
                     Param::Distortion(DistortionParam::Mode(DistortionMode::SoftClip)),
                     "Type",
                     DistortionMode::to_choices(),
@@ -138,6 +139,7 @@ impl Describable for Distortion {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "drive",
                     Param::Distortion(DistortionParam::Drive(NormalizedValue::CENTER)),
                     "Drive",
                 )
@@ -148,6 +150,7 @@ impl Describable for Distortion {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "tone",
                     Param::Distortion(DistortionParam::Tone(NormalizedValue::new(0.8))),
                     "Tone",
                 )
@@ -158,6 +161,7 @@ impl Describable for Distortion {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Distortion(DistortionParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
@@ -168,6 +172,7 @@ impl Describable for Distortion {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "bit_depth",
                     Param::Distortion(DistortionParam::BitDepth(NormalizedValue::CENTER)),
                     "Bit Depth",
                 )

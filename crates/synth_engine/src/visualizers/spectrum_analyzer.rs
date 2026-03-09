@@ -83,6 +83,7 @@ impl Describable for SpectrumAnalyzer {
             .tag("fft")
             .parameter(
                 ParameterDescriptor::float(
+                    "gain",
                     Param::SpectrumAnalyzer(SpectrumAnalyzerParam::Gain(Gain::UNITY)),
                     "Gain",
                 )

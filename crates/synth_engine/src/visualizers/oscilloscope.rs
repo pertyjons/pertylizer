@@ -113,6 +113,7 @@ impl Describable for Oscilloscope {
             .tag("waveform")
             .parameter(
                 ParameterDescriptor::float(
+                    "time",
                     Param::Oscilloscope(OscilloscopeParam::Time(Seconds::new(0.01))),
                     "Time",
                 )
@@ -123,6 +124,7 @@ impl Describable for Oscilloscope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "gain",
                     Param::Oscilloscope(OscilloscopeParam::Gain(Gain::UNITY)),
                     "Gain",
                 )
@@ -133,6 +135,7 @@ impl Describable for Oscilloscope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "trig",
                     Param::Oscilloscope(OscilloscopeParam::Trigger(NormalizedValue::CENTER)),
                     "Trig",
                 )

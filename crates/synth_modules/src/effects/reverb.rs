@@ -145,6 +145,7 @@ impl Describable for Reverb {
             // No ports - effect chain modules are processed automatically
             .parameter(
                 ParameterDescriptor::float(
+                    "room_size",
                     Param::Reverb(ReverbParam::RoomSize(NormalizedValue::CENTER)),
                     "Room Size",
                 )
@@ -155,6 +156,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "decay",
                     Param::Reverb(ReverbParam::Decay(NormalizedValue::CENTER)),
                     "Decay",
                 )
@@ -165,6 +167,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "damping",
                     Param::Reverb(ReverbParam::Damping(NormalizedValue::CENTER)),
                     "Damping",
                 )
@@ -175,6 +178,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "diffusion",
                     Param::Reverb(ReverbParam::Diffusion(NormalizedValue::CENTER)),
                     "Diffusion",
                 )
@@ -185,6 +189,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pre_delay",
                     Param::Reverb(ReverbParam::PreDelay(Seconds::ZERO)),
                     "Pre-Delay",
                 )
@@ -196,6 +201,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "low_cut",
                     Param::Reverb(ReverbParam::LowCut(Hertz::new(80.0))),
                     "Low Cut",
                 )
@@ -207,6 +213,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "width",
                     Param::Reverb(ReverbParam::Width(NormalizedValue::MAX)),
                     "Width",
                 )
@@ -217,6 +224,7 @@ impl Describable for Reverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Reverb(ReverbParam::Mix(NormalizedValue::new(0.3))),
                     "Mix",
                 )

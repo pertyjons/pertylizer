@@ -161,8 +161,9 @@ impl Describable for StereoOutput {
             // Parameters
             .parameter(
                 ParameterDescriptor::float(
+                    "master",
                     Param::Mixer(MixerParam::Master(Gain::new(0.8))),
-                    "Master Level",
+                    "Master",
                 )
                 .description("Master output volume")
                 .range(0.0, 1.0)
@@ -173,6 +174,7 @@ impl Describable for StereoOutput {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pan",
                     Param::Amplifier(AmplifierParam::Pan(BipolarValue::CENTER)),
                     "Pan",
                 )
@@ -183,14 +185,14 @@ impl Describable for StereoOutput {
                 .widget(WidgetHint::PanKnob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Mixer(MixerParam::Limit(true)), "Limiter")
+                ParameterDescriptor::float("limit", Param::Mixer(MixerParam::Limit(true)), "Limit")
                     .description("Enable soft limiter to prevent clipping")
                     .range(0.0, 1.0)
                     .default(1.0)
                     .widget(WidgetHint::Toggle),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Mixer(MixerParam::Mute(false)), "Mute")
+                ParameterDescriptor::float("mute", Param::Mixer(MixerParam::Mute(false)), "Mute")
                     .description("Mute output")
                     .range(0.0, 1.0)
                     .default(0.0)
@@ -346,8 +348,7 @@ impl PolyModule for StereoOutput {
     }
 
     fn module_type(&self) -> ModuleType {
-        // Treat as Mixer type for compatibility (Output category)
-        ModuleType::Mixer
+        ModuleType::StereoOutput
     }
 
     fn reset(&mut self) {

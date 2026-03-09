@@ -84,6 +84,7 @@ impl Describable for RandomGates {
             .tag("gates")
             .parameter(
                 ParameterDescriptor::float(
+                    "density",
                     Param::RandomGates(RandomGatesParam::Density(NormalizedValue::CENTER)),
                     "Density",
                 )
@@ -93,14 +94,19 @@ impl Describable for RandomGates {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::RandomGates(RandomGatesParam::Seed(42)), "Seed")
-                    .description("Random seed for reproducibility")
-                    .range(0.0, 65535.0)
-                    .default(42.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "seed",
+                    Param::RandomGates(RandomGatesParam::Seed(42)),
+                    "Seed",
+                )
+                .description("Random seed for reproducibility")
+                .range(0.0, 65535.0)
+                .default(42.0)
+                .widget(WidgetHint::Knob),
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "burst",
                     Param::RandomGates(RandomGatesParam::BurstProbability(NormalizedValue::new(
                         0.1,
                     ))),
@@ -113,6 +119,7 @@ impl Describable for RandomGates {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "gate_len",
                     Param::RandomGates(RandomGatesParam::GateLength(NormalizedValue::CENTER)),
                     "Gate Len",
                 )

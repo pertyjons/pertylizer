@@ -169,6 +169,7 @@ impl Describable for BbdDelay {
             .tag("time")
             .parameter(
                 ParameterDescriptor::float(
+                    "time",
                     Param::BbdDelay(BbdDelayParam::Time(Seconds::new(0.3))),
                     "Time",
                 )
@@ -181,6 +182,7 @@ impl Describable for BbdDelay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "feedback",
                     Param::BbdDelay(BbdDelayParam::Feedback(NormalizedValue::new(0.5))),
                     "Feedback",
                 )
@@ -191,6 +193,7 @@ impl Describable for BbdDelay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "tone",
                     Param::BbdDelay(BbdDelayParam::Tone(NormalizedValue::CENTER)),
                     "Tone",
                 )
@@ -201,6 +204,7 @@ impl Describable for BbdDelay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "wow_flutter",
                     Param::BbdDelay(BbdDelayParam::WowFlutter(NormalizedValue::new(0.3))),
                     "Wow/Flutter",
                 )
@@ -211,6 +215,7 @@ impl Describable for BbdDelay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "clock_noise",
                     Param::BbdDelay(BbdDelayParam::ClockNoise(NormalizedValue::new(0.2))),
                     "Clock Noise",
                 )
@@ -221,6 +226,7 @@ impl Describable for BbdDelay {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::BbdDelay(BbdDelayParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )

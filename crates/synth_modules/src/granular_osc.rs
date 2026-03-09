@@ -266,6 +266,7 @@ impl Describable for GranularOsc {
             .tag("texture")
             .parameter(
                 ParameterDescriptor::float(
+                    "grain_size",
                     Param::GranularOsc(GranularParam::GrainSize(Milliseconds::new(50.0))),
                     "Grain Size",
                 )
@@ -276,6 +277,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "density",
                     Param::GranularOsc(GranularParam::Density(NormalizedValue::new(0.5))),
                     "Density",
                 )
@@ -285,6 +287,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "position",
                     Param::GranularOsc(GranularParam::Position(NormalizedValue::MIN)),
                     "Position",
                 )
@@ -294,6 +297,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pos_spread",
                     Param::GranularOsc(GranularParam::PositionSpread(NormalizedValue::new(0.1))),
                     "Pos Spread",
                 )
@@ -303,6 +307,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pitch_spread",
                     Param::GranularOsc(GranularParam::PitchSpread(NormalizedValue::MIN)),
                     "Pitch Spread",
                 )
@@ -312,6 +317,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pan_spread",
                     Param::GranularOsc(GranularParam::PanSpread(NormalizedValue::MIN)),
                     "Pan Spread",
                 )
@@ -321,6 +327,7 @@ impl Describable for GranularOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "freeze",
                     Param::GranularOsc(GranularParam::Freeze(false)),
                     "Freeze",
                 )
@@ -329,6 +336,7 @@ impl Describable for GranularOsc {
                 .widget(WidgetHint::Toggle),
             )
             .parameter(ParameterDescriptor::choice(
+                "window",
                 Param::GranularOsc(GranularParam::Window(GrainWindow::Hann)),
                 "Window",
                 GrainWindow::ALL
@@ -337,6 +345,7 @@ impl Describable for GranularOsc {
                     .collect(),
             ))
             .parameter(ParameterDescriptor::choice(
+                "source",
                 Param::GranularOsc(GranularParam::Source(GrainSource::Saw)),
                 "Source",
                 GrainSource::ALL
@@ -346,6 +355,7 @@ impl Describable for GranularOsc {
             ))
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::GranularOsc(GranularParam::Level(Gain::UNITY)),
                     "Level",
                 )

@@ -174,6 +174,7 @@ impl Describable for NoiseGenerator {
             .tag("percussion")
             .parameter(
                 ParameterDescriptor::choice(
+                    "type",
                     Param::Noise(NoiseParam::Type(NoiseType::White)),
                     "Type",
                     NoiseType::to_choices(),
@@ -183,6 +184,7 @@ impl Describable for NoiseGenerator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::Noise(NoiseParam::Level(Gain::new(0.8))),
                     "Level",
                 )

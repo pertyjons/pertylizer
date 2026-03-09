@@ -167,6 +167,7 @@ impl Describable for Euclidean {
             .tag("sequencer")
             .parameter(
                 ParameterDescriptor::float(
+                    "steps",
                     Param::Euclidean(EuclideanParam::Steps(StepCount::new(16))),
                     "Steps",
                 )
@@ -177,6 +178,7 @@ impl Describable for Euclidean {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pulses",
                     Param::Euclidean(EuclideanParam::Pulses(StepCount::new(4))),
                     "Pulses",
                 )
@@ -187,6 +189,7 @@ impl Describable for Euclidean {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "rotation",
                     Param::Euclidean(EuclideanParam::Rotation(StepCount::new(0))),
                     "Rotation",
                 )
@@ -197,6 +200,7 @@ impl Describable for Euclidean {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "swing",
                     Param::Euclidean(EuclideanParam::Swing(NormalizedValue::MIN)),
                     "Swing",
                 )

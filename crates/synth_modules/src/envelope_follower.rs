@@ -64,6 +64,7 @@ impl Describable for EnvelopeFollower {
             .tag("dynamics")
             .parameter(
                 ParameterDescriptor::float(
+                    "attack",
                     Param::EnvelopeFollower(EnvelopeFollowerParam::Attack(Milliseconds::new(5.0))),
                     "Attack",
                 )
@@ -76,6 +77,7 @@ impl Describable for EnvelopeFollower {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "release",
                     Param::EnvelopeFollower(EnvelopeFollowerParam::Release(Milliseconds::new(
                         50.0,
                     ))),
@@ -90,6 +92,7 @@ impl Describable for EnvelopeFollower {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "sensitivity",
                     Param::EnvelopeFollower(EnvelopeFollowerParam::Sensitivity(
                         NormalizedValue::new(0.5),
                     )),

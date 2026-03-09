@@ -316,11 +316,18 @@ pub fn apply_module_parameters(
     instrument_id: InstrumentId,
 ) {
     for (param_name, value) in parameters {
-        // Find the parameter descriptor by name
+        // Find the parameter descriptor by type_id (stable JSON key),
+        // falling back to name for legacy files.
         let param_desc = descriptor
             .parameters
             .iter()
-            .find(|p| p.name.to_lowercase() == param_name.to_lowercase());
+            .find(|p| p.type_id.to_lowercase() == param_name.to_lowercase())
+            .or_else(|| {
+                descriptor
+                    .parameters
+                    .iter()
+                    .find(|p| p.name.to_lowercase() == param_name.to_lowercase())
+            });
 
         if let Some(param_desc) = param_desc {
             // Convert the ParamValue to f32 for patch_editor
@@ -435,7 +442,15 @@ pub fn create_patch_from_editor(
         .unwrap_or_default();
 
     for module_id in patch_editor.module_ids() {
-        if let Some((_descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
+        if let Some((descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
+            // Build name→type_id mapping from the descriptor so we save
+            // the stable type_id as JSON key instead of the display name.
+            let name_to_type_id: HashMap<String, &str> = descriptor
+                .parameters
+                .iter()
+                .map(|p| (p.name.clone(), p.type_id.as_str()))
+                .collect();
+
             // Prefer engine values over GUI-cached values.
             let source_params = engine_params
                 .get(&module_id.to_string())
@@ -443,7 +458,10 @@ pub fn create_patch_from_editor(
 
             let mut param_map = HashMap::new();
             for (pname, value) in source_params {
-                param_map.insert(pname.clone(), ParamValue::Float(*value));
+                let key = name_to_type_id
+                    .get(pname)
+                    .map_or_else(|| pname.clone(), |tid| (*tid).to_string());
+                param_map.insert(key, ParamValue::Float(*value));
             }
             patch.modules.push(ModuleState {
                 id: module_id.to_string(),

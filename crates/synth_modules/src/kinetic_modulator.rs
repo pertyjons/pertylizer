@@ -85,6 +85,7 @@ impl Describable for KineticModulator {
             .tag("easing")
             .parameter(
                 ParameterDescriptor::float(
+                    "duration",
                     Param::Kinetic(KineticParam::Duration(Seconds::new(0.5))),
                     "Duration",
                 )
@@ -95,12 +96,14 @@ impl Describable for KineticModulator {
                 .curve(ResponseCurve::Logarithmic),
             )
             .parameter(ParameterDescriptor::choice(
+                "curve",
                 Param::Kinetic(KineticParam::CurveType(EasingCurve::CubicOut)),
                 "Curve",
                 EasingCurve::to_choices(),
             ))
             .parameter(
                 ParameterDescriptor::float(
+                    "overshoot",
                     Param::Kinetic(KineticParam::Overshoot(NormalizedValue::new(0.5))),
                     "Overshoot",
                 )
@@ -109,18 +112,24 @@ impl Describable for KineticModulator {
                 .widget(WidgetHint::Knob),
             )
             .parameter(ParameterDescriptor::choice(
+                "loop_mode",
                 Param::Kinetic(KineticParam::LoopMode(KineticLoopMode::OneShot)),
                 "Loop Mode",
                 KineticLoopMode::to_choices(),
             ))
             .parameter(
-                ParameterDescriptor::float(Param::Kinetic(KineticParam::Bipolar(false)), "Bipolar")
-                    .range(0.0, 1.0)
-                    .default(0.0)
-                    .widget(WidgetHint::Toggle),
+                ParameterDescriptor::float(
+                    "bipolar",
+                    Param::Kinetic(KineticParam::Bipolar(false)),
+                    "Bipolar",
+                )
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Toggle),
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "retrigger",
                     Param::Kinetic(KineticParam::Retrigger(true)),
                     "Retrigger",
                 )

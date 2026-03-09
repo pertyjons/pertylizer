@@ -115,6 +115,7 @@ impl Describable for RingMod {
             .tag("metallic")
             .parameter(
                 ParameterDescriptor::float(
+                    "carrier_freq",
                     Param::RingMod(RingModParam::CarrierFreq(Hertz::new(440.0))),
                     "Carrier Freq",
                 )
@@ -127,6 +128,7 @@ impl Describable for RingMod {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "carrier_wave",
                     Param::RingMod(RingModParam::CarrierWaveform(Waveform::Sine)),
                     "Carrier Wave",
                     Waveform::ALL
@@ -139,6 +141,7 @@ impl Describable for RingMod {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::RingMod(RingModParam::Mix(NormalizedValue::new(0.5))),
                     "Mix",
                 )
@@ -150,6 +153,7 @@ impl Describable for RingMod {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "freq_ratio",
                     Param::RingMod(RingModParam::FreqRatio(NormalizedValue::new(0.5))),
                     "Freq Ratio",
                 )
@@ -161,6 +165,7 @@ impl Describable for RingMod {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "key_track",
                     Param::RingMod(RingModParam::TrackKeyboard(NormalizedValue::MIN)),
                     "Key Track",
                 )

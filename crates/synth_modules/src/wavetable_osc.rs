@@ -93,6 +93,7 @@ impl Describable for WavetableOsc {
             .tag("source")
             .parameter(
                 ParameterDescriptor::choice(
+                    "table",
                     Param::WavetableOsc(WavetableParam::Table(WavetableSelect::Basic)),
                     "Table",
                     WavetableSelect::to_choices(),
@@ -102,6 +103,7 @@ impl Describable for WavetableOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "position",
                     Param::WavetableOsc(WavetableParam::Position(NormalizedValue::MIN)),
                     "Position",
                 )
@@ -113,6 +115,7 @@ impl Describable for WavetableOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "detune",
                     Param::WavetableOsc(WavetableParam::Detune(Cents::ZERO)),
                     "Detune",
                 )
@@ -124,6 +127,7 @@ impl Describable for WavetableOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "octave",
                     Param::WavetableOsc(WavetableParam::Octave(Octaves::ZERO)),
                     "Octave",
                 )
@@ -135,6 +139,7 @@ impl Describable for WavetableOsc {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::WavetableOsc(WavetableParam::Level(Gain::new(0.8))),
                     "Level",
                 )

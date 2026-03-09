@@ -123,12 +123,13 @@ impl Describable for Lfo {
             .tag("lfo")
             .tag("modulation")
             .parameter(ParameterDescriptor::choice(
+                "waveform",
                 Param::Lfo(LfoParam::Waveform(LfoWaveform::Sine)),
                 "Waveform",
                 LfoWaveform::to_choices(),
             ))
             .parameter(
-                ParameterDescriptor::float(Param::Lfo(LfoParam::Rate(Hertz::new(1.0))), "Rate")
+                ParameterDescriptor::float("rate", Param::Lfo(LfoParam::Rate(Hertz::new(1.0))), "Rate")
                     .range(0.01, 50.0)
                     .default(1.0)
                     .unit(ParameterUnit::Hertz)
@@ -137,6 +138,7 @@ impl Describable for Lfo {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "depth",
                     Param::Lfo(LfoParam::Depth(NormalizedValue::MAX)),
                     "Depth",
                 )
@@ -145,7 +147,7 @@ impl Describable for Lfo {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(Param::Lfo(LfoParam::Phase(Phase::ZERO)), "Phase")
+                ParameterDescriptor::float("phase", Param::Lfo(LfoParam::Phase(Phase::ZERO)), "Phase")
                     .range(0.0, 1.0)
                     .default(0.0)
                     .widget(WidgetHint::Knob),

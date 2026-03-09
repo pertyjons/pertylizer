@@ -165,6 +165,7 @@ impl Describable for Convolver {
             .tag("convolution")
             .tag("ir")
             .parameter(ParameterDescriptor::choice(
+                "ir_type",
                 Param::Convolver(ConvolverParam::Ir(ImpulseResponse::Plate)),
                 "IR Type",
                 ImpulseResponse::ALL
@@ -174,6 +175,7 @@ impl Describable for Convolver {
             ))
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::Convolver(ConvolverParam::Mix(NormalizedValue::new(0.3))),
                     "Mix",
                 )
@@ -184,6 +186,7 @@ impl Describable for Convolver {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "pre_delay",
                     Param::Convolver(ConvolverParam::PreDelay(Milliseconds::new(0.0))),
                     "Pre-Delay",
                 )
@@ -194,6 +197,7 @@ impl Describable for Convolver {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "decay",
                     Param::Convolver(ConvolverParam::DecayTrim(NormalizedValue::MAX)),
                     "Decay",
                 )
@@ -203,6 +207,7 @@ impl Describable for Convolver {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "brightness",
                     Param::Convolver(ConvolverParam::Brightness(NormalizedValue::new(0.8))),
                     "Brightness",
                 )

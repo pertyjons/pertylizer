@@ -416,6 +416,7 @@ impl Describable for MathOscillator {
             // Parameters
             .parameter(
                 ParameterDescriptor::choice(
+                    "algorithm",
                     Param::MathOscillator(MathOscillatorParam::Algorithm(MathAlgo::SineFM)),
                     "Algorithm",
                     MathAlgo::to_choices(),
@@ -425,6 +426,7 @@ impl Describable for MathOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "frequency",
                     Param::MathOscillator(MathOscillatorParam::Frequency(Hertz::A4)),
                     "Frequency",
                 )
@@ -437,6 +439,7 @@ impl Describable for MathOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "param_a",
                     Param::MathOscillator(MathOscillatorParam::ParamA(NormalizedValue::CENTER)),
                     "Param A",
                 )
@@ -447,6 +450,7 @@ impl Describable for MathOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "param_b",
                     Param::MathOscillator(MathOscillatorParam::ParamB(NormalizedValue::CENTER)),
                     "Param B",
                 )
@@ -457,6 +461,7 @@ impl Describable for MathOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "param_c",
                     Param::MathOscillator(MathOscillatorParam::ParamC(NormalizedValue::CENTER)),
                     "Param C",
                 )
@@ -467,6 +472,7 @@ impl Describable for MathOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::MathOscillator(MathOscillatorParam::Level(Gain::UNITY)),
                     "Level",
                 )

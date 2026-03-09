@@ -146,6 +146,7 @@ impl Describable for SignalMonitor {
             .tag("utility")
             .parameter(
                 ParameterDescriptor::float(
+                    "time",
                     Param::SignalMonitor(SignalMonitorParam::Time(Seconds::new(0.01))),
                     "Time",
                 )
@@ -156,6 +157,7 @@ impl Describable for SignalMonitor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "gain",
                     Param::SignalMonitor(SignalMonitorParam::Gain(Gain::UNITY)),
                     "Gain",
                 )
@@ -166,6 +168,7 @@ impl Describable for SignalMonitor {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "trig",
                     Param::SignalMonitor(SignalMonitorParam::Trigger(NormalizedValue::CENTER)),
                     "Trig",
                 )

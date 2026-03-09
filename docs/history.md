@@ -1,5 +1,14 @@
 # Version History
 
+## [0.228.0] - 2026-03-09
+### Fix silent project loading and parameter persistence architecture
+- **Fix StereoOutput module_type** — return `ModuleType::StereoOutput` instead of `Mixer`, allowing graph evaluation to find the output node
+- **Fix StereoOutput parameter names** — rename "Master Level" → "Master" and "Limiter" → "Limit" to match existing JSON project files
+- **Stable parameter IDs (type_id)** — add `type_id` field to `ParameterDescriptor`, separating the persistent JSON key from the display name; display names can now be renamed freely without breaking saved projects
+- **Snake_case parameter keys** — all parameter `type_id` values use snake_case (e.g. `"velocity_sens"`, `"attack_curve"`); deserialization falls back to display name matching for backward compatibility with older project files
+- **Remove debug prints** — remove `[INST]` and `[SEQ]` eprintln from audio engine
+- **Fix visualizer build** — remove unused `version_warned` field from `SynthTelemetry`
+
 ## [0.227.0] - 2026-03-09
 ### Audio engine performance and visualizer upgrade
 - **Audio engine: connection lookup cache** — build `incoming_map` on topology change instead of O(M×C) scan per module per frame, eliminating ~100K comparisons/frame with complex patches

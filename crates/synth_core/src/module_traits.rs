@@ -522,9 +522,12 @@ impl ChoiceOption {
 /// Complete description of a parameter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterDescriptor {
+    /// Stable identifier used as key in JSON project files.
+    /// Must never change once set — renaming breaks saved projects.
+    pub type_id: String,
     /// Parameter with default value (identifies both type and default).
     pub id: Param,
-    /// Display name.
+    /// Display name (shown in UI, safe to rename).
     pub name: String,
     /// Description for tooltips.
     pub description: String,
@@ -544,9 +547,14 @@ pub struct ParameterDescriptor {
 
 impl ParameterDescriptor {
     /// Create a new float parameter descriptor.
-    /// The id parameter should contain the default value.
-    pub fn float(id: Param, name: impl Into<String>) -> Self {
+    ///
+    /// - `type_id`: Stable identifier used as key in JSON project files. Must
+    ///   never change once set — renaming breaks saved projects.
+    /// - `id`: The `Param` variant with its default value.
+    /// - `name`: Display name shown in the UI (safe to rename freely).
+    pub fn float(type_id: impl Into<String>, id: Param, name: impl Into<String>) -> Self {
         Self {
+            type_id: type_id.into(),
             id,
             name: name.into(),
             description: String::new(),
@@ -560,12 +568,20 @@ impl ParameterDescriptor {
     }
 
     /// Create a choice parameter descriptor.
-    /// The id parameter should contain the default choice value.
-    pub fn choice(id: Param, name: impl Into<String>, choices: Vec<ChoiceOption>) -> Self {
+    ///
+    /// - `type_id`: Stable identifier used as key in JSON project files.
+    /// - `id`: The `Param` variant with its default choice value.
+    /// - `name`: Display name shown in the UI.
+    pub fn choice(
+        type_id: impl Into<String>,
+        id: Param,
+        name: impl Into<String>,
+        choices: Vec<ChoiceOption>,
+    ) -> Self {
         let max = (choices.len().saturating_sub(1)) as f32;
-        // Extract default value from the param's current value
         let default = id.as_f32();
         Self {
+            type_id: type_id.into(),
             id,
             name: name.into(),
             description: String::new(),

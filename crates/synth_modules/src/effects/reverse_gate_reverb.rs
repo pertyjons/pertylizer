@@ -129,6 +129,7 @@ impl Describable for ReverseGateReverb {
             .tag("effect")
             .parameter(
                 ParameterDescriptor::float(
+                    "window",
                     Param::ReverseGateReverb(ReverseGateReverbParam::WindowTime(
                         Milliseconds::new(600.0),
                     )),
@@ -142,6 +143,7 @@ impl Describable for ReverseGateReverb {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "mode",
                     Param::ReverseGateReverb(ReverseGateReverbParam::Mode(
                         ReverseGateMode::Reverse,
                     )),
@@ -152,6 +154,7 @@ impl Describable for ReverseGateReverb {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "trigger",
                     Param::ReverseGateReverb(ReverseGateReverbParam::Trigger(
                         ReverseGateTrigger::Periodic,
                     )),
@@ -162,6 +165,7 @@ impl Describable for ReverseGateReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "threshold",
                     Param::ReverseGateReverb(ReverseGateReverbParam::Threshold(Decibels::new(
                         -24.0,
                     ))),
@@ -175,6 +179,7 @@ impl Describable for ReverseGateReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "gate_time",
                     Param::ReverseGateReverb(ReverseGateReverbParam::GateTime(Milliseconds::new(
                         120.0,
                     ))),
@@ -188,6 +193,7 @@ impl Describable for ReverseGateReverb {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::ReverseGateReverb(ReverseGateReverbParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

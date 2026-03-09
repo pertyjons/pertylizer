@@ -102,6 +102,7 @@ impl Describable for BodyResonance {
             .tag("piano")
             .parameter(
                 ParameterDescriptor::float(
+                    "freq",
                     Param::BodyResonance(BodyResonanceParam::Frequency(Hertz::new(200.0))),
                     "Freq",
                 )
@@ -114,6 +115,7 @@ impl Describable for BodyResonance {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "resonance",
                     Param::BodyResonance(BodyResonanceParam::Resonance(NormalizedValue::new(0.5))),
                     "Resonance",
                 )
@@ -125,6 +127,7 @@ impl Describable for BodyResonance {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "size",
                     Param::BodyResonance(BodyResonanceParam::Size(NormalizedValue::new(0.5))),
                     "Size",
                 )
@@ -136,6 +139,7 @@ impl Describable for BodyResonance {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "bright",
                     Param::BodyResonance(BodyResonanceParam::Brightness(NormalizedValue::new(0.5))),
                     "Bright",
                 )
@@ -147,6 +151,7 @@ impl Describable for BodyResonance {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::BodyResonance(BodyResonanceParam::Mix(NormalizedValue::new(0.3))),
                     "Mix",
                 )

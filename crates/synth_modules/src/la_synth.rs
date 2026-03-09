@@ -161,6 +161,7 @@ impl Describable for LaSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "attack_type",
                     Param::LaSynth(LaSynthParam::AttackType(NormalizedValue::MIN)),
                     "Attack Type",
                 )
@@ -171,6 +172,7 @@ impl Describable for LaSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "attack_time",
                     Param::LaSynth(LaSynthParam::AttackTime(Milliseconds::new(30.0))),
                     "Attack Time",
                 )
@@ -182,6 +184,7 @@ impl Describable for LaSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "attack_level",
                     Param::LaSynth(LaSynthParam::AttackLevel(NormalizedValue::new(0.7))),
                     "Attack Level",
                 )
@@ -192,6 +195,7 @@ impl Describable for LaSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "x_fade_time",
                     Param::LaSynth(LaSynthParam::CrossfadeTime(Milliseconds::new(50.0))),
                     "X-Fade Time",
                 )
@@ -203,6 +207,7 @@ impl Describable for LaSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "brightness",
                     Param::LaSynth(LaSynthParam::Brightness(NormalizedValue::new(0.5))),
                     "Brightness",
                 )

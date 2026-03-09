@@ -111,6 +111,7 @@ impl Describable for EnsembleChorus {
             .tag("ensemble")
             .parameter(
                 ParameterDescriptor::float(
+                    "rate",
                     Param::EnsembleChorus(EnsembleChorusParam::Rate(Hertz::new(0.6))),
                     "Rate",
                 )
@@ -122,6 +123,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "depth",
                     Param::EnsembleChorus(EnsembleChorusParam::Depth(Milliseconds::new(1.2))),
                     "Depth",
                 )
@@ -133,6 +135,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "base_delay",
                     Param::EnsembleChorus(EnsembleChorusParam::BaseDelay(Milliseconds::new(12.0))),
                     "Base Delay",
                 )
@@ -144,6 +147,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "tone",
                     Param::EnsembleChorus(EnsembleChorusParam::Tone(NormalizedValue::new(0.4))),
                     "Tone",
                 )
@@ -154,6 +158,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "noise",
                     Param::EnsembleChorus(EnsembleChorusParam::Noise(NormalizedValue::new(0.1))),
                     "Noise",
                 )
@@ -164,6 +169,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "stereo_width",
                     Param::EnsembleChorus(EnsembleChorusParam::StereoWidth(NormalizedValue::MAX)),
                     "Stereo Width",
                 )
@@ -174,6 +180,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "voices",
                     Param::EnsembleChorus(EnsembleChorusParam::Voices(VoiceCount::DUAL)),
                     "Voices",
                 )
@@ -184,6 +191,7 @@ impl Describable for EnsembleChorus {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::EnsembleChorus(EnsembleChorusParam::Mix(NormalizedValue::CENTER)),
                     "Mix",
                 )

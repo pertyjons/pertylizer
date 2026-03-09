@@ -117,6 +117,7 @@ impl Describable for SpectralBlur {
             .tag("blur")
             .parameter(
                 ParameterDescriptor::float(
+                    "fft_size",
                     Param::SpectralBlur(SpectralBlurParam::FftSize(FftSizeOption::Fft1024)),
                     "FFT Size",
                 )
@@ -127,6 +128,7 @@ impl Describable for SpectralBlur {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "blur_time",
                     Param::SpectralBlur(SpectralBlurParam::BlurTime(NormalizedValue::new(0.7))),
                     "Blur Time",
                 )
@@ -137,6 +139,7 @@ impl Describable for SpectralBlur {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "blur_freq",
                     Param::SpectralBlur(SpectralBlurParam::BlurFreq(NormalizedValue::new(0.3))),
                     "Blur Freq",
                 )
@@ -147,6 +150,7 @@ impl Describable for SpectralBlur {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "freeze",
                     Param::SpectralBlur(SpectralBlurParam::Freeze(false)),
                     "Freeze",
                 )
@@ -157,6 +161,7 @@ impl Describable for SpectralBlur {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "mix",
                     Param::SpectralBlur(SpectralBlurParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )

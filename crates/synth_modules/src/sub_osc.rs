@@ -97,6 +97,7 @@ impl Describable for SubOscillator {
             .tag("bass")
             .parameter(
                 ParameterDescriptor::choice(
+                    "waveform",
                     Param::SubOsc(SubOscParam::Waveform(SubOscWaveform::Square)),
                     "Waveform",
                     SubOscWaveform::to_choices(),
@@ -106,6 +107,7 @@ impl Describable for SubOscillator {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "octave",
                     Param::SubOsc(SubOscParam::Octave(SubOscOctave::MinusOne)),
                     "Octave",
                     SubOscOctave::to_choices(),
@@ -115,6 +117,7 @@ impl Describable for SubOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "level",
                     Param::SubOsc(SubOscParam::Level(Gain::new(0.5))),
                     "Level",
                 )

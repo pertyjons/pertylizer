@@ -1144,18 +1144,6 @@ impl Instrument {
             self.effect_buffer[i * 2 + 1] = self.voice_right[i];
         }
 
-        // DEBUG: Check voice output levels
-        if active_count > 0 {
-            let voice_peak: f32 = self.voice_left.as_slice()[..sample_count].iter()
-                .chain(self.voice_right.as_slice()[..sample_count].iter())
-                .fold(0.0f32, |max, &s| max.max(s.abs()));
-            if voice_peak > 0.0001 || self.id().as_u64() == 7 {
-                eprintln!("[INST {}] voices={} voice_peak={:.6} effects={} graph_modules={}",
-                    self.id().as_u64(), active_count, voice_peak,
-                    0, self.voice_graph.len());
-            }
-        }
-
         // Process through effect chain (modifies effect_buffer in place)
         self.effect_chain.process(&mut self.effect_buffer, context);
 

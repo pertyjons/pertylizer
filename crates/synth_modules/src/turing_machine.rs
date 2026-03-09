@@ -164,6 +164,7 @@ impl Describable for TuringMachine {
             .tag("random")
             .parameter(
                 ParameterDescriptor::float(
+                    "mutation",
                     Param::TuringMachine(TuringMachineParam::MutationRate(NormalizedValue::CENTER)),
                     "Mutation",
                 )
@@ -174,6 +175,7 @@ impl Describable for TuringMachine {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "range",
                     Param::TuringMachine(TuringMachineParam::Range(NormalizedValue::new(0.5))),
                     "Range",
                 )
@@ -184,6 +186,7 @@ impl Describable for TuringMachine {
             )
             .parameter(
                 ParameterDescriptor::choice(
+                    "scale",
                     Param::TuringMachine(TuringMachineParam::Scale(TuringScale::Chromatic)),
                     "Scale",
                     TuringScale::to_choices(),
@@ -193,6 +196,7 @@ impl Describable for TuringMachine {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "length",
                     Param::TuringMachine(TuringMachineParam::Length(StepCount::new(16))),
                     "Length",
                 )
