@@ -1,7 +1,8 @@
 //! Pulse Terrain — Landscape breathes with bass.
 //!
 //! A grid of 3D geometry that displaces vertically based on lower FFT frequencies and RMS.
-//! Like a pulsing dance floor/terrain.
+//! Like a pulsing dance floor/terrain. Input signals are smoothed with asymmetric
+//! attack/decay easing to prevent teleportation on transients.
 
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
@@ -17,6 +18,11 @@ const EMISSIVE_STRENGTH: f32 = 5.0;
 
 /// Per-second terrain height smoothing rate. Responsive but smooth.
 const TERRAIN_SMOOTH_RATE: f32 = 10.0;
+
+/// Input signal smoothing — attack (signal rising).
+const SIGNAL_ATTACK_RATE: f32 = 20.0;
+/// Input signal smoothing — decay (signal falling).
+const SIGNAL_DECAY_RATE: f32 = 5.0;
 
 #[derive(Component)]
 pub struct TerrainTile {
@@ -80,6 +86,8 @@ pub fn update(
     effect_state: Res<EffectState>,
     policy: Res<ThemeMaterialPolicy>,
     mut query: Query<(&TerrainTile, &mut Transform)>,
+    mut smoothed_bass: Local<f32>,
+    mut smoothed_rms: Local<f32>,
 ) {
     // Transport stopped → slow down ripple animation
     let time_scale = if telemetry.playing { 1.0 } else { 0.15 };
@@ -88,15 +96,32 @@ pub fn update(
     let smooth_alpha = 1.0 - (-TERRAIN_SMOOTH_RATE * dt).exp();
     let fade = effect_state.fade;
 
-    // Use lower FFT bands to drive the terrain height
-    let mut bass = 0.0;
+    // Compute raw bass from lower FFT bands
+    let mut raw_bass = 0.0;
     for i in 0..10 {
-        bass += telemetry.fft[i];
+        raw_bass += telemetry.fft[i];
     }
-    bass = (bass / 10.0) * 15.0;
+    raw_bass = (raw_bass / 10.0) * 15.0;
 
-    // Use RMS + beat phase for global wave
-    let rms_mono = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
+    // Compute raw RMS
+    let raw_rms = (telemetry.rms[0] + telemetry.rms[1]) * 0.5;
+
+    // Smooth bass with asymmetric easing
+    let bass_rate = if raw_bass > *smoothed_bass {
+        SIGNAL_ATTACK_RATE
+    } else {
+        SIGNAL_DECAY_RATE
+    };
+    *smoothed_bass += (raw_bass - *smoothed_bass) * (1.0 - (-bass_rate * dt).exp());
+
+    // Smooth RMS with asymmetric easing
+    let rms_rate = if raw_rms > *smoothed_rms {
+        SIGNAL_ATTACK_RATE
+    } else {
+        SIGNAL_DECAY_RATE
+    };
+    *smoothed_rms += (raw_rms - *smoothed_rms) * (1.0 - (-rms_rate * dt).exp());
+
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
 
     // Recent velocity boosts ground intensity
@@ -119,11 +144,13 @@ pub fn update(
         // Add some noise based on X/Z coordinates
         let noise = ((tile.x as f32 * 0.3 + t).sin() * (tile.z as f32 * 0.3 + t).cos()) * 2.0;
 
-        // Height is a combination of base wave, ripple driven by RMS, bass pump, and beat phase
+        // Height uses smoothed signals instead of raw values
         let target_y = tile.base_y
             + noise
-            + (ripple * (rms_mono + beat_pulse * 0.3) * 10.0)
-            + (bass * (1.0 + velocity_boost) * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
+            + (ripple * (*smoothed_rms + beat_pulse * 0.3) * 10.0)
+            + (*smoothed_bass
+                * (1.0 + velocity_boost)
+                * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
 
         let target = target_y * fade;
         transform.translation.y += (target - transform.translation.y) * smooth_alpha;
