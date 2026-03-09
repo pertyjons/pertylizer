@@ -123,6 +123,8 @@ pub struct ThemeConfig {
 
     // Environment
     pub floor_color: Color,
+    pub floor_metallic: f32,
+    pub floor_roughness: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +177,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 120.0,
                 rms_emissive_scale: 1.5,
                 floor_color: Color::srgb(0.02, 0.02, 0.05),
+                floor_metallic: 0.0,
+                floor_roughness: 0.15,
             },
         );
 
@@ -204,6 +208,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 0.0,
                 rms_emissive_scale: 0.8,
                 floor_color: Color::srgb(0.08, 0.08, 0.1),
+                floor_metallic: 0.9,
+                floor_roughness: 0.25,
             },
         );
 
@@ -233,6 +239,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 180.0,
                 rms_emissive_scale: 1.0,
                 floor_color: Color::srgb(0.05, 0.08, 0.1),
+                floor_metallic: 0.05,
+                floor_roughness: 0.02,
             },
         );
 
@@ -262,6 +270,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 60.0,
                 rms_emissive_scale: 1.2,
                 floor_color: Color::srgb(0.01, 0.01, 0.02),
+                floor_metallic: 0.0,
+                floor_roughness: 0.4,
             },
         );
 
@@ -291,6 +301,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 300.0,
                 rms_emissive_scale: 1.4,
                 floor_color: Color::srgb(0.03, 0.01, 0.06),
+                floor_metallic: 0.1,
+                floor_roughness: 0.1,
             },
         );
 
@@ -320,6 +332,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 45.0,
                 rms_emissive_scale: 1.6,
                 floor_color: Color::srgb(0.04, 0.03, 0.02),
+                floor_metallic: 0.0,
+                floor_roughness: 0.6,
             },
         );
 
@@ -349,6 +363,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 210.0,
                 rms_emissive_scale: 0.7,
                 floor_color: Color::srgb(0.15, 0.18, 0.22),
+                floor_metallic: 0.05,
+                floor_roughness: 0.08,
             },
         );
 
@@ -378,6 +394,8 @@ impl Default for ThemeRegistry {
                 peak_flash_hue: 0.0,
                 rms_emissive_scale: 2.0,
                 floor_color: Color::srgb(0.0, 0.0, 0.0),
+                floor_metallic: 0.0,
+                floor_roughness: 0.95,
             },
         );
 
@@ -705,9 +723,11 @@ pub fn apply_theme(
                 material.base_color =
                     lerp_color(current_cfg.floor_color, target_cfg.floor_color, t);
                 material.metallic =
-                    lerp_f32(current_cfg.metallic, target_cfg.metallic, t).clamp(0.0, 1.0);
+                    lerp_f32(current_cfg.floor_metallic, target_cfg.floor_metallic, t)
+                        .clamp(0.0, 1.0);
                 material.perceptual_roughness =
-                    lerp_f32(current_cfg.roughness, target_cfg.roughness, t).clamp(0.0, 1.0);
+                    lerp_f32(current_cfg.floor_roughness, target_cfg.floor_roughness, t)
+                        .clamp(0.0, 1.0);
             }
         }
 
@@ -740,8 +760,8 @@ pub fn apply_theme(
         for mat_handle in &mut floor_query {
             if let Some(material) = materials.get_mut(&mat_handle.0) {
                 material.base_color = current_cfg.floor_color;
-                material.metallic = current_cfg.metallic.clamp(0.0, 1.0);
-                material.perceptual_roughness = current_cfg.roughness.clamp(0.0, 1.0);
+                material.metallic = current_cfg.floor_metallic.clamp(0.0, 1.0);
+                material.perceptual_roughness = current_cfg.floor_roughness.clamp(0.0, 1.0);
             }
         }
 

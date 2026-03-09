@@ -1,4 +1,9 @@
-//! Non-blocking UDP OSC receiver system for Bevy.
+//! Background-threaded UDP OSC receiver system for Bevy.
+//!
+//! A dedicated daemon thread owns the UDP socket in blocking mode and
+//! forwards raw packets through a bounded crossbeam channel. The Bevy
+//! system drains the channel each frame, keeping the game loop free of
+//! any socket syscalls.
 //!
 //! Receives OSC bundles from Pertylizer and sends `/viz/pong` replies
 //! so the sender knows a client is connected (enables full telemetry).
@@ -7,6 +12,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
 
 use bevy::prelude::*;
+use crossbeam_channel::{Receiver, bounded};
 use rosc::{OscMessage, OscPacket, OscType, encoder};
 
 use synth_osc_protocol::addresses;
@@ -16,11 +22,21 @@ use crate::telemetry::{EXPECTED_PROTOCOL_VERSION, MAX_FFT_BANDS, NoteOnEvent, Sy
 /// How often to send `/viz/pong` back to the sender.
 const PONG_INTERVAL_SECS: f32 = synth_osc_protocol::PONG_REPLY_INTERVAL_SECS;
 
+/// Maximum number of packets buffered between the reader thread and the
+/// Bevy system. If the channel is full, new packets are silently dropped
+/// (we only care about the latest data).
+const CHANNEL_CAPACITY: usize = 100;
+
 /// UDP socket resource for receiving OSC packets.
+///
+/// The background thread owns the main socket; this resource holds the
+/// channel receiver and a cloned socket used only for sending pong replies.
 #[derive(Resource)]
 pub struct OscSocket {
-    socket: UdpSocket,
-    buf: Vec<u8>,
+    /// Receives `(raw_bytes, sender_addr)` from the background thread.
+    rx: Receiver<(Vec<u8>, SocketAddr)>,
+    /// Cloned socket used exclusively for sending `/viz/pong` replies.
+    pong_socket: UdpSocket,
     /// Address of the last sender (to reply with pong).
     sender_addr: Option<SocketAddr>,
     /// Last time we sent a pong.
@@ -45,15 +61,53 @@ fn setup_osc_socket(mut commands: Commands) {
             synth_osc_protocol::DEFAULT_OSC_PORT
         )
     });
-    socket
+
+    // Clone for pong replies before moving the original into the thread.
+    let pong_socket = socket
+        .try_clone()
+        .expect("Failed to clone UDP socket for pong replies");
+    pong_socket
         .set_nonblocking(true)
-        .expect("Failed to set non-blocking");
+        .expect("Failed to set pong socket non-blocking");
+
+    let (tx, rx) = bounded(CHANNEL_CAPACITY);
+
+    // Spawn a daemon thread that owns the socket in blocking mode.
+    std::thread::Builder::new()
+        .name("osc-reader".into())
+        .spawn(move || {
+            // Blocking mode – the thread sleeps efficiently in recv_from.
+            socket
+                .set_nonblocking(false)
+                .expect("Failed to set socket to blocking mode");
+
+            let mut buf = vec![0u8; 65_536];
+
+            loop {
+                match socket.recv_from(&mut buf) {
+                    Ok((size, addr)) => {
+                        let packet = buf[..size].to_vec();
+                        // If the channel is full, silently drop the packet.
+                        let _ = tx.try_send((packet, addr));
+                    }
+                    Err(e) => {
+                        // If the channel is disconnected the main app has
+                        // shut down; exit the thread quietly.
+                        if tx.is_empty() && e.kind() == std::io::ErrorKind::Other {
+                            break;
+                        }
+                        // For other transient errors, just continue.
+                    }
+                }
+            }
+        })
+        .expect("Failed to spawn OSC reader thread");
 
     println!("OSC receiver: listening on {bind_addr}");
 
     commands.insert_resource(OscSocket {
-        socket,
-        buf: vec![0u8; 65_536],
+        rx,
+        pong_socket,
         sender_addr: None,
         last_pong_sent: Instant::now(),
     });
@@ -70,10 +124,10 @@ fn receive_osc(
 
     let mut received_any = false;
 
-    // Drain all pending UDP packets (non-blocking)
+    // Drain all packets forwarded by the background thread
     let sock = &mut *socket;
-    while let Ok((size, addr)) = sock.socket.recv_from(&mut sock.buf) {
-        if let Ok((_, packet)) = rosc::decoder::decode_udp(&sock.buf[..size]) {
+    while let Ok((data, addr)) = sock.rx.try_recv() {
+        if let Ok((_, packet)) = rosc::decoder::decode_udp(&data) {
             handle_packet(&packet, &mut telemetry, &mut camera_state);
             sock.sender_addr = Some(addr);
             received_any = true;
@@ -86,7 +140,7 @@ fn receive_osc(
         if now.duration_since(sock.last_pong_sent).as_secs_f32() >= PONG_INTERVAL_SECS
             && let Some(addr) = sock.sender_addr
         {
-            send_pong(&sock.socket, addr);
+            send_pong(&sock.pong_socket, addr);
             sock.last_pong_sent = now;
         }
     }

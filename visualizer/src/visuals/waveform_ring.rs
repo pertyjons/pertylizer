@@ -27,8 +27,7 @@ const BAR_THICKNESS: f32 = 0.15;
 /// Emissive intensity multiplier.
 const EMISSIVE_STRENGTH: f32 = 6.0;
 
-/// Per-second smoothing rates (frame-rate independent).
-const ATTACK_RATE: f32 = 30.0;
+/// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
 const DECAY_RATE: f32 = 6.0;
 
 /// Number of shared material buckets.
@@ -118,8 +117,7 @@ pub fn update(
         }
     }
 
-    // Pre-compute smoothing alphas once (same for all bars)
-    let attack_alpha = 1.0 - (-ATTACK_RATE * dt).exp();
+    // Pre-compute decay alpha once (attack is instant)
     let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
 
     for (mut transform, mut vis, bar) in &mut query {
@@ -139,14 +137,13 @@ pub fn update(
 
         let target_height = (telemetry.fft[bar.0] * MAX_HEIGHT).max(0.01);
 
-        // Smooth lerp with pre-computed alpha
+        // Instant attack, smooth decay
         let current = transform.scale.y;
-        let alpha = if target_height > current {
-            attack_alpha
+        let new_height = if target_height > current {
+            target_height
         } else {
-            decay_alpha
+            current + (target_height - current) * decay_alpha
         };
-        let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
         transform.translation.y = new_height / 2.0;

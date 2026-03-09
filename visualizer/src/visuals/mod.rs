@@ -37,6 +37,7 @@ fn rand_f32(rng: &mut fastrand::Rng, range: std::ops::Range<f32>) -> f32 {
     range.start + rng.f32() * (range.end - range.start)
 }
 
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -216,24 +217,24 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
-                    spectral_waterfall::update_materials.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::SpectralWaterfall),
-                    ),
-                    centroid_nebula::update_material.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::CentroidNebula),
-                    ),
-                    pulse_terrain::update_material.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::PulseTerrain),
-                    ),
-                    spectral_origami::update_material.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::SpectralOrigami),
-                    ),
-                    ferrofluid_tendrils::update_material.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::FerrofluidTendrils),
-                    ),
-                    voronoi_shatter::update_material.run_if(
-                        effects::effect_active_or_pending(effects::EffectId::VoronoiShatter),
-                    ),
+                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::SpectralWaterfall,
+                    )),
+                    centroid_nebula::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::CentroidNebula,
+                    )),
+                    pulse_terrain::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::PulseTerrain,
+                    )),
+                    spectral_origami::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::SpectralOrigami,
+                    )),
+                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::FerrofluidTendrils,
+                    )),
+                    voronoi_shatter::update_material.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::VoronoiShatter,
+                    )),
                 )
                     .in_set(UpdateMaterials)
                     .after(ThemeUpdate),
@@ -309,6 +310,7 @@ fn setup_scene(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Hdr,
+        Tonemapping::TonyMcMapface,
         Transform::from_xyz(0.0, 12.0, 25.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
         camera::OrbitCamera {
             radius: 25.0,

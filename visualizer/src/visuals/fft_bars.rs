@@ -26,8 +26,7 @@ const MAX_HEIGHT: f32 = 8.0;
 /// Emissive intensity multiplier for bloom visibility.
 const EMISSIVE_STRENGTH: f32 = 5.0;
 
-/// Per-second smoothing rates (frame-rate independent).
-const ATTACK_RATE: f32 = 30.0;
+/// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
 const DECAY_RATE: f32 = 6.0;
 
 /// Number of shared material buckets (bars grouped by hue).
@@ -96,7 +95,6 @@ pub fn update(
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
     let height_scale = MAX_HEIGHT * (1.0 + beat_pulse * 0.15);
     let width_scale = bar_width / MIN_BAR_WIDTH;
-    let attack_alpha = 1.0 - (-ATTACK_RATE * dt).exp();
     let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
 
     for (mut transform, mut vis, bar) in &mut query {
@@ -113,14 +111,13 @@ pub fn update(
 
         let target_height = (telemetry.fft[bar.0] * height_scale).max(0.01);
 
-        // Smooth lerp with pre-computed alpha
+        // Instant attack, smooth decay
         let current = transform.scale.y;
-        let alpha = if target_height > current {
-            attack_alpha
+        let new_height = if target_height > current {
+            target_height
         } else {
-            decay_alpha
+            current + (target_height - current) * decay_alpha
         };
-        let new_height = current + (target_height - current) * alpha;
 
         transform.scale.y = new_height;
         transform.translation.y = new_height / 2.0;

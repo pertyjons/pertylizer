@@ -1,5 +1,17 @@
 # Version History
 
+## [0.227.0] - 2026-03-09
+### Audio engine performance and visualizer upgrade
+- **Audio engine: connection lookup cache** — build `incoming_map` on topology change instead of O(M×C) scan per module per frame, eliminating ~100K comparisons/frame with complex patches
+- **Audio engine: cached output module** — resolve output module ID once on graph change, not every `process()` call
+- **Audio engine: eliminate per-frame allocations** — move mod source gathering into `ModuleGraph::gather_mod_source_values()` (avoids `collect::<Vec<_>>()`), pre-allocate mod matrix slots buffer on Voice
+- **Visualizer: bounded OSC channel** — background `osc-reader` thread with `crossbeam_channel::bounded(100)`, drops packets when queue is full to prevent memory buildup during frame drops
+- **Visualizer: TonyMcMapface tonemapping** — adds `Tonemapping::TonyMcMapface` for filmic color rendering
+- **Visualizer: asymmetric easing** — FFT bars, waveform ring, and RMS light now use instant attack / smooth exponential decay for snappy transients without flicker
+- **Visualizer: time-based centroid smoothing** — fixed frame-rate-dependent centroid smoothing in centroid_nebula to use proper `exp(-rate * dt)` interpolation
+- **Visualizer: terrain mesh smoothing** — pulse_terrain tiles now lerp toward target height instead of jumping directly, eliminating per-frame vibration
+- **Visualizer: per-theme floor PBR** — separate `floor_metallic`/`floor_roughness` per theme (Glass: mirror, Metal: brushed, Synthwave: reflective neon, Void: matte black)
+
 ## [0.226.0] - 2026-03-06
 ### Generative geometry effects and camera enhancements
 - **Voronoi Shatter** (terrain) — ground grid of cells that split and tumble outward on spectral flux spikes, reassembling during calm passages

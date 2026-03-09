@@ -22,7 +22,7 @@ pub fn setup(
     // Floor color matches the default Neon theme
     let material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.02, 0.02, 0.05),
-        perceptual_roughness: 0.9,
+        perceptual_roughness: 0.15,
         ..default()
     });
 

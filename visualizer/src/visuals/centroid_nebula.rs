@@ -18,6 +18,9 @@ const BOUNDS: f32 = 15.0;
 /// Emissive multiplier.
 const EMISSIVE_STRENGTH: f32 = 4.0;
 
+/// Per-second centroid smoothing rate (symmetric, time-based).
+const CENTROID_SMOOTH_RATE: f32 = 4.0;
+
 /// A single particle in the nebula.
 #[derive(Component)]
 pub struct NebulaParticle {
@@ -76,11 +79,13 @@ pub fn update(
     mut last_centroid: Local<f32>,
 ) {
     let t = time.elapsed_secs();
+    let dt = time.delta_secs();
 
-    // Smooth the centroid value so it doesn't jitter violently
+    // Smooth the centroid value so it doesn't jitter violently (time-based)
     // Typical centroid is 500Hz - 8000Hz
     let raw_centroid = telemetry.centroid_hz.clamp(200.0, 10000.0);
-    let centroid = *last_centroid + (raw_centroid - *last_centroid) * 0.1;
+    let alpha = 1.0 - (-CENTROID_SMOOTH_RATE * dt).exp();
+    let centroid = *last_centroid + (raw_centroid - *last_centroid) * alpha;
     *last_centroid = centroid;
 
     // Normalize centroid to a 0.0 - 1.0 range (logarithmic is better for frequency)
@@ -116,6 +121,7 @@ pub fn update(
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_material(
+    time: Res<Time>,
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
     query: Query<&MeshMaterial3d<StandardMaterial>, With<NebulaParticle>>,
@@ -127,12 +133,14 @@ pub fn update_material(
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
+    let dt = time.delta_secs();
 
     let raw_centroid = telemetry.centroid_hz.clamp(200.0, 10000.0);
+    let alpha = 1.0 - (-CENTROID_SMOOTH_RATE * dt).exp();
     let centroid = if *last_centroid == 0.0 {
         raw_centroid
     } else {
-        *last_centroid + (raw_centroid - *last_centroid) * 0.1
+        *last_centroid + (raw_centroid - *last_centroid) * alpha
     };
     *last_centroid = centroid;
 

@@ -3763,6 +3763,7 @@ name = "pertylizer-visualizer"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "crossbeam-channel",
  "fastrand",
  "rosc",
  "synth_osc_protocol",

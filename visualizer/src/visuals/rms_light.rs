@@ -6,8 +6,12 @@ use super::RmsLight;
 use super::theme::ThemeRuntime;
 use crate::telemetry::SynthTelemetry;
 
+/// Per-second decay smoothing rate for light intensity. Attack is instant.
+const LIGHT_DECAY_RATE: f32 = 8.0;
+
 /// Update point light intensity from RMS, flux, velocity, and peak telemetry.
 pub fn update(
+    time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     runtime: Res<ThemeRuntime>,
     mut query: Query<&mut PointLight, With<RmsLight>>,
@@ -42,8 +46,16 @@ pub fn update(
         0.0
     };
 
+    let dt = time.delta_secs();
+    let decay_alpha = 1.0 - (-LIGHT_DECAY_RATE * dt).exp();
+
     for mut light in &mut query {
-        light.intensity = rms_mono * intensity_multiplier * flux_boost
+        let target = rms_mono * intensity_multiplier * flux_boost
             + (velocity_flash + peak_flash) * intensity_multiplier;
+        if target > light.intensity {
+            light.intensity = target;
+        } else {
+            light.intensity += (target - light.intensity) * decay_alpha;
+        }
     }
 }

@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.226.0)
+# TODO - Pertylizer (v0.227.0)
 
 ## 1. Synth — Foundation & Core
 

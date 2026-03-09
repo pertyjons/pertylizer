@@ -15,6 +15,9 @@ const GRID_SIZE: usize = 20; // 20x20 grid
 const GRID_SPACING: f32 = 1.5;
 const EMISSIVE_STRENGTH: f32 = 5.0;
 
+/// Per-second terrain height smoothing rate. Responsive but smooth.
+const TERRAIN_SMOOTH_RATE: f32 = 10.0;
+
 #[derive(Component)]
 pub struct TerrainTile {
     pub x: usize,
@@ -81,6 +84,8 @@ pub fn update(
     // Transport stopped → slow down ripple animation
     let time_scale = if telemetry.playing { 1.0 } else { 0.15 };
     let t = time.elapsed_secs() * time_scale;
+    let dt = time.delta_secs();
+    let smooth_alpha = 1.0 - (-TERRAIN_SMOOTH_RATE * dt).exp();
     let fade = effect_state.fade;
 
     // Use lower FFT bands to drive the terrain height
@@ -120,7 +125,8 @@ pub fn update(
             + (ripple * (rms_mono + beat_pulse * 0.3) * 10.0)
             + (bass * (1.0 + velocity_boost) * (1.0 / (1.0 + tile.dist_from_center * 0.1)));
 
-        transform.translation.y = target_y * fade;
+        let target = target_y * fade;
+        transform.translation.y += (target - transform.translation.y) * smooth_alpha;
 
         // Scale down slightly when fading out
         let scale = 1.0 * fade;
