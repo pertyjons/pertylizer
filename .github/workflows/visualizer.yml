@@ -23,7 +23,7 @@ jobs:
       - name: Build
         run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visualizer-ubuntu
           path: visualizer/target/release/pertylizer-visualizer
@@ -40,7 +40,7 @@ jobs:
       - name: Build
         run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visualizer-macos
           path: visualizer/target/release/pertylizer-visualizer
@@ -57,7 +57,7 @@ jobs:
       - name: Build
         run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visualizer-windows
           path: visualizer/target/release/pertylizer-visualizer.exe

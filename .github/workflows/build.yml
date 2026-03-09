@@ -54,7 +54,7 @@ jobs:
       - name: Binary size
         run: ls -lh target/release/pertylizer | awk '{print "Binary size:", $5}'
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pertylizer-ubuntu
           path: target/release/pertylizer
@@ -79,7 +79,7 @@ jobs:
       - name: Binary size
         run: ls -lh target/release/pertylizer | awk '{print "Binary size:", $5}'
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pertylizer-macos
           path: target/release/pertylizer
@@ -107,7 +107,7 @@ jobs:
           $size = (Get-Item target\release\pertylizer.exe).Length / 1MB
           Write-Host ("Binary size: {0:N1} MB" -f $size)
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pertylizer-windows
           path: target/release/pertylizer.exe
