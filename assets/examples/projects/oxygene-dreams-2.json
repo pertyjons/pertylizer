@@ -28,14 +28,14 @@
               1050.0
             ],
             "parameters": {
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0,
               "Attack": 0.15,
               "Release": 1.5,
-              "Velocity Sens": 1.0,
               "Sustain": 0.4,
-              "Decay": 1.5
+              "Decay": 1.5,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -61,14 +61,14 @@
               50.0
             ],
             "parameters": {
-              "Cutoff Mod": 1.0,
               "Morph": 0.0,
-              "Key Tracking": 0.0,
               "Drive": 0.6,
               "Model": 0.0,
               "Resonance": 0.08,
-              "Mode": 0.0,
-              "Cutoff": 1400.0
+              "Cutoff": 1400.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -427,13 +427,13 @@
             ],
             "parameters": {
               "Decay": 0.1,
-              "Attack Curve": 0.0,
               "Release": 0.1,
               "Sustain": 0.1,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Attack": 0.001,
-              "Release Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -457,14 +457,14 @@
               100.0
             ],
             "parameters": {
-              "Mode": 0.0,
               "Drive": 1.0,
-              "Cutoff Mod": 1.0,
               "Resonance": 0.45,
-              "Key Tracking": 0.0,
               "Model": 0.0,
               "Cutoff": 1000.0,
-              "Morph": 0.0
+              "Morph": 0.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -491,7 +491,6 @@
             "parameters": {
               "Unison": 1.0,
               "X-Mod": 0.0,
-              "FM Amount": 1.0,
               "Phase": 0.0,
               "Uni Detune": 10.0,
               "Pulse Width": 0.5,
@@ -502,7 +501,8 @@
               "Octave": 0.0,
               "Detune": 0.0,
               "Frequency": 440.0,
-              "Uni Spread": 0.5
+              "Uni Spread": 0.5,
+              "FM Amt": 1.0
             }
           },
           {
@@ -513,14 +513,14 @@
               100.0
             ],
             "parameters": {
-              "Release Curve": 0.0,
               "Decay": 0.2,
               "Attack": 0.002,
               "Sustain": 0.0,
-              "Decay Curve": 0.0,
               "Release": 0.15,
-              "Velocity Sens": 1.0,
-              "Attack Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -636,13 +636,13 @@
             ],
             "parameters": {
               "Release": 0.3,
-              "Attack Curve": 0.0,
               "Decay": 0.2,
               "Sustain": 0.6,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Release Curve": 0.0,
-              "Attack": 0.005
+              "Attack": 0.005,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -653,14 +653,14 @@
               100.0
             ],
             "parameters": {
-              "Velocity Sens": 1.0,
               "Release": 0.4,
               "Sustain": 0.2,
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0,
               "Attack": 0.001,
-              "Decay Curve": 0.0,
-              "Decay": 0.3
+              "Decay": 0.3,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -674,11 +674,11 @@
               "Model": 0.0,
               "Resonance": 0.1,
               "Cutoff": 800.0,
-              "Mode": 0.0,
-              "Cutoff Mod": 1.0,
-              "Key Tracking": 0.0,
               "Morph": 0.0,
-              "Drive": 1.0
+              "Drive": 1.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -710,7 +710,6 @@
               "Phase": 0.0,
               "Octave": 0.0,
               "Waveform": 2.0,
-              "FM Amount": 1.0,
               "Frequency": 440.0,
               "Unison": 1.0,
               "Uni Phase": 1.0,
@@ -719,7 +718,8 @@
               "Level": 0.8,
               "X-Mod": 0.0,
               "Pulse Width": 0.5,
-              "Uni Spread": 0.5
+              "Uni Spread": 0.5,
+              "FM Amt": 1.0
             }
           },
           {
@@ -734,7 +734,6 @@
               "Detune": 0.0,
               "Uni Spread": 0.5,
               "FM Mode": 0.0,
-              "FM Amount": 1.0,
               "Frequency": 440.0,
               "Uni Phase": 1.0,
               "Waveform": 2.0,
@@ -743,7 +742,8 @@
               "Pulse Width": 0.5,
               "Level": 0.0,
               "Octave": 0.0,
-              "Uni Detune": 10.0
+              "Uni Detune": 10.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -902,12 +902,12 @@
             "parameters": {
               "Morph": 0.0,
               "Cutoff": 500.0,
-              "Key Tracking": 0.0,
-              "Cutoff Mod": 1.0,
               "Resonance": 0.35,
               "Model": 0.0,
               "Drive": 1.2,
-              "Mode": 0.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -918,14 +918,14 @@
               100.0
             ],
             "parameters": {
-              "Decay Curve": 0.0,
               "Attack": 0.01,
               "Sustain": 0.85,
-              "Attack Curve": 0.0,
               "Release": 0.5,
               "Decay": 0.3,
-              "Velocity Sens": 1.0,
-              "Release Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -984,12 +984,12 @@
             "parameters": {
               "Decay": 0.7,
               "Sustain": 0.15,
-              "Attack Curve": 0.0,
               "Release": 0.5,
-              "Decay Curve": 0.0,
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Attack": 0.005
+              "Attack": 0.005,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1076,8 +1076,8 @@
               "X-Mod": 0.0,
               "Pulse Width": 0.5,
               "Uni Detune": 10.0,
-              "FM Amount": 1.0,
-              "Octave": 0.0
+              "Octave": 0.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -1090,7 +1090,6 @@
             "parameters": {
               "Pulse Width": 0.5,
               "X-Mod": 0.0,
-              "FM Amount": 1.0,
               "FM Mode": 0.0,
               "Octave": 0.0,
               "Phase": 0.0,
@@ -1101,7 +1100,8 @@
               "Unison": 1.0,
               "Detune": 0.0,
               "Uni Detune": 10.0,
-              "Waveform": 2.0
+              "Waveform": 2.0,
+              "FM Amt": 1.0
             }
           }
         ],
@@ -1243,12 +1243,12 @@
             "parameters": {
               "Attack": 0.2,
               "Decay": 1.5,
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Sustain": 0.7,
-              "Decay Curve": 0.0,
-              "Attack Curve": 0.0,
-              "Release": 2.0
+              "Release": 2.0,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1386,14 +1386,14 @@
               100.0
             ],
             "parameters": {
-              "Mode": 0.0,
               "Morph": 0.0,
-              "Key Tracking": 0.0,
               "Resonance": 0.05,
               "Drive": 0.5,
               "Model": 0.0,
               "Cutoff": 1600.0,
-              "Cutoff Mod": 1.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           }
         ],
@@ -1504,9 +1504,9 @@
               "Uni Detune": 10.0,
               "Pulse Width": 0.5,
               "Phase": 0.0,
-              "FM Amount": 1.0,
               "Waveform": 0.0,
-              "Detune": 0.0
+              "Detune": 0.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -1530,14 +1530,14 @@
               100.0
             ],
             "parameters": {
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Attack": 0.001,
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0,
               "Release": 0.01,
               "Sustain": 0.0,
-              "Decay": 0.025
+              "Decay": 0.025,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1548,14 +1548,14 @@
               100.0
             ],
             "parameters": {
-              "Attack Curve": 0.0,
               "Release": 0.01,
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Sustain": 0.0,
               "Decay": 0.07,
               "Attack": 0.001,
-              "Decay Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1580,13 +1580,13 @@
             ],
             "parameters": {
               "Release": 0.12,
-              "Attack Curve": 0.0,
               "Sustain": 0.0,
-              "Release Curve": 0.0,
               "Decay": 0.4,
-              "Velocity Sens": 1.0,
-              "Decay Curve": 0.0,
-              "Attack": 0.001
+              "Attack": 0.001,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1746,13 +1746,13 @@
             ],
             "parameters": {
               "Model": 0.0,
-              "Mode": 0.0,
-              "Cutoff Mod": 1.0,
               "Cutoff": 7500.0,
               "Resonance": 0.4,
               "Morph": 0.0,
-              "Key Tracking": 0.0,
-              "Drive": 1.0
+              "Drive": 1.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -1775,14 +1775,14 @@
               100.0
             ],
             "parameters": {
-              "Decay Curve": 0.0,
               "Attack": 0.001,
               "Decay": 0.05,
               "Sustain": 0.0,
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Release Curve": 0.0,
-              "Release": 0.03
+              "Release": 0.03,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1900,13 +1900,13 @@
             ],
             "parameters": {
               "Decay": 2.0,
-              "Velocity Sens": 1.0,
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0,
-              "Release Curve": 0.0,
               "Sustain": 0.0,
               "Attack": 0.001,
-              "Release": 1.0
+              "Release": 1.0,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -1923,14 +1923,14 @@
               "FM Mode": 0.0,
               "X-Mod": 0.0,
               "Waveform": 0.0,
-              "FM Amount": 1.0,
               "Level": 0.5,
               "Detune": 2.0,
               "Uni Spread": 0.5,
               "Uni Phase": 1.0,
               "Uni Detune": 10.0,
               "Phase": 0.0,
-              "Pulse Width": 0.5
+              "Pulse Width": 0.5,
+              "FM Amt": 1.0
             }
           },
           {
@@ -1963,7 +1963,6 @@
               "Pulse Width": 0.5,
               "Uni Spread": 0.5,
               "Frequency": 440.0,
-              "FM Amount": 1.0,
               "Uni Phase": 1.0,
               "X-Mod": 0.0,
               "Detune": 0.0,
@@ -1972,7 +1971,8 @@
               "FM Mode": 0.0,
               "Waveform": 0.0,
               "Octave": 0.0,
-              "Phase": 0.0
+              "Phase": 0.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -2010,14 +2010,14 @@
               100.0
             ],
             "parameters": {
-              "Release Curve": 0.0,
               "Sustain": 0.1,
               "Attack": 0.001,
-              "Decay Curve": 0.0,
               "Decay": 0.5,
-              "Velocity Sens": 1.0,
-              "Attack Curve": 0.0,
-              "Release": 0.3
+              "Release": 0.3,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           }
         ],
@@ -2160,14 +2160,14 @@
               100.0
             ],
             "parameters": {
-              "Cutoff Mod": 1.0,
               "Model": 1.0,
-              "Key Tracking": 0.0,
-              "Mode": 0.0,
               "Resonance": 0.3,
               "Cutoff": 2500.0,
               "Drive": 1.5,
-              "Morph": 0.1
+              "Morph": 0.1,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -2181,11 +2181,11 @@
               "Decay": 0.4,
               "Release": 2.0,
               "Attack": 0.8,
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Decay Curve": 0.0,
-              "Sustain": 0.75
+              "Sustain": 0.75,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2342,7 +2342,7 @@
               "Detune": 0.0,
               "X-Mod": 0.0,
               "Uni Spread": 0.6,
-              "FM Amount": 1.0
+              "FM Amt": 1.0
             }
           },
           {
@@ -2387,12 +2387,12 @@
             "parameters": {
               "Resonance": 0.25,
               "Cutoff": 4500.0,
-              "Cutoff Mod": 1.0,
-              "Key Tracking": 0.0,
               "Model": 0.0,
-              "Mode": 0.0,
               "Morph": 0.0,
-              "Drive": 1.0
+              "Drive": 1.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -2405,12 +2405,12 @@
             "parameters": {
               "Decay": 0.4,
               "Attack": 0.005,
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Sustain": 0.05,
-              "Release Curve": 0.0,
-              "Decay Curve": 0.0,
-              "Release": 0.4
+              "Release": 0.4,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2449,13 +2449,13 @@
             ],
             "parameters": {
               "Attack": 0.001,
-              "Attack Curve": 0.0,
-              "Release Curve": 0.0,
               "Release": 0.2,
-              "Decay Curve": 0.0,
               "Sustain": 0.1,
-              "Velocity Sens": 1.0,
-              "Decay": 0.2
+              "Decay": 0.2,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           }
         ],
@@ -2615,11 +2615,11 @@
               "Uni Detune": 10.0,
               "X-Mod": 0.0,
               "Unison": 1.0,
-              "FM Amount": 1.0,
               "Uni Spread": 0.5,
               "Pulse Width": 0.5,
               "Level": 0.65,
-              "Phase": 0.0
+              "Phase": 0.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -2640,10 +2640,10 @@
               "X-Mod": 0.0,
               "Uni Phase": 1.0,
               "Pulse Width": 0.5,
-              "FM Amount": 1.0,
               "Frequency": 440.0,
               "Phase": 0.0,
-              "Detune": 0.0
+              "Detune": 0.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -2656,12 +2656,12 @@
             "parameters": {
               "Attack": 0.01,
               "Sustain": 0.15,
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Decay": 1.0,
-              "Decay Curve": 0.0,
               "Release": 0.8,
-              "Attack Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2687,13 +2687,13 @@
             ],
             "parameters": {
               "Release": 2.5,
-              "Velocity Sens": 1.0,
               "Attack": 0.3,
-              "Attack Curve": 0.0,
               "Decay": 0.5,
               "Sustain": 0.8,
-              "Decay Curve": 0.0,
-              "Release Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2718,13 +2718,13 @@
             ],
             "parameters": {
               "Cutoff": 600.0,
-              "Key Tracking": 0.0,
               "Resonance": 0.45,
-              "Cutoff Mod": 1.0,
               "Drive": 1.5,
               "Model": 0.0,
-              "Mode": 0.0,
-              "Morph": 0.0
+              "Morph": 0.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           }
         ],
@@ -2866,12 +2866,12 @@
             "parameters": {
               "Cutoff": 1000.0,
               "Morph": 0.0,
-              "Cutoff Mod": 1.0,
               "Model": 0.0,
               "Resonance": 0.15,
               "Drive": 1.2,
-              "Mode": 0.0,
-              "Key Tracking": 0.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -2909,14 +2909,14 @@
               100.0
             ],
             "parameters": {
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Decay Curve": 0.0,
               "Attack": 0.001,
               "Decay": 0.08,
               "Release": 0.05,
-              "Release Curve": 0.0,
-              "Sustain": 0.0
+              "Sustain": 0.0,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2948,14 +2948,14 @@
               100.0
             ],
             "parameters": {
-              "Velocity Sens": 1.0,
               "Decay": 0.15,
               "Sustain": 0.0,
               "Attack": 0.001,
               "Release": 0.1,
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -2982,7 +2982,6 @@
               "Unison": 1.0,
               "X-Mod": 0.0,
               "Uni Phase": 1.0,
-              "FM Amount": 1.0,
               "Level": 0.6,
               "Octave": 0.0,
               "Pulse Width": 0.5,
@@ -2991,7 +2990,8 @@
               "Waveform": 0.0,
               "Detune": 0.0,
               "Frequency": 50.0,
-              "Uni Detune": 10.0
+              "Uni Detune": 10.0,
+              "FM Amt": 1.0
             }
           }
         ],
@@ -3138,14 +3138,14 @@
               100.0
             ],
             "parameters": {
-              "Attack Curve": 0.0,
               "Attack": 0.01,
               "Sustain": 0.15,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Release": 0.2,
               "Decay": 0.5,
-              "Release Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -3188,12 +3188,12 @@
             "parameters": {
               "Morph": 0.0,
               "Cutoff": 1800.0,
-              "Key Tracking": 0.0,
               "Model": 0.0,
               "Drive": 1.0,
-              "Cutoff Mod": 1.0,
               "Resonance": 0.15,
-              "Mode": 0.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -3205,13 +3205,13 @@
             ],
             "parameters": {
               "Release": 0.6,
-              "Velocity Sens": 1.0,
-              "Decay Curve": 0.0,
-              "Attack Curve": 0.0,
               "Sustain": 0.6,
-              "Release Curve": 0.0,
               "Decay": 0.4,
-              "Attack": 0.1
+              "Attack": 0.1,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           }
         ],
@@ -3372,7 +3372,6 @@
               "Pulse Width": 0.5,
               "Level": 0.9,
               "Uni Phase": 1.0,
-              "FM Amount": 1.0,
               "Phase": 0.0,
               "Uni Spread": 0.85,
               "Waveform": 1.0,
@@ -3382,7 +3381,8 @@
               "X-Mod": 0.0,
               "FM Mode": 0.0,
               "Frequency": 440.0,
-              "Uni Detune": 8.0
+              "Uni Detune": 8.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -3407,14 +3407,14 @@
               100.0
             ],
             "parameters": {
-              "Velocity Sens": 1.0,
               "Release": 2.0,
               "Sustain": 0.85,
               "Attack": 0.8,
-              "Decay Curve": 0.0,
               "Decay": 0.6,
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           }
         ],
@@ -3537,10 +3537,10 @@
               "Uni Spread": 0.5,
               "Phase": 0.0,
               "Waveform": 0.0,
-              "FM Amount": 1.0,
               "Octave": 0.0,
               "Pulse Width": 0.5,
-              "Frequency": 440.0
+              "Frequency": 440.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -3553,12 +3553,12 @@
             "parameters": {
               "Decay": 0.5,
               "Release": 0.3,
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Attack": 0.001,
               "Sustain": 0.1,
-              "Release Curve": 0.0,
-              "Decay Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -3577,12 +3577,12 @@
               "Uni Phase": 1.0,
               "Detune": 2.0,
               "Waveform": 0.0,
-              "FM Amount": 1.0,
               "Unison": 1.0,
               "FM Mode": 0.0,
               "Frequency": 440.0,
               "Phase": 0.0,
-              "Pulse Width": 0.5
+              "Pulse Width": 0.5,
+              "FM Amt": 1.0
             }
           },
           {
@@ -3594,13 +3594,13 @@
             ],
             "parameters": {
               "Release": 1.0,
-              "Attack Curve": 0.0,
               "Sustain": 0.0,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Attack": 0.001,
-              "Release Curve": 0.0,
-              "Decay": 2.0
+              "Decay": 2.0,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -3798,13 +3798,13 @@
             ],
             "parameters": {
               "Sustain": 0.8,
-              "Decay Curve": 0.0,
               "Release": 1.2,
               "Attack": 0.4,
-              "Attack Curve": 0.0,
               "Decay": 0.5,
-              "Release Curve": 0.0,
-              "Velocity Sens": 1.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -3897,13 +3897,13 @@
               "FM Mode": 0.0,
               "Waveform": 1.0,
               "Detune": 0.0,
-              "FM Amount": 1.0,
               "Unison": 1.0,
               "Pulse Width": 0.5,
               "Uni Spread": 0.5,
               "Octave": 0.0,
               "Uni Detune": 10.0,
-              "Frequency": 440.0
+              "Frequency": 440.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -3915,13 +3915,13 @@
             ],
             "parameters": {
               "Resonance": 0.1,
-              "Mode": 0.0,
               "Drive": 1.0,
-              "Cutoff Mod": 1.0,
               "Morph": 0.0,
               "Cutoff": 2000.0,
               "Model": 0.0,
-              "Key Tracking": 0.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -4042,13 +4042,13 @@
             ],
             "parameters": {
               "Morph": 0.0,
-              "Key Tracking": 0.0,
               "Cutoff": 2500.0,
-              "Cutoff Mod": 1.0,
               "Resonance": 0.1,
-              "Mode": 0.0,
               "Drive": 1.0,
-              "Model": 0.0
+              "Model": 0.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -4077,14 +4077,14 @@
               100.0
             ],
             "parameters": {
-              "Decay Curve": 0.0,
               "Release": 1.0,
-              "Velocity Sens": 1.0,
-              "Attack Curve": 0.0,
               "Sustain": 0.5,
-              "Release Curve": 0.0,
               "Decay": 1.0,
-              "Attack": 0.4
+              "Attack": 0.4,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4143,7 +4143,6 @@
               "Detune": -5.0,
               "FM Mode": 0.0,
               "Waveform": 2.0,
-              "FM Amount": 1.0,
               "Uni Spread": 0.5,
               "Octave": 0.0,
               "Pulse Width": 0.5,
@@ -4153,7 +4152,8 @@
               "Uni Detune": 10.0,
               "Unison": 1.0,
               "X-Mod": 0.0,
-              "Uni Phase": 1.0
+              "Uni Phase": 1.0,
+              "FM Amt": 1.0
             }
           },
           {
@@ -4203,12 +4203,12 @@
             "parameters": {
               "Decay": 0.5,
               "Sustain": 0.8,
-              "Attack Curve": 0.0,
               "Attack": 0.6,
-              "Release Curve": 0.0,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
-              "Release": 1.2
+              "Release": 1.2,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           }
         ],
@@ -4411,11 +4411,11 @@
               "Sustain": 0.0,
               "Decay": 1.2,
               "Attack": 0.001,
-              "Attack Curve": 0.0,
-              "Release Curve": 0.0,
-              "Decay Curve": 0.0,
               "Release": 1.5,
-              "Velocity Sens": 1.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4440,14 +4440,14 @@
               100.0
             ],
             "parameters": {
-              "Decay Curve": 0.0,
               "Sustain": 0.0,
               "Release": 0.2,
-              "Release Curve": 0.0,
-              "Attack Curve": 0.0,
               "Attack": 0.001,
               "Decay": 0.4,
-              "Velocity Sens": 1.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4459,13 +4459,13 @@
             ],
             "parameters": {
               "Model": 0.0,
-              "Key Tracking": 0.0,
               "Morph": 0.0,
               "Drive": 1.0,
               "Resonance": 0.2,
-              "Mode": 0.0,
               "Cutoff": 6000.0,
-              "Cutoff Mod": 1.0
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           }
         ],
@@ -4668,14 +4668,14 @@
               100.0
             ],
             "parameters": {
-              "Velocity Sens": 1.0,
               "Release": 0.3,
-              "Release Curve": 0.0,
               "Decay": 0.4,
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0,
               "Sustain": 0.7,
-              "Attack": 0.005
+              "Attack": 0.005,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4700,13 +4700,13 @@
             ],
             "parameters": {
               "Morph": 0.0,
-              "Key Tracking": 0.0,
               "Cutoff": 1800.0,
               "Model": 0.0,
               "Drive": 1.0,
-              "Cutoff Mod": 1.0,
-              "Mode": 0.0,
-              "Resonance": 0.15
+              "Resonance": 0.15,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 0.0
             }
           },
           {
@@ -4717,14 +4717,14 @@
               100.0
             ],
             "parameters": {
-              "Attack Curve": 0.0,
-              "Decay Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Release": 0.2,
               "Attack": 0.002,
               "Decay": 0.5,
               "Sustain": 0.2,
-              "Release Curve": 0.0
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4738,7 +4738,6 @@
               "Level": 0.8,
               "Unison": 7.0,
               "Uni Spread": 1.0,
-              "FM Amount": 1.0,
               "Uni Phase": 1.0,
               "Frequency": 440.0,
               "Phase": 0.0,
@@ -4748,7 +4747,8 @@
               "Pulse Width": 0.5,
               "Octave": 0.0,
               "X-Mod": 0.0,
-              "Detune": 0.0
+              "Detune": 0.0,
+              "FM Amt": 1.0
             }
           }
         ],
@@ -4839,13 +4839,13 @@
             ],
             "parameters": {
               "Release": 1.0,
-              "Attack Curve": 0.0,
-              "Velocity Sens": 1.0,
               "Sustain": 0.8,
-              "Release Curve": 0.0,
               "Attack": 0.5,
-              "Decay Curve": 0.0,
-              "Decay": 0.2
+              "Decay": 0.2,
+              "Atk Curve": 0.0,
+              "Dec Curve": 0.0,
+              "Rel Curve": 0.0,
+              "Vel Sens": 1.0
             }
           },
           {
@@ -4857,13 +4857,13 @@
             ],
             "parameters": {
               "Model": 0.0,
-              "Cutoff Mod": 1.0,
               "Drive": 1.0,
-              "Mode": 2.0,
               "Cutoff": 1500.0,
               "Resonance": 0.7,
-              "Key Tracking": 0.0,
-              "Morph": 0.0
+              "Morph": 0.0,
+              "CV Amt": 1.0,
+              "Key Track": 0.0,
+              "Type": 2.0
             }
           },
           {
@@ -5029,7 +5029,7 @@
   ],
   "active_instrument_id": 0,
   "song": {
-    "name": "Oxygène Dreams",
+    "name": "Oxyg\u00e8ne Dreams",
     "author": "Pertylizer AI",
     "patterns": {
       "29": {

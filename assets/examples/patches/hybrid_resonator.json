@@ -64,9 +64,9 @@
       ],
       "parameters": {
         "Pan": 0.0,
-        "Master Level": 0.8,
         "Mute": 0.0,
-        "Limiter": 1.0
+        "Master": 0.8,
+        "Limit": 1.0
       }
     },
     {
