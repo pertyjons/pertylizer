@@ -89,7 +89,11 @@ pub fn update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     policy: Res<ThemeMaterialPolicy>,
-    mut query: Query<(&TerrainColumn, &mut Transform, &MeshMaterial3d<StandardMaterial>)>,
+    mut query: Query<(
+        &TerrainColumn,
+        &mut Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_policy_version: Local<u64>,
 ) {
@@ -122,16 +126,16 @@ pub fn update(
         transform.translation = Vec3::new(col.base_pos.x, height * 0.5, col.base_pos.z);
 
         // Update material color when policy changes or during fade
-        if policy_changed || fade < 1.0 {
-            if let Some(material) = materials.get_mut(&material_handle.0) {
-                let band_pos = col.col_index as f32 / COLS as f32;
-                let hue = telemetry_color::band_frequency_hue(band_pos);
-                let color = Color::hsl(hue, sat, lit * fade);
-                material.base_color = color;
-                material.emissive = LinearRgba::from(color) * emissive * fade;
-                material.metallic = policy.metallic;
-                material.perceptual_roughness = policy.roughness;
-            }
+        if (policy_changed || fade < 1.0)
+            && let Some(material) = materials.get_mut(&material_handle.0)
+        {
+            let band_pos = col.col_index as f32 / COLS as f32;
+            let hue = telemetry_color::band_frequency_hue(band_pos);
+            let color = Color::hsl(hue, sat, lit * fade);
+            material.base_color = color;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = policy.metallic;
+            material.perceptual_roughness = policy.roughness;
         }
     }
 }

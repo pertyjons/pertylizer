@@ -80,7 +80,11 @@ pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
-    mut query: Query<(&mut DiffusionCell, &mut Transform, &MeshMaterial3d<StandardMaterial>)>,
+    mut query: Query<(
+        &mut DiffusionCell,
+        &mut Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     policy: Res<ThemeMaterialPolicy>,
     mut sim_accum: Local<f32>,
@@ -136,15 +140,12 @@ pub fn update(
                 let zp = (z + 1) % GRID_SIZE;
                 let zm = (z + GRID_SIZE - 1) % GRID_SIZE;
 
-                let lap_a = grid_a[xp][z] + grid_a[xm][z] + grid_a[x][zp] + grid_a[x][zm]
-                    - 4.0 * a;
-                let lap_b = grid_b[xp][z] + grid_b[xm][z] + grid_b[x][zp] + grid_b[x][zm]
-                    - 4.0 * b;
+                let lap_a = grid_a[xp][z] + grid_a[xm][z] + grid_a[x][zp] + grid_a[x][zm] - 4.0 * a;
+                let lap_b = grid_b[xp][z] + grid_b[xm][z] + grid_b[x][zp] + grid_b[x][zm] - 4.0 * b;
 
                 // Gray-Scott reaction-diffusion
                 let reaction = a * b * b;
-                new_a[x][z] =
-                    (a + d_a * lap_a * 0.2 - reaction + feed * (1.0 - a)).clamp(0.0, 1.0);
+                new_a[x][z] = (a + d_a * lap_a * 0.2 - reaction + feed * (1.0 - a)).clamp(0.0, 1.0);
                 new_b[x][z] =
                     (b + d_b * lap_b * 0.2 + reaction - (kill + feed) * b).clamp(0.0, 1.0);
             }

@@ -153,7 +153,12 @@ pub fn setup(
 
         let base_transform = Transform {
             translation: def.pos,
-            rotation: Quat::from_euler(EulerRot::XYZ, def.rotation.x, def.rotation.y, def.rotation.z),
+            rotation: Quat::from_euler(
+                EulerRot::XYZ,
+                def.rotation.x,
+                def.rotation.y,
+                def.rotation.z,
+            ),
             scale: def.scale,
         };
 
@@ -257,8 +262,7 @@ pub fn update(
         // Sway in the wind (RMS-driven)
         let sway_x = (t * 0.7 + branch.index as f32 * 0.5).sin() * rms_mono * 0.15;
         let sway_z = (t * 0.9 + branch.index as f32 * 0.3).cos() * rms_mono * 0.15;
-        transform.rotation = base.rotation
-            * Quat::from_euler(EulerRot::XYZ, sway_x, 0.0, sway_z);
+        transform.rotation = base.rotation * Quat::from_euler(EulerRot::XYZ, sway_x, 0.0, sway_z);
 
         // Position stays at base
         transform.translation = base.translation;

@@ -1,8 +1,8 @@
 //! Centroid Nebula — Particle cloud shifting color and shape based on spectral brightness.
 
+use super::rand_f32;
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
-use rand::Rng;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
@@ -43,16 +43,16 @@ pub fn setup(
         ..default()
     });
 
-    let mut rng = rand::thread_rng();
+    let mut rng = fastrand::Rng::new();
 
     for _ in 0..NEBULA_PARTICLES {
-        let x = rng.gen_range(-BOUNDS..BOUNDS);
-        let y = rng.gen_range(-BOUNDS..BOUNDS) + 5.0;
-        let z = rng.gen_range(-BOUNDS..BOUNDS) - 5.0;
+        let x = rand_f32(&mut rng, -BOUNDS..BOUNDS);
+        let y = rand_f32(&mut rng, -BOUNDS..BOUNDS) + 5.0;
+        let z = rand_f32(&mut rng, -BOUNDS..BOUNDS) - 5.0;
         let pos = Vec3::new(x, y, z);
 
-        let phase = rng.gen_range(0.0..std::f32::consts::TAU);
-        let base_size = rng.gen_range(0.5..1.5);
+        let phase = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
+        let base_size = rand_f32(&mut rng, 0.5..1.5);
 
         commands.spawn((
             Mesh3d(mesh.clone()),

@@ -126,7 +126,8 @@ pub fn update(
         // Beat pulse adds subtle vertical bounce when assembled
         let pulse_y = beat_pulse * 0.3 * (1.0 - shatter);
 
-        transform.translation = cell.base_pos + displacement * fade + Vec3::new(0.0, hop + pulse_y, 0.0) * fade;
+        transform.translation =
+            cell.base_pos + displacement * fade + Vec3::new(0.0, hop + pulse_y, 0.0) * fade;
         transform.rotation = Quat::from_euler(EulerRot::XYZ, rot_x * fade, 0.0, rot_z * fade);
     }
 }

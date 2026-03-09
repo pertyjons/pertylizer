@@ -8,9 +8,9 @@ pub mod chord_bloom;
 pub mod cpu_overdrive;
 pub mod debug_hud;
 pub mod effects;
-pub mod fft_terrain;
 pub mod ferrofluid_tendrils;
 pub mod fft_bars;
+pub mod fft_terrain;
 pub mod flux_supernova;
 pub mod fractal_pulse;
 pub mod harmonic_ribbons;
@@ -31,6 +31,11 @@ pub mod velocity_meteors;
 pub mod voronoi_shatter;
 pub mod waiting_indicator;
 pub mod waveform_ring;
+
+/// Generate a random `f32` in the given range.
+fn rand_f32(rng: &mut fastrand::Rng, range: std::ops::Range<f32>) -> f32 {
+    range.start + rng.f32() * (range.end - range.start)
+}
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;

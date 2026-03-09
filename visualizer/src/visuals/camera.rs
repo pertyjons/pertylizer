@@ -5,10 +5,9 @@
 //! Up/Down arrows zoom in/out (orbit modes).
 //! Auto-cut mode: beat-synced camera switching on downbeats.
 
-use bevy::prelude::*;
-
 use super::telemetry_color;
 use crate::telemetry::SynthTelemetry;
+use bevy::prelude::*;
 
 /// Base orbit speed at 120 BPM (radians/sec).
 const BASE_SPEED: f32 = 0.1;
@@ -102,15 +101,22 @@ impl CameraMode {
     #[must_use]
     pub fn from_name(s: &str) -> Option<Self> {
         // Match canonical name() and common variants (no heap allocation)
-        Self::ALL.iter().copied().find(|m| s.eq_ignore_ascii_case(m.name()))
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|m| s.eq_ignore_ascii_case(m.name()))
             .or_else(|| {
                 // Handle underscore/no-separator variants
                 if s.eq_ignore_ascii_case("topdown") || s.eq_ignore_ascii_case("top_down") {
                     Some(Self::TopDown)
-                } else if s.eq_ignore_ascii_case("flythrough") || s.eq_ignore_ascii_case("fly_through") {
+                } else if s.eq_ignore_ascii_case("flythrough")
+                    || s.eq_ignore_ascii_case("fly_through")
+                {
                     Some(Self::FlyThrough)
-                } else if s.eq_ignore_ascii_case("freeorbit") || s.eq_ignore_ascii_case("free_orbit")
-                    || s.eq_ignore_ascii_case("free-orbit") {
+                } else if s.eq_ignore_ascii_case("freeorbit")
+                    || s.eq_ignore_ascii_case("free_orbit")
+                    || s.eq_ignore_ascii_case("free-orbit")
+                {
                     Some(Self::FreeOrbit)
                 } else {
                     None
@@ -246,9 +252,8 @@ pub fn update(
         state.auto_cut_timer += dt;
         if state.auto_cut_timer >= AUTO_CUT_INTERVAL {
             state.auto_cut_timer = 0.0;
-            let mut rng = rand::thread_rng();
-            use rand::Rng;
-            let mut next_idx = rng.gen_range(0..CameraMode::ALL.len());
+            let mut rng = fastrand::Rng::new();
+            let mut next_idx = rng.usize(0..CameraMode::ALL.len());
             let cur_idx = CameraMode::ALL
                 .iter()
                 .position(|&m| m == state.mode)

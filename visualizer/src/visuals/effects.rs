@@ -8,8 +8,6 @@
 
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
-use rand::Rng;
-use rand::seq::SliceRandom;
 use std::sync::OnceLock;
 
 /// Available visual effects.
@@ -72,7 +70,11 @@ impl EffectId {
         Self::NoteTree,
     ];
 
-    pub const AMBIENT: &[Self] = &[Self::CentroidNebula, Self::SpectralCathedral, Self::ReactionDiffusion];
+    pub const AMBIENT: &[Self] = &[
+        Self::CentroidNebula,
+        Self::SpectralCathedral,
+        Self::ReactionDiffusion,
+    ];
 
     pub const TRANSIENTS: &[Self] = &[
         Self::NoteParticles,
@@ -238,34 +240,34 @@ fn presets() -> &'static [SceneConfig] {
 
 /// Generate a completely random scene using the slot rules.
 fn generate_random_scene() -> SceneConfig {
-    let mut rng = rand::thread_rng();
+    let mut rng = fastrand::Rng::new();
 
     // 80% chance to have a terrain
-    let terrain = if rng.gen_bool(0.8) {
-        Some(*EffectId::TERRAIN.choose(&mut rng).unwrap())
+    let terrain = if rng.f64() < 0.8 {
+        rng.choice(EffectId::TERRAIN.iter()).copied()
     } else {
         None
     };
 
     // 70% chance to have a hero
-    let hero = if rng.gen_bool(0.7) {
-        Some(*EffectId::HERO.choose(&mut rng).unwrap())
+    let hero = if rng.f64() < 0.7 {
+        rng.choice(EffectId::HERO.iter()).copied()
     } else {
         None
     };
 
     // 50% chance to have an ambient effect
-    let ambient = if rng.gen_bool(0.5) {
-        Some(*EffectId::AMBIENT.choose(&mut rng).unwrap())
+    let ambient = if rng.f64() < 0.5 {
+        rng.choice(EffectId::AMBIENT.iter()).copied()
     } else {
         None
     };
 
     // Pick 1 to 3 random transients
     let mut transients = Vec::new();
-    let num_transients = rng.gen_range(1..=3);
+    let num_transients = rng.usize(1..=3);
     let mut available_transients = EffectId::TRANSIENTS.to_vec();
-    available_transients.shuffle(&mut rng);
+    rng.shuffle(&mut available_transients);
     for transient in available_transients.iter().take(num_transients) {
         transients.push(*transient);
     }

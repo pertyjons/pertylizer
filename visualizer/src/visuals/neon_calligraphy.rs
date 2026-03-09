@@ -3,12 +3,12 @@
 //! A grid of 3D lines/strokes that light up based on pitch and velocity.
 //! Uses shared materials to avoid per-entity material mutation overhead.
 
-use bevy::prelude::*;
-
 use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::rand_f32;
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
+use bevy::prelude::*;
 
 const NUM_STROKES: usize = 128; // One for each MIDI note
 const STROKE_LENGTH: f32 = 4.0;
@@ -51,14 +51,13 @@ pub fn setup(
         materials: shared_mats.clone(),
     });
 
-    let mut rng = rand::thread_rng();
-    use rand::Rng;
+    let mut rng = fastrand::Rng::new();
 
     for i in 0..NUM_STROKES {
         // Distribute randomly in a sphere/cloud
-        let r = rng.gen_range(5.0..20.0);
-        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-        let phi = rng.gen_range(0.0..std::f32::consts::PI);
+        let r = rand_f32(&mut rng, 5.0..20.0);
+        let theta = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
+        let phi = rand_f32(&mut rng, 0.0..std::f32::consts::PI);
 
         let x = r * phi.sin() * theta.cos();
         let y = r * phi.sin() * theta.sin() + 10.0;
@@ -67,9 +66,9 @@ pub fn setup(
         let pos = Vec3::new(x, y, z);
 
         // Random rotation
-        let rot_x = rng.gen_range(0.0..std::f32::consts::TAU);
-        let rot_y = rng.gen_range(0.0..std::f32::consts::TAU);
-        let rot_z = rng.gen_range(0.0..std::f32::consts::TAU);
+        let rot_x = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
+        let rot_y = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
+        let rot_z = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
         let rot = Quat::from_euler(EulerRot::XYZ, rot_x, rot_y, rot_z);
 
         let mat_idx = (i * NUM_MATERIAL_BUCKETS / NUM_STROKES).min(NUM_MATERIAL_BUCKETS - 1);
