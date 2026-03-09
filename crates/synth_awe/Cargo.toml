@@ -2,7 +2,7 @@
 name = "synth_awe"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.94"
 description = "Acoustic World Engine - real-time room simulation"
 authors = ["Per"]
 license = "MIT"

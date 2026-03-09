@@ -2,7 +2,7 @@
 name = "synth_core"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.94"
 description = "Core types, traits, and audio abstractions for Pertylizer"
 authors = ["Per"]
 license = "MIT"

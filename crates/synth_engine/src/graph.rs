@@ -83,9 +83,13 @@ pub struct ModuleGraph {
     /// Pre-allocated input buffers for processing (avoid allocations in audio thread).
     /// Vec of (port_name, buffer) pairs - allows creating a reference slice without allocation.
     input_buffers: Vec<(PortName, AudioBuffer)>,
-    /// Pre-allocated vec for gathering incoming connections.
-    /// Uses PortName for zero-allocation copying of connection info.
+    /// Pre-built incoming connection lookup: module_id → Vec<(from_module, from_port, to_port)>.
+    /// Rebuilt when graph topology changes (order_dirty), not per frame.
+    incoming_map: HashMap<ModuleId, Vec<(ModuleId, PortName, PortName)>>,
+    /// Pre-allocated vec for gathering incoming connections (used as temp during rebuild).
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
+    /// Cached output module ID — resolved when graph topology changes, not per frame.
+    cached_output_id: Option<ModuleId>,
     /// Set of bypassed modules (outputs zeroed instead of processing).
     bypassed: HashSet<ModuleId>,
 }
@@ -101,7 +105,9 @@ impl ModuleGraph {
             order_dirty: true,
             buffer_size: synth_core::BlockSize::new(256),
             input_buffers: Vec::with_capacity(8),
+            incoming_map: HashMap::new(),
             incoming_cache: Vec::with_capacity(16),
+            cached_output_id: None,
             bypassed: HashSet::new(),
         }
     }
@@ -114,7 +120,9 @@ impl ModuleGraph {
         self.instance_counters.clear();
         self.order_dirty = true;
         self.input_buffers.clear();
+        self.incoming_map.clear();
         self.incoming_cache.clear();
+        self.cached_output_id = None;
         self.bypassed.clear();
     }
 
@@ -338,54 +346,15 @@ impl ModuleGraph {
             self.process_module(module_id, context);
         }
 
-        // Copy from final output module (if any) to output buffer
-        // Priority 1: Look for a dedicated Output category module
-        if let Some((&id, _)) = self
-            .nodes
-            .iter()
-            .find(|(_, n)| n.descriptor.category == ModuleCategory::Output)
-            && let Some(node) = self.nodes.get(&id)
+        // Copy from cached output module (resolved during topology change, not per frame)
+        if let Some(out_id) = self.cached_output_id
+            && let Some(node) = self.nodes.get(&out_id)
             && let Some(out_buf) = node.outputs.get(&PortName::OUT)
         {
             output.copy_from(out_buf);
-            return;
+        } else {
+            output.clear();
         }
-
-        // Priority 2: Find a "sink" module (has connections IN but none OUT)
-        // This ensures we only use modules that are actually endpoints in the graph
-        let found = self
-            .processing_order
-            .iter()
-            .rev()
-            .copied()
-            .filter(|&id| self.is_sink(id))
-            .filter(|&id| self.connections.iter().any(|c| c.to_module == id))
-            .find_map(|id| self.nodes.get(&id)?.outputs.get(&PortName::OUT));
-
-        if let Some(out_buf) = found {
-            output.copy_from(out_buf);
-            return;
-        }
-
-        // Priority 3: If there are connections, use the last connected sink
-        if !self.connections.is_empty() {
-            let found = self
-                .processing_order
-                .iter()
-                .rev()
-                .copied()
-                .filter(|&id| self.is_sink(id))
-                .find_map(|id| self.nodes.get(&id)?.outputs.get(&PortName::OUT));
-
-            if let Some(out_buf) = found {
-                output.copy_from(out_buf);
-                return;
-            }
-        }
-
-        // No valid output found - return silence
-        // (disconnected modules should not produce output)
-        output.clear();
     }
 
     /// Trigger note on for all modules.
@@ -507,6 +476,64 @@ impl ModuleGraph {
             .and_then(|n| n.outputs.get(&PortName::OUT))
             .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
             .unwrap_or(0.0)
+    }
+
+    /// Gather modulation source values from LFO, Envelope, and Kinetic modules.
+    /// Iterates nodes internally to avoid the borrow conflict that requires `collect::<Vec<_>>()`.
+    /// Returns (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc).
+    pub fn gather_mod_source_values(&self) -> ([f32; 2], [f32; 2], f32, f32, f32) {
+        let mut lfo_values = [0.0f32; 2];
+        let mut env_values = [0.0f32; 2];
+        let mut kinetic_pos = 0.0f32;
+        let mut kinetic_vel = 0.0f32;
+        let mut kinetic_acc = 0.0f32;
+        let mut lfo_count = 0u8;
+        let mut env_count = 0u8;
+
+        for (&module_id, node) in &self.nodes {
+            match module_id.module_type {
+                ModuleType::Lfo if lfo_count < 2 => {
+                    lfo_values[lfo_count as usize] = node
+                        .outputs
+                        .get(&PortName::OUT)
+                        .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+                        .unwrap_or(0.0);
+                    lfo_count += 1;
+                }
+                ModuleType::Envelope if env_count < 2 => {
+                    env_values[env_count as usize] = node
+                        .outputs
+                        .get(&PortName::OUT)
+                        .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+                        .unwrap_or(0.0);
+                    env_count += 1;
+                }
+                ModuleType::KineticModulator => {
+                    kinetic_pos = node
+                        .outputs
+                        .get(&PortName::OUT)
+                        .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+                        .unwrap_or(0.0);
+                    kinetic_vel = node
+                        .module
+                        .get_param(&Param::Kinetic(synth_core::KineticParam::OutputVel(0.0)))
+                        .unwrap_or(0.0);
+                    kinetic_acc = node
+                        .module
+                        .get_param(&Param::Kinetic(synth_core::KineticParam::OutputAcc(0.0)))
+                        .unwrap_or(0.0);
+                }
+                _ => {}
+            }
+        }
+
+        (
+            lfo_values,
+            env_values,
+            kinetic_pos,
+            kinetic_vel,
+            kinetic_acc,
+        )
     }
 
     /// Check if the graph is empty.
@@ -675,65 +702,106 @@ impl ModuleGraph {
 
         self.processing_order = order;
         self.order_dirty = false;
+
+        // Rebuild incoming connection map (avoids per-frame O(M×C) scan)
+        self.incoming_map.clear();
+        for conn in &self.connections {
+            self.incoming_map
+                .entry(conn.to_module)
+                .or_insert_with(|| Vec::with_capacity(4))
+                .push((conn.from_module, conn.from_port, conn.to_port));
+        }
+
+        // Cache the output module ID (avoids per-frame search)
+        self.cached_output_id = self.resolve_output_module();
+    }
+
+    /// Resolve which module should be used as the graph output.
+    /// Called once when topology changes, not per frame.
+    fn resolve_output_module(&self) -> Option<ModuleId> {
+        // Priority 1: Dedicated Output category module
+        if let Some((&id, _)) = self
+            .nodes
+            .iter()
+            .find(|(_, n)| n.descriptor.category == ModuleCategory::Output)
+            && self
+                .nodes
+                .get(&id)
+                .and_then(|n| n.outputs.get(&PortName::OUT))
+                .is_some()
+        {
+            return Some(id);
+        }
+
+        // Priority 2: Sink module with incoming connections
+        let found = self
+            .processing_order
+            .iter()
+            .rev()
+            .copied()
+            .filter(|&id| !self.connections.iter().any(|c| c.from_module == id))
+            .find(|&id| {
+                self.connections.iter().any(|c| c.to_module == id)
+                    && self
+                        .nodes
+                        .get(&id)
+                        .and_then(|n| n.outputs.get(&PortName::OUT))
+                        .is_some()
+            });
+        if found.is_some() {
+            return found;
+        }
+
+        // Priority 3: Any sink with an output port
+        if !self.connections.is_empty() {
+            return self
+                .processing_order
+                .iter()
+                .rev()
+                .copied()
+                .filter(|&id| !self.connections.iter().any(|c| c.from_module == id))
+                .find(|&id| {
+                    self.nodes
+                        .get(&id)
+                        .and_then(|n| n.outputs.get(&PortName::OUT))
+                        .is_some()
+                });
+        }
+
+        None
     }
 
     fn process_module(&mut self, module_id: ModuleId, context: &ProcessContext) {
-        // Gather incoming connections into pre-allocated cache (avoid per-frame allocation)
-        // Connection ports are PortName (Copy, no allocation)
-        self.incoming_cache.clear();
-        for conn in &self.connections {
-            if conn.to_module == module_id {
-                self.incoming_cache.push((
-                    conn.from_module,
-                    conn.from_port, // PortName is Copy - no allocation!
-                    conn.to_port,   // PortName is Copy - no allocation!
-                ));
-            }
-        }
-
         // Clear the input buffers Vec for this module
-        // We need to clear the list entirely (not just buffer contents) because
-        // different modules have different input ports. Previously we only cleared
-        // buffer contents which caused stale port entries to persist across modules.
         self.input_buffers.clear();
 
-        // Gather inputs from connected modules
-        // Uses Vec for zero-allocation (no HashMap creation per frame)
-        for (from_module, from_port, to_port) in &self.incoming_cache {
-            if let Some(from_node) = self.nodes.get(from_module)
-                && let Some(output_buf) = from_node.outputs.get(from_port)
-            {
-                // Sum inputs if multiple connections to same port
-                // Linear search in Vec is fast for typical 1-4 input ports
-                if let Some((_, existing)) = self
-                    .input_buffers
-                    .iter_mut()
-                    .find(|(name, _)| *name == *to_port)
+        // Use pre-built incoming connection map (rebuilt on topology change, not per frame)
+        if let Some(incoming) = self.incoming_map.get(&module_id) {
+            for &(from_module, from_port, to_port) in incoming {
+                if let Some(from_node) = self.nodes.get(&from_module)
+                    && let Some(output_buf) = from_node.outputs.get(&from_port)
                 {
-                    // Ensure buffer is correctly sized before adding
-                    if existing.len() < context.samples.as_usize() {
-                        existing.resize(context.samples.as_usize());
+                    // Sum inputs if multiple connections to same port
+                    // Linear search in Vec is fast for typical 1-4 input ports
+                    if let Some((_, existing)) = self
+                        .input_buffers
+                        .iter_mut()
+                        .find(|(name, _)| *name == to_port)
+                    {
+                        if existing.len() < context.samples.as_usize() {
+                            existing.resize(context.samples.as_usize());
+                        }
+                        existing.add_from(output_buf);
+                    } else {
+                        let mut buf = AudioBuffer::new(context.samples.as_usize());
+                        buf.copy_from(output_buf);
+                        self.input_buffers.push((to_port, buf));
                     }
-                    existing.add_from(output_buf);
-                } else {
-                    // First connection to this port - add new buffer entry
-                    // Note: Vec only grows during warmup, not during steady-state processing
-                    let mut buf = AudioBuffer::new(context.samples.as_usize());
-                    buf.copy_from(output_buf);
-                    self.input_buffers.push((*to_port, buf));
                 }
             }
         }
 
-        // Build InputPorts from the input_buffers Vec.
-        // Uses a small Vec allocation for the reference slice, which is much cheaper
-        // than the old HashMap<String, &AudioBuffer> approach:
-        // - No String cloning (PortName is Copy - 8 bytes vs 24+ bytes for String)
-        // - No hashing or bucket allocation
-        // - Typical size is 1-4 entries, so Vec allocation is minimal
-        //
-        // Trade-off: Still allocates a small Vec per module per frame, but this is
-        // acceptable for realtime audio (takes nanoseconds for 4-8 pointers).
+        // Build InputPorts reference slice (small Vec for typical 1-4 ports)
         let input_refs: Vec<(PortName, &AudioBuffer)> = self
             .input_buffers
             .iter()

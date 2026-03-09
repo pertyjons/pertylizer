@@ -2,7 +2,7 @@
 name = "pertylizer"
 version = "0.226.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.94"
 description = "Pertylizer — a modular synthesizer"
 authors = ["Per"]
 license = "MIT"

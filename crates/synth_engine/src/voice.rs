@@ -21,7 +21,7 @@ use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
     Semitones, Velocity,
 };
-use synth_core::{KineticParam, ModuleType, OscillatorParam, Param};
+use synth_core::{ModuleType, OscillatorParam, Param};
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -290,6 +290,9 @@ pub struct Voice {
     /// Cached mod matrix module ID (if present in graph).
     mod_matrix_id: Option<crate::ModuleId>,
 
+    /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
+    mod_slots_cache: Vec<(usize, synth_core::ModDestination, f32)>,
+
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
 
@@ -317,6 +320,7 @@ impl Voice {
             glide_time: Seconds::ZERO,
             output_module_id: None,
             mod_matrix_id: None,
+            mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
         }
@@ -347,6 +351,7 @@ impl Voice {
             glide_time: Seconds::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
+            mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
         }
@@ -636,39 +641,9 @@ impl Voice {
         let pitch_bend_val = self.pitch_bend.as_f32();
 
         // Read LFO/Envelope/Kinetic outputs from previous block
-        let mut lfo_values = [0.0f32; 2];
-        let mut env_values = [0.0f32; 2];
-        let mut kinetic_pos = 0.0f32;
-        let mut kinetic_vel = 0.0f32;
-        let mut kinetic_acc = 0.0f32;
-        let mut lfo_count = 0u8;
-        let mut env_count = 0u8;
-        for module_id in self.graph.module_ids().collect::<Vec<_>>() {
-            match module_id.module_type {
-                ModuleType::Lfo if lfo_count < 2 => {
-                    lfo_values[lfo_count as usize] = self.graph.get_last_output_value(module_id);
-                    lfo_count += 1;
-                }
-                ModuleType::Envelope if env_count < 2 => {
-                    env_values[env_count as usize] = self.graph.get_last_output_value(module_id);
-                    env_count += 1;
-                }
-                ModuleType::KineticModulator => {
-                    // Position comes from the "out" port
-                    kinetic_pos = self.graph.get_last_output_value(module_id);
-                    // Velocity and acceleration via get_param with read-only output params
-                    kinetic_vel = self
-                        .graph
-                        .get_param(module_id, &Param::Kinetic(KineticParam::OutputVel(0.0)))
-                        .unwrap_or(0.0);
-                    kinetic_acc = self
-                        .graph
-                        .get_param(module_id, &Param::Kinetic(KineticParam::OutputAcc(0.0)))
-                        .unwrap_or(0.0);
-                }
-                _ => {}
-            }
-        }
+        // Uses internal graph iteration to avoid collect::<Vec<_>>() allocation
+        let (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc) =
+            self.graph.gather_mod_source_values();
 
         // Build source values array matching ModSource::ALL indices
         // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber,
@@ -694,12 +669,10 @@ impl Voice {
         // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config
         // through get_param and calculate modulations here in Voice.
 
-        // Read mod matrix configuration through get_param and calculate modulations ourselves
-        let slots = self.read_mod_matrix_slots(mm_id);
-        for slot in &slots {
-            let src_idx = slot.0;
-            let dst = slot.1;
-            let amount = slot.2;
+        // Read mod matrix configuration and apply modulations (uses pre-allocated cache)
+        self.read_mod_matrix_slots_into_cache(mm_id);
+        for i in 0..self.mod_slots_cache.len() {
+            let (src_idx, dst, amount) = self.mod_slots_cache[i];
 
             if src_idx == 0 || matches!(dst, synth_core::ModDestination::None) {
                 continue;
@@ -714,14 +687,12 @@ impl Voice {
         }
     }
 
-    /// Read mod matrix slot configurations via get_param.
-    /// Reads the grid size first and only returns slots within that range.
-    /// Returns Vec of (source_index, destination, amount).
-    fn read_mod_matrix_slots(
-        &self,
-        mm_id: crate::ModuleId,
-    ) -> Vec<(usize, synth_core::ModDestination, f32)> {
+    /// Read mod matrix slot configurations into the pre-allocated cache.
+    /// Reuses `self.mod_slots_cache` to avoid per-frame Vec allocation.
+    fn read_mod_matrix_slots_into_cache(&mut self, mm_id: crate::ModuleId) {
         use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource as MS};
+
+        self.mod_slots_cache.clear();
 
         // Read grid size to determine how many slots to process
         let grid_size_idx = self
@@ -735,7 +706,6 @@ impl Voice {
         let grid_size = ModMatrixGridSize::from_index(grid_size_idx);
         let slot_count = grid_size.slot_count();
 
-        let mut slots = Vec::with_capacity(slot_count);
         for i in 0..slot_count {
             let slot = i as u8;
             let src_idx = self
@@ -763,9 +733,8 @@ impl Voice {
                 .unwrap_or(0.0);
 
             let dst = ModDestination::from_index(dst_idx);
-            slots.push((src_idx, dst, amount));
+            self.mod_slots_cache.push((src_idx, dst, amount));
         }
-        slots
     }
 
     /// Clone the voice structure (for voice allocation).
@@ -795,6 +764,7 @@ impl Voice {
             glide_time: self.glide_time,
             output_module_id: output_id,
             mod_matrix_id,
+            mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: self.tuning_table.clone(),
         }

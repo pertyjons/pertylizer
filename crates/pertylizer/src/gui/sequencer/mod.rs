@@ -3818,9 +3818,7 @@ fn draw_automation_zone(
             }
 
             // Draw curves between consecutive points
-            for window in points.windows(2) {
-                let from = &window[0];
-                let to = &window[1];
+            for [from, to] in points.array_windows() {
                 let x_start = tick_to_x(from.tick);
                 let x_end = tick_to_x(to.tick);
                 let pixel_width = (x_end - x_start).max(1.0);

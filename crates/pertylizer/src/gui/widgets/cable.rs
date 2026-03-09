@@ -82,10 +82,10 @@ fn calculate_route(from: Pos2, to: Pos2, spread: f32) -> Vec<Pos2> {
 /// Total path length along a set of waypoints.
 fn path_length(points: &[Pos2]) -> f32 {
     points
-        .windows(2)
-        .map(|w| {
-            let dx = w[1].x - w[0].x;
-            let dy = w[1].y - w[0].y;
+        .array_windows()
+        .map(|&[a, b]| {
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
             (dx * dx + dy * dy).sqrt()
         })
         .sum()
@@ -94,16 +94,16 @@ fn path_length(points: &[Pos2]) -> f32 {
 /// Map a distance along the path to an (x, y) coordinate.
 fn point_at_distance(points: &[Pos2], dist: f32) -> Option<Pos2> {
     let mut remaining = dist;
-    for w in points.windows(2) {
-        let dx = w[1].x - w[0].x;
-        let dy = w[1].y - w[0].y;
+    for &[a, b] in points.array_windows() {
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
         let seg_len = (dx * dx + dy * dy).sqrt();
         if seg_len < 0.001 {
             continue;
         }
         if remaining <= seg_len {
             let t = remaining / seg_len;
-            return Some(Pos2::new(w[0].x + dx * t, w[0].y + dy * t));
+            return Some(Pos2::new(a.x + dx * t, a.y + dy * t));
         }
         remaining -= seg_len;
     }
@@ -122,8 +122,8 @@ fn draw_segments(
     }
 
     if !round_corners || points.len() <= 2 {
-        for w in points.windows(2) {
-            painter.line_segment([w[0], w[1]], stroke);
+        for &[a, b] in points.array_windows() {
+            painter.line_segment([a, b], stroke);
         }
         return;
     }
@@ -306,8 +306,8 @@ pub fn draw_flow_particles(
 pub fn point_near_cable(point: Pos2, from: Pos2, to: Pos2, threshold: f32, spread: f32) -> bool {
     let points = calculate_route(from, to, spread);
 
-    for w in points.windows(2) {
-        if point_to_segment_distance(point, w[0], w[1]) < threshold {
+    for &[a, b] in points.array_windows() {
+        if point_to_segment_distance(point, a, b) < threshold {
             return true;
         }
     }
@@ -321,8 +321,8 @@ pub fn closest_point_on_cable(point: Pos2, from: Pos2, to: Pos2, spread: f32) ->
     let mut best = from;
     let mut best_dist = f32::MAX;
 
-    for w in points.windows(2) {
-        let closest = closest_point_on_segment(point, w[0], w[1]);
+    for &[a, b] in points.array_windows() {
+        let closest = closest_point_on_segment(point, a, b);
         let dx = point.x - closest.x;
         let dy = point.y - closest.y;
         let dist = dx * dx + dy * dy;
