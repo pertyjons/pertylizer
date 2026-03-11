@@ -1,12 +1,12 @@
 //! Acid Bass - Classic 303-style acid bass with Steiner-Parker filter.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Acid Bass - Squelchy acid bass with variable saturation and resonance sweep.
 pub fn patch_acid_bass() -> Patch {
     let mut patch = Patch::new("Acid Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Squelchy acid bass with Acid filter's resonance-driven saturation and envelope sweep."
             .to_string(),

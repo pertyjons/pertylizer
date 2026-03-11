@@ -1,12 +1,12 @@
 //! Glitch Pad - Evolving textured pad with wavefold waveshaping and LFO modulation.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Glitch Pad - Digital, textured pad with movement.
 pub fn patch_glitch_pad() -> Patch {
     let mut patch = Patch::new("Glitch Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Evolving pad with wavefold waveshaping and slow LFO filter modulation.".to_string());
     patch.notes = Some(

@@ -1,12 +1,12 @@
 //! Wave Folder Bass - West coast synthesis bass.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Wave Folder Bass - West coast synthesis bass.
 pub fn patch_wave_folder_bass() -> Patch {
     let mut patch = Patch::new("Wave Folder Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Rich, harmonically complex bass using wave folding.".to_string());
     patch.notes = Some(
         r#"

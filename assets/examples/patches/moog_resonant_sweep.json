@@ -1,0 +1,366 @@
+{
+  "name": "Moog Resonant Sweep",
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons/pertylizer"
+  },
+  "version": "1.0",
+  "modules": [
+    {
+      "id": "env-2",
+      "type": "envelope",
+      "position": {
+        "x": 384.0,
+        "y": 384.0
+      },
+      "parameters": {
+        "release": 0.5,
+        "rel_curve": 0.0,
+        "attack": 0.01,
+        "sustain": 0.85,
+        "decay": 0.3,
+        "atk_curve": 0.0,
+        "dec_curve": 0.0,
+        "vel_sens": 0.7
+      }
+    },
+    {
+      "id": "osc-2",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 352.0
+      },
+      "parameters": {
+        "x_mod": 0.0,
+        "frequency": 440.0,
+        "detune": 12.0,
+        "waveform": 2.0,
+        "uni_phase": 1.0,
+        "uni_spread": 0.5,
+        "pulse_width": 0.5,
+        "level": 0.75,
+        "fm_amt": 1.0,
+        "uni_detune": 10.0,
+        "unison": 1.0,
+        "fm_mode": 0.0
+      }
+    },
+    {
+      "id": "rev-1",
+      "type": "reverb",
+      "position": {
+        "x": 1760.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "pre_delay": 0.0,
+        "damping": 0.6,
+        "room_size": 0.5,
+        "decay": 2.0,
+        "width": 1.0,
+        "diffusion": 0.5,
+        "low_cut": 80.0,
+        "mix": 0.15
+      }
+    },
+    {
+      "id": "amp-1",
+      "type": "amplifier",
+      "position": {
+        "x": 1088.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "pan": 0.0,
+        "level": 0.95,
+        "cv_bipolar": 0.0
+      }
+    },
+    {
+      "id": "osc-1",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "fm_amt": 1.0,
+        "waveform": 2.0,
+        "fm_mode": 0.0,
+        "level": 0.85,
+        "frequency": 440.0,
+        "pulse_width": 0.5,
+        "uni_detune": 10.0,
+        "uni_phase": 1.0,
+        "unison": 1.0,
+        "uni_spread": 0.5,
+        "x_mod": 0.0,
+        "detune": 0.0
+      }
+    },
+    {
+      "id": "flt-1",
+      "type": "filter",
+      "position": {
+        "x": 736.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "morph": 0.0,
+        "model": 0.0,
+        "cutoff": 500.0,
+        "drive": 1.8,
+        "cv_amt": 1.0,
+        "type": 0.0,
+        "resonance": 0.55,
+        "key_track": 0.8
+      }
+    },
+    {
+      "id": "env-1",
+      "type": "envelope",
+      "position": {
+        "x": 384.0,
+        "y": 672.0
+      },
+      "parameters": {
+        "sustain": 0.15,
+        "atk_curve": 0.0,
+        "rel_curve": 0.0,
+        "vel_sens": 0.6,
+        "attack": 0.005,
+        "release": 0.5,
+        "decay": 0.7,
+        "dec_curve": 0.0
+      }
+    },
+    {
+      "id": "mix-1",
+      "type": "mixer",
+      "position": {
+        "x": 384.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "input_4": 1.0,
+        "input_1": 0.8,
+        "input_2": 0.7,
+        "input_7": 1.0,
+        "input_5": 1.0,
+        "master": 0.9,
+        "input_6": 1.0,
+        "input_8": 1.0,
+        "input_3": 0.5
+      }
+    },
+    {
+      "id": "lfo-1",
+      "type": "lfo",
+      "position": {
+        "x": 384.0,
+        "y": 960.0
+      },
+      "parameters": {
+        "depth": 0.3,
+        "rate": 1.8,
+        "phase": 0.0,
+        "waveform": 1.0
+      }
+    },
+    {
+      "id": "out-1",
+      "type": "stereo_output",
+      "position": {
+        "x": 1408.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "mute": 0.0,
+        "master": 0.8,
+        "limit": 1.0,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "chr-1",
+      "type": "chorus",
+      "position": {
+        "x": 1760.0,
+        "y": 320.0
+      },
+      "parameters": {
+        "rate": 0.8,
+        "voices": 2.0,
+        "mix": 0.25,
+        "depth": 0.35
+      }
+    },
+    {
+      "id": "sub-1",
+      "type": "sub_oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 672.0
+      },
+      "parameters": {
+        "level": 0.5,
+        "octave": 0.0,
+        "waveform": 1.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": [
+        "osc-1",
+        "out"
+      ],
+      "to": [
+        "mix-1",
+        "in1"
+      ]
+    },
+    {
+      "from": [
+        "osc-2",
+        "out"
+      ],
+      "to": [
+        "mix-1",
+        "in2"
+      ]
+    },
+    {
+      "from": [
+        "sub-1",
+        "out"
+      ],
+      "to": [
+        "mix-1",
+        "in3"
+      ]
+    },
+    {
+      "from": [
+        "mix-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "env-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "cutoff_cv"
+      ]
+    },
+    {
+      "from": [
+        "lfo-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "cutoff_cv"
+      ]
+    },
+    {
+      "from": [
+        "flt-1",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "env-2",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "cv"
+      ]
+    },
+    {
+      "from": [
+        "amp-1",
+        "left"
+      ],
+      "to": [
+        "out-1",
+        "in_l"
+      ]
+    },
+    {
+      "from": [
+        "amp-1",
+        "right"
+      ],
+      "to": [
+        "out-1",
+        "in_r"
+      ]
+    },
+    {
+      "from": [
+        "env-1",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "cv"
+      ]
+    },
+    {
+      "from": [
+        "osc-2",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "env-2",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "cutoff_cv"
+      ]
+    },
+    {
+      "from": [
+        "osc-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "in"
+      ]
+    }
+  ],
+  "settings": {
+    "master_volume": 0.8,
+    "bpm": 120.0,
+    "octave_offset": 0,
+    "glide_time": 0.0,
+    "canvas_size": [
+      2210.0,
+      1460.0
+    ]
+  }
+}

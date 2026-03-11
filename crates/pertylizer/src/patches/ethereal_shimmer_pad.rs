@@ -1,12 +1,12 @@
 //! Ethereal Shimmer Pad — lush additive pad with Juno chorus, octave shimmer reverb, wide stereo.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Ethereal Shimmer Pad — AdditiveOsc through EnsembleChorus, ShimmerReverb, Mid/Side widening, and EQ shaping.
 pub fn patch_ethereal_shimmer_pad() -> Patch {
     let mut patch = Patch::new("Ethereal Shimmer Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Lush additive harmonics through Juno-style ensemble chorus, octave shimmer reverb, \
          wide stereo field, and gentle EQ sculpting."

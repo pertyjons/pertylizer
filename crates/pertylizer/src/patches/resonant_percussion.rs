@@ -1,12 +1,12 @@
 //! Resonant Percussion — hammer noise through modal resonators with reverse/gate reverb.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Resonant Percussion — MechanicalNoise excites ModalResonator with ReverseGateReverb drama.
 pub fn patch_resonant_percussion() -> Patch {
     let mut patch = Patch::new("Resonant Percussion");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Hammer-style mechanical noise bursts excite modal resonant frequencies, \
          processed through EQ shaping and dramatic reverse/gate reverb."

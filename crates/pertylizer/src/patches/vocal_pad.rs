@@ -1,12 +1,12 @@
 //! Vocal Pad - Ethereal vowel pad using formant wavetable scanning.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Vocal Pad - Lush choir-like pad with formant wavetable morphing.
 pub fn patch_vocal_pad() -> Patch {
     let mut patch = Patch::new("Vocal Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Ethereal vowel pad using the Formant wavetable with slow LFO position scanning."
             .to_string(),

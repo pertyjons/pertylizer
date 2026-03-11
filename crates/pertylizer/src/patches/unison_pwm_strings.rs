@@ -1,12 +1,12 @@
 //! Unison PWM Strings - Lush string ensemble using pulse-width modulation and unison.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Unison PWM Strings - Rich, animated string section with PWM and stereo unison.
 pub fn patch_unison_pwm_strings() -> Patch {
     let mut patch = Patch::new("Unison PWM Strings");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Lush string ensemble combining pulse-width modulation with 5-voice stereo unison."
             .to_string(),

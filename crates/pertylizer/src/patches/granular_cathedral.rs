@@ -1,12 +1,12 @@
 //! Granular Cathedral — enormous frozen grain textures through cathedral convolution with spectral smearing.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Granular Cathedral — GranularOsc through Convolver, SpectralBlur, GranularFx, and Limiter.
 pub fn patch_granular_cathedral() -> Patch {
     let mut patch = Patch::new("Granular Cathedral");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Enormous frozen grain textures through cathedral convolution reverb \
          with spectral smearing and granular re-processing."

@@ -1,12 +1,12 @@
 //! Pitch Following Drone — self-modulating drone where pitch tracker creates evolving feedback.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Pitch Following Drone — PitchTracker, GranularOsc, ModalResonator, EnsembleChorus.
 pub fn patch_pitch_following_drone() -> Patch {
     let mut patch = Patch::new("Pitch Following Drone");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Self-modulating drone combining standard and granular oscillators, \
          with pitch tracking creating evolving cross-modulation."

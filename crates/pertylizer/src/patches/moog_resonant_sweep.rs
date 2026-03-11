@@ -1,12 +1,12 @@
 //! Moog Resonant Sweep - Fat analog lead/bass with filter envelope sweep.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Moog Resonant Sweep - Fat analog lead/bass with filter envelope sweep.
 pub fn patch_moog_resonant_sweep() -> Patch {
     let mut patch = Patch::new("Moog Resonant Sweep");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Fat Moog-style lead with resonant filter sweep, sub bass, and LFO wobble.".to_string(),
     );

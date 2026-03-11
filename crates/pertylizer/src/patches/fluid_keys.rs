@@ -1,12 +1,12 @@
 //! Fluid Keys - Warm electric piano with morphing filter overtones.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Fluid Keys - Warm keys with Fluid filter morph creating bell-like overtones.
 pub fn patch_fluid_keys() -> Patch {
     let mut patch = Patch::new("Fluid Keys");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Warm electric piano using Fluid filter's morph to create evolving overtones on each note."
             .to_string(),

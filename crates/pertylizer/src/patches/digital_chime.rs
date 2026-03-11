@@ -1,12 +1,12 @@
 //! Digital Chime - Crystalline chime with envelope-scanned wavetable.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Digital Chime - Sparkling digital chime with position sweep on attack.
 pub fn patch_digital_chime() -> Patch {
     let mut patch = Patch::new("Digital Chime");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Crystalline chime using the Digital wavetable with envelope-driven position sweep."
             .to_string(),

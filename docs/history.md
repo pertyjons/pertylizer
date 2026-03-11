@@ -1,5 +1,21 @@
 # Version History
 
+## [0.229.0] - 2026-03-11
+### Rack UI overhaul: patch metadata, effect zones, port shapes, and UX fixes
+- **Auto Layout manual only** — removed automatic layout on startup and MCP reconciliation; Auto Layout now only runs when explicitly chosen from the right-click context menu
+- **Patch saves author info** — patches now embed full author metadata (name, email, website, license) from Settings as a JSON object, with backward-compatible deserialization from legacy string format
+- **Patch saves instrument name** — patch name is set from the active instrument name instead of being empty
+- **Patch saves canvas size** — `canvas_size` field in `PatchSettings` preserves scroll area dimensions; restored on load for correct layout, cleared on Auto Layout and module removal so canvas can shrink
+- **Position as object** — module and group positions serialized as `{"x": ..., "y": ...}` instead of arrays; backward-compatible deserialization from `[x, y]`
+- **Grid size reduced** — rack grid changed from 50px to 32px for more compact module layouts; `auto_layout.rs` now references `patch_editor::GRID_SIZE` instead of duplicating the constant
+- **Fix quit dialog loop** — "Don't Save" in the unsaved-changes dialog now clears the dirty flag before sending close, preventing infinite dialog reopening
+- **Effect zone background** — effect and visualizer modules get a tinted background zone with border and "Effect Chain" label in the rack view
+- **Distinct port shapes** — Audio=circle, Control/CV=diamond, Gate=square, MIDI=hexagon for instant visual port type identification
+- **Port hover labels** — hovering a port shows its name and type (e.g. "cutoff_cv (cv)") on a tooltip layer above all modules
+- **Port hover glow** — brighter glow ring on port hover for better feedback
+- **`PatchAuthor` struct** — new serializable author type with `From<&str>` for built-in patches
+- **`Position` struct** — new serializable 2D position type replacing `(f32, f32)` tuples
+
 ## [0.228.0] - 2026-03-09
 ### Fix silent project loading and parameter persistence architecture
 - **Fix StereoOutput module_type** — return `ModuleType::StereoOutput` instead of `Mixer`, allowing graph evaluation to find the output node

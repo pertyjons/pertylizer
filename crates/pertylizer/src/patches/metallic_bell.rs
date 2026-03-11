@@ -1,12 +1,12 @@
 //! Metallic Bell - Shimmering bell using wavetable through ring modulation.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Metallic Bell - Inharmonic, shimmering bell with wavetable + ring mod.
 pub fn patch_metallic_bell() -> Patch {
     let mut patch = Patch::new("Metallic Bell");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Shimmering metallic bell combining Digital wavetable with Ring Modulation.".to_string(),
     );

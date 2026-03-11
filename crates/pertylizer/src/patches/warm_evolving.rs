@@ -1,12 +1,12 @@
 //! Warm Evolving - Slowly morphing ambient texture with warm wavetable.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Warm Evolving - Gentle ambient texture with slow wavetable scanning.
 pub fn patch_warm_evolving() -> Patch {
     let mut patch = Patch::new("Warm Evolving");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Ambient texture using the Warm wavetable with very slow position scanning and deep reverb."
             .to_string(),

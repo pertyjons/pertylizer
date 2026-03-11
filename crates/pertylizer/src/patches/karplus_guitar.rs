@@ -1,12 +1,12 @@
 //! Karplus Guitar - Physical modeling plucked string sound.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Karplus Guitar - Physical modeling plucked string sound.
 pub fn patch_karplus_guitar() -> Patch {
     let mut patch = Patch::new("Karplus Guitar");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Physical modeling plucked string using Karplus-Strong synthesis.".to_string());
     patch.notes = Some(

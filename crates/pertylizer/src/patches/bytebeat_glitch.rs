@@ -1,12 +1,12 @@
 //! Bytebeat Glitch - Retro digital music formula.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Bytebeat Glitch - Retro digital music formula.
 pub fn patch_bytebeat_glitch() -> Patch {
     let mut patch = Patch::new("Bytebeat Glitch");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Algorithmic music using bytebeat formula synthesis.".to_string());
     patch.notes = Some(
         r#"

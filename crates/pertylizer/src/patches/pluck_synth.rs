@@ -1,12 +1,12 @@
 //! Pluck Synth - Short, plucky synthesizer sound.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Pluck Synth - Short, plucky synthesizer sound.
 pub fn patch_pluck_synth() -> Patch {
     let mut patch = Patch::new("Pluck Synth");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Short, plucky synthesizer for arpeggios and sequences.".to_string());
     patch.notes = Some(
         r#"

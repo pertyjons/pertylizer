@@ -1,12 +1,12 @@
 //! Shepard Riser - Infinite rising tone effect.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Shepard Riser - Infinite rising tone effect.
 pub fn patch_shepard_riser() -> Patch {
     let mut patch = Patch::new("Shepard Riser");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("The Shepard tone - an auditory illusion of endlessly rising pitch.".to_string());
     patch.notes = Some(

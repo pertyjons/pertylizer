@@ -1,12 +1,12 @@
 //! Spacey Bass - Classic subtractive bass with detuned oscillators.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Spacey Bass - Classic subtractive bass with two detuned oscillators.
 pub fn patch_spacey_bass() -> Patch {
     let mut patch = Patch::new("Spacey Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Classic subtractive bass with two detuned oscillators.".to_string());
     patch.notes = Some(
         r#"

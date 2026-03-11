@@ -1,12 +1,12 @@
 //! Analog Dream Machine — complex MSEG envelope modulating filter with vintage effects chain.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Analog Dream Machine — MSEG-driven filter sweeps through Phaser, Flanger, BBD Delay, and Compressor.
 pub fn patch_analog_dream_machine() -> Patch {
     let mut patch = Patch::new("Analog Dream Machine");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Complex MSEG envelope creates evolving filter sweeps on detuned saws, \
          processed through vintage phaser, flanger, BBD delay, and compressor."

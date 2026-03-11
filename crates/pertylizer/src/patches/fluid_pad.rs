@@ -1,12 +1,12 @@
 //! Fluid Pad - Evolving pad with morphing filter character.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Fluid Pad - Lush evolving pad using the Fluid filter's morph crossfade.
 pub fn patch_fluid_pad() -> Patch {
     let mut patch = Patch::new("Fluid Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Dreamy pad with Fluid filter morph swept by LFO for evolving timbral movement."
             .to_string(),

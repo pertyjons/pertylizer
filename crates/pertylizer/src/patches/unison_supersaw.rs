@@ -1,12 +1,12 @@
 //! Unison Supersaw - Classic trance/EDM supersaw lead using intra-voice unison.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Unison Supersaw - Massive, wide supersaw lead.
 pub fn patch_unison_supersaw() -> Patch {
     let mut patch = Patch::new("Unison Supersaw");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Classic trance supersaw with 7-voice unison, full stereo spread and chorus.".to_string(),
     );

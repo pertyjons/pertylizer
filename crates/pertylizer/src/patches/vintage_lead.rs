@@ -1,12 +1,12 @@
 //! Vintage Lead - Classic analog-style mono lead with vibrato.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Vintage Lead - Classic analog-style mono lead with vibrato.
 pub fn patch_vintage_lead() -> Patch {
     let mut patch = Patch::new("Vintage Lead");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Classic analog-style mono lead with vibrato and delay.".to_string());
     patch.notes = Some(
         r#"

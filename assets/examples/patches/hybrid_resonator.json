@@ -1,261 +1,265 @@
 {
-  "name": "",
-  "author": "User",
+  "name": "Hybrid Resonator",
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons/pertylizer"
+  },
   "version": "1.0",
   "modules": [
     {
-      "id": "lfo-1",
-      "type": "lfo",
-      "position": [
-        50.0,
-        1750.0
-      ],
-      "parameters": {
-        "Waveform": 1.0,
-        "Rate": 4.0,
-        "Depth": 0.35,
-        "Phase": 0.0
-      }
-    },
-    {
-      "id": "mix-1",
-      "type": "mixer",
-      "position": [
-        800.0,
-        50.0
-      ],
-      "parameters": {
-        "Master": 0.9,
-        "Input 4": 1.0,
-        "Input 6": 1.0,
-        "Input 2": 1.0,
-        "Input 8": 1.0,
-        "Input 1": 1.0,
-        "Input 7": 1.0,
-        "Input 3": 1.0,
-        "Input 5": 1.0
-      }
-    },
-    {
-      "id": "mix-2",
-      "type": "mixer",
-      "position": [
-        50.0,
-        1050.0
-      ],
-      "parameters": {
-        "Input 1": 1.0,
-        "Input 5": 1.0,
-        "Input 2": 1.0,
-        "Input 4": 1.0,
-        "Input 8": 1.0,
-        "Input 6": 1.0,
-        "Master": 1.0,
-        "Input 3": 1.0,
-        "Input 7": 1.0
-      }
-    },
-    {
-      "id": "out-1",
-      "type": "stereo_output",
-      "position": [
-        2650.0,
-        50.0
-      ],
-      "parameters": {
-        "Pan": 0.0,
-        "Mute": 0.0,
-        "Master": 0.8,
-        "Limit": 1.0
-      }
-    },
-    {
-      "id": "amp-1",
-      "type": "amplifier",
-      "position": [
-        2000.0,
-        50.0
-      ],
-      "parameters": {
-        "Pan": 0.0,
-        "Level": 0.9,
-        "CV Bipolar": 0.0
-      }
-    },
-    {
-      "id": "flt-1",
-      "type": "filter",
-      "position": [
-        1200.0,
-        50.0
-      ],
-      "parameters": {
-        "Cutoff": 1200.0,
-        "CV Amt": 1.0,
-        "Morph": 0.0,
-        "Key Track": 0.0,
-        "Drive": 1.2,
-        "Type": 0.0,
-        "Model": 0.0,
-        "Resonance": 0.35
-      }
-    },
-    {
-      "id": "rng-1",
-      "type": "ring_mod",
-      "position": [
-        450.0,
-        50.0
-      ],
-      "parameters": {
-        "Carrier Freq": 440.0,
-        "Mix": 0.45,
-        "Key Track": 0.0,
-        "Freq Ratio": 0.5,
-        "Carrier Wave": 0.0
-      }
-    },
-    {
-      "id": "env-1",
+      "id": "env-2",
       "type": "envelope",
-      "position": [
-        2000.0,
-        350.0
-      ],
+      "position": {
+        "x": 32.0,
+        "y": 1728.0
+      },
       "parameters": {
-        "Decay": 0.25,
-        "Rel Curve": 0.0,
-        "Atk Curve": 0.0,
-        "Release": 0.4,
-        "Vel Sens": 1.0,
-        "Sustain": 0.6,
-        "Dec Curve": 0.0,
-        "Attack": 0.005
-      }
-    },
-    {
-      "id": "mth-1",
-      "type": "math_oscillator",
-      "position": [
-        50.0,
-        250.0
-      ],
-      "parameters": {
-        "Param A": 0.5,
-        "Algorithm": 3.0,
-        "Param B": 0.5,
-        "Frequency": 440.0,
-        "Level": 0.6,
-        "Param C": 0.5
-      }
-    },
-    {
-      "id": "osc-1",
-      "type": "oscillator",
-      "position": [
-        50.0,
-        500.0
-      ],
-      "parameters": {
-        "Uni Detune": 18.0,
-        "X-Mod": 0.0,
-        "Waveform": 4.0,
-        "Uni Spread": 0.7,
-        "Unison": 4.0,
-        "FM Amt": 1.0,
-        "Pulse Width": 0.5,
-        "Level": 0.8,
-        "Frequency": 440.0,
-        "Uni Phase": 1.0,
-        "FM Mode": 0.0,
-        "Detune": 0.0
-      }
-    },
-    {
-      "id": "wtb-1",
-      "type": "wavetable_osc",
-      "position": [
-        50.0,
-        50.0
-      ],
-      "parameters": {
-        "Table": 2.0,
-        "Detune": 0.0,
-        "Octave": 0.0,
-        "Level": 0.7,
-        "Position": 0.25
-      }
-    },
-    {
-      "id": "kbp-1",
-      "type": "keyboard_panner",
-      "position": [
-        2350.0,
-        50.0
-      ],
-      "parameters": {
-        "Spread": 0.7,
-        "Invert": 0.0,
-        "Curve": 0.4,
-        "Center": 60.0
+        "sustain": 0.2,
+        "atk_curve": 0.0,
+        "rel_curve": 0.0,
+        "release": 0.25,
+        "dec_curve": 0.0,
+        "vel_sens": 1.0,
+        "attack": 0.002,
+        "decay": 0.18
       }
     },
     {
       "id": "bdy-1",
       "type": "body_resonance",
-      "position": [
-        1600.0,
-        50.0
-      ],
+      "position": {
+        "x": 1408.0,
+        "y": 32.0
+      },
       "parameters": {
-        "Mix": 0.35,
-        "Freq": 280.0,
-        "Resonance": 0.7,
-        "Size": 0.6,
-        "Bright": 0.65
+        "freq": 280.0,
+        "size": 0.6,
+        "bright": 0.65,
+        "mix": 0.35,
+        "resonance": 0.7
+      }
+    },
+    {
+      "id": "mth-1",
+      "type": "math_oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 352.0
+      },
+      "parameters": {
+        "param_b": 0.5,
+        "param_c": 0.5,
+        "level": 0.6,
+        "algorithm": 3.0,
+        "param_a": 0.5,
+        "frequency": 440.0
+      }
+    },
+    {
+      "id": "amp-1",
+      "type": "amplifier",
+      "position": {
+        "x": 1760.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "pan": 0.0,
+        "cv_bipolar": 0.0,
+        "level": 0.9
+      }
+    },
+    {
+      "id": "rng-1",
+      "type": "ring_mod",
+      "position": {
+        "x": 384.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "freq_ratio": 0.5,
+        "key_track": 0.0,
+        "carrier_wave": 0.0,
+        "carrier_freq": 440.0,
+        "mix": 0.45
+      }
+    },
+    {
+      "id": "osc-1",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "uni_spread": 0.7,
+        "pulse_width": 0.5,
+        "level": 0.8,
+        "detune": 0.0,
+        "waveform": 4.0,
+        "fm_mode": 0.0,
+        "uni_phase": 1.0,
+        "x_mod": 0.0,
+        "frequency": 440.0,
+        "fm_amt": 1.0,
+        "unison": 4.0,
+        "uni_detune": 18.0
+      }
+    },
+    {
+      "id": "flt-1",
+      "type": "filter",
+      "position": {
+        "x": 1056.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "model": 0.0,
+        "cv_amt": 1.0,
+        "drive": 1.2,
+        "resonance": 0.35,
+        "morph": 0.0,
+        "key_track": 0.0,
+        "type": 0.0,
+        "cutoff": 1200.0
+      }
+    },
+    {
+      "id": "mix-2",
+      "type": "mixer",
+      "position": {
+        "x": 32.0,
+        "y": 992.0
+      },
+      "parameters": {
+        "input_3": 1.0,
+        "master": 1.0,
+        "input_7": 1.0,
+        "input_4": 1.0,
+        "input_1": 1.0,
+        "input_8": 1.0,
+        "input_2": 1.0,
+        "input_6": 1.0,
+        "input_5": 1.0
+      }
+    },
+    {
+      "id": "lfo-1",
+      "type": "lfo",
+      "position": {
+        "x": 32.0,
+        "y": 1536.0
+      },
+      "parameters": {
+        "depth": 0.35,
+        "waveform": 1.0,
+        "phase": 0.0,
+        "rate": 4.0
+      }
+    },
+    {
+      "id": "env-1",
+      "type": "envelope",
+      "position": {
+        "x": 1408.0,
+        "y": 192.0
+      },
+      "parameters": {
+        "decay": 0.25,
+        "dec_curve": 0.0,
+        "sustain": 0.6,
+        "rel_curve": 0.0,
+        "attack": 0.005,
+        "release": 0.4,
+        "atk_curve": 0.0,
+        "vel_sens": 1.0
+      }
+    },
+    {
+      "id": "mix-1",
+      "type": "mixer",
+      "position": {
+        "x": 704.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "input_6": 1.0,
+        "input_3": 1.0,
+        "input_4": 1.0,
+        "input_2": 1.0,
+        "input_1": 1.0,
+        "input_8": 1.0,
+        "input_7": 1.0,
+        "input_5": 1.0,
+        "master": 0.9
+      }
+    },
+    {
+      "id": "kbp-1",
+      "type": "keyboard_panner",
+      "position": {
+        "x": 2080.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "center": 60.0,
+        "spread": 0.7,
+        "curve": 0.4,
+        "invert": 0.0
       }
     },
     {
       "id": "sub-1",
       "type": "sub_oscillator",
-      "position": [
-        50.0,
-        1450.0
-      ],
+      "position": {
+        "x": 32.0,
+        "y": 544.0
+      },
       "parameters": {
-        "Level": 0.4,
-        "Waveform": 1.0,
-        "Octave": 0.0
+        "waveform": 1.0,
+        "level": 0.4,
+        "octave": 0.0
       }
     },
     {
-      "id": "env-2",
-      "type": "envelope",
-      "position": [
-        50.0,
-        1950.0
-      ],
+      "id": "out-1",
+      "type": "stereo_output",
+      "position": {
+        "x": 2368.0,
+        "y": 32.0
+      },
       "parameters": {
-        "Atk Curve": 0.0,
-        "Attack": 0.002,
-        "Rel Curve": 0.0,
-        "Dec Curve": 0.0,
-        "Decay": 0.18,
-        "Sustain": 0.2,
-        "Vel Sens": 1.0,
-        "Release": 0.25
+        "master": 0.8,
+        "limit": 1.0,
+        "mute": 0.0,
+        "pan": 0.0
       }
     },
     {
       "id": "nse-1",
       "type": "noise",
-      "position": [
-        50.0,
-        850.0
-      ],
+      "position": {
+        "x": 32.0,
+        "y": 800.0
+      },
       "parameters": {
-        "Type": 4.0,
-        "Level": 0.2
+        "type": 4.0,
+        "level": 0.2
+      }
+    },
+    {
+      "id": "wtb-1",
+      "type": "wavetable_osc",
+      "position": {
+        "x": 32.0,
+        "y": 1344.0
+      },
+      "parameters": {
+        "position": 0.25,
+        "level": 0.7,
+        "table": 2.0,
+        "detune": 0.0,
+        "octave": 0.0
       }
     }
   ],
@@ -445,6 +449,10 @@
     "master_volume": 0.8,
     "bpm": 120.0,
     "octave_offset": 0,
-    "glide_time": 0.0
+    "glide_time": 0.0,
+    "canvas_size": [
+      2818.0,
+      2228.0
+    ]
   }
 }

@@ -1,12 +1,12 @@
 //! Unison Sync Lead - Aggressive sync lead with tight unison for cutting solos.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Unison Sync Lead - Hard sync combined with unison for a cutting, aggressive lead.
 pub fn patch_unison_sync_lead() -> Patch {
     let mut patch = Patch::new("Unison Sync Lead");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Aggressive hard-sync lead with 3-voice tight unison and waveshaper distortion."
             .to_string(),

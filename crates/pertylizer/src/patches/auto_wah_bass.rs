@@ -1,12 +1,12 @@
 //! Auto-Wah Bass - Dynamic filter bass using envelope follower.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Auto-Wah Bass - Funky bass with envelope follower driving filter cutoff.
 pub fn patch_auto_wah_bass() -> Patch {
     let mut patch = Patch::new("Auto-Wah Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Funky auto-wah bass where playing dynamics control filter brightness via envelope follower."
             .to_string(),

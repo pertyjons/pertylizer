@@ -50,7 +50,7 @@ impl ModuleClipboard {
             self.reference_pos = (0.0, 0.0);
         } else {
             let (sum_x, sum_y) = modules.iter().fold((0.0_f32, 0.0_f32), |(sx, sy), m| {
-                (sx + m.position.0, sy + m.position.1)
+                (sx + m.position.x, sy + m.position.y)
             });
             #[allow(clippy::cast_precision_loss)]
             let count = modules.len() as f32;

@@ -1,12 +1,12 @@
 //! String Ensemble - Lush, orchestral strings.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// String Ensemble - Lush, orchestral strings using SuperSaw algorithm.
 pub fn patch_string_ensemble() -> Patch {
     let mut patch = Patch::new("String Ensemble");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Rich, orchestral string section with vibrato and hall reverb.".to_string());
     patch.notes = Some(

@@ -44,8 +44,8 @@ pub struct LayoutResult {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/// Grid cell size — must match `patch_editor::GRID_SIZE`.
-const GRID: f32 = 50.0;
+/// Grid cell size — re-exported from `patch_editor::GRID_SIZE`.
+const GRID: f32 = super::patch_editor::GRID_SIZE;
 
 /// Extra gap between modules (1 grid cell).
 const GAP: f32 = GRID;

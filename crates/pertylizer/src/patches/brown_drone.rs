@@ -1,12 +1,12 @@
 //! Brown Drone - Dark ambient drone using brown noise.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Brown Drone - Ambient drone showcasing the colored noise generator.
 pub fn patch_brown_drone() -> Patch {
     let mut patch = Patch::new("Brown Drone");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Dark, rumbling ambient drone using brown noise filtering.".to_string());
     patch.notes = Some(

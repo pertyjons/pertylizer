@@ -1,12 +1,12 @@
 //! Sub Bass - Deep, weighty bass using the sub-oscillator.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Sub Bass - Deep bass patch showcasing the sub-oscillator module.
 pub fn patch_sub_bass() -> Patch {
     let mut patch = Patch::new("Sub Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Deep, weighty bass using the new sub-oscillator for massive low end.".to_string());
     patch.notes = Some(

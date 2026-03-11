@@ -18,7 +18,7 @@ use synth_engine::{EngineHandle, ModuleId};
 
 use crate::patch::{
     ConnectionState, ExposedPortState, GroupCategory, GroupId, GroupTemplate, HexColor,
-    ModuleGroupState, ModuleState, ParamValue,
+    ModuleGroupState, ModuleState, ParamValue, Position,
 };
 
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
@@ -29,7 +29,7 @@ use super::widgets::{
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
-pub(crate) const GRID_SIZE: f32 = 50.0;
+pub(crate) const GRID_SIZE: f32 = 32.0;
 const GROUP_HEADER_HEIGHT: f32 = 24.0;
 const GROUP_PORT_MARGIN: f32 = 12.0;
 const GROUP_PADDING: f32 = 16.0;
@@ -312,8 +312,6 @@ pub struct PatchEditor {
     /// Modules that need to be repositioned (after auto-layout).
     /// When a module is in this set, we use current_pos() instead of default_pos().
     needs_reposition: HashSet<ModuleId>,
-    /// When true, auto-layout runs on the next frame that has a canvas_rect.
-    needs_initial_layout: bool,
     /// The cable closest to the pointer (if any), updated each frame.
     hovered_cable: Option<Connection>,
     /// Right-click context menu on a port.
@@ -322,6 +320,8 @@ pub struct PatchEditor {
     bg_context_menu: Option<BgContextMenuState>,
     /// Right-click context menu on a group.
     group_context_menu: Option<GroupContextMenuState>,
+    /// Minimum canvas size hint (restored from saved patch).
+    min_canvas_size: Option<Vec2>,
 }
 
 impl PatchEditor {
@@ -345,11 +345,11 @@ impl PatchEditor {
             module_to_group: HashMap::new(),
             next_group_id: 1,
             needs_reposition: HashSet::new(),
-            needs_initial_layout: true,
             hovered_cable: None,
             port_context_menu: None,
             bg_context_menu: None,
             group_context_menu: None,
+            min_canvas_size: None,
         }
     }
 
@@ -451,6 +451,8 @@ impl PatchEditor {
     pub fn remove_module(&mut self, id: ModuleId) {
         self.panels.remove(&id);
         self.descriptors.remove(&id);
+        // Clear saved canvas size hint so the canvas can shrink
+        self.min_canvas_size = None;
         self.z_order.retain(|&mid| mid != id);
         self.connectivity.remove(&id);
         self.bypassed.remove(&id);
@@ -521,7 +523,7 @@ impl PatchEditor {
                 color: g.color.clone(),
                 members,
                 collapsed: g.collapsed,
-                position: Pos2::new(g.position.0, g.position.1),
+                position: Pos2::new(g.position.x, g.position.y),
                 exposed_inputs,
                 exposed_outputs,
             };
@@ -542,7 +544,7 @@ impl PatchEditor {
                 color: g.color.clone(),
                 members: g.members.iter().map(|m| m.to_string()).collect(),
                 collapsed: g.collapsed,
-                position: (g.position.x, g.position.y),
+                position: Position::new(g.position.x, g.position.y),
                 exposed_inputs: g
                     .exposed_inputs
                     .iter()
@@ -645,7 +647,7 @@ impl PatchEditor {
                 modules.push(ModuleState {
                     id: mid.to_string(),
                     module_type: mid.module_type,
-                    position: (pos.x - min.x, pos.y - min.y),
+                    position: Position::new(pos.x - min.x, pos.y - min.y),
                     parameters: param_map,
                 });
             }
@@ -1244,8 +1246,9 @@ impl PatchEditor {
     }
 
     /// Calculate the bounding box of all module positions + estimated size.
-    /// Used to tell ScrollArea how large the content is.
-    fn calculate_content_size(&self) -> Vec2 {
+    /// Used to tell `ScrollArea` how large the content is and for persisting
+    /// canvas size in patch files.
+    pub fn content_size(&self) -> Vec2 {
         let mut max_x: f32 = 0.0;
         let mut max_y: f32 = 0.0;
         for panel in self.panels.values() {
@@ -1260,9 +1263,13 @@ impl PatchEditor {
             }
         }
         if self.panels.is_empty() && self.groups.is_empty() {
-            return Vec2::new(800.0, 600.0);
+            return self.min_canvas_size.unwrap_or(Vec2::new(800.0, 600.0));
         }
-        Vec2::new(max_x + 100.0, max_y + 100.0)
+        let mut size = Vec2::new(max_x + 100.0, max_y + 100.0);
+        if let Some(min) = self.min_canvas_size {
+            size = size.max(min);
+        }
+        size
     }
 
     /// Draw the rack view.
@@ -1277,7 +1284,7 @@ impl PatchEditor {
         instrument_id: u64,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
-        let content_size = self.calculate_content_size();
+        let content_size = self.content_size();
 
         // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
         let visible_rect = ui.available_rect_before_wrap();
@@ -1300,6 +1307,9 @@ impl PatchEditor {
                 // Draw grid
                 self.draw_grid(ui, scroll_rect);
 
+                // Draw tinted background zone behind effect modules
+                self.draw_effect_zone(ui, scroll_rect);
+
                 // Save scroll area layer + clip rect for cable drawing (behind modules)
                 scroll_layer_id = Some(ui.layer_id());
                 scroll_clip_rect = Some(ui.clip_rect());
@@ -1313,12 +1323,6 @@ impl PatchEditor {
 
         // Store the canvas rect for auto-layout calculations (in logical coordinates)
         result.canvas_rect = Some(scroll_rect);
-
-        // Auto-layout on first frame (after startup or patch load)
-        if self.needs_initial_layout && !self.panels.is_empty() {
-            self.needs_initial_layout = false;
-            self.apply_auto_layout(scroll_rect);
-        }
 
         // Compute group layout (bounds + hidden modules) before drawing cables
         let group_layout = self.compute_group_layout(area_origin, scroll_offset);
@@ -2105,16 +2109,14 @@ impl PatchEditor {
                                 super::widgets::PortWidget::new(port.port_type, direction)
                                     .connected(port.is_connected)
                                     .highlighted(is_highlighted)
+                                    .label(&port.label)
                                     .show(ui);
 
                             store_position(port, center);
 
-                            let tooltip = if port.description.is_empty() {
-                                port.label.clone()
-                            } else {
-                                format!("{}: {}", port.label, port.description)
-                            };
-                            response.on_hover_text(tooltip);
+                            if !port.description.is_empty() {
+                                response.on_hover_text(&port.description);
+                            }
                         });
                     });
                 });
@@ -2252,6 +2254,74 @@ impl PatchEditor {
             );
             y += grid_size;
         }
+    }
+
+    /// Draw a tinted background zone behind effect (and visualizer) modules.
+    fn draw_effect_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
+        let padding = GRID_SIZE;
+
+        // Compute bounding box of effect/visualizer modules in logical coordinates
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        let mut has_effects = false;
+
+        for (id, panel) in &self.panels {
+            let category = self.descriptors.get(id).map(|d| d.category);
+            if matches!(
+                category,
+                Some(ModuleCategory::Effect | ModuleCategory::Visualizer)
+            ) {
+                has_effects = true;
+                min_x = min_x.min(panel.position.x);
+                min_y = min_y.min(panel.position.y);
+                max_x = max_x.max(panel.position.x + panel.size.x);
+                max_y = max_y.max(panel.position.y + panel.size.y);
+            }
+        }
+
+        if !has_effects {
+            return;
+        }
+
+        // Expand to grid-aligned bounds with padding
+        let origin = scroll_rect.min.to_vec2();
+        let zone_rect = Rect::from_min_max(
+            Pos2::new(
+                ((min_x - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.x,
+                ((min_y - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.y,
+            ),
+            Pos2::new(
+                ((max_x + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.x,
+                ((max_y + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.y,
+            ),
+        );
+
+        let painter = ui.painter();
+
+        // Tinted background
+        let fx_color = category_color(ModuleCategory::Effect);
+        let tint = fx_color.gamma_multiply(0.06);
+        painter.rect_filled(zone_rect, 4.0, tint);
+
+        // Border
+        painter.rect_stroke(
+            zone_rect,
+            4.0,
+            egui::Stroke::new(1.0, fx_color.gamma_multiply(0.15)),
+            egui::StrokeKind::Inside,
+        );
+
+        // Label in top-left corner
+        let label_pos = zone_rect.min + egui::vec2(8.0, 4.0);
+        painter.text(
+            label_pos,
+            egui::Align2::LEFT_TOP,
+            format!("{} Effect Chain", ri::FLASHLIGHT_FILL),
+            egui::FontId::proportional(11.0),
+            fx_color.gamma_multiply(0.35),
+        );
     }
 
     /// Draw cables behind modules (on the scroll area's layer). Hovered cables
@@ -3581,7 +3651,7 @@ impl PatchEditor {
                 states.push(ModuleState {
                     id: id.to_string(),
                     module_type: id.module_type,
-                    position: (position.x, position.y),
+                    position: Position::new(position.x, position.y),
                     parameters,
                 });
             }
@@ -3710,9 +3780,9 @@ impl PatchEditor {
         self.bypassed.insert(id, bypassed);
     }
 
-    /// Request auto-layout on the next frame (e.g. after loading a patch).
-    pub fn request_initial_layout(&mut self) {
-        self.needs_initial_layout = true;
+    /// Set a minimum canvas size hint (restored from a saved patch).
+    pub fn set_min_canvas_size(&mut self, size: Vec2) {
+        self.min_canvas_size = Some(size);
     }
 
     /// Apply automatic layout to modules based on signal flow.
@@ -3720,6 +3790,9 @@ impl PatchEditor {
     /// `available_rect` should be the area available for modules (excluding side panels).
     pub fn apply_auto_layout(&mut self, available_rect: egui::Rect) {
         use super::auto_layout::{LayoutConnection, ModuleInfo, calculate_layout};
+
+        // Clear saved canvas size hint — auto-layout determines the new bounds
+        self.min_canvas_size = None;
 
         // Collect module info
         let modules: Vec<ModuleInfo> = self

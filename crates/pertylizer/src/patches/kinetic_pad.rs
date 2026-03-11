@@ -1,12 +1,12 @@
 //! Kinetic Pad — evolving pad using ElasticOut easing in loop mode.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Kinetic Pad — ElasticOut curve creates organic movement in filter and pitch.
 pub fn patch_kinetic_pad() -> Patch {
     let mut patch = Patch::new("Kinetic Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Evolving pad using Kinetic Modulator's ElasticOut curve for organic movement.".to_string(),
     );

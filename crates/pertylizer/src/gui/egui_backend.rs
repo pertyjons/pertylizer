@@ -2764,6 +2764,13 @@ impl SynthApp {
             active_id,
         );
 
+        // Restore canvas size hint so the scroll area matches the original layout
+        if let Some((w, h)) = patch.settings.canvas_size {
+            instrument
+                .patch_editor
+                .set_min_canvas_size(eframe::egui::Vec2::new(w, h));
+        }
+
         // Restore AWE UI state from loaded patch
         if let Some(awe) = &patch.settings.awe {
             self.awe_enabled = awe.enabled;
@@ -2864,8 +2871,6 @@ impl SynthApp {
                 patch_editor.add_connection(conn);
             }
 
-            // Trigger auto-layout so MCP-added modules get proper positions
-            patch_editor.request_initial_layout();
         }
     }
 
@@ -3042,11 +3047,15 @@ impl SynthApp {
 
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
-        let editor = self.active_patch_editor_ref()?;
+        let instrument = self
+            .instruments
+            .iter()
+            .find(|i| i.id == self.active_instrument_id)?;
         let engine_state = Some((self.session.state().as_ref(), self.active_instrument_id));
         patch_bridge::create_patch_from_rack(
-            &self.dialog_state.patch_save_name,
-            editor,
+            &instrument.name,
+            &self.settings.author,
+            &instrument.patch_editor,
             &self.keyboard,
             &self.handle,
             self.glide_time,
@@ -3361,6 +3370,7 @@ impl SynthApp {
                         close = true;
                     }
                     if ui.button("Don't Save").clicked() {
+                        self.dirty = false;
                         self.execute_pending_action(ctx);
                         close = true;
                     }

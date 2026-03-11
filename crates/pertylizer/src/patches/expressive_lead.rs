@@ -1,12 +1,12 @@
 //! Expressive Lead - Performance lead using Mod Matrix for MIDI expression.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Expressive Lead - Mono lead with mod wheel, aftertouch, and velocity expression.
 pub fn patch_expressive_lead() -> Patch {
     let mut patch = Patch::new("Expressive Lead");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Performance lead with mod wheel vibrato, aftertouch filter, and velocity dynamics.".into(),
     );

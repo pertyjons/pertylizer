@@ -1,12 +1,12 @@
 //! Hi-Hat - Metallic electronic hi-hat.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Hi-Hat - Metallic electronic hi-hat.
 pub fn patch_drum_hihat() -> Patch {
     let mut patch = Patch::new("Hi-Hat");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Metallic electronic hi-hat with variable decay.".to_string());
     patch.notes = Some(
         r#"

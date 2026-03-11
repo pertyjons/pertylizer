@@ -1,12 +1,12 @@
 //! Waveshaper Lead - Sharp, harmonically rich lead with sine fold waveshaping.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Waveshaper Lead - Metallic, aggressive lead with harmonic movement.
 pub fn patch_waveshaper_lead() -> Patch {
     let mut patch = Patch::new("Waveshaper Lead");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Sharp lead with sine fold waveshaping and filter envelope modulation.".to_string());
     patch.notes = Some(

@@ -1,12 +1,12 @@
 //! Aggressive Bass - Punchy, distorted bass with filter movement.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Aggressive Bass - Punchy, distorted bass with filter movement.
 pub fn patch_aggressive_bass() -> Patch {
     let mut patch = Patch::new("Aggressive Bass");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description =
         Some("Punchy, aggressive bass with distortion and filter sweep.".to_string());
     patch.notes = Some(

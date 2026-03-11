@@ -1,12 +1,12 @@
 //! Noise Sweep - Filter sweep effect with modulated noise.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Noise Sweep - Filter sweep effect with modulated noise.
 pub fn patch_noise_sweep() -> Patch {
     let mut patch = Patch::new("Noise Sweep");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Dramatic filter sweep effect with noise and resonance.".to_string());
     patch.notes = Some(
         r#"

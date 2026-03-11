@@ -1,12 +1,12 @@
 //! Vector Pad — four-oscillator pad with LFO-driven vector crossfading.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Vector Pad — four distinct waveforms blended via XY vector mixer with slow LFO sweep.
 pub fn patch_vector_pad() -> Patch {
     let mut patch = Patch::new("Vector Pad");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Evolving pad using Vector Mixer to crossfade four oscillators via dual LFO modulation."
             .to_string(),

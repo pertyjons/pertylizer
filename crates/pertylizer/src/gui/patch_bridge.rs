@@ -12,11 +12,14 @@ use eframe::egui::Pos2;
 
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
+use crate::io::settings::AuthorInfo;
 use crate::patch::{
     ConnectionState, ExposedPortState, GroupId, GroupTemplate, ModuleState, ParamValue, Patch,
+    PatchAuthor, Position,
 };
 use crate::session::SynthSession;
 use synth_core::ModuleType;
+use synth_core::Param;
 use synth_core::{Describable, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
@@ -138,7 +141,7 @@ fn load_module(
         Err(_) => return, // Skip invalid IDs
     };
 
-    let position = Pos2::new(module_state.position.0, module_state.position.1);
+    let position = Pos2::new(module_state.position.x, module_state.position.y);
 
     // Special cases: modules that need VisualizationBuffer injection (GUI-only)
     match module_state.module_type {
@@ -387,6 +390,7 @@ pub fn apply_module_parameters(
 #[allow(clippy::too_many_arguments)]
 pub fn create_patch_from_rack(
     patch_name: &str,
+    author: &AuthorInfo,
     patch_editor: &PatchEditor,
     keyboard: &PianoKeyboard,
     handle: &EngineHandle,
@@ -396,13 +400,24 @@ pub fn create_patch_from_rack(
     engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
 ) -> Option<Patch> {
     let mut patch = create_patch_from_editor(patch_name, patch_editor, engine_state);
-    patch.author = Some("User".to_string());
+    let patch_author = PatchAuthor {
+        name: author.name.clone(),
+        email: author.email.clone(),
+        website: author.website.clone(),
+        license: author.license.clone(),
+    };
+    if !patch_author.is_empty() {
+        patch.author = Some(patch_author);
+    }
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = synth_core::Gain::new(handle.master_volume());
     patch.settings.glide_time = glide_time;
     if awe_enabled {
         patch.settings.awe = Some(awe_ui.to_awe_state(true));
     }
+    // Save canvas size so layout is restored correctly on load
+    let content_size = patch_editor.content_size();
+    patch.settings.canvas_size = Some((content_size.x, content_size.y));
     Some(patch)
 }
 
@@ -423,50 +438,53 @@ pub fn create_patch_from_editor(
     let mut patch = Patch::new(name);
 
     // Build a lookup of engine parameter values when available.
-    let engine_params: HashMap<String, HashMap<String, f32>> = engine_state
+    // Store raw Param values so we can match them to descriptors by kind.
+    let engine_params: HashMap<String, Vec<Param>> = engine_state
         .map(|(state, inst_id)| {
             state
                 .shared_graph
                 .get_modules_for_instrument(inst_id)
                 .into_iter()
-                .map(|m| {
-                    let params: HashMap<String, f32> = m
-                        .parameters
-                        .iter()
-                        .map(|p| (p.name().to_string(), p.as_f32()))
-                        .collect();
-                    (m.id.to_string(), params)
-                })
+                .map(|m| (m.id.to_string(), m.parameters.clone()))
                 .collect()
         })
         .unwrap_or_default();
 
     for module_id in patch_editor.module_ids() {
         if let Some((descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
-            // Build name→type_id mapping from the descriptor so we save
-            // the stable type_id as JSON key instead of the display name.
-            let name_to_type_id: HashMap<String, &str> = descriptor
-                .parameters
-                .iter()
-                .map(|p| (p.name.clone(), p.type_id.as_str()))
-                .collect();
-
-            // Prefer engine values over GUI-cached values.
-            let source_params = engine_params
-                .get(&module_id.to_string())
-                .unwrap_or(&gui_params);
-
             let mut param_map = HashMap::new();
-            for (pname, value) in source_params {
-                let key = name_to_type_id
-                    .get(pname)
-                    .map_or_else(|| pname.clone(), |tid| (*tid).to_string());
-                param_map.insert(key, ParamValue::Float(*value));
+
+            if let Some(engine_param_list) = engine_params.get(&module_id.to_string()) {
+                // Use engine values: match each descriptor to its engine
+                // param by kind, ensuring we always use the stable type_id.
+                for desc in &descriptor.parameters {
+                    if let Some(ep) = engine_param_list
+                        .iter()
+                        .find(|p| p.same_kind(&desc.id))
+                    {
+                        param_map
+                            .insert(desc.type_id.clone(), ParamValue::Float(ep.as_f32()));
+                    }
+                }
+            } else {
+                // Fall back to GUI-cached values (keyed by display name).
+                // Map display name → type_id using the descriptor.
+                let name_to_type_id: HashMap<&str, &str> = descriptor
+                    .parameters
+                    .iter()
+                    .map(|p| (p.name.as_str(), p.type_id.as_str()))
+                    .collect();
+                for (display_name, value) in &gui_params {
+                    let key = name_to_type_id
+                        .get(display_name.as_str())
+                        .map_or_else(|| display_name.clone(), |tid| (*tid).to_string());
+                    param_map.insert(key, ParamValue::Float(*value));
+                }
             }
             patch.modules.push(ModuleState {
                 id: module_id.to_string(),
                 module_type: module_id.module_type,
-                position: (position.x, position.y),
+                position: Position::new(position.x, position.y),
                 parameters: param_map,
             });
         }
@@ -525,8 +543,8 @@ pub fn insert_group_template(
         let module_type = module_state.module_type;
         let module_id = next_id(module_type);
         let position = Pos2::new(
-            module_state.position.0 + drop_pos.x,
-            module_state.position.1 + drop_pos.y,
+            module_state.position.x + drop_pos.x,
+            module_state.position.y + drop_pos.y,
         );
 
         let descriptor = match module_type {
@@ -703,8 +721,8 @@ pub fn paste_clipboard_modules(
         };
 
         let position = Pos2::new(
-            module_state.position.0 + offset_x,
-            module_state.position.1 + offset_y,
+            module_state.position.x + offset_x,
+            module_state.position.y + offset_y,
         );
 
         let descriptor = match module_type {

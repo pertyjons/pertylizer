@@ -1,12 +1,12 @@
 //! Granular Storm — dense aggressive granular clouds with phaser sweep, wide stereo, compressed.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Granular Storm — GranularOsc with GranularFx, Phaser, Mid/Side, and Compressor.
 pub fn patch_granular_storm() -> Patch {
     let mut patch = Patch::new("Granular Storm");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Dense, aggressive granular clouds with rapid grain scatter, \
          phaser sweeps, wide stereo spread, and heavy compression."

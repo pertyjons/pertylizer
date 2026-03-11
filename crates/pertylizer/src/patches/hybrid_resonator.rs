@@ -1,12 +1,12 @@
 //! Hybrid Resonator - Layered hybrid voice with ring-modulated wavetable and body resonance.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Hybrid Resonator - Spiky, resonant hybrid with motion in the mids.
 pub fn patch_hybrid_resonator() -> Patch {
     let mut patch = Patch::new("Hybrid Resonator");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Layered hybrid voice with ring-modulated wavetable, bitwise math edge, and resonant body tone."
             .to_string(),

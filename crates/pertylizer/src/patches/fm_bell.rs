@@ -1,12 +1,12 @@
 //! FM Bell - Bright, bell-like FM synthesis sound.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// FM Bell - Bright, bell-like FM synthesis sound.
 pub fn patch_fm_bell() -> Patch {
     let mut patch = Patch::new("FM Bell");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some("Bright, metallic bell sound using FM synthesis.".to_string());
     patch.notes = Some(
         r#"

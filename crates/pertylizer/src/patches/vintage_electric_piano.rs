@@ -1,12 +1,12 @@
 //! Vintage Electric Piano — Rhodes-style piano with mechanical key sounds and vintage effects.
 
-use crate::patch::{ModuleBuilder, Patch};
+use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
 use synth_core::ModuleType;
 
 /// Vintage Electric Piano — MechanicalNoise, Convolver, EQ, BBD Delay, EnsembleChorus, Compressor.
 pub fn patch_vintage_electric_piano() -> Patch {
     let mut patch = Patch::new("Vintage Electric Piano");
-    patch.author = Some("Pertylizer".to_string());
+    patch.author = Some(PatchAuthor::from("Pertylizer"));
     patch.description = Some(
         "Detailed Rhodes-style electric piano combining sine oscillator tine sounds \
          with mechanical key noise, plate reverb, vintage chorus, BBD delay, and gentle compression."

@@ -27,14 +27,101 @@ use synth_core::ModuleType;
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 
+/// Author information embedded in a patch file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PatchAuthor {
+    /// Full name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Email address.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub email: String,
+    /// Website URL.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub website: String,
+    /// License (e.g. "CC BY 4.0", "All rights reserved").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
+}
+
+impl From<&str> for PatchAuthor {
+    fn from(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            ..Self::default()
+        }
+    }
+}
+
+impl PatchAuthor {
+    /// Returns true if all fields are empty.
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty()
+            && self.email.is_empty()
+            && self.website.is_empty()
+            && self.license.is_empty()
+    }
+}
+
+/// Deserialize author from either a string (legacy) or an object (new format).
+fn deserialize_author<'de, D>(deserializer: D) -> Result<Option<PatchAuthor>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct AuthorVisitor;
+
+    impl<'de> de::Visitor<'de> for AuthorVisitor {
+        type Value = Option<PatchAuthor>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or an author object")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(PatchAuthor {
+                name: v.to_string(),
+                ..PatchAuthor::default()
+            }))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(PatchAuthor {
+                name: v,
+                ..PatchAuthor::default()
+            }))
+        }
+
+        fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let author = PatchAuthor::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(author))
+        }
+    }
+
+    deserializer.deserialize_any(AuthorVisitor)
+}
+
 /// A complete synthesizer patch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Patch {
     /// Patch name.
     pub name: String,
-    /// Author name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author: Option<String>,
+    /// Author information.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_author"
+    )]
+    pub author: Option<PatchAuthor>,
     /// Patch version.
     #[serde(default = "default_version")]
     pub version: String,
@@ -63,6 +150,69 @@ fn default_version() -> String {
     "1.0".to_string()
 }
 
+/// 2D position in the rack view, serialized as `{"x": ..., "y": ...}`.
+///
+/// Deserializes from both `{"x": ..., "y": ...}` (new) and `[x, y]` (legacy).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Position {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Position {
+    #[must_use]
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+impl From<(f32, f32)> for Position {
+    fn from((x, y): (f32, f32)) -> Self {
+        Self { x, y }
+    }
+}
+
+impl<'de> Deserialize<'de> for Position {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct PositionVisitor;
+
+        impl<'de> de::Visitor<'de> for PositionVisitor {
+            type Value = Position;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("{\"x\": ..., \"y\": ...} or [x, y]")
+            }
+
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let x = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &"[x, y]"))?;
+                let y = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &"[x, y]"))?;
+                Ok(Position { x, y })
+            }
+
+            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                #[derive(Deserialize)]
+                struct XY {
+                    x: f32,
+                    y: f32,
+                }
+                let xy = XY::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(Position { x: xy.x, y: xy.y })
+            }
+        }
+
+        deserializer.deserialize_any(PositionVisitor)
+    }
+}
+
 /// State of a single module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleState {
@@ -72,7 +222,7 @@ pub struct ModuleState {
     #[serde(rename = "type")]
     pub module_type: ModuleType,
     /// Position in the rack view.
-    pub position: (f32, f32),
+    pub position: Position,
     /// Parameter values.
     #[serde(default)]
     pub parameters: HashMap<String, ParamValue>,
@@ -108,7 +258,7 @@ pub struct ModuleGroupState {
     /// Whether the group is collapsed in the UI.
     pub collapsed: bool,
     /// Position of the group box when collapsed.
-    pub position: (f32, f32),
+    pub position: Position,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exposed_inputs: Vec<ExposedPortState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -282,6 +432,10 @@ pub struct PatchSettings {
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe: Option<synth_awe::AweState>,
+    /// Canvas size hint (width, height) for the rack view.
+    /// Used to restore the scroll area size when loading a patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas_size: Option<(f32, f32)>,
 }
 
 fn default_master_volume() -> Gain {
@@ -296,6 +450,7 @@ impl Default for PatchSettings {
             octave_offset: 0,
             glide_time: Seconds::new(0.0),
             awe: None,
+            canvas_size: None,
         }
     }
 }
@@ -357,12 +512,12 @@ impl Patch {
             .iter()
             .filter(|m| members.contains(&m.id.as_str()))
             .fold((0.0_f32, 0.0_f32, 0u32), |(sx, sy, c), m| {
-                (sx + m.position.0, sy + m.position.1, c + 1)
+                (sx + m.position.x, sy + m.position.y, c + 1)
             });
         let position = if count > 0 {
-            (sum_x / count as f32, sum_y / count as f32)
+            Position::new(sum_x / count as f32, sum_y / count as f32)
         } else {
-            (0.0, 0.0)
+            Position::default()
         };
         self.groups.push(ModuleGroupState {
             id,
@@ -453,14 +608,14 @@ impl ModuleBuilder {
             state: ModuleState {
                 id,
                 module_type,
-                position: (0.0, 0.0),
+                position: Position::default(),
                 parameters: HashMap::new(),
             },
         }
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.state.position = (x, y);
+        self.state.position = Position::new(x, y);
         self
     }
 
