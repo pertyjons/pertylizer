@@ -95,6 +95,12 @@ impl InstrumentUiState {
         self
     }
 
+    /// Set volume and update the stored volume for mute/unmute.
+    pub fn set_volume(&mut self, volume: Gain) {
+        self.volume = volume;
+        self.stored_volume = volume;
+    }
+
     /// Toggle mute state (soft mute via volume).
     pub fn toggle_mute(&mut self) -> Gain {
         if self.muted {

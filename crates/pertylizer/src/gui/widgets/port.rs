@@ -100,13 +100,18 @@ impl PortWidget {
             let glow_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 80);
             self.draw_shape(painter, center, radius + 6.0, glow_color, None);
 
-            let inner_glow =
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
+            let inner_glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
             self.draw_shape(painter, center, radius + 3.0, inner_glow, None);
         }
 
         // Outer ring (shape outline)
-        self.draw_shape(painter, center, radius, Color32::TRANSPARENT, Some(Stroke::new(2.0, color)));
+        self.draw_shape(
+            painter,
+            center,
+            radius,
+            Color32::TRANSPARENT,
+            Some(Stroke::new(2.0, color)),
+        );
 
         // Inner fill
         let fill = if self.connected {
@@ -118,8 +123,7 @@ impl PortWidget {
 
         // Hover: brighter glow ring + port label
         if response.hovered() {
-            let hover_glow =
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
+            let hover_glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
             self.draw_shape(painter, center, radius + 4.0, hover_glow, None);
             self.draw_shape(
                 painter,
@@ -133,12 +137,8 @@ impl PortWidget {
             if !self.label.is_empty() {
                 let label_text = format!("{} ({})", self.label, self.type_label());
                 let label_pos = match self.direction {
-                    WidgetPortDirection::Input => {
-                        Pos2::new(center.x + radius + 8.0, center.y)
-                    }
-                    WidgetPortDirection::Output => {
-                        Pos2::new(center.x - radius - 8.0, center.y)
-                    }
+                    WidgetPortDirection::Input => Pos2::new(center.x + radius + 8.0, center.y),
+                    WidgetPortDirection::Output => Pos2::new(center.x - radius - 8.0, center.y),
                 };
                 let anchor = match self.direction {
                     WidgetPortDirection::Input => egui::Align2::LEFT_CENTER,
@@ -222,10 +222,10 @@ impl PortWidget {
 /// Generate diamond (rotated square) vertices.
 fn diamond_points(center: Pos2, radius: f32) -> [Pos2; 4] {
     [
-        Pos2::new(center.x, center.y - radius),         // top
-        Pos2::new(center.x + radius, center.y),         // right
-        Pos2::new(center.x, center.y + radius),         // bottom
-        Pos2::new(center.x - radius, center.y),         // left
+        Pos2::new(center.x, center.y - radius), // top
+        Pos2::new(center.x + radius, center.y), // right
+        Pos2::new(center.x, center.y + radius), // bottom
+        Pos2::new(center.x - radius, center.y), // left
     ]
 }
 

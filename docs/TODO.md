@@ -1,26 +1,41 @@
-# TODO - Pertylizer (v0.229.0)
+# TODO - Pertylizer (v0.230.0)
+
+## 0. Known Bugs
+
+### 0.0 Export WAV produces no file
+- [ ] Export WAV does not produce an output file — needs investigation and fix
+
+### 0.1 Project save/load — module layout not preserved
+- [ ] Module positions and canvas size are not correctly restored for all instruments when loading a project (only the first 2–3 instruments get correct layout)
+- [ ] Verify that Rack view saves each instrument's module positions and canvas size correctly when saving a project
+- [ ] More parameters for an instrument should probably be saved in the settings from the instrument strip toolbar
+- [ ] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument
+---
 
 ## 1. Core Usability & Workflow
 
-### 1.1 MIDI learn
+### 1.1 Instrument management
+- [ ] Rename instrument from instrument strip menu or inline edit
+
+### 1.2 MIDI learn
 - [ ] Map MIDI CC to any module parameter via right-click → "MIDI Learn"
 - [ ] Visual indicator on mapped parameters
 - [ ] Save/load MIDI mappings with patch or settings
 
-### 1.2 Module presets
+### 1.3 Module presets
 - [ ] Save/load parameter presets per module type (not the whole patch)
 - [ ] Preset browser in module context menu or header
 - [ ] Ship default presets for common module types
 
-### 1.3 Mixer view
+### 1.4 Mixer view
 - [ ] Dedicated mixer view with faders, pan, sends, and inserts
 - [ ] Send/return effect busses — shared effects instead of per-instrument chains only
 
-### 1.4 Settings & utilities
+### 1.5 Settings & utilities
 - [ ] Add Browse button in Settings dialog to change patches directory
 - [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — repeated in 4+ locations
 
-### 1.5 Workflow quality of life
+### 1.6 Workflow quality of life
 - [ ] Reorder effect chain — add ability to change processing order (e.g., left/right arrows on effect modules)
 - [ ] A/B comparison — quick-switch between two patch versions to compare sound
 - [ ] Parameter locking — lock parameters to prevent accidental changes

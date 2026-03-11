@@ -11,7 +11,6 @@
 
 use eframe::egui;
 
-use crate::gui::app::state::AppView;
 use crate::gui::theme::theme;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::presets::awe_presets;
@@ -427,24 +426,48 @@ fn is_extreme_preset(preset: &AwePreset) -> bool {
     preset.name.starts_with("EXT:")
 }
 
+/// Apply an AWE preset: update UI state and send all parameters to the engine.
+pub fn apply_awe_preset(
+    preset_idx: usize,
+    preset: &AwePreset,
+    handle: &mut EngineHandle,
+    awe_enabled: &mut bool,
+    ui_state: &mut AweUiState,
+) {
+    ui_state.selected_preset = Some(preset_idx);
+    ui_state.restore_from(&preset.state);
+    *awe_enabled = preset.state.enabled;
+    handle.send(EngineCommand::SetAweEnabled {
+        enabled: preset.state.enabled,
+    });
+    handle.send(EngineCommand::SetAweParameter {
+        param: AweParam::RoomShape(preset.state.room),
+    });
+    handle.send(EngineCommand::SetAweParameter {
+        param: AweParam::Material(preset.state.material),
+    });
+    handle.send(EngineCommand::SetAweState {
+        snapshot: preset.state.snapshot,
+    });
+    handle.send(EngineCommand::SetAweParameter {
+        param: AweParam::SpatialEnabled(preset.state.spatial_enabled),
+    });
+    handle.send(EngineCommand::SetAweParameter {
+        param: AweParam::NoteMapping(preset.state.note_mapping),
+    });
+}
+
 /// Draw the AWE view.
 #[allow(clippy::too_many_lines)]
 pub fn draw_awe_view(
     ctx: &egui::Context,
     handle: &mut EngineHandle,
     awe_enabled: &mut bool,
-    active_view: &mut AppView,
     ui_state: &mut AweUiState,
 ) {
     // Top toolbar
     egui::TopBottomPanel::top("awe_toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("← Rack").clicked() {
-                *active_view = AppView::Rack;
-            }
-
-            ui.separator();
-
             let toggle_label = if *awe_enabled { "AWE: ON" } else { "AWE: OFF" };
             let toggle_color = if *awe_enabled {
                 theme().colors.meter_green
@@ -518,89 +541,7 @@ pub fn draw_awe_view(
                 && let Some(idx) = new_preset
                 && let Some(preset) = presets.get(idx)
             {
-                ui_state.selected_preset = Some(idx);
-                ui_state.restore_from(&preset.state);
-                // Send all state to engine
-                *awe_enabled = preset.state.enabled;
-                handle.send(EngineCommand::SetAweEnabled {
-                    enabled: preset.state.enabled,
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::RoomShape(preset.state.room),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Material(preset.state.material),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::DryWet(preset.state.snapshot.dry_wet),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::EarlyLateBalance(preset.state.snapshot.early_late_balance),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::ModesAmount(preset.state.snapshot.modes_amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::FreqWarp(preset.state.snapshot.freq_warp),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::ResonanceBoost(preset.state.snapshot.resonance_boost),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::TailStretch(preset.state.snapshot.tail_stretch),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::PortalAmount(preset.state.snapshot.portal_amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::SourcePos(preset.state.snapshot.source_pos),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::ListenerPos(preset.state.snapshot.listener_pos),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::SpatialEnabled(preset.state.spatial_enabled),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::NoteMapping(preset.state.note_mapping),
-                });
-                // LFOs
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Rate(preset.state.snapshot.lfo1.rate),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Amount(preset.state.snapshot.lfo1.amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Target(preset.state.snapshot.lfo1.target),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Rate(preset.state.snapshot.lfo2.rate),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Amount(preset.state.snapshot.lfo2.amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Target(preset.state.snapshot.lfo2.target),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Rate(preset.state.snapshot.lfo3.rate),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Amount(preset.state.snapshot.lfo3.amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Target(preset.state.snapshot.lfo3.target),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Rate(preset.state.snapshot.lfo4.rate),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Amount(preset.state.snapshot.lfo4.amount),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Target(preset.state.snapshot.lfo4.target),
-                });
+                apply_awe_preset(idx, preset, handle, awe_enabled, ui_state);
             }
         });
     });

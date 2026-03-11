@@ -458,12 +458,8 @@ pub fn create_patch_from_editor(
                 // Use engine values: match each descriptor to its engine
                 // param by kind, ensuring we always use the stable type_id.
                 for desc in &descriptor.parameters {
-                    if let Some(ep) = engine_param_list
-                        .iter()
-                        .find(|p| p.same_kind(&desc.id))
-                    {
-                        param_map
-                            .insert(desc.type_id.clone(), ParamValue::Float(ep.as_f32()));
+                    if let Some(ep) = engine_param_list.iter().find(|p| p.same_kind(&desc.id)) {
+                        param_map.insert(desc.type_id.clone(), ParamValue::Float(ep.as_f32()));
                     }
                 }
             } else {
@@ -498,6 +494,11 @@ pub fn create_patch_from_editor(
     }
 
     patch.groups = patch_editor.group_states();
+
+    // Save canvas size so layout is restored correctly on load
+    let content_size = patch_editor.content_size();
+    patch.settings.canvas_size = Some((content_size.x, content_size.y));
+
     patch
 }
 

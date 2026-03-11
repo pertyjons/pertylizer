@@ -1,5 +1,13 @@
 # Version History
 
+## [0.230.0] - 2026-03-11
+### AWE top bar menu, English presets, extracted preset helper
+- **AWE status icon in top bar** — new surround sound icon between OSC and project name, showing enabled/disabled state with preset name on hover
+- **AWE preset dropdown menu** — click the AWE icon to select presets directly from the top bar (like MIDI port selector), with "Off" option at top, standard presets, and "Extreme" section
+- **All AWE presets renamed to English** — 36 presets translated from Swedish to English (names and descriptions), e.g. "Katedral" → "Cathedral", "Glaslabyrint" → "Glass Labyrinth"
+- **Extracted `apply_awe_preset()` helper** — shared function in `awe_view.rs` used by both the AWE view and the top bar menu, replacing ~80 lines of duplicated preset-apply code
+- **Removed "← Rack" button from AWE toolbar** — navigation button removed along with unused `active_view` parameter from `draw_awe_view()`
+
 ## [0.229.0] - 2026-03-11
 ### Rack UI overhaul: patch metadata, effect zones, port shapes, and UX fixes
 - **Auto Layout manual only** — removed automatic layout on startup and MCP reconciliation; Auto Layout now only runs when explicitly chosen from the right-click context menu

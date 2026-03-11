@@ -20,10 +20,10 @@ pub struct AwePreset {
 #[must_use]
 pub fn awe_presets() -> Vec<AwePreset> {
     vec![
-        // 1. Katedral
+        // 1. Cathedral
         AwePreset {
-            name: "Katedral",
-            description: "Stor, majestätisk katedral med lång reverb",
+            name: "Cathedral",
+            description: "Grand, majestic cathedral with long reverb",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -50,10 +50,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 2. Badrum
+        // 2. Bathroom
         AwePreset {
-            name: "Badrum",
-            description: "Kort, ljust rum med tydliga rumsmoder",
+            name: "Bathroom",
+            description: "Short, bright room with distinct room modes",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -80,10 +80,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 3. Grotta
+        // 3. Cave
         AwePreset {
-            name: "Grotta",
-            description: "Mörk, omslutande sfärisk grotta",
+            name: "Cave",
+            description: "Dark, enveloping spherical cave",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 8.0.into() },
@@ -135,10 +135,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 5. Konserthall
+        // 5. Concert Hall
         AwePreset {
-            name: "Konserthall",
-            description: "Varm, balanserad konserthall i trä",
+            name: "Concert Hall",
+            description: "Warm, balanced wooden concert hall",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -165,10 +165,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 6. Sci-Fi Korridor
+        // 6. Sci-Fi Corridor
         AwePreset {
-            name: "Sci-Fi Korridor",
-            description: "Kall metallisk L-formad korridor med portal",
+            name: "Sci-Fi Corridor",
+            description: "Cold metallic L-shaped corridor with portal",
             state: AweState {
                 enabled: true,
                 room: RoomShape::LShape {
@@ -197,10 +197,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 7. Dröm
+        // 7. Dream
         AwePreset {
-            name: "Dröm",
-            description: "Shimmer-reverb med frekvensförskjutning",
+            name: "Dream",
+            description: "Shimmer reverb with frequency shifting",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -227,10 +227,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 8. Underjorden
+        // 8. Underground
         AwePreset {
-            name: "Underjorden",
-            description: "Mörk tunnel med starka moder och portal",
+            name: "Underground",
+            description: "Dark tunnel with strong modes and portal",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Cylinder {
@@ -256,10 +256,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 9. Industrihall
+        // 9. Industrial Hall
         AwePreset {
-            name: "Industrihall",
-            description: "Stor metallisk hall med resonansboost",
+            name: "Industrial Hall",
+            description: "Large metallic hall with resonance boost",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -286,10 +286,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 10. Liten Studio
+        // 10. Small Studio
         AwePreset {
-            name: "Liten Studio",
-            description: "Kontrollerat, torrt rum i trä",
+            name: "Small Studio",
+            description: "Controlled, dry wooden room",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -316,10 +316,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 11. Rymdstation
+        // 11. Space Station
         AwePreset {
-            name: "Rymdstation",
-            description: "Sci-fi sfär med per-röst spatialisering",
+            name: "Space Station",
+            description: "Sci-fi sphere with per-voice spatialization",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 4.0.into() },
@@ -342,10 +342,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 12. Bergseko
+        // 12. Mountain Echo
         AwePreset {
-            name: "Bergseko",
-            description: "Extremt långa ekon i bergspassage",
+            name: "Mountain Echo",
+            description: "Extremely long echoes in mountain pass",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Tube {
@@ -371,10 +371,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 13. Kupol
+        // 13. Dome
         AwePreset {
-            name: "Kupol",
-            description: "Fokuserad overhead-reflektion i glaskupol",
+            name: "Dome",
+            description: "Focused overhead reflection in glass dome",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Dome {
@@ -431,10 +431,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 15. Iskatedral
+        // 15. Ice Cathedral
         AwePreset {
-            name: "Iskatedral",
-            description: "Glittrande isvalv med kristallklar svans",
+            name: "Ice Cathedral",
+            description: "Glittering ice vault with crystal clear tail",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -461,10 +461,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 16. Marmorgalleria
+        // 16. Marble Gallery
         AwePreset {
-            name: "Marmorgalleria",
-            description: "Lång marmorkorridor med glansiga reflexer",
+            name: "Marble Gallery",
+            description: "Long marble corridor with glossy reflections",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -491,10 +491,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 17. Neonatrium
+        // 17. Neon Atrium
         AwePreset {
-            name: "Neonatrium",
-            description: "Glaskupol med neonreflexer och portal-svep",
+            name: "Neon Atrium",
+            description: "Glass dome with neon reflections and portal sweep",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Dome { radius: 9.0.into() },
@@ -517,10 +517,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 18. Vattenreservoar
+        // 18. Water Reservoir
         AwePreset {
-            name: "Vattenreservoar",
-            description: "Fuktig cistern med mörk botten och lång svans",
+            name: "Water Reservoir",
+            description: "Damp cistern with dark bottom and long tail",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Cylinder {
@@ -546,10 +546,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 19. Dunrum
+        // 19. Fluff Room
         AwePreset {
-            name: "Dunrum",
-            description: "Supertorrt rum med matta väggar och nära reflexer",
+            name: "Fluff Room",
+            description: "Super dry room with matte walls and close reflections",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -576,10 +576,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 20. Glaslabyrint
+        // 20. Glass Labyrinth
         AwePreset {
-            name: "Glaslabyrint",
-            description: "Fladdrande reflexer i en glaskorridor-labyrint",
+            name: "Glass Labyrinth",
+            description: "Fluttering reflections in a glass corridor labyrinth",
             state: AweState {
                 enabled: true,
                 room: RoomShape::LShape {
@@ -608,10 +608,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 21. Maskinrum
+        // 21. Engine Room
         AwePreset {
-            name: "Maskinrum",
-            description: "Metallisk resonans med starka rumsmoder",
+            name: "Engine Room",
+            description: "Metallic resonance with strong room modes",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -638,10 +638,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 22. Stjärnport
+        // 22. Stargate
         AwePreset {
-            name: "Stjärnport",
-            description: "Rymdklot med per-röstspatialitet och portal",
+            name: "Stargate",
+            description: "Space sphere with per-voice spatiality and portal",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 6.0.into() },
@@ -664,10 +664,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 23. Kvantkammare
+        // 23. Quantum Chamber
         AwePreset {
-            name: "Kvantkammare",
-            description: "Glasig sfär med skiftande rymd och portalglimt",
+            name: "Quantum Chamber",
+            description: "Glassy sphere with shifting space and portal glint",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 5.5.into() },
@@ -690,10 +690,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 24. Basaltklyfta
+        // 24. Basalt Gorge
         AwePreset {
-            name: "Basaltklyfta",
-            description: "Hög, smal klyfta med mörka rumsmode-svärmar",
+            name: "Basalt Gorge",
+            description: "Tall, narrow gorge with dark room mode swarms",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -720,10 +720,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 25. Aurorahall
+        // 25. Aurora Hall
         AwePreset {
-            name: "Aurorahall",
-            description: "Iskall sal med skimmrande svans och mjuka reflexer",
+            name: "Aurora Hall",
+            description: "Icy hall with shimmering tail and soft reflections",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -750,10 +750,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 26. Gravitationstunnel
+        // 26. Gravity Tunnel
         AwePreset {
-            name: "Gravitationstunnel",
-            description: "Metalltunnel med tung basresonans och lång svans",
+            name: "Gravity Tunnel",
+            description: "Metal tunnel with heavy bass resonance and long tail",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Tube {
@@ -779,10 +779,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 27. Regnrum
+        // 27. Rain Room
         AwePreset {
-            name: "Regnrum",
-            description: "Fuktigt, dämpat rum med korta, mjuka reflexer",
+            name: "Rain Room",
+            description: "Damp, muted room with short, soft reflections",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -809,10 +809,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 28. Svävande Kör
+        // 28. Floating Choir
         AwePreset {
-            name: "Svävande Kör",
-            description: "Eterisk sfär med per-röstspatialitet och mjuk svans",
+            name: "Floating Choir",
+            description: "Ethereal sphere with per-voice spatiality and soft tail",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 6.5.into() },
@@ -835,10 +835,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 29. Spegelplan
+        // 29. Mirror Plane
         AwePreset {
-            name: "Spegelplan",
-            description: "Glaslabyrint med fladdrande spegelportar",
+            name: "Mirror Plane",
+            description: "Glass labyrinth with fluttering mirror portals",
             state: AweState {
                 enabled: true,
                 room: RoomShape::LShape {
@@ -867,10 +867,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 30. Kristallvalv
+        // 30. Crystal Vault
         AwePreset {
-            name: "Kristallvalv",
-            description: "Marmorkupol med skimrande tidiga reflexer",
+            name: "Crystal Vault",
+            description: "Marble dome with shimmering early reflections",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Dome { radius: 7.5.into() },
@@ -893,10 +893,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 31. Singularitet
+        // 31. Singularity
         AwePreset {
-            name: "EXT: Singularitet",
-            description: "Fysiklös vakuumkammare med oändlig svans",
+            name: "EXT: Singularity",
+            description: "Physics-defying vacuum chamber with infinite tail",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 7.0.into() },
@@ -919,10 +919,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 32. Plasmastorm
+        // 32. Plasma Storm
         AwePreset {
-            name: "EXT: Plasmastorm",
-            description: "Het plasmahall med aggressiva färgskiftningar",
+            name: "EXT: Plasma Storm",
+            description: "Hot plasma hall with aggressive tonal shifts",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -949,10 +949,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 33. Prismaspiral
+        // 33. Prism Spiral
         AwePreset {
-            name: "EXT: Prismaspiral",
-            description: "Prismatiskt valv med spektral rotation",
+            name: "EXT: Prism Spiral",
+            description: "Prismatic vault with spectral rotation",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Dome { radius: 8.5.into() },
@@ -975,10 +975,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 34. Membranhåla
+        // 34. Membrane Cavity
         AwePreset {
-            name: "EXT: Membranhåla",
-            description: "Omvänd dämpning med pulserande basgrotta",
+            name: "EXT: Membrane Cavity",
+            description: "Inverted damping with pulsating bass cave",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Box {
@@ -1005,10 +1005,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 35. Nanodimma
+        // 35. Nano Fog
         AwePreset {
-            name: "EXT: Nanodimma",
-            description: "Ultradämpad dimkammare med mjuka kanter",
+            name: "EXT: Nano Fog",
+            description: "Ultra-damped fog chamber with soft edges",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Cylinder {
@@ -1034,10 +1034,10 @@ pub fn awe_presets() -> Vec<AwePreset> {
                 },
             },
         },
-        // 36. Antigrav
+        // 36. Anti-Gravity
         AwePreset {
-            name: "EXT: Antigrav",
-            description: "Fysiklös rymd med per-röstsväv och portal",
+            name: "EXT: Anti-Gravity",
+            description: "Physics-defying space with per-voice float and portal",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Sphere { radius: 6.0.into() },
