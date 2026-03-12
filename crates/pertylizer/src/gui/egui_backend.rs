@@ -1094,13 +1094,27 @@ impl eframe::App for SynthApp {
                         };
                         let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
                         if resp.hovered() {
-                            resp.on_hover_text(if sessions > 0 {
-                                format!("MCP: {sessions} active session(s)")
+                            let tooltip = if sessions > 0 {
+                                let session_list = mcp.mcp_sessions.sessions();
+                                if session_list.is_empty() {
+                                    format!("MCP: {sessions} active session(s)")
+                                } else {
+                                    let mut text =
+                                        format!("MCP: {} active session(s)\n", session_list.len());
+                                    for s in &session_list {
+                                        text.push_str(&format!(
+                                            "\n  {} v{} (MCP {})",
+                                            s.client_name, s.client_version, s.protocol_version
+                                        ));
+                                    }
+                                    text
+                                }
                             } else if listening {
                                 "MCP: listening (no active sessions)".to_owned()
                             } else {
                                 "MCP: not running".to_owned()
-                            });
+                            };
+                            resp.on_hover_text(tooltip);
                         }
                         ui.separator();
                     }
@@ -1140,9 +1154,7 @@ impl eframe::App for SynthApp {
                             .selected_preset
                             .and_then(|i| presets.get(i).map(|p| p.name.to_owned()));
                         let (icon, color, hover_text) = if self.awe_enabled {
-                            let name = preset_name
-                                .as_deref()
-                                .unwrap_or("Custom");
+                            let name = preset_name.as_deref().unwrap_or("Custom");
                             (
                                 ri::SURROUND_SOUND_FILL,
                                 theme().colors.meter_green,
@@ -1156,27 +1168,22 @@ impl eframe::App for SynthApp {
                             )
                         };
                         let arrow = ri::ARROW_DOWN_S_FILL;
-                        let awe_label =
-                            RichText::new(format!("{icon} AWE {arrow}")).color(color);
+                        let awe_label = RichText::new(format!("{icon} AWE {arrow}")).color(color);
                         let resp = ui.menu_button(awe_label, |ui| {
                             ui.set_min_width(250.0);
                             // Off option
                             let is_off = !self.awe_enabled;
                             let off_label = if is_off {
-                                RichText::new(format!(
-                                    "{} Off",
-                                    ri::CHECKBOX_BLANK_CIRCLE_FILL
-                                ))
-                                .color(theme().colors.text_dim)
+                                RichText::new(format!("{} Off", ri::CHECKBOX_BLANK_CIRCLE_FILL))
+                                    .color(theme().colors.text_dim)
                             } else {
                                 RichText::new("  Off")
                             };
                             if ui.button(off_label).clicked() {
                                 self.awe_enabled = false;
                                 self.awe_ui.selected_preset = None;
-                                self.handle.send(EngineCommand::SetAweEnabled {
-                                    enabled: false,
-                                });
+                                self.handle
+                                    .send(EngineCommand::SetAweEnabled { enabled: false });
                                 self.mark_dirty();
                                 ui.close();
                             }
@@ -1197,8 +1204,8 @@ impl eframe::App for SynthApp {
                             if !standard.is_empty() {
                                 for i in &standard {
                                     let preset = &presets[*i];
-                                    let is_current = self.awe_enabled
-                                        && self.awe_ui.selected_preset == Some(*i);
+                                    let is_current =
+                                        self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
                                     let label = if is_current {
                                         RichText::new(format!(
                                             "{} {}",
@@ -1209,10 +1216,7 @@ impl eframe::App for SynthApp {
                                     } else {
                                         RichText::new(format!("  {}", preset.name))
                                     };
-                                    if ui
-                                        .button(label)
-                                        .on_hover_text(preset.description)
-                                        .clicked()
+                                    if ui.button(label).on_hover_text(preset.description).clicked()
                                     {
                                         crate::gui::awe_view::apply_awe_preset(
                                             *i,
@@ -1228,14 +1232,11 @@ impl eframe::App for SynthApp {
                             }
                             if !extreme.is_empty() {
                                 ui.separator();
-                                ui.label(
-                                    RichText::new("Extreme")
-                                        .color(theme().colors.text_dim),
-                                );
+                                ui.label(RichText::new("Extreme").color(theme().colors.text_dim));
                                 for i in &extreme {
                                     let preset = &presets[*i];
-                                    let is_current = self.awe_enabled
-                                        && self.awe_ui.selected_preset == Some(*i);
+                                    let is_current =
+                                        self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
                                     let label = if is_current {
                                         RichText::new(format!(
                                             "{} {}",
@@ -1249,10 +1250,7 @@ impl eframe::App for SynthApp {
                                             preset.name.trim_start_matches("EXT: ")
                                         ))
                                     };
-                                    if ui
-                                        .button(label)
-                                        .on_hover_text(preset.description)
-                                        .clicked()
+                                    if ui.button(label).on_hover_text(preset.description).clicked()
                                     {
                                         crate::gui::awe_view::apply_awe_preset(
                                             *i,
@@ -1293,7 +1291,6 @@ impl eframe::App for SynthApp {
             .show(ctx, |ui| {
                 self.draw_keyboard(ui);
             });
-
 
         // Main content - CentralPanel rendered LAST (normal egui order)
         // Module Areas are clipped to visible_rect in patch_editor.rs
@@ -2061,9 +2058,8 @@ impl SynthApp {
 
                     let instrument_num = self.instruments.len() + 1;
                     let new_name = format!("Instrument {instrument_num}");
-                    let new_channel =
-                        MidiChannel::from_one_indexed(instrument_num as u8)
-                            .unwrap_or(MidiChannel::CH1);
+                    let new_channel = MidiChannel::from_one_indexed(instrument_num as u8)
+                        .unwrap_or(MidiChannel::CH1);
 
                     let new_ui_instrument =
                         InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);

@@ -101,7 +101,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             std::sync::Arc::clone(&session),
             std::sync::Arc::clone(&shared),
         ));
-        let counter = std::sync::Arc::clone(&shared.mcp_active_sessions);
+        let registry = shared.mcp_sessions.clone();
         let shared_for_flag = std::sync::Arc::clone(&shared);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new()
@@ -110,7 +110,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 shared_for_flag
                     .mcp_listening
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT, Some(counter)).await {
+                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT, Some(registry)).await {
                     eprintln!("MCP server error: {e}");
                     shared_for_flag
                         .mcp_listening

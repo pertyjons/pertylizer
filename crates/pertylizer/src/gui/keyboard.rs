@@ -114,6 +114,7 @@ impl PianoKeyboard {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("Octave: {:+}", self.octave_offset))
+                    .small()
                     .color(theme().colors.text_secondary),
             );
             if ui.small_button("-").clicked() && self.octave_offset > -2 {

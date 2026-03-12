@@ -1,9 +1,9 @@
-# TODO - Pertylizer (v0.230.0)
+# TODO - Pertylizer (v0.231.0)
 
 ## 0. Known Bugs
 
 ### 0.0 Export WAV produces no file
-- [ ] Export WAV does not produce an output file — needs investigation and fix
+- [ ] Export WAV does not produce an output file — needs investigation and fix, it should have a dialogue with save options as resolution, format and other good stuff before you actually saves the file
 
 ### 0.1 Project save/load — module layout not preserved
 - [ ] Module positions and canvas size are not correctly restored for all instruments when loading a project (only the first 2–3 instruments get correct layout)
@@ -16,6 +16,8 @@
 
 ### 1.1 Instrument management
 - [ ] Rename instrument from instrument strip menu or inline edit
+- [ ] Remove instruments via context menu or toolbar
+- [ ] Translate all swedish descriptions in the modules here: crates/synth_modules
 
 ### 1.2 MIDI learn
 - [ ] Map MIDI CC to any module parameter via right-click → "MIDI Learn"

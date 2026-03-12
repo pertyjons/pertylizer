@@ -1,5 +1,11 @@
 # Version History
 
+## [0.231.0] - 2026-03-12
+### MCP client identity, module header gradient, octave label fix
+- **MCP session registry with client identity** — replaced atomic session counter with `McpSessionRegistry` that tracks connected clients by name, version, and MCP protocol version; tooltip now lists each connected client (e.g. "claude-code v1.2.3 (MCP 2025-06-18)")
+- **Module header gradient tint** — subtle diagonal gradient from top-left (module category color at 12% opacity) to transparent in the module header area, giving each module type a distinct visual identity
+- **Octave label font size** — changed "Octave: +0" label above piano keyboard to use small font, matching surrounding UI elements
+
 ## [0.230.0] - 2026-03-11
 ### AWE top bar menu, English presets, extracted preset helper
 - **AWE status icon in top bar** — new surround sound icon between OSC and project name, showing enabled/disabled state with preset name on hover

@@ -2,7 +2,8 @@
 //!
 //! Defines tool handlers that delegate to the SynthBridge trait.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -11,10 +12,94 @@ use rmcp::model::{
     RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
     ResourceContents, ServerCapabilities, ServerInfo,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::bridge::SynthBridge;
+
+// === MCP session tracking ===
+
+/// Information about a connected MCP client.
+#[derive(Debug, Clone)]
+pub struct McpSessionInfo {
+    /// Unique session ID (monotonically increasing).
+    pub id: u64,
+    /// Client name (e.g. "claude-code", "cursor").
+    pub client_name: String,
+    /// Client version string.
+    pub client_version: String,
+    /// MCP protocol version the client speaks.
+    pub protocol_version: String,
+}
+
+/// Shared registry of active MCP sessions, visible to the GUI.
+#[derive(Debug, Clone)]
+pub struct McpSessionRegistry {
+    next_id: Arc<AtomicU64>,
+    sessions: Arc<Mutex<Vec<McpSessionInfo>>>,
+    /// Fast atomic counter for GUI (avoids locking the mutex every frame).
+    session_count: Arc<AtomicUsize>,
+}
+
+impl McpSessionRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            next_id: Arc::new(AtomicU64::new(1)),
+            sessions: Arc::new(Mutex::new(Vec::new())),
+            session_count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Allocate a new session ID and register a placeholder (client info filled in later).
+    fn register(&self) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.session_count.fetch_add(1, Ordering::Relaxed);
+        id
+    }
+
+    /// Fill in the client info for a session after the initialize handshake.
+    fn set_client_info(&self, id: u64, info: McpSessionInfo) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.push(info);
+            let _ = id; // id already embedded in info
+        }
+    }
+
+    /// Remove a session when the client disconnects.
+    fn unregister(&self, id: u64) {
+        self.session_count.fetch_sub(1, Ordering::Relaxed);
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.retain(|s| s.id != id);
+        }
+    }
+
+    /// Number of active sessions (lock-free).
+    #[must_use]
+    pub fn active_count(&self) -> usize {
+        self.session_count.load(Ordering::Relaxed)
+    }
+
+    /// Snapshot of all active sessions.
+    #[must_use]
+    pub fn sessions(&self) -> Vec<McpSessionInfo> {
+        self.sessions
+            .lock()
+            .map_or_else(|_| Vec::new(), |s| s.clone())
+    }
+
+    /// The raw atomic counter, for backward-compatible sharing.
+    #[must_use]
+    pub fn count_arc(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.session_count)
+    }
+}
+
+impl Default for McpSessionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // === Parameter structs for tool inputs ===
 
@@ -755,38 +840,39 @@ pub struct ProjectPathParam {
 pub struct SynthMcpServer {
     bridge: Arc<dyn SynthBridge>,
     tool_router: ToolRouter<Self>,
-    /// Shared counter for active sessions (incremented on creation, decremented on drop).
-    session_counter: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    /// Session registry shared with the GUI.
+    registry: Option<McpSessionRegistry>,
+    /// This session's unique ID within the registry.
+    session_id: u64,
 }
 
 impl SynthMcpServer {
-    /// Create a new MCP server backed by the given bridge.
+    /// Create a new MCP server backed by the given bridge (no session tracking).
     pub fn new(bridge: Arc<dyn SynthBridge>) -> Self {
         Self {
             bridge,
             tool_router: Self::tool_router(),
-            session_counter: None,
+            registry: None,
+            session_id: 0,
         }
     }
 
-    /// Create a new MCP server with session tracking.
-    pub fn with_session_counter(
-        bridge: Arc<dyn SynthBridge>,
-        counter: Arc<std::sync::atomic::AtomicUsize>,
-    ) -> Self {
-        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    /// Create a new MCP server with session tracking via a shared registry.
+    pub fn with_registry(bridge: Arc<dyn SynthBridge>, registry: McpSessionRegistry) -> Self {
+        let session_id = registry.register();
         Self {
             bridge,
             tool_router: Self::tool_router(),
-            session_counter: Some(counter),
+            registry: Some(registry),
+            session_id,
         }
     }
 }
 
 impl Drop for SynthMcpServer {
     fn drop(&mut self) {
-        if let Some(counter) = &self.session_counter {
-            counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(registry) = &self.registry {
+            registry.unregister(self.session_id);
         }
     }
 }
@@ -805,6 +891,31 @@ impl ServerHandler for SynthMcpServer {
                     .into(),
             ),
             ..Default::default()
+        }
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if let Some(registry) = &self.registry {
+            let (client_name, client_version, protocol_version) =
+                if let Some(peer_info) = context.peer.peer_info() {
+                    (
+                        peer_info.client_info.name.clone(),
+                        peer_info.client_info.version.clone(),
+                        peer_info.protocol_version.as_str().to_owned(),
+                    )
+                } else {
+                    ("unknown".to_owned(), String::new(), String::new())
+                };
+            registry.set_client_info(
+                self.session_id,
+                McpSessionInfo {
+                    id: self.session_id,
+                    client_name,
+                    client_version,
+                    protocol_version,
+                },
+            );
         }
     }
 

@@ -4,10 +4,11 @@
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 use crate::patch::Patch;
+use synth_mcp::McpSessionRegistry;
 use synth_sequencer::Song;
 
 /// Action requested by MCP that must be executed on the GUI thread.
@@ -30,8 +31,8 @@ pub struct McpSharedState {
     pub song: Arc<RwLock<Song>>,
     /// Whether the MCP HTTP server is listening.
     pub mcp_listening: AtomicBool,
-    /// Number of active MCP sessions. Wrapped in Arc so it can be shared with the MCP server.
-    pub mcp_active_sessions: Arc<AtomicUsize>,
+    /// Registry of active MCP sessions with client identity info.
+    pub mcp_sessions: McpSessionRegistry,
     /// Auto-layout requested by MCP (consumed by GUI each frame).
     pub pending_auto_layout: AtomicBool,
     /// Project action queued by MCP (consumed by GUI each frame).
@@ -48,7 +49,7 @@ impl McpSharedState {
             ui_layout: Mutex::new(UiLayoutData::default()),
             song: Arc::new(RwLock::new(Song::new("Untitled"))),
             mcp_listening: AtomicBool::new(false),
-            mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
+            mcp_sessions: McpSessionRegistry::new(),
             pending_auto_layout: AtomicBool::new(false),
             pending_project_action: Mutex::new(None),
             project_action_result: (Mutex::new(None), Condvar::new()),
@@ -63,7 +64,7 @@ impl McpSharedState {
             ui_layout: Mutex::new(UiLayoutData::default()),
             song,
             mcp_listening: AtomicBool::new(false),
-            mcp_active_sessions: Arc::new(AtomicUsize::new(0)),
+            mcp_sessions: McpSessionRegistry::new(),
             pending_auto_layout: AtomicBool::new(false),
             pending_project_action: Mutex::new(None),
             project_action_result: (Mutex::new(None), Condvar::new()),
@@ -77,7 +78,7 @@ impl McpSharedState {
 
     /// Get the number of active MCP sessions.
     pub fn active_sessions(&self) -> usize {
-        self.mcp_active_sessions.load(Ordering::Relaxed)
+        self.mcp_sessions.active_count()
     }
 }
 

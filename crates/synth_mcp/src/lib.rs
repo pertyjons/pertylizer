@@ -20,7 +20,7 @@ pub mod types;
 
 pub use bridge::SynthBridge;
 pub use error::McpBridgeError;
-pub use server::SynthMcpServer;
+pub use server::{McpSessionInfo, McpSessionRegistry, SynthMcpServer};
 pub use types::*;
 
 use std::sync::Arc;
@@ -44,11 +44,11 @@ pub async fn serve_stdio(bridge: Arc<dyn SynthBridge>) -> Result<(), Box<dyn std
 /// Claude Code connects directly to `http://127.0.0.1:{port}/mcp`.
 /// No bridge process needed.
 ///
-/// If `session_counter` is provided, each active MCP session will increment/decrement it.
+/// Uses a [`McpSessionRegistry`] to track connected clients with their identity.
 pub async fn serve_http(
     bridge: Arc<dyn SynthBridge>,
     port: u16,
-    session_counter: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    registry: Option<McpSessionRegistry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -58,10 +58,10 @@ pub async fn serve_http(
 
     let service = StreamableHttpService::new(
         move || {
-            if let Some(ref counter) = session_counter {
-                Ok(SynthMcpServer::with_session_counter(
+            if let Some(ref registry) = registry {
+                Ok(SynthMcpServer::with_registry(
                     Arc::clone(&bridge),
-                    Arc::clone(counter),
+                    registry.clone(),
                 ))
             } else {
                 Ok(SynthMcpServer::new(Arc::clone(&bridge)))

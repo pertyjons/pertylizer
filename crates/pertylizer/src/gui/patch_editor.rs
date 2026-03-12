@@ -2063,6 +2063,31 @@ impl PatchEditor {
         });
 
         ui.separator();
+
+        // Gradient tint spanning full module panel, from frame edge to separator
+        let margin = ui.spacing().window_margin;
+        let module_rect = ui.max_rect();
+        let gradient_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                module_rect.left() - f32::from(margin.left),
+                module_rect.top() - f32::from(margin.top),
+            ),
+            egui::pos2(
+                module_rect.right() + f32::from(margin.right),
+                ui.min_rect().bottom(),
+            ),
+        );
+        let tint = accent_color.gamma_multiply(0.12);
+        let transparent = Color32::TRANSPARENT;
+        let painter = ui.painter();
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(gradient_rect.left_top(), tint);
+        mesh.colored_vertex(gradient_rect.right_top(), transparent);
+        mesh.colored_vertex(gradient_rect.right_bottom(), transparent);
+        mesh.colored_vertex(gradient_rect.left_bottom(), transparent);
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
     }
 
     fn draw_port_column_with<F>(
