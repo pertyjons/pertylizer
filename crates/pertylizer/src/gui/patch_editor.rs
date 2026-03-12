@@ -415,6 +415,7 @@ impl PatchEditor {
         self.module_to_group.clear();
         self.next_group_id = 1;
         self.group_context_menu = None;
+        self.needs_reposition.clear();
     }
 
     /// Get module data for saving.

@@ -1,5 +1,11 @@
 # Version History
 
+## [0.232.0] - 2026-03-12
+### Fix WAV export and project module layout restoration
+- **Fix WAV export producing no file** — `FileDialogMode::ExportWav` was missing from the `Saved` pattern match in `update_file_dialog()`, causing the save path to be silently discarded
+- **Fix module positions not restored on project load** — egui caches Area positions by ID; loading a project now calls `reset_areas()` to clear stale cached positions so modules are placed at their saved coordinates instead of reusing old ones
+- **Fix `needs_reposition` leak across project loads** — `PatchEditor::clear()` now also clears the `needs_reposition` set, preventing stale module IDs from triggering unwanted repositioning after loading a new project
+
 ## [0.231.0] - 2026-03-12
 ### MCP client identity, module header gradient, octave label fix
 - **MCP session registry with client identity** — replaced atomic session counter with `McpSessionRegistry` that tracks connected clients by name, version, and MCP protocol version; tooltip now lists each connected client (e.g. "claude-code v1.2.3 (MCP 2025-06-18)")

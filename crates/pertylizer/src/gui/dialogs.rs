@@ -228,9 +228,11 @@ impl DialogState {
             let mode = self.file_dialog_mode.take();
             // Distinguish between picked and saved based on mode
             return match mode {
-                Some(FileDialogMode::SavePatch | FileDialogMode::SaveProject) => {
-                    Some(FileDialogResult::Saved(path, mode))
-                }
+                Some(
+                    FileDialogMode::SavePatch
+                    | FileDialogMode::SaveProject
+                    | FileDialogMode::ExportWav,
+                ) => Some(FileDialogResult::Saved(path, mode)),
                 _ => Some(FileDialogResult::Picked(path, mode)),
             };
         }

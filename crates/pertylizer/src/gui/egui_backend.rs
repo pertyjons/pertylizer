@@ -283,6 +283,11 @@ struct SynthApp {
 
     /// Module clipboard for copy/paste.
     clipboard: crate::gui::clipboard::ModuleClipboard,
+
+    /// Flag to clear egui Area positions on the next frame.
+    /// Set when loading a project so that module positions are correctly
+    /// restored from the saved layout instead of using stale cached positions.
+    needs_area_reset: bool,
 }
 
 impl SynthApp {
@@ -386,6 +391,7 @@ impl SynthApp {
             dirty: false,
             unsaved_dialog: UnsavedChangesDialog::default(),
             clipboard: crate::gui::clipboard::ModuleClipboard::new(),
+            needs_area_reset: false,
         }
     }
 
@@ -433,6 +439,14 @@ impl SynthApp {
 impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         use egui_remixicon::icons as ri;
+
+        // If a project was just loaded, clear cached egui Area positions so that
+        // module windows are placed at their saved positions, not stale ones.
+        if self.needs_area_reset {
+            self.needs_area_reset = false;
+            ctx.memory_mut(|mem| mem.reset_areas());
+        }
+
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
 
@@ -3552,6 +3566,10 @@ impl SynthApp {
 
     /// Load a project file, replacing all current state.
     fn load_project_data(&mut self, project: ProjectFile) {
+        // 0. Request egui Area position reset so module positions are restored
+        //    from the saved layout instead of using stale cached positions.
+        self.needs_area_reset = true;
+
         // 1. Stop sequencer playback
         self.handle.send(EngineCommand::Stop);
 

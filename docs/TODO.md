@@ -1,12 +1,12 @@
-# TODO - Pertylizer (v0.231.0)
+# TODO - Pertylizer (v0.232.0)
 
 ## 0. Known Bugs
 
 ### 0.0 Export WAV produces no file
-- [ ] Export WAV does not produce an output file — needs investigation and fix, it should have a dialogue with save options as resolution, format and other good stuff before you actually saves the file
+- [x] Export WAV does not produce an output file — needs investigation and fix, it should have a dialogue with save options as resolution, format and other good stuff before you actually saves the file
 
 ### 0.1 Project save/load — module layout not preserved
-- [ ] Module positions and canvas size are not correctly restored for all instruments when loading a project (only the first 2–3 instruments get correct layout)
+- [x] Module positions and canvas size are not correctly restored for all instruments when loading a project (only the first 2–3 instruments get correct layout)
 - [ ] Verify that Rack view saves each instrument's module positions and canvas size correctly when saving a project
 - [ ] More parameters for an instrument should probably be saved in the settings from the instrument strip toolbar
 - [ ] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument
