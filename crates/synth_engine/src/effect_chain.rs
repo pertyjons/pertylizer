@@ -269,6 +269,36 @@ impl EffectChain {
         &self.slots
     }
 
+    /// Get the ordered list of module IDs in the chain (processing order).
+    #[must_use]
+    pub fn slot_order(&self) -> Vec<ModuleId> {
+        self.slots.iter().map(ChainSlot::module_id).collect()
+    }
+
+    /// Move a slot one step earlier in the chain (toward index 0).
+    /// Returns `true` if the move was performed, `false` if already first or not found.
+    pub fn move_slot_up(&mut self, id: ModuleId) -> bool {
+        if let Some(idx) = self.slots.iter().position(|s| s.module_id() == id)
+            && idx > 0
+        {
+            self.slots.swap(idx, idx - 1);
+            return true;
+        }
+        false
+    }
+
+    /// Move a slot one step later in the chain (toward end).
+    /// Returns `true` if the move was performed, `false` if already last or not found.
+    pub fn move_slot_down(&mut self, id: ModuleId) -> bool {
+        if let Some(idx) = self.slots.iter().position(|s| s.module_id() == id)
+            && idx + 1 < self.slots.len()
+        {
+            self.slots.swap(idx, idx + 1);
+            return true;
+        }
+        false
+    }
+
     /// Process the effect chain (effects only, visualizers are skipped).
     ///
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.

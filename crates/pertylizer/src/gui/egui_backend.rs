@@ -1327,7 +1327,16 @@ impl eframe::App for SynthApp {
                 return;
             };
 
-            let result = patch_editor.show(ui, &self.handle, active_id.as_u64());
+            // Get effect chain order from shared state
+            let effect_chain_order: Vec<synth_engine::ModuleId> = self
+                .session
+                .list_instruments()
+                .iter()
+                .find(|s| s.id == active_id)
+                .map(|s| s.effect_chain_order.clone())
+                .unwrap_or_default();
+
+            let result = patch_editor.show(ui, &self.handle, active_id.as_u64(), &effect_chain_order);
             let had_mutations = result.has_mutations();
 
             // Handle parameter changes - send Param directly (carries its own value)
@@ -1431,6 +1440,15 @@ impl eframe::App for SynthApp {
                 self.handle.send(EngineCommand::SetBypass {
                     module: module_id,
                     bypass: new_bypass_state,
+                });
+            }
+
+            // Handle effect chain reorder requests
+            for (module_id, direction) in result.reorder_effects {
+                self.handle.send(EngineCommand::ReorderEffect {
+                    instrument_id: Some(active_id),
+                    module_id,
+                    direction,
                 });
             }
 
@@ -1564,7 +1582,7 @@ impl eframe::App for SynthApp {
             if (result.request_auto_layout || mcp_auto_layout)
                 && let Some(canvas_rect) = result.canvas_rect
             {
-                patch_editor.apply_auto_layout(canvas_rect);
+                patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
             }
 
             // Mark dirty if any mutations occurred

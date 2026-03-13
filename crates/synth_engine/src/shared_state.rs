@@ -353,6 +353,8 @@ pub struct InstrumentSnapshot {
     pub module_count: usize,
     /// Number of effects in the chain.
     pub effect_count: usize,
+    /// Effect chain slot order (module IDs in processing order).
+    pub effect_chain_order: Vec<ModuleId>,
 }
 
 /// Thread-safe snapshot of graph topology.

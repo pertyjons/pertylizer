@@ -603,6 +603,15 @@ impl Clone for EngineCommand {
             Self::DisarmRecord => Self::DisarmRecord,
             Self::SetMetronome(enabled) => Self::SetMetronome(*enabled),
             Self::SetMetronomeVolume(vol) => Self::SetMetronomeVolume(*vol),
+            Self::ReorderEffect {
+                instrument_id,
+                module_id,
+                direction,
+            } => Self::ReorderEffect {
+                instrument_id: *instrument_id,
+                module_id: *module_id,
+                direction: *direction,
+            },
         }
     }
 }

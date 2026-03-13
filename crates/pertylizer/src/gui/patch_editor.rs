@@ -1283,6 +1283,7 @@ impl PatchEditor {
         ui: &mut Ui,
         handle: &EngineHandle,
         instrument_id: u64,
+        effect_chain_order: &[ModuleId],
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
         let content_size = self.content_size();
@@ -1358,6 +1359,15 @@ impl PatchEditor {
         if let Some(layer_id) = scroll_layer_id {
             let clip = scroll_clip_rect.unwrap_or(visible_rect);
             self.draw_connections(ui, time, layer_id, clip, &module_rects);
+            // Draw effect chain cables (signal flow between effects)
+            self.draw_effect_chain_cables(
+                ui,
+                layer_id,
+                clip,
+                effect_chain_order,
+                area_origin,
+                scroll_offset,
+            );
         }
 
         // Draw collapsed group boxes (movable) after cables so they sit above.
@@ -1825,6 +1835,61 @@ impl PatchEditor {
                                     .size(11.0)
                                     .color(theme().colors.text_dim),
                                 );
+
+                                // Chain position and reorder buttons
+                                if let Some(chain_pos) = effect_chain_order.iter().position(|id| *id == module_id) {
+                                    let chain_label = format!("#{}", chain_pos + 1);
+                                    ui.label(
+                                        egui::RichText::new(chain_label)
+                                            .size(10.0)
+                                            .color(Color32::from_rgb(230, 160, 50)),
+                                    );
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let t = theme();
+                                        let btn_size = Vec2::new(16.0, 16.0);
+                                        let can_move_down = chain_pos + 1 < effect_chain_order.len();
+                                        let can_move_up = chain_pos > 0;
+
+                                        // Down button
+                                        let down_color = if can_move_down {
+                                            t.colors.text_dim
+                                        } else {
+                                            t.colors.text_dim.gamma_multiply(0.3)
+                                        };
+                                        let down_resp = ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new(ri::ARROW_DOWN_S_LINE)
+                                                    .color(down_color)
+                                                    .size(12.0),
+                                            )
+                                            .frame(false)
+                                            .min_size(btn_size),
+                                        ).on_hover_text("Move down in chain (process later)");
+                                        if down_resp.clicked() && can_move_down {
+                                            result.reorder_effects.push((module_id, synth_engine::ReorderDirection::Down));
+                                        }
+
+                                        // Up button
+                                        let up_color = if can_move_up {
+                                            t.colors.text_dim
+                                        } else {
+                                            t.colors.text_dim.gamma_multiply(0.3)
+                                        };
+                                        let up_resp = ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new(ri::ARROW_UP_S_LINE)
+                                                    .color(up_color)
+                                                    .size(12.0),
+                                            )
+                                            .frame(false)
+                                            .min_size(btn_size),
+                                        ).on_hover_text("Move up in chain (process earlier)");
+                                        if up_resp.clicked() && can_move_up {
+                                            result.reorder_effects.push((module_id, synth_engine::ReorderDirection::Up));
+                                        }
+                                    });
+                                }
                             });
                             ui.label(
                                 egui::RichText::new("Applied automatically after voice mixing")
@@ -2348,6 +2413,141 @@ impl PatchEditor {
             egui::FontId::proportional(11.0),
             fx_color.gamma_multiply(0.35),
         );
+    }
+
+    /// Draw effect chain cables showing signal flow between effects.
+    ///
+    /// These are drawn as vertical cables (top-to-bottom) between consecutive
+    /// effects in chain order, with arrowheads showing direction.
+    fn draw_effect_chain_cables(
+        &self,
+        ui: &Ui,
+        bg_layer: LayerId,
+        clip_rect: Rect,
+        effect_chain_order: &[ModuleId],
+        area_origin: Vec2,
+        scroll_offset: Vec2,
+    ) {
+        if effect_chain_order.len() < 2 {
+            return;
+        }
+
+        let painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
+
+        // Warm amber color for chain cables
+        let chain_color = Color32::from_rgb(230, 160, 50);
+        let chain_stroke = egui::Stroke::new(2.5, chain_color.gamma_multiply(0.7));
+        let arrow_color = chain_color.gamma_multiply(0.85);
+
+        // Draw cables between consecutive effects
+        for pair in effect_chain_order.windows(2) {
+            let from_id = pair[0];
+            let to_id = pair[1];
+
+            // Get module panel positions
+            let (Some(from_panel), Some(to_panel)) =
+                (self.panels.get(&from_id), self.panels.get(&to_id))
+            else {
+                continue;
+            };
+
+            // Calculate screen positions: bottom-center of source, top-center of destination
+            let from_screen = Pos2::new(
+                from_panel.position.x + from_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
+                from_panel.position.y + from_panel.size.y + area_origin.y - scroll_offset.y,
+            );
+            let to_screen = Pos2::new(
+                to_panel.position.x + to_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
+                to_panel.position.y + area_origin.y - scroll_offset.y,
+            );
+
+            // Draw vertical cable segments
+            let mid_y = (from_screen.y + to_screen.y) * 0.5;
+            if (from_screen.x - to_screen.x).abs() < 2.0 {
+                // Straight vertical line
+                painter.line_segment([from_screen, to_screen], chain_stroke);
+            } else {
+                // Orthogonal: down, across, down
+                painter.line_segment([from_screen, Pos2::new(from_screen.x, mid_y)], chain_stroke);
+                painter.line_segment(
+                    [
+                        Pos2::new(from_screen.x, mid_y),
+                        Pos2::new(to_screen.x, mid_y),
+                    ],
+                    chain_stroke,
+                );
+                painter.line_segment([Pos2::new(to_screen.x, mid_y), to_screen], chain_stroke);
+            }
+
+            // Draw arrowhead at destination
+            let arrow_size = 6.0;
+            let arrow_tip = to_screen;
+            let arrow_left = Pos2::new(arrow_tip.x - arrow_size, arrow_tip.y - arrow_size * 1.5);
+            let arrow_right = Pos2::new(arrow_tip.x + arrow_size, arrow_tip.y - arrow_size * 1.5);
+            painter.add(egui::Shape::convex_polygon(
+                vec![arrow_tip, arrow_left, arrow_right],
+                arrow_color,
+                egui::Stroke::NONE,
+            ));
+        }
+
+        // Draw "IN" label/arrow above the first effect
+        if let Some(first_panel) = self.panels.get(&effect_chain_order[0]) {
+            let pos = Pos2::new(
+                first_panel.position.x + first_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
+                first_panel.position.y + area_origin.y - scroll_offset.y - 4.0,
+            );
+            let arrow_top = Pos2::new(pos.x, pos.y - 14.0);
+            painter.line_segment([arrow_top, pos], chain_stroke);
+            // Small arrowhead
+            let s = 4.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    pos,
+                    Pos2::new(pos.x - s, pos.y - s * 1.5),
+                    Pos2::new(pos.x + s, pos.y - s * 1.5),
+                ],
+                arrow_color,
+                egui::Stroke::NONE,
+            ));
+            painter.text(
+                Pos2::new(pos.x, arrow_top.y - 2.0),
+                egui::Align2::CENTER_BOTTOM,
+                "IN",
+                egui::FontId::proportional(9.0),
+                chain_color.gamma_multiply(0.6),
+            );
+        }
+
+        // Draw "OUT" label/arrow below the last effect
+        if let Some(last_panel) = self
+            .panels
+            .get(effect_chain_order.last().unwrap_or(&effect_chain_order[0]))
+        {
+            let pos = Pos2::new(
+                last_panel.position.x + last_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
+                last_panel.position.y + last_panel.size.y + area_origin.y - scroll_offset.y + 4.0,
+            );
+            let arrow_bottom = Pos2::new(pos.x, pos.y + 14.0);
+            painter.line_segment([pos, arrow_bottom], chain_stroke);
+            let s = 4.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    arrow_bottom,
+                    Pos2::new(arrow_bottom.x - s, arrow_bottom.y - s * 1.5),
+                    Pos2::new(arrow_bottom.x + s, arrow_bottom.y - s * 1.5),
+                ],
+                arrow_color,
+                egui::Stroke::NONE,
+            ));
+            painter.text(
+                Pos2::new(pos.x, arrow_bottom.y + 2.0),
+                egui::Align2::CENTER_TOP,
+                "OUT",
+                egui::FontId::proportional(9.0),
+                chain_color.gamma_multiply(0.6),
+            );
+        }
     }
 
     /// Draw cables behind modules (on the scroll area's layer). Hovered cables
@@ -3814,8 +4014,12 @@ impl PatchEditor {
     /// Apply automatic layout to modules based on signal flow.
     ///
     /// `available_rect` should be the area available for modules (excluding side panels).
-    pub fn apply_auto_layout(&mut self, available_rect: egui::Rect) {
-        use super::auto_layout::{LayoutConnection, ModuleInfo, calculate_layout};
+    pub fn apply_auto_layout(
+        &mut self,
+        available_rect: egui::Rect,
+        effect_chain_order: &[ModuleId],
+    ) {
+        use super::auto_layout::{LayoutConnection, ModuleInfo, calculate_layout_with_chain_order};
 
         // Clear saved canvas size hint — auto-layout determines the new bounds
         self.min_canvas_size = None;
@@ -3845,7 +4049,12 @@ impl PatchEditor {
 
         let layout_rect = available_rect;
 
-        let result = calculate_layout(&modules, &connections, layout_rect);
+        let result = calculate_layout_with_chain_order(
+            &modules,
+            &connections,
+            layout_rect,
+            effect_chain_order,
+        );
 
         // Apply new positions and mark for repositioning
         for (module_id, position) in result.positions {
@@ -3893,6 +4102,8 @@ pub struct PatchEditorResult {
     pub context_add: Option<(PaletteSelection, Pos2, Option<Connection>)>,
     /// Requests to open template browser or save group templates.
     pub group_template_action: Option<GroupTemplateAction>,
+    /// Requests to reorder effects in the chain (module_id, direction).
+    pub reorder_effects: Vec<(ModuleId, synth_engine::ReorderDirection)>,
 }
 
 impl PatchEditorResult {

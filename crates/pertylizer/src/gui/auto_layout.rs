@@ -564,6 +564,20 @@ pub fn calculate_layout(
     connections: &[LayoutConnection],
     _available_rect: Rect,
 ) -> LayoutResult {
+    calculate_layout_with_chain_order(modules, connections, _available_rect, &[])
+}
+
+/// Calculate layout with effect chain ordering.
+///
+/// When `effect_chain_order` is non-empty, global modules (effects/visualizers)
+/// are placed vertically in chain order so that top-to-bottom matches
+/// processing order.
+pub fn calculate_layout_with_chain_order(
+    modules: &[ModuleInfo],
+    connections: &[LayoutConnection],
+    _available_rect: Rect,
+    effect_chain_order: &[ModuleId],
+) -> LayoutResult {
     let mut result = LayoutResult::default();
 
     if modules.is_empty() {
@@ -738,8 +752,16 @@ pub fn calculate_layout(
         start_x
     };
 
-    // Place global modules
+    // Place global modules (sorted by effect chain order if available)
     if !global_ids.is_empty() {
+        if !effect_chain_order.is_empty() {
+            global_ids.sort_by_key(|id| {
+                effect_chain_order
+                    .iter()
+                    .position(|chain_id| chain_id == id)
+                    .unwrap_or(usize::MAX)
+            });
+        }
         let mut y = start_y;
         for &id in &global_ids {
             let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId};
+use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, ReorderDirection};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel};
@@ -832,6 +832,13 @@ impl SynthEngine {
             }
             EngineCommand::RemoveEffect { instrument_id, id } => {
                 self.handle_remove_effect(instrument_id, id);
+            }
+            EngineCommand::ReorderEffect {
+                instrument_id,
+                module_id,
+                direction,
+            } => {
+                self.handle_reorder_effect(instrument_id, module_id, direction);
             }
 
             // Modular routing
@@ -1692,6 +1699,33 @@ impl SynthEngine {
         }
     }
 
+    fn handle_reorder_effect(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        direction: ReorderDirection,
+    ) {
+        let chain = match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument.effect_chain_mut()
+                } else {
+                    return;
+                }
+            }
+            None => &mut self.master_effects,
+        };
+        match direction {
+            ReorderDirection::Up => {
+                chain.move_slot_up(module_id);
+            }
+            ReorderDirection::Down => {
+                chain.move_slot_down(module_id);
+            }
+        }
+        self.update_shared_instruments();
+    }
+
     // ========================================================================
     // Modular routing handlers
     // ========================================================================
@@ -1901,6 +1935,7 @@ impl SynthEngine {
                     solo: inst.is_solo(),
                     module_count: inst.voice_graph().len(),
                     effect_count: inst.effect_chain().slots().len(),
+                    effect_chain_order: inst.effect_chain().slot_order(),
                 }
             })
             .collect();

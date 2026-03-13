@@ -513,6 +513,15 @@ pub enum EngineCommand {
         id: ModuleId,
     },
 
+    /// Reorder an effect/visualizer in the chain (move up or down).
+    /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
+    /// - `instrument_id: None` - Target the global master effects
+    ReorderEffect {
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        direction: ReorderDirection,
+    },
+
     /// Set an effect parameter using type-safe API.
     /// The Param contains both the parameter type and its value.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
@@ -573,6 +582,15 @@ pub enum EngineCommand {
 
     /// Apply a batch AWE parameter snapshot.
     SetAweState { snapshot: synth_awe::AweSnapshot },
+}
+
+/// Direction for reordering an effect in the chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReorderDirection {
+    /// Move earlier in the chain (toward index 0 / top).
+    Up,
+    /// Move later in the chain (toward end / bottom).
+    Down,
 }
 
 /// Type of visualizer to add.
@@ -1063,6 +1081,16 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("RemoveEffect")
                 .field("instrument_id", instrument_id)
                 .field("id", id)
+                .finish(),
+            Self::ReorderEffect {
+                instrument_id,
+                module_id,
+                direction,
+            } => f
+                .debug_struct("ReorderEffect")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
+                .field("direction", direction)
                 .finish(),
             Self::SetEffectParameter {
                 instrument_id,

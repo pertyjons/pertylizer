@@ -1,5 +1,13 @@
 # Version History
 
+## [0.237.0] - 2026-03-13
+### Reorder effect chain
+- **Effect chain reorder** — `move_slot_up()` / `move_slot_down()` methods on `EffectChain` to swap slot positions, with `ReorderEffect` engine command + `ReorderDirection` enum
+- **Effect chain cables** — visual amber/orange cables drawn between effects in chain order with arrowheads showing signal flow direction, plus IN/OUT labels at chain endpoints
+- **Chain position indicator** — effect modules show their chain position (#1, #2, ...) with up/down arrow buttons for quick reordering
+- **Auto-layout respects chain order** — when auto-layout runs, effect modules are arranged top-to-bottom matching their processing order
+- **`InstrumentSnapshot.effect_chain_order`** — shared state now exposes the ordered list of module IDs in the effect chain for GUI access
+
 ## [0.236.0] - 2026-03-13
 ### Canvas size serialization
 - **`CanvasSize` struct** — replaced `Option<(f32, f32)>` tuple with a named `CanvasSize { width, height }` struct for canvas size in patch settings
