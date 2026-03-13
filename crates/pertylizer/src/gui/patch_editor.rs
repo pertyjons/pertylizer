@@ -4136,6 +4136,9 @@ impl PatchEditor {
                 self.needs_reposition.insert(module_id);
             }
         }
+
+        // Re-align effect chain into a clean vertical column after auto-layout
+        self.align_effect_chain(effect_chain_order);
     }
 }
 
