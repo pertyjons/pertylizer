@@ -40,7 +40,7 @@ The following `InstrumentParam` variants exist in the engine but have no UI cont
 - [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — repeated in 4+ locations
 
 ### 1.6 Workflow quality of life
-- [ ] Reorder effect chain — add ability to change processing order (e.g., left/right arrows on effect modules)
+- [x] Reorder effect chain — up/down arrows on effect modules, visual chain cables, auto-aligned vertical column *(v0.237.0)*
 - [ ] A/B comparison — quick-switch between two patch versions to compare sound
 - [ ] Parameter locking — lock parameters to prevent accidental changes
 - [ ] Favorite modules — quick access to frequently used modules in "Add Module"
