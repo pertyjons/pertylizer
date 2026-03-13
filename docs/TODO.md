@@ -1,24 +1,8 @@
-# TODO - Pertylizer (v0.234.0)
+# TODO - Pertylizer (v0.235.0)
 
-## 0. Upgrade rmcp 0.17 → 1.2.0
+## 0. Known Bugs
 
-- [x] Bump `rmcp` to `"1.2"` in workspace `Cargo.toml` and fix compilation
-- [x] Fill in new `Implementation` fields (`title`, `description`, `website_url`) in `get_info()`
-- [x] Add `serve_with_ct()` for clean HTTP server shutdown (already handled via `CancellationToken` in `StreamableHttpServerConfig`)
-- [x] Explore `RawAudioContent` for returning audio previews in tool responses
-- [ ] Evaluate task management for long-running operations (`build_instruments`, `load_project`)
-
-See `docs/rmcp-upgrade-plan.md` for full details.
-
----
-
-## 0.1 Known Bugs
-
-### 0.0 Export WAV produces no file
-- [x] Export WAV does not produce an output file — needs investigation and fix, it should have a dialogue with save options as resolution, format and other good stuff before you actually saves the file
-
-### 0.1 Project save/load — module layout not preserved
-- [x] Module positions and canvas size are not correctly restored for all instruments when loading a project (only the first 2–3 instruments get correct layout)
+### 0.1 Project save/load
 - [ ] Verify that Rack view saves each instrument's module positions and canvas size correctly when saving a project
 - [ ] More parameters for an instrument should probably be saved in the settings from the instrument strip toolbar
 - [ ] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument
@@ -98,25 +82,15 @@ See `docs/rmcp-upgrade-plan.md` for full details.
 
 ## 4. UI & Visual Polish
 
-### 4.1 Effects section — visual separation from voice modules
-- [x] Add a visual divider between voice modules and effects in the grid
-- [x] Use a distinct background color/tint for the effects area
-- [x] Label the section clearly: "Master Effects" or "Effect Chain"
-
-### 4.2 Improve module knobs
+### 4.1 Improve module knobs
 - [ ] Better visual design — gradient fill, shadow, tick marks, value tooltip
 - [ ] Consistent sizing across module types
 - [ ] Arc-style knobs with colored fill showing current value
 
-### 4.3 Improve module ports
-- [x] Clearer port type distinction (audio vs control vs gate vs MIDI)
-- [x] Better hover feedback
-- [x] Colored rings matching cable colors, port labels on hover
-
-### 4.4 Redesign instrument list
+### 4.2 Redesign instrument list
 - [ ] Tabbed interface, mixer-style vertical strips, or collapsible panels
 
-### 4.5 Module Groups — Phase 2–3
+### 4.3 Module Groups — Phase 2–3
 - [ ] Phase 2: Template variants (parameter presets with remap)
 - [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
 - [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type

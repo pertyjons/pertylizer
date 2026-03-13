@@ -1,5 +1,9 @@
 # Version History
 
+## [0.235.0] - 2026-03-13
+### Clean up TODO
+- Remove completed items from TODO.md, renumber remaining sections
+
 ## [0.234.0] - 2026-03-13
 ### MCP audio preview via RawAudioContent
 - **`preview_note` MCP tool** — new tool that renders a note on any instrument offline and returns the audio as a base64-encoded WAV clip via rmcp's `RawAudioContent`, allowing AI agents to hear what a patch sounds like
