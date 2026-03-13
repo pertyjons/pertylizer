@@ -4,8 +4,14 @@
 
 ### 0.1 Project save/load
 - [ ] Verify that Rack view saves each instrument's module positions and canvas size correctly when saving a project
-- [ ] More parameters for an instrument should probably be saved in the settings from the instrument strip toolbar
 - [ ] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument
+
+### 0.2 Project settings — unsaved instrument strip parameters
+The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in project/patch files:
+- [ ] `AllocationMode` — voice allocation mode (Polyphonic/Mono/Legato), currently hardcoded to Polyphonic
+- [ ] `MaxVoices` — maximum polyphony per instrument, currently hardcoded in allocator
+- [ ] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity
+- [ ] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity
 ---
 
 ## 1. Core Usability & Workflow
