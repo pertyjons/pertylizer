@@ -414,6 +414,67 @@ impl ConnectionState {
     }
 }
 
+/// Canvas size hint for the rack view.
+///
+/// Serializes as `{"width": ..., "height": ...}`.
+/// Deserializes from both `{"width": ..., "height": ...}` (new) and `[w, h]` (legacy).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CanvasSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl CanvasSize {
+    #[must_use]
+    pub fn new(width: f32, height: f32) -> Self {
+        Self { width, height }
+    }
+}
+
+impl<'de> Deserialize<'de> for CanvasSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct CanvasSizeVisitor;
+
+        impl<'de> de::Visitor<'de> for CanvasSizeVisitor {
+            type Value = CanvasSize;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(r#"{"width": ..., "height": ...} or [w, h]"#)
+            }
+
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let width = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &"[width, height]"))?;
+                let height = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &"[width, height]"))?;
+                Ok(CanvasSize { width, height })
+            }
+
+            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                #[derive(Deserialize)]
+                struct WH {
+                    width: f32,
+                    height: f32,
+                }
+                let wh = WH::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(CanvasSize {
+                    width: wh.width,
+                    height: wh.height,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(CanvasSizeVisitor)
+    }
+}
+
 /// Global patch settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchSettings {
@@ -432,10 +493,10 @@ pub struct PatchSettings {
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe: Option<synth_awe::AweState>,
-    /// Canvas size hint (width, height) for the rack view.
+    /// Canvas size hint for the rack view.
     /// Used to restore the scroll area size when loading a patch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canvas_size: Option<(f32, f32)>,
+    pub canvas_size: Option<CanvasSize>,
 }
 
 fn default_master_volume() -> Gain {

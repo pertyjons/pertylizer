@@ -417,7 +417,10 @@ pub fn create_patch_from_rack(
     }
     // Save canvas size so layout is restored correctly on load
     let content_size = patch_editor.content_size();
-    patch.settings.canvas_size = Some((content_size.x, content_size.y));
+    patch.settings.canvas_size = Some(crate::patch::CanvasSize::new(
+        content_size.x,
+        content_size.y,
+    ));
     Some(patch)
 }
 
@@ -497,7 +500,10 @@ pub fn create_patch_from_editor(
 
     // Save canvas size so layout is restored correctly on load
     let content_size = patch_editor.content_size();
-    patch.settings.canvas_size = Some((content_size.x, content_size.y));
+    patch.settings.canvas_size = Some(crate::patch::CanvasSize::new(
+        content_size.x,
+        content_size.y,
+    ));
 
     patch
 }

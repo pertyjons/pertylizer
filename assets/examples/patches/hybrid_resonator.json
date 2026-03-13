@@ -450,9 +450,9 @@
     "bpm": 120.0,
     "octave_offset": 0,
     "glide_time": 0.0,
-    "canvas_size": [
-      2818.0,
-      2228.0
-    ]
+    "canvas_size": {
+      "width": 2818.0,
+      "height": 2228.0
+    }
   }
 }

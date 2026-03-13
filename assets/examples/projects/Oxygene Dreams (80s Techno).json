@@ -167,10 +167,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            800.0,
-            600.0
-          ]
+          "canvas_size": {
+            "width": 800.0,
+            "height": 600.0
+          }
         }
       }
     },
@@ -363,10 +363,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            852.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 852.0
+          }
         }
       }
     },
@@ -610,10 +610,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            1044.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 1044.0
+          }
         }
       }
     },
@@ -768,10 +768,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1410.0,
-            788.0
-          ]
+          "canvas_size": {
+            "width": 1410.0,
+            "height": 788.0
+          }
         }
       }
     },
@@ -987,10 +987,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            1108.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 1108.0
+          }
         }
       }
     },
@@ -1292,10 +1292,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            1364.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 1364.0
+          }
         }
       }
     },
@@ -1545,10 +1545,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            884.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 884.0
+          }
         }
       }
     },
@@ -1764,10 +1764,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            1108.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 1108.0
+          }
         }
       }
     },
@@ -1932,10 +1932,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            788.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 788.0
+          }
         }
       }
     },
@@ -2114,10 +2114,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1410.0,
-            788.0
-          ]
+          "canvas_size": {
+            "width": 1410.0,
+            "height": 788.0
+          }
         }
       }
     },
@@ -2276,10 +2276,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            788.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 788.0
+          }
         }
       }
     },
@@ -2472,10 +2472,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1506.0,
-            852.0
-          ]
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 852.0
+          }
         }
       }
     },
@@ -2605,10 +2605,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1186.0,
-            756.0
-          ]
+          "canvas_size": {
+            "width": 1186.0,
+            "height": 756.0
+          }
         }
       }
     },
@@ -2893,10 +2893,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            1396.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 1396.0
+          }
         }
       }
     },
@@ -3154,10 +3154,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            948.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 948.0
+          }
         }
       }
     },
@@ -3369,10 +3369,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            1858.0,
-            788.0
-          ]
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 788.0
+          }
         }
       }
     },
@@ -3837,10 +3837,10 @@
           "bpm": 120.0,
           "octave_offset": 0,
           "glide_time": 0.0,
-          "canvas_size": [
-            2818.0,
-            2324.0
-          ]
+          "canvas_size": {
+            "width": 2818.0,
+            "height": 2324.0
+          }
         }
       }
     }

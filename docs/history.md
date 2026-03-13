@@ -1,5 +1,12 @@
 # Version History
 
+## [0.236.0] - 2026-03-13
+### Canvas size serialization
+- **`CanvasSize` struct** — replaced `Option<(f32, f32)>` tuple with a named `CanvasSize { width, height }` struct for canvas size in patch settings
+- Serializes as `{"width": ..., "height": ...}` object instead of `[w, h]` array
+- Backward-compatible deserialization: reads both new object format and legacy `[w, h]` arrays
+- Updated all example patches and projects to use the new format
+
 ## [0.235.0] - 2026-03-13
 ### Clean up TODO
 - Remove completed items from TODO.md, renumber remaining sections

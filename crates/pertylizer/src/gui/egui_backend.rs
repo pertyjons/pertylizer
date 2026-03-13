@@ -3212,10 +3212,10 @@ impl SynthApp {
         );
 
         // Restore canvas size hint so the scroll area matches the original layout
-        if let Some((w, h)) = patch.settings.canvas_size {
+        if let Some(cs) = patch.settings.canvas_size {
             instrument
                 .patch_editor
-                .set_min_canvas_size(eframe::egui::Vec2::new(w, h));
+                .set_min_canvas_size(eframe::egui::Vec2::new(cs.width, cs.height));
         }
 
         // Restore AWE UI state from loaded patch
@@ -3626,10 +3626,10 @@ impl SynthApp {
             );
 
             // Restore canvas size so the scroll area matches the original layout
-            if let Some((w, h)) = inst_state.patch.settings.canvas_size {
+            if let Some(cs) = inst_state.patch.settings.canvas_size {
                 ui_inst
                     .patch_editor
-                    .set_min_canvas_size(eframe::egui::Vec2::new(w, h));
+                    .set_min_canvas_size(eframe::egui::Vec2::new(cs.width, cs.height));
             }
 
             // Apply instrument-level settings
