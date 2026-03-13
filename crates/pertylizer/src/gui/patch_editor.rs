@@ -1824,6 +1824,8 @@ impl PatchEditor {
                                     )
                                     .on_hover_text("Move up in chain (process earlier)");
                                 if up_resp.clicked() && can_move_up {
+                                    let neighbor = effect_chain_order[chain_pos - 1];
+                                    self.swap_module_positions(module_id, neighbor);
                                     result.reorder_effects.push((
                                         module_id,
                                         synth_engine::ReorderDirection::Up,
@@ -1848,6 +1850,8 @@ impl PatchEditor {
                                     )
                                     .on_hover_text("Move down in chain (process later)");
                                 if down_resp.clicked() && can_move_down {
+                                    let neighbor = effect_chain_order[chain_pos + 1];
+                                    self.swap_module_positions(module_id, neighbor);
                                     result.reorder_effects.push((
                                         module_id,
                                         synth_engine::ReorderDirection::Down,
@@ -3914,6 +3918,22 @@ impl PatchEditor {
     pub fn select_modules(&mut self, ids: &HashSet<ModuleId>) {
         self.selected_modules = ids.clone();
         self.selected_module = ids.iter().next().copied();
+    }
+
+    /// Swap the canvas positions of two modules.
+    fn swap_module_positions(&mut self, a: ModuleId, b: ModuleId) {
+        let pos_a = self.panels.get(&a).map(|p| p.position);
+        let pos_b = self.panels.get(&b).map(|p| p.position);
+        if let (Some(pa), Some(pb)) = (pos_a, pos_b) {
+            if let Some(panel) = self.panels.get_mut(&a) {
+                panel.position = pb;
+            }
+            if let Some(panel) = self.panels.get_mut(&b) {
+                panel.position = pa;
+            }
+            self.needs_reposition.insert(a);
+            self.needs_reposition.insert(b);
+        }
     }
 
     /// Check if a module exists.

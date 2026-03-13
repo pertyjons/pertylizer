@@ -1682,6 +1682,7 @@ impl SynthEngine {
                     .add_effect(id, effect, SampleRate::new(self.sample_rate));
             }
         }
+        self.update_shared_instruments();
     }
 
     fn handle_remove_effect(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
@@ -1697,6 +1698,7 @@ impl SynthEngine {
                 self.master_effects.remove_effect(id);
             }
         }
+        self.update_shared_instruments();
     }
 
     fn handle_reorder_effect(
