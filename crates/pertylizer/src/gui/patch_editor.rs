@@ -322,6 +322,8 @@ pub struct PatchEditor {
     group_context_menu: Option<GroupContextMenuState>,
     /// Minimum canvas size hint (restored from saved patch).
     min_canvas_size: Option<Vec2>,
+    /// Cached effect chain order from previous frame (for change detection).
+    prev_effect_chain_order: Vec<ModuleId>,
 }
 
 impl PatchEditor {
@@ -350,6 +352,7 @@ impl PatchEditor {
             bg_context_menu: None,
             group_context_menu: None,
             min_canvas_size: None,
+            prev_effect_chain_order: Vec::new(),
         }
     }
 
@@ -1286,6 +1289,14 @@ impl PatchEditor {
         effect_chain_order: &[ModuleId],
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
+
+        // Re-align effect modules when the chain order changes
+        // (effect added, removed, or reordered)
+        if effect_chain_order != self.prev_effect_chain_order {
+            self.align_effect_chain(effect_chain_order);
+            self.prev_effect_chain_order = effect_chain_order.to_vec();
+        }
+
         let content_size = self.content_size();
 
         // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
@@ -1824,8 +1835,6 @@ impl PatchEditor {
                                     )
                                     .on_hover_text("Move up in chain (process earlier)");
                                 if up_resp.clicked() && can_move_up {
-                                    let neighbor = effect_chain_order[chain_pos - 1];
-                                    self.swap_module_positions(module_id, neighbor);
                                     result.reorder_effects.push((
                                         module_id,
                                         synth_engine::ReorderDirection::Up,
@@ -1850,8 +1859,6 @@ impl PatchEditor {
                                     )
                                     .on_hover_text("Move down in chain (process later)");
                                 if down_resp.clicked() && can_move_down {
-                                    let neighbor = effect_chain_order[chain_pos + 1];
-                                    self.swap_module_positions(module_id, neighbor);
                                     result.reorder_effects.push((
                                         module_id,
                                         synth_engine::ReorderDirection::Down,
@@ -3920,19 +3927,48 @@ impl PatchEditor {
         self.selected_module = ids.iter().next().copied();
     }
 
-    /// Swap the canvas positions of two modules.
-    fn swap_module_positions(&mut self, a: ModuleId, b: ModuleId) {
-        let pos_a = self.panels.get(&a).map(|p| p.position);
-        let pos_b = self.panels.get(&b).map(|p| p.position);
-        if let (Some(pa), Some(pb)) = (pos_a, pos_b) {
-            if let Some(panel) = self.panels.get_mut(&a) {
-                panel.position = pb;
+    /// Align effect chain modules in a vertical column, preserving their x-center
+    /// and stacking them top-to-bottom in chain order with consistent spacing.
+    fn align_effect_chain(&mut self, effect_chain_order: &[ModuleId]) {
+        if effect_chain_order.is_empty() {
+            return;
+        }
+
+        // Only consider modules that actually exist in panels
+        let existing: Vec<ModuleId> = effect_chain_order
+            .iter()
+            .filter(|id| self.panels.contains_key(id))
+            .copied()
+            .collect();
+        if existing.is_empty() {
+            return;
+        }
+
+        // Use the average x-center of all effect modules as the column x
+        let avg_x = existing
+            .iter()
+            .filter_map(|id| self.panels.get(id))
+            .map(|p| p.position.x + p.size.x * 0.5)
+            .sum::<f32>()
+            / existing.len() as f32;
+
+        // Find the topmost y as starting point
+        let start_y = existing
+            .iter()
+            .filter_map(|id| self.panels.get(id))
+            .map(|p| p.position.y)
+            .fold(f32::MAX, f32::min);
+
+        // Stack modules vertically in chain order
+        let gap = GRID_SIZE;
+        let mut y = start_y;
+        for &id in &existing {
+            if let Some(panel) = self.panels.get_mut(&id) {
+                let x = avg_x - panel.size.x * 0.5;
+                panel.position = snap_to_grid(Pos2::new(x, y));
+                y = panel.position.y + panel.size.y + gap;
+                self.needs_reposition.insert(id);
             }
-            if let Some(panel) = self.panels.get_mut(&b) {
-                panel.position = pa;
-            }
-            self.needs_reposition.insert(a);
-            self.needs_reposition.insert(b);
         }
     }
 
