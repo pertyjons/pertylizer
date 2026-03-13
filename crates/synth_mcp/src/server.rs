@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    Annotated, Implementation, ListResourceTemplatesResult, ListResourcesResult,
-    PaginatedRequestParams, RawResource, RawResourceTemplate, ReadResourceRequestParams,
-    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+    AnnotateAble, Annotated, CallToolResult, Content, Implementation, ListResourceTemplatesResult,
+    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawResource,
+    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -159,6 +160,24 @@ pub struct NoteOffParam {
     pub note: u8,
     #[schemars(description = "MIDI channel (1-16, default 1)")]
     pub channel: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PreviewNoteParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
+    pub note: u8,
+    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
+    pub velocity: u8,
+    #[schemars(
+        description = "Note duration in milliseconds (default 500). How long the note is held before release."
+    )]
+    pub duration_ms: Option<u32>,
+    #[schemars(
+        description = "Tail time in milliseconds after note-off (default 500). Extra time for release/reverb tails."
+    )]
+    pub tail_ms: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1201,6 +1220,49 @@ impl SynthMcpServer {
             Ok(()) => format!("Note {} off (ch={})", params.0.note, channel),
             Err(e) => format!("Error: {e}"),
         }
+    }
+
+    #[tool(
+        description = "Render an audio preview of a note played on an instrument. Returns a WAV audio clip of the instrument's current sound. Useful for hearing what a patch sounds like after making changes."
+    )]
+    async fn preview_note(
+        &self,
+        params: Parameters<PreviewNoteParam>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let duration_ms = params.0.duration_ms.unwrap_or(500);
+        let tail_ms = params.0.tail_ms.unwrap_or(500);
+
+        let preview = self
+            .bridge
+            .render_note_preview(
+                params.0.instrument_id,
+                params.0.note,
+                params.0.velocity,
+                duration_ms,
+                tail_ms,
+            )
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&preview.wav_data);
+
+        let audio = RawContent::Audio(RawAudioContent {
+            data: encoded,
+            mime_type: "audio/wav".to_string(),
+        })
+        .no_annotation();
+
+        let text = Content::text(format!(
+            "Audio preview: note {} vel {} on instrument {} ({:.1}s, {}Hz WAV, {} bytes)",
+            params.0.note,
+            params.0.velocity,
+            params.0.instrument_id,
+            preview.duration_seconds,
+            preview.sample_rate,
+            preview.wav_data.len(),
+        ));
+
+        Ok(CallToolResult::success(vec![text, audio]))
     }
 
     #[tool(

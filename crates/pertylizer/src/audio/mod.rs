@@ -65,6 +65,7 @@
 
 pub mod backends;
 pub mod export;
+pub mod preview;
 mod traits;
 mod types;
 

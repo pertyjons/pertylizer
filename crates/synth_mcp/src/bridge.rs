@@ -6,7 +6,7 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchResult,
+    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, BatchResult,
     BuildInstrumentResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
     InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
     PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
@@ -564,6 +564,21 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Optimize the project by removing unused patterns, tracks, and instruments.
     fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError>;
+
+    // === Audio preview ===
+
+    /// Render a short audio preview of a note played on the given instrument.
+    ///
+    /// Creates an offline engine, loads the instrument's current patch,
+    /// plays the note, and returns WAV data.
+    fn render_note_preview(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity: u8,
+        duration_ms: u32,
+        tail_ms: u32,
+    ) -> Result<AudioPreview, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

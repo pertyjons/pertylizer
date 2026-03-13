@@ -477,3 +477,14 @@ pub struct OptimizeResult {
     /// Total number of items removed.
     pub total_removed: usize,
 }
+
+/// Audio preview data returned by offline rendering.
+#[derive(Debug, Clone)]
+pub struct AudioPreview {
+    /// Raw WAV file bytes.
+    pub wav_data: Vec<u8>,
+    /// Sample rate used for rendering.
+    pub sample_rate: u32,
+    /// Duration in seconds (note + tail).
+    pub duration_seconds: f32,
+}

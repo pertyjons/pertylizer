@@ -1,11 +1,11 @@
-# TODO - Pertylizer (v0.233.0)
+# TODO - Pertylizer (v0.234.0)
 
 ## 0. Upgrade rmcp 0.17 → 1.2.0
 
 - [x] Bump `rmcp` to `"1.2"` in workspace `Cargo.toml` and fix compilation
 - [x] Fill in new `Implementation` fields (`title`, `description`, `website_url`) in `get_info()`
 - [x] Add `serve_with_ct()` for clean HTTP server shutdown (already handled via `CancellationToken` in `StreamableHttpServerConfig`)
-- [ ] Explore `RawAudioContent` for returning audio previews in tool responses
+- [x] Explore `RawAudioContent` for returning audio previews in tool responses
 - [ ] Evaluate task management for long-running operations (`build_instruments`, `load_project`)
 
 See `docs/rmcp-upgrade-plan.md` for full details.

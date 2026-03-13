@@ -1,5 +1,11 @@
 # Version History
 
+## [0.234.0] - 2026-03-13
+### MCP audio preview via RawAudioContent
+- **`preview_note` MCP tool** — new tool that renders a note on any instrument offline and returns the audio as a base64-encoded WAV clip via rmcp's `RawAudioContent`, allowing AI agents to hear what a patch sounds like
+- **Offline note preview renderer** — `audio::preview::render_note_preview()` snapshots an instrument's module graph and parameters from the live engine, creates a temporary offline engine, plays a note for a configurable duration with tail time, and produces 16-bit 44.1kHz WAV data in memory
+- **`AudioPreview` bridge type** — new `render_note_preview` method on `SynthBridge` trait, returning WAV bytes with metadata (sample rate, duration)
+
 ## [0.233.0] - 2026-03-13
 ### Upgrade rmcp 0.17 → 1.2.0
 - **Upgrade rmcp to 1.2.0** — bumped from 0.17 to 1.2, the first stable release of the MCP protocol library

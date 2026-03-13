@@ -2387,6 +2387,24 @@ impl SynthBridge for AppSynthBridge {
             total_removed,
         })
     }
+
+    fn render_note_preview(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity: u8,
+        duration_ms: u32,
+        tail_ms: u32,
+    ) -> Result<synth_mcp::types::AudioPreview, McpBridgeError> {
+        crate::audio::preview::render_note_preview(
+            &self.session,
+            InstrumentId::new(instrument_id),
+            MidiNote::new(note),
+            Velocity::from_midi(velocity),
+            duration_ms,
+            tail_ms,
+        )
+    }
 }
 
 impl AppSynthBridge {
