@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    Annotated, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
-    ResourceContents, ServerCapabilities, ServerInfo,
+    Annotated, Implementation, ListResourceTemplatesResult, ListResourcesResult,
+    PaginatedRequestParams, RawResource, RawResourceTemplate, ReadResourceRequestParams,
+    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -880,18 +880,24 @@ impl Drop for SynthMcpServer {
 #[tool_handler]
 impl ServerHandler for SynthMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .build(),
-            instructions: Some(
-                "Pertylizer MCP server. Inspect and control the running synth: \
-                 list modules, read parameters, change settings, play notes."
-                    .into(),
-            ),
-            ..Default::default()
-        }
+        )
+        .with_server_info(
+            Implementation::new("pertylizer", env!("CARGO_PKG_VERSION"))
+                .with_title("Pertylizer")
+                .with_description(
+                    "Modular synthesizer with 35 voice modules, 21 effects, and MCP integration",
+                )
+                .with_website_url("https://github.com/pertyjons/pertylizer"),
+        )
+        .with_instructions(
+            "Pertylizer MCP server. Inspect and control the running synth: \
+             list modules, read parameters, change settings, play notes.",
+        )
     }
 
     #[allow(clippy::unused_async)]
@@ -1028,9 +1034,10 @@ impl ServerHandler for SynthMcpServer {
                 })?;
 
             let json = serde_json::to_string_pretty(info).unwrap_or_default();
-            Ok(ReadResourceResult {
-                contents: vec![ResourceContents::text(json, uri.clone())],
-            })
+            Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                json,
+                uri.clone(),
+            )]))
         } else if let Some(slug) = uri.strip_prefix("synth://patches/") {
             // Look up patch by slug — match by converting name to slug
             let patches = self
@@ -1052,9 +1059,10 @@ impl ServerHandler for SynthMcpServer {
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
             let json = serde_json::to_string_pretty(&data).unwrap_or_default();
-            Ok(ReadResourceResult {
-                contents: vec![ResourceContents::text(json, uri.clone())],
-            })
+            Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                json,
+                uri.clone(),
+            )]))
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Unknown resource URI: {uri}"),

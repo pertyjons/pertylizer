@@ -1,5 +1,11 @@
 # Version History
 
+## [0.233.0] - 2026-03-13
+### Upgrade rmcp 0.17 → 1.2.0
+- **Upgrade rmcp to 1.2.0** — bumped from 0.17 to 1.2, the first stable release of the MCP protocol library
+- **Enhanced MCP server metadata** — `get_info()` now reports title ("Pertylizer"), description, and website URL via the new `Implementation` fields
+- **Fix non-exhaustive struct construction** — migrated `ServerInfo` and `ReadResourceResult` to use builder/constructor patterns required by rmcp 1.x
+
 ## [0.232.0] - 2026-03-12
 ### Fix WAV export and project module layout restoration
 - **Fix WAV export producing no file** — `FileDialogMode::ExportWav` was missing from the `Saved` pattern match in `update_file_dialog()`, causing the save path to be silently discarded

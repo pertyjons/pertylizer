@@ -1,6 +1,18 @@
-# TODO - Pertylizer (v0.232.0)
+# TODO - Pertylizer (v0.233.0)
 
-## 0. Known Bugs
+## 0. Upgrade rmcp 0.17 → 1.2.0
+
+- [x] Bump `rmcp` to `"1.2"` in workspace `Cargo.toml` and fix compilation
+- [x] Fill in new `Implementation` fields (`title`, `description`, `website_url`) in `get_info()`
+- [x] Add `serve_with_ct()` for clean HTTP server shutdown (already handled via `CancellationToken` in `StreamableHttpServerConfig`)
+- [ ] Explore `RawAudioContent` for returning audio previews in tool responses
+- [ ] Evaluate task management for long-running operations (`build_instruments`, `load_project`)
+
+See `docs/rmcp-upgrade-plan.md` for full details.
+
+---
+
+## 0.1 Known Bugs
 
 ### 0.0 Export WAV produces no file
 - [x] Export WAV does not produce an output file — needs investigation and fix, it should have a dialogue with save options as resolution, format and other good stuff before you actually saves the file
