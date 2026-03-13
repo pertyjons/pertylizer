@@ -1796,6 +1796,65 @@ impl PatchEditor {
                                 result.bypass_toggles.push((module_id, new_bypass_state));
                             }
 
+                            // Effect chain reorder buttons (up/down arrows)
+                            if let Some(chain_pos) =
+                                effect_chain_order.iter().position(|id| *id == module_id)
+                            {
+                                let chain_btn_size = Vec2::new(18.0, 20.0);
+                                let can_move_up = chain_pos > 0;
+                                let can_move_down =
+                                    chain_pos + 1 < effect_chain_order.len();
+                                let chain_color = Color32::from_rgb(230, 160, 50);
+
+                                // Up arrow
+                                let up_color = if can_move_up {
+                                    chain_color
+                                } else {
+                                    chain_color.gamma_multiply(0.3)
+                                };
+                                let up_resp = ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(ri::ARROW_UP_S_LINE)
+                                                .color(up_color)
+                                                .size(12.0),
+                                        )
+                                        .frame(false)
+                                        .min_size(chain_btn_size),
+                                    )
+                                    .on_hover_text("Move up in chain (process earlier)");
+                                if up_resp.clicked() && can_move_up {
+                                    result.reorder_effects.push((
+                                        module_id,
+                                        synth_engine::ReorderDirection::Up,
+                                    ));
+                                }
+
+                                // Down arrow
+                                let down_color = if can_move_down {
+                                    chain_color
+                                } else {
+                                    chain_color.gamma_multiply(0.3)
+                                };
+                                let down_resp = ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new(ri::ARROW_DOWN_S_LINE)
+                                                .color(down_color)
+                                                .size(12.0),
+                                        )
+                                        .frame(false)
+                                        .min_size(chain_btn_size),
+                                    )
+                                    .on_hover_text("Move down in chain (process later)");
+                                if down_resp.clicked() && can_move_down {
+                                    result.reorder_effects.push((
+                                        module_id,
+                                        synth_engine::ReorderDirection::Down,
+                                    ));
+                                }
+                            }
+
                             // Close/delete button (always visible)
                             ui.separator();
                             if ui
@@ -1836,59 +1895,16 @@ impl PatchEditor {
                                     .color(theme().colors.text_dim),
                                 );
 
-                                // Chain position and reorder buttons
-                                if let Some(chain_pos) = effect_chain_order.iter().position(|id| *id == module_id) {
+                                // Chain position badge
+                                if let Some(chain_pos) =
+                                    effect_chain_order.iter().position(|id| *id == module_id)
+                                {
                                     let chain_label = format!("#{}", chain_pos + 1);
                                     ui.label(
                                         egui::RichText::new(chain_label)
                                             .size(10.0)
                                             .color(Color32::from_rgb(230, 160, 50)),
                                     );
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let t = theme();
-                                        let btn_size = Vec2::new(16.0, 16.0);
-                                        let can_move_down = chain_pos + 1 < effect_chain_order.len();
-                                        let can_move_up = chain_pos > 0;
-
-                                        // Down button
-                                        let down_color = if can_move_down {
-                                            t.colors.text_dim
-                                        } else {
-                                            t.colors.text_dim.gamma_multiply(0.3)
-                                        };
-                                        let down_resp = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new(ri::ARROW_DOWN_S_LINE)
-                                                    .color(down_color)
-                                                    .size(12.0),
-                                            )
-                                            .frame(false)
-                                            .min_size(btn_size),
-                                        ).on_hover_text("Move down in chain (process later)");
-                                        if down_resp.clicked() && can_move_down {
-                                            result.reorder_effects.push((module_id, synth_engine::ReorderDirection::Down));
-                                        }
-
-                                        // Up button
-                                        let up_color = if can_move_up {
-                                            t.colors.text_dim
-                                        } else {
-                                            t.colors.text_dim.gamma_multiply(0.3)
-                                        };
-                                        let up_resp = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new(ri::ARROW_UP_S_LINE)
-                                                    .color(up_color)
-                                                    .size(12.0),
-                                            )
-                                            .frame(false)
-                                            .min_size(btn_size),
-                                        ).on_hover_text("Move up in chain (process earlier)");
-                                        if up_resp.clicked() && can_move_up {
-                                            result.reorder_effects.push((module_id, synth_engine::ReorderDirection::Up));
-                                        }
-                                    });
                                 }
                             });
                             ui.label(
