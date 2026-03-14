@@ -4,7 +4,7 @@
 //! faster than realtime. Progress is reported via atomic counters
 //! so the GUI can display a progress bar without blocking.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -531,7 +531,7 @@ fn load_patch_modules(
 fn apply_module_parameters(
     module_id: synth_engine::ModuleId,
     descriptor: &synth_core::ModuleDescriptor,
-    parameters: &HashMap<String, ParamValue>,
+    parameters: &BTreeMap<String, ParamValue>,
     effect_type: Option<EffectType>,
     handle: &mut synth_engine::EngineHandle,
     instrument_id: InstrumentId,

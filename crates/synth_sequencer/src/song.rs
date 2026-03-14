@@ -1,6 +1,6 @@
 //! Song structure and arrangement.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -82,11 +82,11 @@ pub struct Song {
     pub author: String,
 
     // Pattern storage
-    patterns: HashMap<PatternId, Pattern>,
+    patterns: BTreeMap<PatternId, Pattern>,
     next_pattern_id: u32,
 
     // Track storage
-    tracks: HashMap<TrackId, SequencerTrack>,
+    tracks: BTreeMap<TrackId, SequencerTrack>,
     next_track_id: u16,
 
     // Arrangement
@@ -107,9 +107,9 @@ impl Song {
         Self {
             name: name.into(),
             author: String::new(),
-            patterns: HashMap::new(),
+            patterns: BTreeMap::new(),
             next_pattern_id: 0,
-            tracks: HashMap::new(),
+            tracks: BTreeMap::new(),
             next_track_id: 0,
             arrangement: Vec::new(),
             tempo_changes: Vec::new(),

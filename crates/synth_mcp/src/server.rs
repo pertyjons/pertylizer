@@ -767,7 +767,7 @@ pub struct ModuleDefInput {
     #[schemars(
         description = "Parameters as {name: value}. Values can be numbers (440.0), strings for choices ('sawtooth'), or booleans. Use get_module_info to discover parameter names."
     )]
-    pub params: Option<std::collections::HashMap<String, ParamValueInput>>,
+    pub params: Option<std::collections::BTreeMap<String, ParamValueInput>>,
 }
 
 /// A connection between modules using array indices.

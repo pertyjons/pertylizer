@@ -1,5 +1,10 @@
 # Version History
 
+## [0.238.0] - 2026-03-14
+### Sorted JSON keys
+- **BTreeMap for serialization** — replaced `HashMap` with `BTreeMap` in all serialized structs (`ModuleState.parameters`, `Song.patterns`, `Song.tracks`) so JSON keys are always written in alphabetical order
+- **Ord derives** — added `PartialOrd`/`Ord` to `PatternId` and `TrackId` to support `BTreeMap` usage
+
 ## [0.237.0] - 2026-03-13
 ### Reorder effect chain
 - **Effect chain reorder** — `move_slot_up()` / `move_slot_down()` methods on `EffectChain` to swap slot positions, with `ReorderEffect` engine command + `ReorderDirection` enum

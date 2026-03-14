@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PatternId(pub u32);
 
 impl PatternId {
@@ -323,7 +323,7 @@ impl From<u16> for TicksPerRow {
 }
 
 /// Unique identifier for a track.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TrackId(pub u16);
 
 impl TrackId {

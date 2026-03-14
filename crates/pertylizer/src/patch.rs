@@ -15,7 +15,7 @@
 //! - Distortion Modes: `"soft_clip"`, `"hard_clip"`, `"tube"`, `"foldback"`, `"bitcrush"`
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -225,7 +225,7 @@ pub struct ModuleState {
     pub position: Position,
     /// Parameter values.
     #[serde(default)]
-    pub parameters: HashMap<String, ParamValue>,
+    pub parameters: BTreeMap<String, ParamValue>,
 }
 
 /// Unique ID for a group within a patch.
@@ -670,7 +670,7 @@ impl ModuleBuilder {
                 id,
                 module_type,
                 position: Position::default(),
-                parameters: HashMap::new(),
+                parameters: BTreeMap::new(),
             },
         }
     }

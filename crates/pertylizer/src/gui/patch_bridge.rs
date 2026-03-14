@@ -5,7 +5,7 @@
 //! - PatchEditor UI state
 //! - Engine commands for audio processing
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use eframe::egui::Pos2;
@@ -312,7 +312,7 @@ fn load_visualizer(
 pub fn apply_module_parameters(
     module_id: ModuleId,
     descriptor: &ModuleDescriptor,
-    parameters: &HashMap<String, ParamValue>,
+    parameters: &BTreeMap<String, ParamValue>,
     effect_type: Option<EffectType>,
     patch_editor: &mut PatchEditor,
     handle: &mut EngineHandle,
@@ -455,7 +455,7 @@ pub fn create_patch_from_editor(
 
     for module_id in patch_editor.module_ids() {
         if let Some((descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
-            let mut param_map = HashMap::new();
+            let mut param_map = BTreeMap::new();
 
             if let Some(engine_param_list) = engine_params.get(&module_id.to_string()) {
                 // Use engine values: match each descriptor to its engine

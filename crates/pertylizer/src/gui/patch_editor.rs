@@ -9,7 +9,7 @@
 use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_extras as _;
 use egui_remixicon::icons as ri;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
 use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
@@ -644,7 +644,7 @@ impl PatchEditor {
         let mut modules: Vec<ModuleState> = Vec::new();
         for mid in &group.members {
             if let Some((_desc, pos, params)) = self.get_module_data(*mid) {
-                let mut param_map = HashMap::new();
+                let mut param_map = BTreeMap::new();
                 for (name, value) in params {
                     param_map.insert(name, ParamValue::Float(value));
                 }
@@ -3897,7 +3897,7 @@ impl PatchEditor {
         let mut states = Vec::new();
         for &id in ids {
             if let Some((_desc, position, gui_params)) = self.get_module_data(id) {
-                let mut parameters = std::collections::HashMap::new();
+                let mut parameters = std::collections::BTreeMap::new();
                 for (name, value) in &gui_params {
                     parameters.insert(name.clone(), ParamValue::Float(*value));
                 }
