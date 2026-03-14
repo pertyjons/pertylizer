@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.238.0)
+# TODO - Pertylizer (v0.239.0)
 
 ## 0. Known Bugs
 
@@ -12,6 +12,9 @@ The following `InstrumentParam` variants exist in the engine but have no UI cont
 - [ ] `MaxVoices` — maximum polyphony per instrument, currently hardcoded in allocator
 - [ ] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity
 - [ ] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity
+
+### 0.3 Miscellaneous
+- [ ] Fix padding on the label Voices in Topbar so it always shows 3 digits wide, as the CPU label does.
 ---
 
 ## 1. Core Usability & Workflow

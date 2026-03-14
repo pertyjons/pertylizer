@@ -9,7 +9,7 @@ use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, MidiNote, Velocity};
 use synth_engine::commands::{EffectType, PortId};
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::{AllocationMode, AllocatorConfig, EngineCommand, SynthEngine};
+use synth_engine::{EngineCommand, SynthEngine};
 
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::AudioPreview;
@@ -56,16 +56,11 @@ pub fn render_note_preview(
     }
 
     // Create a fresh offline engine
-    let allocator_config = AllocatorConfig {
-        max_voices: synth_core::VoiceCount::QUAD,
-        mode: AllocationMode::Polyphonic,
-        ..Default::default()
-    };
-    let (mut engine, mut handle) = SynthEngine::with_config(allocator_config);
+    let (mut engine, mut handle) = SynthEngine::new();
 
-    // Create a temporary session for loading modules
+    // Create a temporary session and instrument for loading modules
     let tmp_session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-    let _ = tmp_session.clear_graph(InstrumentId::FIRST);
+    let _ = tmp_session.add_instrument_with_id(InstrumentId::FIRST, "Preview");
     tmp_session.reset_counters_for_instrument(InstrumentId::FIRST);
 
     // Load modules into the offline engine

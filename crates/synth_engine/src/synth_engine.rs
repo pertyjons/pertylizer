@@ -22,15 +22,12 @@ use crate::sequencer_engine::SequencerEngine;
 use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
-use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
-    AmplifierParam, AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue,
-    CcNumber, EnvelopeParam, FilterParam, Gain, LfoParam, LfoWaveform, MidiNote, ModuleType,
-    NormalizedValue, OscillatorParam, Param, PolyModule as PolyModuleTrait, ProcessContext,
-    SampleCount, SampleRate, Seconds, StreamInfo, Velocity, Waveform,
+    AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber, Gain,
+    MidiNote, ModuleType, NormalizedValue, Param, PolyModule as PolyModuleTrait, ProcessContext,
+    SampleCount, SampleRate, Seconds, StreamInfo, Velocity,
 };
-use synth_modules::{Amplifier, Envelope, Filter, Lfo, Oscillator};
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
 
 /// Size of the command ring buffer.
@@ -402,12 +399,11 @@ pub struct SynthEngine {
 
 impl SynthEngine {
     /// Create a new engine with default configuration.
+    /// Create a new engine.
+    ///
+    /// The engine starts with no instruments — create them explicitly
+    /// via [`EngineCommand::AddInstrument`].
     pub fn new() -> (Self, EngineHandle) {
-        Self::with_config(AllocatorConfig::default())
-    }
-
-    /// Create a new engine with custom configuration.
-    pub fn with_config(config: AllocatorConfig) -> (Self, EngineHandle) {
         let state = EngineState::new();
 
         // Create command ring buffer
@@ -430,23 +426,7 @@ impl SynthEngine {
         let instrument_return_rb = HeapRb::<Box<Instrument>>::new(RETURN_BUFFER_SIZE);
         let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
-        // Create default instrument on Channel 1 (strict channel separation)
-        let mut default_instrument =
-            Instrument::with_config(InstrumentId::FIRST, "Default", config);
-        default_instrument.set_midi_channel(MidiChannel::CH1);
-
-        // Populate the instrument's voice graph with default signal chain
-        Self::populate_default_voice_graph(default_instrument.voice_graph_mut());
-
-        // Initialize allocator with the instrument's voice graph
-        *default_instrument.allocator_mut() = VoiceAllocator::with_graph_template(
-            default_instrument.allocator().config().clone(),
-            default_instrument.voice_graph(),
-        );
-
-        // Initialize instrument mapping with default instrument
-        let mut instrument_mapping = InstrumentMapping::new();
-        instrument_mapping.insert(synth_sequencer::SeqInstrumentId(0), InstrumentId::FIRST);
+        let instrument_mapping = InstrumentMapping::new();
 
         let engine = Self {
             command_consumer,
@@ -455,7 +435,7 @@ impl SynthEngine {
             return_producer,
             instrument_return_producer,
             state: Arc::clone(&state),
-            instruments: vec![Box::new(default_instrument)],
+            instruments: vec![],
             master_effects: EffectChain::new(),
             awe_engine: AweEngine::new(),
             spatial_voice_bank: SpatialVoiceBank::new(),
@@ -478,10 +458,8 @@ impl SynthEngine {
             callback_count: 0,
         };
 
-        // Initialize instrument snapshots so MCP/GUI see the default instrument
+        // Initialize shared state (empty — no instruments yet)
         engine.update_shared_instruments();
-        // Initialize shared graph for default instrument
-        engine.update_shared_graph_for_instrument(&engine.instruments[0]);
 
         let handle = EngineHandle {
             command_sender: CommandSender::new(command_producer),
@@ -537,6 +515,7 @@ impl SynthEngine {
     /// This creates a basic subtractive synthesis signal chain:
     /// OSC1 + OSC2 -> Filter -> Amplifier
     /// with envelope modulation.
+    #[cfg(test)]
     fn populate_default_voice_graph(graph: &mut ModuleGraph) {
         use synth_core::{Cents, Hertz, Seconds as TypedSeconds};
 
@@ -2363,9 +2342,45 @@ mod tests {
     use crate::voice_allocator::AllocationMode;
     use synth_core::VoiceCount;
 
+    /// Create a default instrument and add it to the engine via command.
+    fn add_default_instrument(engine: &mut SynthEngine, handle: &mut EngineHandle) {
+        let mut instrument =
+            Instrument::with_config(InstrumentId::FIRST, "Default", AllocatorConfig::default());
+        instrument.set_midi_channel(MidiChannel::CH1);
+        SynthEngine::populate_default_voice_graph(instrument.voice_graph_mut());
+        *instrument.allocator_mut() = VoiceAllocator::with_graph_template(
+            instrument.allocator().config().clone(),
+            instrument.voice_graph(),
+        );
+        handle.send(EngineCommand::AddInstrument {
+            instrument: Box::new(instrument),
+        });
+        engine.process_commands();
+    }
+
+    fn add_instrument_with_config(
+        engine: &mut SynthEngine,
+        handle: &mut EngineHandle,
+        config: AllocatorConfig,
+    ) {
+        let mut instrument =
+            Instrument::with_config(InstrumentId::FIRST, "Default", config.clone());
+        instrument.set_midi_channel(MidiChannel::CH1);
+        SynthEngine::populate_default_voice_graph(instrument.voice_graph_mut());
+        *instrument.allocator_mut() = VoiceAllocator::with_graph_template(
+            instrument.allocator().config().clone(),
+            instrument.voice_graph(),
+        );
+        handle.send(EngineCommand::AddInstrument {
+            instrument: Box::new(instrument),
+        });
+        engine.process_commands();
+    }
+
     #[test]
     fn test_engine_creation() {
         let (engine, handle) = SynthEngine::new();
+        assert_eq!(engine.instruments.len(), 0);
         assert_eq!(handle.voice_count(), 0);
         assert!((handle.master_volume() - 1.0).abs() < 0.001);
         drop(engine);
@@ -2378,7 +2393,16 @@ mod tests {
             mode: AllocationMode::Polyphonic,
             ..Default::default()
         };
-        let (mut engine, mut handle) = SynthEngine::with_config(config);
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_instrument_with_config(
+            &mut engine,
+            &mut handle,
+            AllocatorConfig {
+                max_voices: VoiceCount::QUAD,
+                mode: AllocationMode::Polyphonic,
+                ..Default::default()
+            },
+        );
 
         // Send multiple notes
         handle.note_on(MidiNote::C4, Velocity::new(0.8));
@@ -2398,15 +2422,18 @@ mod tests {
     }
 
     #[test]
-    fn test_default_instrument_exists() {
+    fn test_engine_starts_empty() {
         let (engine, _handle) = SynthEngine::new();
+        assert_eq!(engine.instruments.len(), 0);
+    }
 
-        // Engine should have one default instrument on Channel 1
+    #[test]
+    fn test_add_instrument_via_command() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_default_instrument(&mut engine, &mut handle);
+
         assert_eq!(engine.instruments.len(), 1);
-        assert_eq!(
-            engine.instruments[0].id(),
-            crate::instrument::InstrumentId::FIRST
-        );
+        assert_eq!(engine.instruments[0].id(), InstrumentId::FIRST);
         assert_eq!(engine.instruments[0].name(), "Default");
         assert_eq!(engine.instruments[0].midi_channel(), MidiChannel::CH1);
     }
@@ -2414,10 +2441,7 @@ mod tests {
     #[test]
     fn test_part_channel_routing() {
         let (mut engine, mut handle) = SynthEngine::new();
-
-        // Modify default instrument to listen to channel 1 only
-        engine.instruments[0]
-            .set_midi_channel(crate::instrument::MidiChannel::from_one_indexed(1).unwrap());
+        add_default_instrument(&mut engine, &mut handle);
 
         // Send note on channel 1 - should be received
         handle.note_on_channel(
@@ -2451,6 +2475,7 @@ mod tests {
         #[test]
         fn test_oscillator_routed_to_voice_graph() {
             let (mut engine, mut handle) = SynthEngine::new();
+            add_default_instrument(&mut engine, &mut handle);
 
             // Count existing oscillators in default instrument's voice graph (there are 2 by default)
             let initial_osc_count = engine.instruments[0]
@@ -2508,7 +2533,8 @@ mod tests {
                 mode: AllocationMode::Polyphonic,
                 ..Default::default()
             };
-            let (mut engine, mut handle) = SynthEngine::with_config(config);
+            let (mut engine, mut handle) = SynthEngine::new();
+            add_instrument_with_config(&mut engine, &mut handle, config);
 
             // Create a new filter with a unique ID
             let filter_id = ModuleId::new(ModuleType::Filter, 10);
@@ -2553,7 +2579,8 @@ mod tests {
                 mode: AllocationMode::Polyphonic,
                 ..Default::default()
             };
-            let (mut engine, mut handle) = SynthEngine::with_config(config);
+            let (mut engine, mut handle) = SynthEngine::new();
+            add_instrument_with_config(&mut engine, &mut handle, config);
 
             // Add a new oscillator and amplifier to default instrument's voice graph
             let new_osc_id = ModuleId::new(ModuleType::Oscillator, 10);
@@ -2634,7 +2661,8 @@ mod tests {
                 max_voices: VoiceCount::DUAL,
                 ..Default::default()
             };
-            let (mut engine, mut handle) = SynthEngine::with_config(config);
+            let (mut engine, mut handle) = SynthEngine::new();
+            add_instrument_with_config(&mut engine, &mut handle, config);
 
             // Add a filter to default instrument
             let filter_id = ModuleId::new(ModuleType::Filter, 10);

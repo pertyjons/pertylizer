@@ -1,5 +1,13 @@
 # Version History
 
+## [0.239.0] - 2026-03-14
+### Engine starts with no instruments
+- **No default instrument** — engine no longer creates `InstrumentId::FIRST` at startup; all instruments are created explicitly via `AddInstrument` command
+- **`active_instrument_id` is `Option<InstrumentId>`** — GUI properly represents "no instrument selected" state instead of assuming one always exists
+- **Removed `SynthEngine::with_config()`** — allocator config was only used for the default instrument; engine constructor is now just `SynthEngine::new()`
+- **Removed FIRST special-casing** — project loading and export no longer skip `InstrumentId::FIRST` when creating instruments, fixing module position bugs for multi-instrument projects
+- **MCP sync cleanup** — removed safety retain that prevented removing the default instrument
+
 ## [0.238.0] - 2026-03-14
 ### Sorted JSON keys
 - **BTreeMap for serialization** — replaced `HashMap` with `BTreeMap` in all serialized structs (`ModuleState.parameters`, `Song.patterns`, `Song.tracks`) so JSON keys are always written in alphabetical order

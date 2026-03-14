@@ -58,7 +58,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         mode: AllocationMode::Polyphonic,
         ..Default::default()
     };
-    let (engine, mut handle) = SynthEngine::with_config(allocator_config.clone());
+    let (engine, mut handle) = SynthEngine::new();
 
     // Start OSC telemetry by default (disable with --no-osc)
     #[cfg(feature = "osc")]
@@ -168,12 +168,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 /// Run headless MCP server on stdio (no GUI, audio still plays).
 #[cfg(feature = "mcp")]
 fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
-    let allocator_config = AllocatorConfig {
-        max_voices: VoiceCount::OCTO,
-        mode: AllocationMode::Polyphonic,
-        ..Default::default()
-    };
-    let (engine, handle) = SynthEngine::with_config(allocator_config);
+    let (engine, handle) = SynthEngine::new();
 
     // Start audio
     let mut host: Box<dyn AudioHostTrait> = match audio::default_host() {

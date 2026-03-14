@@ -16,7 +16,7 @@ pub struct RackContext<'a> {
     /// List of instruments.
     pub instruments: &'a mut Vec<InstrumentUiState>,
     /// Currently active instrument ID.
-    pub active_instrument_id: &'a mut InstrumentId,
+    pub active_instrument_id: &'a mut Option<InstrumentId>,
     /// Engine handle for sending commands.
     pub handle: &'a mut EngineHandle,
     /// Next instrument ID counter.

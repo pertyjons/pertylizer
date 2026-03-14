@@ -8,36 +8,18 @@
   "version": "1.0",
   "modules": [
     {
-      "id": "env-2",
-      "type": "envelope",
+      "id": "rng-1",
+      "type": "ring_mod",
       "position": {
-        "x": 32.0,
-        "y": 1728.0
-      },
-      "parameters": {
-        "sustain": 0.2,
-        "atk_curve": 0.0,
-        "rel_curve": 0.0,
-        "release": 0.25,
-        "dec_curve": 0.0,
-        "vel_sens": 1.0,
-        "attack": 0.002,
-        "decay": 0.18
-      }
-    },
-    {
-      "id": "bdy-1",
-      "type": "body_resonance",
-      "position": {
-        "x": 1408.0,
+        "x": 384.0,
         "y": 32.0
       },
       "parameters": {
-        "freq": 280.0,
-        "size": 0.6,
-        "bright": 0.65,
-        "mix": 0.35,
-        "resonance": 0.7
+        "carrier_freq": 440.0,
+        "carrier_wave": 0.0,
+        "freq_ratio": 0.5,
+        "key_track": 0.0,
+        "mix": 0.45
       }
     },
     {
@@ -48,62 +30,26 @@
         "y": 352.0
       },
       "parameters": {
-        "param_b": 0.5,
-        "param_c": 0.5,
-        "level": 0.6,
         "algorithm": 3.0,
+        "frequency": 440.0,
+        "level": 0.6,
         "param_a": 0.5,
-        "frequency": 440.0
+        "param_b": 0.5,
+        "param_c": 0.5
       }
     },
     {
-      "id": "amp-1",
-      "type": "amplifier",
-      "position": {
-        "x": 1760.0,
-        "y": 32.0
-      },
-      "parameters": {
-        "pan": 0.0,
-        "cv_bipolar": 0.0,
-        "level": 0.9
-      }
-    },
-    {
-      "id": "rng-1",
-      "type": "ring_mod",
-      "position": {
-        "x": 384.0,
-        "y": 32.0
-      },
-      "parameters": {
-        "freq_ratio": 0.5,
-        "key_track": 0.0,
-        "carrier_wave": 0.0,
-        "carrier_freq": 440.0,
-        "mix": 0.45
-      }
-    },
-    {
-      "id": "osc-1",
-      "type": "oscillator",
+      "id": "lfo-1",
+      "type": "lfo",
       "position": {
         "x": 32.0,
-        "y": 32.0
+        "y": 1824.0
       },
       "parameters": {
-        "uni_spread": 0.7,
-        "pulse_width": 0.5,
-        "level": 0.8,
-        "detune": 0.0,
-        "waveform": 4.0,
-        "fm_mode": 0.0,
-        "uni_phase": 1.0,
-        "x_mod": 0.0,
-        "frequency": 440.0,
-        "fm_amt": 1.0,
-        "unison": 4.0,
-        "uni_detune": 18.0
+        "depth": 0.35,
+        "phase": 0.0,
+        "rate": 4.0,
+        "waveform": 1.0
       }
     },
     {
@@ -114,14 +60,80 @@
         "y": 32.0
       },
       "parameters": {
-        "model": 0.0,
+        "cutoff": 1200.0,
         "cv_amt": 1.0,
         "drive": 1.2,
-        "resonance": 0.35,
-        "morph": 0.0,
         "key_track": 0.0,
-        "type": 0.0,
-        "cutoff": 1200.0
+        "model": 0.0,
+        "morph": 0.0,
+        "resonance": 0.35,
+        "type": 0.0
+      }
+    },
+    {
+      "id": "sub-1",
+      "type": "sub_oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 544.0
+      },
+      "parameters": {
+        "level": 0.4,
+        "octave": 0.0,
+        "waveform": 1.0
+      }
+    },
+    {
+      "id": "amp-1",
+      "type": "amplifier",
+      "position": {
+        "x": 1760.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "cv_bipolar": 0.0,
+        "level": 0.9,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "env-2",
+      "type": "envelope",
+      "position": {
+        "x": 32.0,
+        "y": 1536.0
+      },
+      "parameters": {
+        "atk_curve": 0.0,
+        "attack": 0.002,
+        "dec_curve": 0.0,
+        "decay": 0.18,
+        "rel_curve": 0.0,
+        "release": 0.25,
+        "sustain": 0.2,
+        "vel_sens": 1.0
+      }
+    },
+    {
+      "id": "osc-1",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "detune": 0.0,
+        "fm_amt": 1.0,
+        "fm_mode": 0.0,
+        "frequency": 440.0,
+        "level": 0.8,
+        "pulse_width": 0.5,
+        "uni_detune": 18.0,
+        "uni_phase": 1.0,
+        "uni_spread": 0.7,
+        "unison": 4.0,
+        "waveform": 4.0,
+        "x_mod": 0.0
       }
     },
     {
@@ -132,47 +144,56 @@
         "y": 992.0
       },
       "parameters": {
-        "input_3": 1.0,
-        "master": 1.0,
-        "input_7": 1.0,
-        "input_4": 1.0,
         "input_1": 1.0,
-        "input_8": 1.0,
         "input_2": 1.0,
+        "input_3": 1.0,
+        "input_4": 1.0,
+        "input_5": 1.0,
         "input_6": 1.0,
-        "input_5": 1.0
+        "input_7": 1.0,
+        "input_8": 1.0,
+        "master": 1.0
       }
     },
     {
-      "id": "lfo-1",
-      "type": "lfo",
+      "id": "nse-1",
+      "type": "noise",
       "position": {
         "x": 32.0,
-        "y": 1536.0
+        "y": 800.0
       },
       "parameters": {
-        "depth": 0.35,
-        "waveform": 1.0,
-        "phase": 0.0,
-        "rate": 4.0
+        "level": 0.2,
+        "type": 4.0
       }
     },
     {
-      "id": "env-1",
-      "type": "envelope",
+      "id": "out-1",
+      "type": "stereo_output",
       "position": {
-        "x": 1408.0,
-        "y": 192.0
+        "x": 2368.0,
+        "y": 32.0
       },
       "parameters": {
-        "decay": 0.25,
-        "dec_curve": 0.0,
-        "sustain": 0.6,
-        "rel_curve": 0.0,
-        "attack": 0.005,
-        "release": 0.4,
-        "atk_curve": 0.0,
-        "vel_sens": 1.0
+        "limit": 1.0,
+        "master": 0.8,
+        "mute": 0.0,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "bdy-1",
+      "type": "body_resonance",
+      "position": {
+        "x": 1408.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "bright": 0.65,
+        "freq": 280.0,
+        "mix": 0.35,
+        "resonance": 0.7,
+        "size": 0.6
       }
     },
     {
@@ -183,15 +204,30 @@
         "y": 32.0
       },
       "parameters": {
-        "input_6": 1.0,
+        "input_1": 1.0,
+        "input_2": 1.0,
         "input_3": 1.0,
         "input_4": 1.0,
-        "input_2": 1.0,
-        "input_1": 1.0,
-        "input_8": 1.0,
-        "input_7": 1.0,
         "input_5": 1.0,
+        "input_6": 1.0,
+        "input_7": 1.0,
+        "input_8": 1.0,
         "master": 0.9
+      }
+    },
+    {
+      "id": "wtb-1",
+      "type": "wavetable_osc",
+      "position": {
+        "x": 32.0,
+        "y": 1344.0
+      },
+      "parameters": {
+        "detune": 0.0,
+        "level": 0.7,
+        "octave": 0.0,
+        "position": 0.25,
+        "table": 2.0
       }
     },
     {
@@ -203,63 +239,27 @@
       },
       "parameters": {
         "center": 60.0,
-        "spread": 0.7,
         "curve": 0.4,
-        "invert": 0.0
+        "invert": 0.0,
+        "spread": 0.7
       }
     },
     {
-      "id": "sub-1",
-      "type": "sub_oscillator",
+      "id": "env-1",
+      "type": "envelope",
       "position": {
-        "x": 32.0,
-        "y": 544.0
+        "x": 1408.0,
+        "y": 192.0
       },
       "parameters": {
-        "waveform": 1.0,
-        "level": 0.4,
-        "octave": 0.0
-      }
-    },
-    {
-      "id": "out-1",
-      "type": "stereo_output",
-      "position": {
-        "x": 2368.0,
-        "y": 32.0
-      },
-      "parameters": {
-        "master": 0.8,
-        "limit": 1.0,
-        "mute": 0.0,
-        "pan": 0.0
-      }
-    },
-    {
-      "id": "nse-1",
-      "type": "noise",
-      "position": {
-        "x": 32.0,
-        "y": 800.0
-      },
-      "parameters": {
-        "type": 4.0,
-        "level": 0.2
-      }
-    },
-    {
-      "id": "wtb-1",
-      "type": "wavetable_osc",
-      "position": {
-        "x": 32.0,
-        "y": 1344.0
-      },
-      "parameters": {
-        "position": 0.25,
-        "level": 0.7,
-        "table": 2.0,
-        "detune": 0.0,
-        "octave": 0.0
+        "atk_curve": 0.0,
+        "attack": 0.005,
+        "dec_curve": 0.0,
+        "decay": 0.25,
+        "rel_curve": 0.0,
+        "release": 0.4,
+        "sustain": 0.6,
+        "vel_sens": 1.0
       }
     }
   ],
@@ -452,7 +452,7 @@
     "glide_time": 0.0,
     "canvas_size": {
       "width": 2818.0,
-      "height": 2228.0
+      "height": 2324.0
     }
   }
 }

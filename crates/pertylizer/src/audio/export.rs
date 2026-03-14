@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use synth_core::{AudioCallbackContext, AudioProcessor, audio::SampleRate as HwSampleRate};
 use synth_engine::commands::{EffectType, PortId};
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::{AllocationMode, AllocatorConfig, EngineCommand, SynthEngine};
+use synth_engine::{EngineCommand, SynthEngine};
 
 use crate::patch::ParamValue;
 use crate::project::ProjectFile;
@@ -188,12 +188,7 @@ fn render_to_wav(
     progress: &ExportProgress,
 ) -> Result<(), ExportError> {
     // 1. Create a fresh engine
-    let allocator_config = AllocatorConfig {
-        max_voices: synth_core::VoiceCount::OCTO,
-        mode: AllocationMode::Polyphonic,
-        ..Default::default()
-    };
-    let (mut engine, mut handle) = SynthEngine::with_config(allocator_config);
+    let (mut engine, mut handle) = SynthEngine::new();
 
     // 2. Create a session for loading
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
@@ -369,16 +364,10 @@ fn load_project_into_engine(
     session: &SynthSession,
     handle: &mut synth_engine::EngineHandle,
 ) -> Result<(), ExportError> {
-    // Clear the default instrument's graph
-    let _ = session.clear_graph(InstrumentId::FIRST);
-
     for inst_state in &project.instruments {
         let inst_id = inst_state.id;
 
-        // Create instrument (FIRST already exists)
-        if inst_id != InstrumentId::FIRST
-            && let Err(e) = session.add_instrument_with_id(inst_id, &inst_state.name)
-        {
+        if let Err(e) = session.add_instrument_with_id(inst_id, &inst_state.name) {
             eprintln!(
                 "Warning: failed to create instrument {}: {e}",
                 inst_state.name

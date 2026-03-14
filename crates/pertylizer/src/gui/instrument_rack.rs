@@ -148,7 +148,7 @@ pub struct InstrumentRackResult {
 pub fn show_instrument_rack(
     ui: &mut Ui,
     instruments: &mut Vec<InstrumentUiState>,
-    active_instrument_id: &mut InstrumentId,
+    active_instrument_id: &mut Option<InstrumentId>,
     handle: &mut EngineHandle,
     next_instrument_id: &mut u64,
 ) -> InstrumentRackResult {
@@ -193,7 +193,7 @@ pub fn show_instrument_rack(
             .show(ui, |ui| {
                 for idx in 0..instruments.len() {
                     let instrument_id = instruments[idx].id;
-                    let is_active = instrument_id == *active_instrument_id;
+                    let is_active = Some(instrument_id) == *active_instrument_id;
 
                     // Instrument row frame
                     let frame_color = if is_active {
@@ -231,7 +231,7 @@ pub fn show_instrument_rack(
                                     .min_size(egui::vec2(20.0, 20.0)),
                                 );
                                 if response.clicked() {
-                                    *active_instrument_id = instrument_id;
+                                    *active_instrument_id = Some(instrument_id);
                                     result.active_instrument_changed = Some(instrument_id);
                                     // Set focused instrument for keyboard routing
                                     handle.set_focused_instrument(Some(instrument_id));
@@ -597,11 +597,11 @@ pub fn show_instrument_rack(
             result.mutated = true;
 
             // If we removed the active instrument, select the first one
-            if removed_instrument.id == *active_instrument_id && !instruments.is_empty() {
-                *active_instrument_id = instruments[0].id;
-                result.active_instrument_changed = Some(*active_instrument_id);
+            if Some(removed_instrument.id) == *active_instrument_id {
+                *active_instrument_id = instruments.first().map(|i| i.id);
+                result.active_instrument_changed = *active_instrument_id;
                 // Update focused instrument for keyboard routing
-                handle.set_focused_instrument(Some(*active_instrument_id));
+                handle.set_focused_instrument(*active_instrument_id);
             }
         }
 

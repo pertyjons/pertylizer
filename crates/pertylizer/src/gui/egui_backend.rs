@@ -247,7 +247,7 @@ struct SynthApp {
 
     // Instrument rack state
     instruments: Vec<InstrumentUiState>,
-    active_instrument_id: InstrumentId,
+    active_instrument_id: Option<InstrumentId>,
     next_instrument_id: u64,
 
     // Navigation state
@@ -293,7 +293,7 @@ struct SynthApp {
 impl SynthApp {
     #[allow(unused_variables)]
     fn new(
-        mut handle: EngineHandle,
+        handle: EngineHandle,
         host: Box<dyn AudioHostTrait>,
         config: SynthGuiConfig,
         latency: std::time::Duration,
@@ -316,42 +316,14 @@ impl SynthApp {
         let settings = config.settings.clone();
         let session = config.session.clone();
         let song = config.song.clone();
-        let mut keyboard = PianoKeyboard::new();
-        let mut glide_time = Seconds::new(0.0);
+        let keyboard = PianoKeyboard::new();
+        let glide_time = Seconds::new(0.0);
 
-        // Initialize instruments with a default instrument that matches the engine's default
-        // The engine starts with one instrument on CH1 (InstrumentId::FIRST)
-        // Each instrument owns its own PatchEditor for independent visual graphs.
-        let mut default_instrument = InstrumentUiState::default();
-        let active_instrument_id = InstrumentId::FIRST;
-        let next_instrument_id = 1; // Start at 1 since FIRST (0) is already used
-
-        // Create and load the startup patch into the default instrument
-        // Uses send_blocking to ensure commands aren't dropped during startup
-        let startup_patch = crate::patches::default_patch();
-        let patch_name = startup_patch.name.clone();
-
-        patch_bridge::load_patch(
-            &startup_patch,
-            &mut default_instrument.patch_editor,
-            &session,
-            &mut handle,
-            &mut keyboard,
-            &mut glide_time,
-            active_instrument_id,
-        );
-
-        // Set instrument name to match the loaded patch (both UI and engine)
-        default_instrument.name = patch_name.clone();
-        handle.send_blocking(EngineCommand::RenameInstrument {
-            instrument_id: active_instrument_id,
-            name: patch_name.clone(),
-        });
-
-        let instruments = vec![default_instrument];
-
-        // Set the focused instrument for keyboard routing (only this instrument receives keyboard input)
-        handle.set_focused_instrument(Some(active_instrument_id));
+        // Start with no instruments — user creates them explicitly via "+ New Instrument"
+        let active_instrument_id: Option<InstrumentId> = None;
+        let next_instrument_id = 0;
+        let instruments: Vec<InstrumentUiState> = vec![];
+        let patch_name = String::new();
 
         // Initialize MIDI input (connects to first available port)
         // The MidiHandler gets a clone of the command sender, so both GUI and MIDI
@@ -408,7 +380,7 @@ impl SynthApp {
     ) -> Option<(ModuleId, synth_core::ModuleDescriptor)> {
         let result = self
             .session
-            .add_module(self.active_instrument_id, module_type)
+            .add_module(self.active_instrument_id?, module_type)
             .ok()?;
         Some(result)
     }
@@ -418,9 +390,10 @@ impl SynthApp {
     /// Returns `None` if active_instrument_id doesn't match any instrument.
     /// This can happen briefly during instrument deletion/creation.
     fn active_patch_editor(&mut self) -> Option<&mut PatchEditor> {
+        let id = self.active_instrument_id?;
         self.instruments
             .iter_mut()
-            .find(|i| i.id == self.active_instrument_id)
+            .find(|i| i.id == id)
             .map(|i| &mut i.patch_editor)
     }
 
@@ -429,9 +402,10 @@ impl SynthApp {
     /// Returns `None` if active_instrument_id doesn't match any instrument.
     /// This can happen briefly during instrument deletion/creation.
     fn active_patch_editor_ref(&self) -> Option<&PatchEditor> {
+        let id = self.active_instrument_id?;
         self.instruments
             .iter()
-            .find(|i| i.id == self.active_instrument_id)
+            .find(|i| i.id == id)
             .map(|i| &i.patch_editor)
     }
 }
@@ -1311,7 +1285,12 @@ impl eframe::App for SynthApp {
         match self.active_view {
             AppView::Rack => {
                 // Rack view: show the active instrument's patch editor
-                let active_id = self.active_instrument_id;
+                let Some(active_id) = self.active_instrument_id else {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        crate::gui::views::rack::draw_empty_state(ui);
+                    });
+                    return;
+                };
                 egui::CentralPanel::default().show(ctx, |ui| {
             // Get the active instrument's patch editor
             let Some(patch_editor) = self
@@ -1470,7 +1449,7 @@ impl eframe::App for SynthApp {
                 let monitor_id = {
                     let mut counters = self.session.counters_lock();
                     let counter = counters
-                        .entry((self.active_instrument_id, synth_core::ModuleType::SignalMonitor))
+                        .entry((active_id, synth_core::ModuleType::SignalMonitor))
                         .or_insert(0);
                     *counter += 1;
                     ModuleId::new(TypedModuleType::SignalMonitor, *counter)
@@ -1550,7 +1529,7 @@ impl eframe::App for SynthApp {
                 Self::handle_context_add(
                     &self.session,
                     &mut self.handle,
-                    self.active_instrument_id,
+                    active_id,
                     patch_editor,
                     selection,
                     world_pos,
@@ -2064,9 +2043,8 @@ impl SynthApp {
 
             // Instrument selector dropdown
             let active_name = self
-                .instruments
-                .iter()
-                .find(|i| i.id == self.active_instrument_id)
+                .active_instrument_id
+                .and_then(|id| self.instruments.iter().find(|i| i.id == id))
                 .map(|i| i.name.as_str())
                 .unwrap_or("(none)");
             let menu_label = RichText::new(format!(
@@ -2105,7 +2083,7 @@ impl SynthApp {
                     });
 
                     self.instruments.push(new_ui_instrument);
-                    self.active_instrument_id = new_id;
+                    self.active_instrument_id = Some(new_id);
                     self.handle.set_focused_instrument(Some(new_id));
                     self.mark_dirty();
                     ui.close();
@@ -2117,7 +2095,7 @@ impl SynthApp {
                     ui.label(RichText::new("No instruments").color(t.colors.text_dim));
                 } else {
                     for inst in &self.instruments {
-                        let is_active = inst.id == self.active_instrument_id;
+                        let is_active = Some(inst.id) == self.active_instrument_id;
                         let label = if is_active {
                             RichText::new(format!(
                                 "{} {}",
@@ -2129,7 +2107,7 @@ impl SynthApp {
                             RichText::new(format!("  {}", inst.name))
                         };
                         if ui.button(label).clicked() {
-                            self.active_instrument_id = inst.id;
+                            self.active_instrument_id = Some(inst.id);
                             self.handle.set_focused_instrument(Some(inst.id));
                             ui.close();
                         }
@@ -2140,9 +2118,8 @@ impl SynthApp {
 
             // Find the active instrument index for modifying controls
             let active_idx = self
-                .instruments
-                .iter()
-                .position(|i| i.id == self.active_instrument_id);
+                .active_instrument_id
+                .and_then(|id| self.instruments.iter().position(|i| i.id == id));
 
             if let Some(idx) = active_idx {
                 let instrument_id = self.instruments[idx].id;
@@ -2569,7 +2546,9 @@ impl SynthApp {
         let offset = crate::gui::clipboard::ModuleClipboard::paste_offset();
         let paste_pos = (ref_pos.0 + offset, ref_pos.1 + offset);
 
-        let instrument_id = self.active_instrument_id;
+        let Some(instrument_id) = self.active_instrument_id else {
+            return;
+        };
 
         // Access the patch editor by index to avoid borrowing all of self
         let Some(inst_idx) = self.instruments.iter().position(|i| i.id == instrument_id) else {
@@ -2627,15 +2606,13 @@ impl SynthApp {
             .retain(|inst| !to_remove.contains(&inst.id));
 
         // If active instrument was removed, select first remaining
-        if !self.instruments.is_empty()
-            && !self
-                .instruments
-                .iter()
-                .any(|i| i.id == self.active_instrument_id)
+        if self
+            .active_instrument_id
+            .is_some_and(|id| !self.instruments.iter().any(|i| i.id == id))
         {
-            self.active_instrument_id = self.instruments[0].id;
+            self.active_instrument_id = self.instruments.first().map(|i| i.id);
             self.handle
-                .set_focused_instrument(Some(self.active_instrument_id));
+                .set_focused_instrument(self.active_instrument_id);
         }
 
         let total = removed_patterns.len() + removed_tracks.len() + removed_instruments;
@@ -3174,7 +3151,9 @@ impl SynthApp {
             .group_template_drop_pos
             .take()
             .unwrap_or(Pos2::new(100.0, 100.0));
-        let active_id = self.active_instrument_id;
+        let Some(active_id) = self.active_instrument_id else {
+            return;
+        };
         let session = self.session.clone();
         let (handle, instruments) = (&mut self.handle, &mut self.instruments);
         if let Some(editor) = instruments
@@ -3206,7 +3185,10 @@ impl SynthApp {
 
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
-        let active_id = self.active_instrument_id;
+        let Some(active_id) = self.active_instrument_id else {
+            eprintln!("Warning: Cannot load patch - no active instrument selected");
+            return;
+        };
         let Some(instrument) = self.instruments.iter_mut().find(|i| i.id == active_id) else {
             eprintln!("Warning: Cannot load patch - no active instrument found");
             return;
@@ -3373,20 +3355,16 @@ impl SynthApp {
         }
 
         // Instruments removed by MCP (in GUI but not in engine)
-        // Don't remove the default instrument (ID 0) as a safety measure
-        self.instruments
-            .retain(|i| engine_ids.contains(&i.id) || i.id == InstrumentId::FIRST);
+        self.instruments.retain(|i| engine_ids.contains(&i.id));
 
         // If active instrument was removed, switch to first available
-        if !self
-            .instruments
-            .iter()
-            .any(|i| i.id == self.active_instrument_id)
-            && let Some(first) = self.instruments.first()
+        if self
+            .active_instrument_id
+            .is_some_and(|id| !self.instruments.iter().any(|i| i.id == id))
         {
-            self.active_instrument_id = first.id;
+            self.active_instrument_id = self.instruments.first().map(|i| i.id);
             self.handle
-                .set_focused_instrument(Some(self.active_instrument_id));
+                .set_focused_instrument(self.active_instrument_id);
         }
 
         // Update metadata for existing instruments (name, volume, pan, mute, solo)
@@ -3466,7 +3444,9 @@ impl SynthApp {
         self.mark_dirty();
 
         // 1. Clear active instrument's GUI state
-        let active_id = self.active_instrument_id;
+        let Some(active_id) = self.active_instrument_id else {
+            return;
+        };
 
         // Remove visualizer buffers before clearing (session doesn't track these)
         if let Some(patch_editor) = self
@@ -3511,11 +3491,9 @@ impl SynthApp {
 
     /// Create a patch from current rack state.
     fn create_patch_from_rack(&self) -> Option<Patch> {
-        let instrument = self
-            .instruments
-            .iter()
-            .find(|i| i.id == self.active_instrument_id)?;
-        let engine_state = Some((self.session.state().as_ref(), self.active_instrument_id));
+        let active_id = self.active_instrument_id?;
+        let instrument = self.instruments.iter().find(|i| i.id == active_id)?;
+        let engine_state = Some((self.session.state().as_ref(), active_id));
         patch_bridge::create_patch_from_rack(
             &instrument.name,
             &self.settings.author,
@@ -3576,7 +3554,7 @@ impl SynthApp {
 
         ProjectFile::new(
             instrument_states,
-            self.active_instrument_id.as_u64(),
+            self.active_instrument_id.map_or(0, |id| id.as_u64()),
             song,
             global,
         )
@@ -3611,10 +3589,9 @@ impl SynthApp {
                 max_id = inst_id.as_u64();
             }
 
-            if inst_id != InstrumentId::FIRST
-                && let Err(e) = self
-                    .session
-                    .add_instrument_with_id(inst_id, &inst_state.name)
+            if let Err(e) = self
+                .session
+                .add_instrument_with_id(inst_id, &inst_state.name)
             {
                 eprintln!(
                     "Warning: failed to create instrument {}: {e}",
@@ -3740,12 +3717,12 @@ impl SynthApp {
         // 8. Set active instrument
         let target_id = InstrumentId::new(project.active_instrument_id);
         if self.instruments.iter().any(|i| i.id == target_id) {
-            self.active_instrument_id = target_id;
-        } else if let Some(first) = self.instruments.first() {
-            self.active_instrument_id = first.id;
+            self.active_instrument_id = Some(target_id);
+        } else {
+            self.active_instrument_id = self.instruments.first().map(|i| i.id);
         }
         self.handle
-            .set_focused_instrument(Some(self.active_instrument_id));
+            .set_focused_instrument(self.active_instrument_id);
     }
 
     /// Reset to a new empty project, clearing all instruments and song data.
