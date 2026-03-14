@@ -1,5 +1,10 @@
 # Version History
 
+## [0.241.0] - 2026-03-14
+### Fix modules invisible after project load
+- **Removed `reset_areas()` call** — `ctx.memory_mut(|mem| mem.reset_areas())` was clearing egui's internal Area state on the frame after project load, making module panels invisible until the user switched instruments and back; since `current_pos()` already overrides stored positions every frame, the reset was unnecessary
+- **Cleaned up debug code** — removed frame-by-frame position logging, reconcile file logging, and load diagnostics that were added during the position bug investigation
+
 ## [0.240.0] - 2026-03-14
 ### Fix module positions lost on project load
 - **Root cause: MCP reconciliation race** — `reconcile_instruments()` compared GUI state against engine's shared state, but engine processes `AddInstrument` commands asynchronously; during the delay, reconciliation removed just-loaded GUI instruments and recreated them with empty PatchEditors, losing all saved module positions

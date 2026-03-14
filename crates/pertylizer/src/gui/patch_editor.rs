@@ -361,11 +361,6 @@ impl PatchEditor {
         }
     }
 
-    /// Whether position readback from egui is currently suppressed.
-    pub fn suppress_position_readback(&self) -> bool {
-        self.suppress_position_readback
-    }
-
     /// Add a module to the rack.
     pub fn add_module(&mut self, id: ModuleId, descriptor: ModuleDescriptor) {
         let position = self.next_module_pos;
