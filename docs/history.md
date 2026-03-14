@@ -1,5 +1,12 @@
 # Version History
 
+## [0.240.0] - 2026-03-14
+### Fix module positions lost on project load
+- **Root cause: MCP reconciliation race** — `reconcile_instruments()` compared GUI state against engine's shared state, but engine processes `AddInstrument` commands asynchronously; during the delay, reconciliation removed just-loaded GUI instruments and recreated them with empty PatchEditors, losing all saved module positions
+- **Fix: preserve instruments with modules** — `reconcile_instruments` no longer removes GUI instruments whose PatchEditor contains modules, preventing loaded state from being destroyed during async engine sync
+- **Suppress stale position readback** — `PatchEditor` skips reading positions back from egui Area state during the frame a patch is loaded, preventing stale cached positions from overwriting saved ones
+- **Clear active instrument on load** — `active_instrument_id` is reset to `None` when loading a project or creating a new one
+
 ## [0.239.0] - 2026-03-14
 ### Engine starts with no instruments
 - **No default instrument** — engine no longer creates `InstrumentId::FIRST` at startup; all instruments are created explicitly via `AddInstrument` command

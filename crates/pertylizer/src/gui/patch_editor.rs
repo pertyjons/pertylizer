@@ -324,6 +324,10 @@ pub struct PatchEditor {
     min_canvas_size: Option<Vec2>,
     /// Cached effect chain order from previous frame (for change detection).
     prev_effect_chain_order: Vec<ModuleId>,
+    /// When true, skip reading positions back from egui Area state.
+    /// Set after loading a patch/project so saved positions aren't overwritten
+    /// by stale egui Area rects during the same frame.
+    suppress_position_readback: bool,
 }
 
 impl PatchEditor {
@@ -352,8 +356,14 @@ impl PatchEditor {
             bg_context_menu: None,
             group_context_menu: None,
             min_canvas_size: None,
+            suppress_position_readback: false,
             prev_effect_chain_order: Vec::new(),
         }
+    }
+
+    /// Whether position readback from egui is currently suppressed.
+    pub fn suppress_position_readback(&self) -> bool {
+        self.suppress_position_readback
     }
 
     /// Add a module to the rack.
@@ -419,6 +429,7 @@ impl PatchEditor {
         self.next_group_id = 1;
         self.group_context_menu = None;
         self.needs_reposition.clear();
+        self.suppress_position_readback = true;
     }
 
     /// Get module data for saving.
@@ -2009,8 +2020,11 @@ impl PatchEditor {
             });
 
             // Handle area interaction — Area always returns InnerResponse (no Option)
-            // Update logical position and size from screen rect, snapped to grid
-            if let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(window_id))
+            // Update logical position and size from screen rect, snapped to grid.
+            // Skip during the frame a patch/project was just loaded — egui's Area rects
+            // are stale and would overwrite the freshly loaded saved positions.
+            if !self.suppress_position_readback
+                && let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(window_id))
                 && let Some(panel_state) = self.panels.get_mut(&module_id)
             {
                 let logical_pos = area_rect.min - area_origin + scroll_offset;
@@ -2127,6 +2141,9 @@ impl PatchEditor {
         }
 
         // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
+
+        // Clear suppress flag — next frame will resume normal position tracking
+        self.suppress_position_readback = false;
 
         result
     }

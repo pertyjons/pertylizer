@@ -253,6 +253,9 @@ struct SynthApp {
     // Navigation state
     active_view: AppView,
 
+    // DEBUG: frame counter after project load (0 = not tracking)
+    debug_load_frames: u32,
+
     // AWE state
     awe_enabled: bool,
     awe_ui: crate::gui::awe_view::AweUiState,
@@ -350,6 +353,7 @@ impl SynthApp {
             active_instrument_id,
             next_instrument_id,
             active_view: AppView::default(),
+            debug_load_frames: 0,
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
             song,
@@ -419,6 +423,42 @@ impl eframe::App for SynthApp {
         if self.needs_area_reset {
             self.needs_area_reset = false;
             ctx.memory_mut(|mem| mem.reset_areas());
+        }
+
+        // DEBUG: track positions across frames after loading
+        if self.debug_load_frames > 0 {
+            let frame_num = 7 - self.debug_load_frames;
+            self.debug_load_frames -= 1;
+            let mut log = format!(
+                "=== FRAME {frame_num} (needs_area_reset was: {}) ===\n",
+                self.needs_area_reset || frame_num == 1
+            );
+            // Pick instrument 2 (Spacey Bass) as sample - should be broken
+            if let Some(inst) = self.instruments.iter().find(|i| i.id.as_u64() == 2) {
+                for mid in inst.patch_editor.module_ids() {
+                    if let Some((_, pos, _)) = inst.patch_editor.get_module_data(mid) {
+                        log.push_str(&format!("  inst2 {mid}: ({}, {})\n", pos.x, pos.y));
+                    }
+                }
+            }
+            // Also check active instrument
+            if let Some(active_id) = self.active_instrument_id
+                && let Some(inst) = self.instruments.iter().find(|i| i.id == active_id)
+            {
+                let name = &inst.name;
+                for mid in inst.patch_editor.module_ids() {
+                    if let Some((_, pos, _)) = inst.patch_editor.get_module_data(mid) {
+                        log.push_str(&format!("  active({name}) {mid}: ({}, {})\n", pos.x, pos.y));
+                    }
+                }
+            }
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/pertylizer_frame_debug.txt")
+                .unwrap();
+            let _ = f.write_all(log.as_bytes());
         }
 
         // Clean up any modules returned from audio thread (dropped on main thread)
@@ -3305,6 +3345,32 @@ impl SynthApp {
                 continue;
             }
 
+            {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/pertylizer_frame_debug.txt")
+                    .unwrap();
+                let _ = writeln!(
+                    f,
+                    "RECONCILE inst {inst_id}: +{} modules, -{} modules, +{} connections",
+                    to_add.len(),
+                    to_remove.len(),
+                    new_connections.len()
+                );
+                let editor_list: Vec<_> = patch_editor.module_ids();
+                let session_list: Vec<_> = session_modules.keys().collect();
+                let _ = writeln!(f, "  editor has: {editor_list:?}");
+                let _ = writeln!(f, "  session has: {session_list:?}");
+                for (module_id, _) in &to_add {
+                    let _ = writeln!(f, "  ADD: {module_id} at (100,100)");
+                }
+                for module_id in &to_remove {
+                    let _ = writeln!(f, "  REMOVE: {module_id}");
+                }
+            }
+
             for (module_id, descriptor) in to_add {
                 let position = eframe::egui::Pos2::new(100.0, 100.0);
                 patch_editor.add_module_at(module_id, descriptor, position);
@@ -3354,8 +3420,13 @@ impl SynthApp {
             }
         }
 
-        // Instruments removed by MCP (in GUI but not in engine)
-        self.instruments.retain(|i| engine_ids.contains(&i.id));
+        // Remove GUI instruments that the engine no longer has, BUT only if
+        // their PatchEditor is empty. During project loading, engine processes
+        // AddInstrument commands asynchronously — GUI instruments with loaded
+        // modules may not yet appear in shared state. Keeping them prevents
+        // reconciliation from destroying loaded PatchEditors.
+        self.instruments
+            .retain(|i| engine_ids.contains(&i.id) || !i.patch_editor.module_ids().is_empty());
 
         // If active instrument was removed, switch to first available
         if self
@@ -3579,6 +3650,7 @@ impl SynthApp {
 
         // 3. Clear GUI state
         self.instruments.clear();
+        self.active_instrument_id = None;
         self.handle.visualization_buffers.clear();
 
         // 4. Recreate instruments from project file
@@ -3723,6 +3795,35 @@ impl SynthApp {
         }
         self.handle
             .set_focused_instrument(self.active_instrument_id);
+
+        self.debug_load_frames = 6; // Track 6 frames after loading
+
+        // DEBUG: verify positions survived loading
+        let mut debug_log = String::new();
+        for inst in &self.instruments {
+            let positions: Vec<_> = inst
+                .patch_editor
+                .module_ids()
+                .into_iter()
+                .filter_map(|id| {
+                    inst.patch_editor
+                        .get_module_data(id)
+                        .map(|(_, pos, _)| (id, pos))
+                })
+                .collect();
+            debug_log.push_str(&format!(
+                "Instrument {} '{}': {} modules, suppress={}\n",
+                inst.id.as_u64(),
+                inst.name,
+                positions.len(),
+                inst.patch_editor.suppress_position_readback()
+            ));
+            for (id, pos) in &positions {
+                debug_log.push_str(&format!("  {id}: ({}, {})\n", pos.x, pos.y));
+            }
+        }
+        let _ = std::fs::write("/tmp/pertylizer_load_debug.txt", &debug_log);
+        eprintln!("DEBUG: wrote load diagnostics to /tmp/pertylizer_load_debug.txt");
     }
 
     /// Reset to a new empty project, clearing all instruments and song data.
