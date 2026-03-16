@@ -1512,7 +1512,8 @@ impl PatchEditor {
             let screen_pos = panel_position + area_origin - scroll_offset;
 
             // Use Area + Frame instead of Window so modules render at Order::Background
-            // (same layer as panels). Panels rendered after CentralPanel paint over modules.
+            // (same layer as panels). The keyboard panel renders at Order::Middle
+            // to ensure it always has input priority over module Areas.
             let area = egui::Area::new(window_id)
                 .order(Order::Background)
                 .movable(true)

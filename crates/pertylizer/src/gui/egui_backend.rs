@@ -463,12 +463,14 @@ impl eframe::App for SynthApp {
                         if !overdub {
                             pattern.clear_notes();
                         }
+                        let instrument =
+                            self.sequencer_view_state.recording_instrument;
                         for note in &notes {
                             let nid = pattern.add_note(
                                 note.start,
                                 note.pitch,
                                 note.velocity,
-                                synth_sequencer::SeqInstrumentId(0),
+                                instrument,
                             );
                             if let Some(n) = pattern.note_mut(nid) {
                                 n.duration = Some(note.duration);
@@ -960,7 +962,7 @@ impl eframe::App for SynthApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new("PANIC").color(theme().colors.accent_red),
+                            RichText::new(format!("{} PANIC", ri::ALARM_WARNING_FILL)).color(theme().colors.accent_red),
                         ))
                         .clicked()
                     {
@@ -982,8 +984,9 @@ impl eframe::App for SynthApp {
                     ui.label(RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color));
                     ui.separator();
                     ui.label(
-                        RichText::new(format!("Voices: {}", self.handle.voice_count()))
-                            .color(theme().colors.text_secondary),
+                        RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))
+                            .color(theme().colors.text_secondary)
+                            .family(egui::FontFamily::Monospace),
                     );
                     ui.separator();
                     ui.label(
@@ -1264,10 +1267,16 @@ impl eframe::App for SynthApp {
         });
 
         // Bottom panel with keyboard (always visible)
+        // Render keyboard content in Order::Middle so it has input priority over
+        // module Areas (Order::Background) that may extend into the panel area.
         egui::TopBottomPanel::bottom("keyboard_panel")
             .min_height(120.0)
             .show(ctx, |ui| {
-                self.draw_keyboard(ui);
+                let layer_id =
+                    egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
+                ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+                    self.draw_keyboard(ui);
+                });
             });
 
         // Main content - CentralPanel rendered LAST (normal egui order)

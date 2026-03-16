@@ -4,7 +4,7 @@
   "instruments": [
     {
       "id": 0,
-      "name": "Init",
+      "name": "Fractal Pad",
       "channel": 1,
       "volume": 0.7,
       "pan": -0.2,
@@ -17,7 +17,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "patch": {
-        "name": "Init",
+        "name": "Fractal Pad",
         "version": "1.0",
         "modules": [
           {
@@ -207,16 +207,6 @@
         "connections": [
           {
             "from": [
-              "osc-1",
-              "out"
-            ],
-            "to": [
-              "flt-1",
-              "in"
-            ]
-          },
-          {
-            "from": [
               "env-1",
               "out"
             ],
@@ -253,76 +243,6 @@
             "to": [
               "amp-1",
               "cv"
-            ]
-          },
-          {
-            "from": [
-              "env-2",
-              "out"
-            ],
-            "to": [
-              "flt-1",
-              "cutoff_cv"
-            ]
-          },
-          {
-            "from": [
-              "osc-2",
-              "out"
-            ],
-            "to": [
-              "flt-1",
-              "in"
-            ]
-          },
-          {
-            "from": [
-              "osc-1",
-              "out"
-            ],
-            "to": [
-              "mix-1",
-              "in1"
-            ]
-          },
-          {
-            "from": [
-              "env-2",
-              "out"
-            ],
-            "to": [
-              "amp-1",
-              "cv"
-            ]
-          },
-          {
-            "from": [
-              "osc-2",
-              "out"
-            ],
-            "to": [
-              "mix-1",
-              "in2"
-            ]
-          },
-          {
-            "from": [
-              "sub-1",
-              "out"
-            ],
-            "to": [
-              "mix-1",
-              "in3"
-            ]
-          },
-          {
-            "from": [
-              "mix-1",
-              "out"
-            ],
-            "to": [
-              "flt-1",
-              "in"
             ]
           },
           {

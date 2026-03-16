@@ -286,8 +286,16 @@ impl SequencerEngine {
 
             let mut notes = Vec::new();
             let mut auto_vals = Vec::new();
+            let any_solo = song.any_solo();
 
             for placement in song.arrangement() {
+                // Skip muted/non-soloed tracks
+                if let Some(track) = song.track(placement.track_id)
+                    && !track.is_audible(any_solo)
+                {
+                    continue;
+                }
+
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
                 };
