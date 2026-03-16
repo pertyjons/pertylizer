@@ -1,0 +1,6087 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Kick",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Kick",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 352.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.4,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "mmx-1",
+            "type": "mod_matrix",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "grid_size": 1.0,
+              "slot_10_amount": 0.0,
+              "slot_10_dest": 0.0,
+              "slot_10_enabled": 1.0,
+              "slot_10_source": 0.0,
+              "slot_11_amount": 0.0,
+              "slot_11_dest": 0.0,
+              "slot_11_enabled": 1.0,
+              "slot_11_source": 0.0,
+              "slot_12_amount": 0.0,
+              "slot_12_dest": 0.0,
+              "slot_12_enabled": 1.0,
+              "slot_12_source": 0.0,
+              "slot_13_amount": 0.0,
+              "slot_13_dest": 0.0,
+              "slot_13_enabled": 1.0,
+              "slot_13_source": 0.0,
+              "slot_14_amount": 0.0,
+              "slot_14_dest": 0.0,
+              "slot_14_enabled": 1.0,
+              "slot_14_source": 0.0,
+              "slot_15_amount": 0.0,
+              "slot_15_dest": 0.0,
+              "slot_15_enabled": 1.0,
+              "slot_15_source": 0.0,
+              "slot_16_amount": 0.0,
+              "slot_16_dest": 0.0,
+              "slot_16_enabled": 1.0,
+              "slot_16_source": 0.0,
+              "slot_1_amount": 1.0,
+              "slot_1_dest": 1.0,
+              "slot_1_enabled": 1.0,
+              "slot_1_source": 4.0,
+              "slot_2_amount": 0.0,
+              "slot_2_dest": 0.0,
+              "slot_2_enabled": 1.0,
+              "slot_2_source": 0.0,
+              "slot_3_amount": 0.0,
+              "slot_3_dest": 0.0,
+              "slot_3_enabled": 1.0,
+              "slot_3_source": 0.0,
+              "slot_4_amount": 0.0,
+              "slot_4_dest": 0.0,
+              "slot_4_enabled": 1.0,
+              "slot_4_source": 0.0,
+              "slot_5_amount": 0.0,
+              "slot_5_dest": 0.0,
+              "slot_5_enabled": 1.0,
+              "slot_5_source": 0.0,
+              "slot_6_amount": 0.0,
+              "slot_6_dest": 0.0,
+              "slot_6_enabled": 1.0,
+              "slot_6_source": 0.0,
+              "slot_7_amount": 0.0,
+              "slot_7_dest": 0.0,
+              "slot_7_enabled": 1.0,
+              "slot_7_source": 0.0,
+              "slot_8_amount": 0.0,
+              "slot_8_dest": 0.0,
+              "slot_8_enabled": 1.0,
+              "slot_8_source": 0.0,
+              "slot_9_amount": 0.0,
+              "slot_9_dest": 0.0,
+              "slot_9_enabled": 1.0,
+              "slot_9_source": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 1056.0,
+              "y": 448.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.1,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 704.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 55.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 0.0,
+              "x_mod": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 948.0
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Snare",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Snare",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 180.0,
+              "level": 0.5,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 0.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 384.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.3,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 1408.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.1,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "nse-1",
+            "type": "noise",
+            "position": {
+              "x": 32.0,
+              "y": 352.0
+            },
+            "parameters": {
+              "level": 0.8,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 736.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 200.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.0,
+              "type": 1.0
+            }
+          },
+          {
+            "id": "mmx-1",
+            "type": "mod_matrix",
+            "position": {
+              "x": 1408.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "grid_size": 1.0,
+              "slot_10_amount": 0.0,
+              "slot_10_dest": 0.0,
+              "slot_10_enabled": 1.0,
+              "slot_10_source": 0.0,
+              "slot_11_amount": 0.0,
+              "slot_11_dest": 0.0,
+              "slot_11_enabled": 1.0,
+              "slot_11_source": 0.0,
+              "slot_12_amount": 0.0,
+              "slot_12_dest": 0.0,
+              "slot_12_enabled": 1.0,
+              "slot_12_source": 0.0,
+              "slot_13_amount": 0.0,
+              "slot_13_dest": 0.0,
+              "slot_13_enabled": 1.0,
+              "slot_13_source": 0.0,
+              "slot_14_amount": 0.0,
+              "slot_14_dest": 0.0,
+              "slot_14_enabled": 1.0,
+              "slot_14_source": 0.0,
+              "slot_15_amount": 0.0,
+              "slot_15_dest": 0.0,
+              "slot_15_enabled": 1.0,
+              "slot_15_source": 0.0,
+              "slot_16_amount": 0.0,
+              "slot_16_dest": 0.0,
+              "slot_16_enabled": 1.0,
+              "slot_16_source": 0.0,
+              "slot_1_amount": 1.0,
+              "slot_1_dest": 1.0,
+              "slot_1_enabled": 1.0,
+              "slot_1_source": 4.0,
+              "slot_2_amount": 0.0,
+              "slot_2_dest": 0.0,
+              "slot_2_enabled": 1.0,
+              "slot_2_source": 0.0,
+              "slot_3_amount": 0.0,
+              "slot_3_dest": 0.0,
+              "slot_3_enabled": 1.0,
+              "slot_3_source": 0.0,
+              "slot_4_amount": 0.0,
+              "slot_4_dest": 0.0,
+              "slot_4_enabled": 1.0,
+              "slot_4_source": 0.0,
+              "slot_5_amount": 0.0,
+              "slot_5_dest": 0.0,
+              "slot_5_enabled": 1.0,
+              "slot_5_source": 0.0,
+              "slot_6_amount": 0.0,
+              "slot_6_dest": 0.0,
+              "slot_6_enabled": 1.0,
+              "slot_6_source": 0.0,
+              "slot_7_amount": 0.0,
+              "slot_7_dest": 0.0,
+              "slot_7_enabled": 1.0,
+              "slot_7_source": 0.0,
+              "slot_8_amount": 0.0,
+              "slot_8_dest": 0.0,
+              "slot_8_enabled": 1.0,
+              "slot_8_source": 0.0,
+              "slot_9_amount": 0.0,
+              "slot_9_dest": 0.0,
+              "slot_9_enabled": 1.0,
+              "slot_9_source": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "nse-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 852.0
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Hihat",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Hihat",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 960.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 288.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 6000.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.0,
+              "type": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 640.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "nse-1",
+            "type": "noise",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "level": 0.8,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 288.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.05,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "nse-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1410.0,
+            "height": 788.0
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Bass",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Bass",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 150.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.4,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 352.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.2,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 736.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 384.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.3,
+              "rel_curve": 0.0,
+              "release": 0.1,
+              "sustain": 0.5,
+              "vel_sens": 1.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "cutoff_cv"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1506.0,
+            "height": 852.0
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Pad",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Pad",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "amp-2",
+            "type": "amplifier",
+            "position": {
+              "x": 736.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "osc-2",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.6,
+              "unison": 4.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 384.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 1.5,
+              "dec_curve": 0.0,
+              "decay": 2.0,
+              "rel_curve": 0.0,
+              "release": 2.0,
+              "sustain": 1.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-2",
+            "type": "stereo_output",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-2",
+            "type": "filter",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 1500.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.1,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "chr-2",
+            "type": "chorus",
+            "position": {
+              "x": 1408.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "depth": 0.5,
+              "mix": 0.5,
+              "rate": 0.5,
+              "voices": 2.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "amp-2",
+              "out"
+            ],
+            "to": [
+              "out-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-2",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "osc-2",
+              "out_l"
+            ],
+            "to": [
+              "flt-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "osc-2",
+              "out_r"
+            ],
+            "to": [
+              "flt-2",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 788.0
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "Lead",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Lead",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "dly-2",
+            "type": "delay",
+            "position": {
+              "x": 1408.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "feedback": 0.4,
+              "mix": 0.5,
+              "mode": 0.0,
+              "time": 0.375,
+              "tone": 0.4
+            }
+          },
+          {
+            "id": "env-3",
+            "type": "envelope",
+            "position": {
+              "x": 384.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.05,
+              "dec_curve": 0.0,
+              "decay": 0.4,
+              "rel_curve": 0.0,
+              "release": 0.5,
+              "sustain": 0.4,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "flt-2",
+            "type": "filter",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 800.0,
+              "cv_amt": 0.6,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.4,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "env-4",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 352.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.3,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-2",
+            "type": "amplifier",
+            "position": {
+              "x": 736.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-2",
+            "type": "stereo_output",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "rev-1",
+            "type": "reverb",
+            "position": {
+              "x": 1408.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "damping": 0.5,
+              "decay": 0.5,
+              "diffusion": 0.5,
+              "low_cut": 80.0,
+              "mix": 0.3,
+              "pre_delay": 0.0,
+              "room_size": 0.5,
+              "width": 1.0
+            }
+          },
+          {
+            "id": "osc-2",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.3,
+              "unison": 3.0,
+              "waveform": 3.0,
+              "x_mod": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-2",
+              "out_r"
+            ],
+            "to": [
+              "flt-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-2",
+              "out"
+            ],
+            "to": [
+              "out-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-2",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "osc-2",
+              "out_l"
+            ],
+            "to": [
+              "flt-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-4",
+              "out"
+            ],
+            "to": [
+              "flt-2",
+              "cutoff_cv"
+            ]
+          },
+          {
+            "from": [
+              "env-3",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 852.0
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "name": "Arp",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "patch": {
+        "name": "Arp",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-2",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "dly-2",
+            "type": "delay",
+            "position": {
+              "x": 1408.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "feedback": 0.4,
+              "mix": 0.5,
+              "mode": 0.0,
+              "time": 0.375,
+              "tone": 0.4
+            }
+          },
+          {
+            "id": "out-2",
+            "type": "stereo_output",
+            "position": {
+              "x": 1056.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-2",
+            "type": "filter",
+            "position": {
+              "x": 384.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 300.0,
+              "cv_amt": 0.8,
+              "drive": 1.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.3,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 352.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.2,
+              "rel_curve": 0.0,
+              "release": 0.2,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-2",
+            "type": "amplifier",
+            "position": {
+              "x": 736.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "flt-2",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "osc-2",
+              "out"
+            ],
+            "to": [
+              "flt-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "amp-2",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-2",
+              "out"
+            ],
+            "to": [
+              "out-2",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "flt-2",
+              "cutoff_cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1858.0,
+            "height": 852.0
+          }
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 7,
+  "song": {
+    "name": "Neon Horizon",
+    "author": "",
+    "patterns": {
+      "0": {
+        "id": 0,
+        "name": "Kick_Basic",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 4
+      },
+      "1": {
+        "id": 1,
+        "name": "Kick_Build",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 3840,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 4800,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 5760,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 6720,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 7680,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 8160,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 8640,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 9120,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 9600,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 10080,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 10560,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 11040,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 11520,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 11760,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 12000,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 12240,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 12480,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 12720,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 12960,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 13200,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 13440,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 13680,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 13920,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 14160,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 14400,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 14640,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 14880,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 15120,
+            "duration": 120,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 32
+      },
+      "2": {
+        "id": 2,
+        "name": "Snare_Basic",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 480,
+            "pitch": 38,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 38,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 2
+      },
+      "3": {
+        "id": 3,
+        "name": "Snare_Build",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 11520,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 11760,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 12000,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 12240,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 12480,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 12720,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 12960,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 13200,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 13440,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 13680,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 13920,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 14160,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 14400,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 14640,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 14880,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 15120,
+            "duration": 120,
+            "pitch": 38,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 16
+      },
+      "4": {
+        "id": 4,
+        "name": "Hihat_8",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 8
+      },
+      "5": {
+        "id": 5,
+        "name": "Hihat_16",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 240,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 480,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 720,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 960,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 1200,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 1440,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 1680,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 1920,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 2160,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 2400,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 2640,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 2880,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 3120,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 3360,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 3600,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 16
+      },
+      "6": {
+        "id": 6,
+        "name": "Bass_8",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 384,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 3840,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 4320,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 4800,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 5280,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 5760,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 6240,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 6720,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 7200,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 7680,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 8160,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 8640,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 9120,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 9600,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 10080,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 10560,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 11040,
+            "duration": 384,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 11520,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 12000,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 12480,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 12960,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 13440,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 13920,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 14400,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 14880,
+            "duration": 384,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 32
+      },
+      "7": {
+        "id": 7,
+        "name": "Bass_16",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 240,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 480,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 720,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 960,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 1200,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 1440,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 1680,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 1920,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 2160,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 2400,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 2640,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 2880,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 3120,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 3360,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 3600,
+            "duration": 192,
+            "pitch": 33,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 3840,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 4080,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 4320,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 4560,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 4800,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 5040,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 5280,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 5520,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 5760,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 6000,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 6240,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 6480,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 6720,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 6960,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 7200,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 7440,
+            "duration": 192,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 32,
+            "start": 7680,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 33,
+            "start": 7920,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 34,
+            "start": 8160,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 35,
+            "start": 8400,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 36,
+            "start": 8640,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 37,
+            "start": 8880,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 38,
+            "start": 9120,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 39,
+            "start": 9360,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 40,
+            "start": 9600,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 41,
+            "start": 9840,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 42,
+            "start": 10080,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 43,
+            "start": 10320,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 44,
+            "start": 10560,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 45,
+            "start": 10800,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 46,
+            "start": 11040,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 47,
+            "start": 11280,
+            "duration": 192,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 48,
+            "start": 11520,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 49,
+            "start": 11760,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 50,
+            "start": 12000,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 51,
+            "start": 12240,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 52,
+            "start": 12480,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 53,
+            "start": 12720,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 54,
+            "start": 12960,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 55,
+            "start": 13200,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 56,
+            "start": 13440,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 57,
+            "start": 13680,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 58,
+            "start": 13920,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 59,
+            "start": 14160,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 60,
+            "start": 14400,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 61,
+            "start": 14640,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 62,
+            "start": 14880,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 63,
+            "start": 15120,
+            "duration": 192,
+            "pitch": 31,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 64
+      },
+      "8": {
+        "id": 8,
+        "name": "Pad_Basic",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 57,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 53,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 57,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 59,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 12
+      },
+      "9": {
+        "id": 9,
+        "name": "Pad_Bridge",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 52,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 59,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 53,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 57,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 3840,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 50,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 53,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 7680,
+            "duration": 3840,
+            "pitch": 57,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 52,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 11520,
+            "duration": 3840,
+            "pitch": 59,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 12
+      },
+      "10": {
+        "id": 10,
+        "name": "Arp_Basic",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 240,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 480,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 720,
+            "duration": 192,
+            "pitch": 69,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 960,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 1200,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 1440,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 1680,
+            "duration": 192,
+            "pitch": 69,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 1920,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 2160,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 2400,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 2640,
+            "duration": 192,
+            "pitch": 69,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 2880,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 3120,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 3360,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 3600,
+            "duration": 192,
+            "pitch": 69,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 3840,
+            "duration": 192,
+            "pitch": 53,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 4080,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 4320,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 4560,
+            "duration": 192,
+            "pitch": 65,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 4800,
+            "duration": 192,
+            "pitch": 53,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 5040,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 5280,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 5520,
+            "duration": 192,
+            "pitch": 65,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 5760,
+            "duration": 192,
+            "pitch": 53,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 6000,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 6240,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 6480,
+            "duration": 192,
+            "pitch": 65,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 6720,
+            "duration": 192,
+            "pitch": 53,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 6960,
+            "duration": 192,
+            "pitch": 57,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 7200,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 7440,
+            "duration": 192,
+            "pitch": 65,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 32,
+            "start": 7680,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 33,
+            "start": 7920,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 34,
+            "start": 8160,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 35,
+            "start": 8400,
+            "duration": 192,
+            "pitch": 72,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 36,
+            "start": 8640,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 37,
+            "start": 8880,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 38,
+            "start": 9120,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 39,
+            "start": 9360,
+            "duration": 192,
+            "pitch": 72,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 40,
+            "start": 9600,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 41,
+            "start": 9840,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 42,
+            "start": 10080,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 43,
+            "start": 10320,
+            "duration": 192,
+            "pitch": 72,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 44,
+            "start": 10560,
+            "duration": 192,
+            "pitch": 60,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 45,
+            "start": 10800,
+            "duration": 192,
+            "pitch": 64,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 46,
+            "start": 11040,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 47,
+            "start": 11280,
+            "duration": 192,
+            "pitch": 72,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 48,
+            "start": 11520,
+            "duration": 192,
+            "pitch": 55,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 49,
+            "start": 11760,
+            "duration": 192,
+            "pitch": 59,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 50,
+            "start": 12000,
+            "duration": 192,
+            "pitch": 62,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 51,
+            "start": 12240,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 52,
+            "start": 12480,
+            "duration": 192,
+            "pitch": 55,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 53,
+            "start": 12720,
+            "duration": 192,
+            "pitch": 59,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 54,
+            "start": 12960,
+            "duration": 192,
+            "pitch": 62,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 55,
+            "start": 13200,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 56,
+            "start": 13440,
+            "duration": 192,
+            "pitch": 55,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 57,
+            "start": 13680,
+            "duration": 192,
+            "pitch": 59,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 58,
+            "start": 13920,
+            "duration": 192,
+            "pitch": 62,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 59,
+            "start": 14160,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 60,
+            "start": 14400,
+            "duration": 192,
+            "pitch": 55,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 61,
+            "start": 14640,
+            "duration": 192,
+            "pitch": 59,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 62,
+            "start": 14880,
+            "duration": 192,
+            "pitch": 62,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 63,
+            "start": 15120,
+            "duration": 192,
+            "pitch": 67,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 64
+      },
+      "11": {
+        "id": 11,
+        "name": "Lead_Verse",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1440,
+            "pitch": 69,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 1920,
+            "duration": 1440,
+            "pitch": 64,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 3840,
+            "duration": 1440,
+            "pitch": 65,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 5760,
+            "duration": 1440,
+            "pitch": 60,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 7680,
+            "duration": 1440,
+            "pitch": 67,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 9600,
+            "duration": 1440,
+            "pitch": 64,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 11520,
+            "duration": 2880,
+            "pitch": 62,
+            "velocity": 0.86614174,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 7
+      },
+      "12": {
+        "id": 12,
+        "name": "Lead_Chorus",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 69,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 480,
+            "pitch": 71,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 960,
+            "pitch": 72,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 76,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 72,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 3840,
+            "duration": 480,
+            "pitch": 69,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 4320,
+            "duration": 480,
+            "pitch": 65,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 4800,
+            "duration": 960,
+            "pitch": 69,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 5760,
+            "duration": 960,
+            "pitch": 72,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 6720,
+            "duration": 960,
+            "pitch": 69,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 7680,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 8160,
+            "duration": 480,
+            "pitch": 69,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 8640,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 9600,
+            "duration": 960,
+            "pitch": 64,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 10560,
+            "duration": 960,
+            "pitch": 60,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 11520,
+            "duration": 960,
+            "pitch": 62,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 12480,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 12960,
+            "duration": 480,
+            "pitch": 62,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 13440,
+            "duration": 960,
+            "pitch": 59,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 14400,
+            "duration": 960,
+            "pitch": 55,
+            "velocity": 0.9055118,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 20
+      },
+      "13": {
+        "id": 13,
+        "name": "Bass_Bridge",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 3840,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 4320,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 4800,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 5280,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 5760,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 6240,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 6720,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 7200,
+            "duration": 384,
+            "pitch": 29,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 7680,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 8160,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 8640,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 9120,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 9600,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 10080,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 10560,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 11040,
+            "duration": 384,
+            "pitch": 26,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 11520,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 12000,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 12480,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 12960,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 13440,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 13920,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 14400,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 14880,
+            "duration": 384,
+            "pitch": 28,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 32
+      }
+    },
+    "next_pattern_id": 14,
+    "tracks": {
+      "0": {
+        "id": 0,
+        "name": "Kick",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "1": {
+        "id": 1,
+        "name": "Snare",
+        "instrument": 2,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "2": {
+        "id": 2,
+        "name": "Hihat",
+        "instrument": 3,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "3": {
+        "id": 3,
+        "name": "Bass",
+        "instrument": 4,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "4": {
+        "id": 4,
+        "name": "Pad",
+        "instrument": 5,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "5": {
+        "id": 5,
+        "name": "Lead",
+        "instrument": 6,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "6": {
+        "id": 6,
+        "name": "Arp",
+        "instrument": 7,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    },
+    "next_track_id": 7,
+    "arrangement": [
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 3,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 34560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 34560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 34560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 38400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 38400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 38400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 42240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 42240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 42240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 3,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 11,
+        "track_id": 5,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 49920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 49920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 49920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 53760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 53760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 53760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 57600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 57600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 57600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 65280,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 65280,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 65280,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 69120,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 69120,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 69120,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 72960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 72960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 72960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 80640,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 80640,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 80640,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 84480,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 84480,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 84480,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 88320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 88320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 88320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 92160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 96000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 96000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 96000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 99840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 99840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 99840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 103680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 103680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 103680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 107520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 111360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 111360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 111360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 115200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 115200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 115200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 119040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 119040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 119040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 3,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 122880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 126720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 126720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 126720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 130560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 130560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 130560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 134400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 134400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 134400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 3,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 11,
+        "track_id": 5,
+        "start": 138240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 142080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 142080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 142080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 145920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 145920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 145920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 149760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 149760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 2,
+        "start": 149760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 153600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 9,
+        "track_id": 4,
+        "start": 153600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 13,
+        "track_id": 3,
+        "start": 153600,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 157440,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 161280,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 165120,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 0,
+        "start": 168960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 3,
+        "track_id": 1,
+        "start": 168960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 9,
+        "track_id": 4,
+        "start": 168960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 13,
+        "track_id": 3,
+        "start": 168960,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 184320,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 188160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 188160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 188160,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 192000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 192000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 192000,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 195840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 195840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 195840,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 199680,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 203520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 203520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 203520,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 207360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 207360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 207360,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 211200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 211200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 211200,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 215040,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 218880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 218880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 218880,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 222720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 222720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 222720,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 226560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 226560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 226560,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 3,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 5,
+        "start": 230400,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 234240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 234240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 234240,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 238080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 238080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 238080,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 241920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 1,
+        "start": 241920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 2,
+        "start": 241920,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 245760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 6,
+        "start": 245760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 3,
+        "start": 245760,
+        "transpose": 0.0,
+        "gain": 1.0
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 4,
+        "start": 261120,
+        "transpose": 0.0,
+        "gain": 1.0
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 120.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}
