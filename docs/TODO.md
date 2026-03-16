@@ -14,7 +14,21 @@ The following `InstrumentParam` variants exist in the engine but have no UI cont
 - [ ] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity
 
 ### 0.3 Miscellaneous
-- [ ] Fix padding on the label Voices in Topbar so it always shows 3 digits wide, as the CPU label does.
+- [x] Fix padding on the label Voices in Topbar so it always shows 3 digits wide, as the CPU label does.
+---
+
+## ★ MCP: Enrich tool metadata for AI discovery
+
+`list_module_types` returns module types but lacks the context an AI needs to build patches autonomously:
+
+- [x] **Parameter ranges** — return min/max/default for every parameter (e.g. `cutoff: 20.0–20000.0 Hz, default 1000.0`)
+- [x] **Enum/discrete values** — list named options for discrete params (e.g. `waveform: 0=Sine, 1=Saw, 2=Square, 3=Triangle`)
+- [x] **Port types** — mark ports as audio/cv/gate and input/output so AI knows what to connect
+- [x] **Signal flow hints** — describe typical patch topology (e.g. `osc → filter → amp → out`, `env → amp.cv_gain`)
+- [x] **Parameter units** — annotate with Hz, dB, ms, 0.0–1.0 normalized, etc.
+
+This enables AI to self-discover the full synth architecture without hardcoded knowledge.
+
 ---
 
 ## 1. Core Usability & Workflow
@@ -125,7 +139,7 @@ The following `InstrumentParam` variants exist in the engine but have no UI cont
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 - [ ] Support batching of MCP commands to reduce latency and overhead during complex generations
-- [ ] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges
+- [ ] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges (see ★ MCP section above)
 
 ---
 

@@ -140,7 +140,7 @@ pub struct SetParameterParam {
     pub module_id: String,
     #[schemars(description = "Parameter name, e.g. 'frequency', 'resonance'")]
     pub param_name: String,
-    #[schemars(description = "New parameter value as a float")]
+    #[schemars(description = "New value in the parameter's native range (e.g. 20.0-20000.0 for cutoff in Hz). Use list_module_types or get_module_info to discover valid ranges.")]
     pub value: f32,
 }
 
@@ -627,7 +627,7 @@ pub struct ParamSetInput {
     pub module_id: String,
     #[schemars(description = "Parameter name (e.g. 'frequency', 'level')")]
     pub param_name: String,
-    #[schemars(description = "New value as float")]
+    #[schemars(description = "New value in the parameter's native range (e.g. 440.0 for frequency in Hz). Use list_module_types for valid ranges.")]
     pub value: f32,
 }
 
@@ -915,7 +915,27 @@ impl ServerHandler for SynthMcpServer {
         )
         .with_instructions(
             "Pertylizer MCP server. Inspect and control the running synth: \
-             list modules, read parameters, change settings, play notes.",
+             list modules, read parameters, change settings, play notes.\n\n\
+             ## Architecture\n\
+             Pertylizer is a modular synthesizer. Each **instrument** has a voice graph \
+             (oscillators, filters, envelopes, amplifiers, mixers) and an effect chain \
+             (delay, reverb, chorus, etc.).\n\n\
+             ## Typical voice signal flow\n\
+             `oscillator → filter → amplifier → output`\n\
+             Envelope → amplifier cv_gain (volume shaping), Envelope → filter cutoff_cv (filter sweep).\n\
+             LFO → any cv input for modulation.\n\n\
+             ## Building instruments\n\
+             Use `build_instrument` for one-call instrument creation, or step-by-step: \
+             `create_instrument` → `add_module` (multiple) → `set_parameter` → `connect`.\n\
+             Call `list_module_types` to discover available modules with parameter ranges, \
+             units, port types, and signal flow hints.\n\n\
+             ## Sequencer\n\
+             Songs have **tracks** and **patterns**. Patterns contain notes and automation. \
+             Patterns are placed on tracks in the **arrangement** timeline. \
+             Use `create_pattern` → `add_notes` → `create_track` → `place_pattern` to build songs.\n\n\
+             ## Batch operations\n\
+             Prefer batch tools (`build_instrument`, `add_notes`, `connect_multiple`, \
+             `create_patterns`, `place_patterns`) over repeated single calls for efficiency.",
         )
     }
 
@@ -1093,7 +1113,7 @@ impl ServerHandler for SynthMcpServer {
 
 #[tool_router]
 impl SynthMcpServer {
-    #[tool(description = "List all instruments in the synth engine with their basic settings")]
+    #[tool(description = "List all instruments with ID, name, category, volume, pan, mute/solo state, and module/effect counts.")]
     async fn list_instruments(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_instruments() {
             Ok(instruments) => serde_json::to_string_pretty(&instruments)
@@ -1138,7 +1158,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Get all connections (cables) between modules in the voice graph")]
+    #[tool(description = "Get all connections (cables) between modules in the voice graph. Returns from_module:from_port → to_module:to_port pairs.")]
     async fn get_connections(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_connections(params.0.instrument_id) {
             Ok(conns) => serde_json::to_string_pretty(&conns)
@@ -1147,7 +1167,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Get the current value of a specific module parameter")]
+    #[tool(description = "Get the current value of a specific module parameter. Returns name, raw value, formatted display string (e.g. '440 Hz'), and min/max/default range.")]
     async fn get_parameter(&self, params: Parameters<GetParameterParam>) -> String {
         match self.bridge.get_parameter(
             params.0.instrument_id,
@@ -1160,7 +1180,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Get engine status: CPU usage, voice count, meters, transport state")]
+    #[tool(description = "Get engine status: CPU usage (0.0-1.0), active voice count, peak/RMS meters (dB), sample rate, tempo, and whether sequencer is playing.")]
     async fn get_engine_status(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_engine_status() {
             Ok(status) => serde_json::to_string_pretty(&status)
@@ -1213,7 +1233,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Stop a MIDI note (note off).")]
+    #[tool(description = "Stop a MIDI note (note off). Use the same note number as the corresponding note_on.")]
     async fn note_off(&self, params: Parameters<NoteOffParam>) -> String {
         let channel = params.0.channel.unwrap_or(1);
         match self.bridge.note_off(params.0.note, channel) {
@@ -1429,7 +1449,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Rename an instrument.")]
+    #[tool(description = "Rename an instrument. The name is shown in the UI instrument strip and track selector.")]
     async fn rename_instrument(&self, params: Parameters<RenameInstrumentParam>) -> String {
         match self
             .bridge
@@ -1522,7 +1542,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Enable or disable an instrument.")]
+    #[tool(description = "Enable or disable an instrument. Disabled instruments skip all audio processing (lighter than mute which still processes but silences output).")]
     async fn set_instrument_enabled(
         &self,
         params: Parameters<SetInstrumentEnabledParam>,
@@ -1562,7 +1582,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Disconnect a cable between two module ports.")]
+    #[tool(description = "Disconnect a cable between two module ports. Uses same from/to parameters as connect.")]
     async fn disconnect(&self, params: Parameters<ConnectParam>) -> String {
         match self.bridge.disconnect(
             params.0.instrument_id,
@@ -1592,7 +1612,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Set the song tempo in BPM")]
+    #[tool(description = "Set the song tempo in BPM (typically 60-200, e.g. 120.0 for standard pop tempo).")]
     async fn set_song_tempo(&self, params: Parameters<SetSongTempoParam>) -> String {
         match self.bridge.set_song_tempo(params.0.bpm) {
             Ok(()) => format!("OK: tempo set to {} BPM", params.0.bpm),
@@ -1600,7 +1620,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Set the song name")]
+    #[tool(description = "Set the song name. Shown in the transport bar and saved with the project.")]
     async fn set_song_name(&self, params: Parameters<SetSongNameParam>) -> String {
         match self.bridge.set_song_name(&params.0.name) {
             Ok(()) => format!("OK: song name set to '{}'", params.0.name),
@@ -1644,7 +1664,7 @@ impl SynthMcpServer {
 
     // === Sequencer: Notes ===
 
-    #[tool(description = "List all notes in a pattern with pitch, start, duration, and velocity")]
+    #[tool(description = "List all notes in a pattern. Returns note ID, MIDI pitch (0-127), pitch name (e.g. 'C4'), start/duration in beats, and velocity (0-127).")]
     async fn list_notes(&self, params: Parameters<PatternIdParam>) -> String {
         match self.bridge.list_notes(params.0.pattern_id) {
             Ok(notes) => serde_json::to_string_pretty(&notes)
@@ -1716,7 +1736,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Create a new sequencer track. Returns the track ID.")]
+    #[tool(description = "Create a new sequencer track. Optionally assign an instrument and set a name. Returns the track ID.")]
     async fn create_track(&self, params: Parameters<CreateTrackParam>) -> String {
         match self
             .bridge
@@ -1745,7 +1765,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Remove a pattern placement from the arrangement")]
+    #[tool(description = "Remove a pattern placement from the arrangement by specifying the pattern_id, track_id, and start_beat of the placement to remove.")]
     async fn remove_placement(&self, params: Parameters<PlacePatternParam>) -> String {
         match self.bridge.remove_placement(
             params.0.pattern_id,
@@ -1760,7 +1780,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "List all pattern placements in the song arrangement")]
+    #[tool(description = "List all pattern placements in the song arrangement. Each placement maps a pattern to a track at a beat position.")]
     async fn list_arrangement(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_arrangement() {
             Ok(placements) => serde_json::to_string_pretty(&placements)
@@ -1931,7 +1951,7 @@ impl SynthMcpServer {
 
     // === Track control ===
 
-    #[tool(description = "Set the volume of a track (0.0 = silent, 1.0 = full).")]
+    #[tool(description = "Set the volume of a track (0.0 = silent, 1.0 = full, up to 2.0 for boost).")]
     async fn set_track_volume(&self, params: Parameters<SetTrackVolumeParam>) -> String {
         match self
             .bridge
@@ -2005,7 +2025,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Rename a track.")]
+    #[tool(description = "Rename a track. The name is shown in the sequencer track headers.")]
     async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
         match self.bridge.rename_track(params.0.track_id, &params.0.name) {
             Ok(()) => format!(
@@ -2026,7 +2046,7 @@ impl SynthMcpServer {
 
     // === Pattern management ===
 
-    #[tool(description = "Rename a pattern.")]
+    #[tool(description = "Rename a pattern. The name is shown in the arrangement timeline and piano roll.")]
     async fn rename_pattern(&self, params: Parameters<RenamePatternParam>) -> String {
         match self
             .bridge
@@ -2040,7 +2060,7 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Set the length of a pattern in beats.")]
+    #[tool(description = "Set the length of a pattern in beats (e.g. 4.0 = one bar in 4/4, 8.0 = two bars).")]
     async fn set_pattern_length(&self, params: Parameters<SetPatternLengthParam>) -> String {
         match self
             .bridge
@@ -2248,7 +2268,7 @@ impl SynthMcpServer {
 
     // === Sequencer: Transport ===
 
-    #[tool(description = "Start sequencer playback")]
+    #[tool(description = "Start sequencer playback from the current position. Use seq_seek first to set position.")]
     async fn seq_play(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.seq_play() {
             Ok(()) => "OK: sequencer playing".to_string(),

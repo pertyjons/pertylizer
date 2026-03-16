@@ -193,14 +193,46 @@ pub struct UiConnectionInfo {
     pub to_port: String,
 }
 
-/// Information about a module parameter.
+/// Information about a module parameter including range, unit, and choices.
 #[derive(Debug, Clone, Serialize)]
 pub struct ParamTypeInfo {
-    /// Parameter name.
+    /// Parameter name (use with set_parameter).
     pub name: String,
-    /// Allowed choices (only for choice/enum parameters).
+    /// Description of what this parameter does.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Minimum value.
+    pub min: f32,
+    /// Maximum value.
+    pub max: f32,
+    /// Default value.
+    pub default: f32,
+    /// Unit (e.g. "Hz", "dB", "%", "ms", "s").
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub unit: String,
+    /// Allowed choices for enum/discrete parameters (id → display name).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub choices: Option<Vec<String>>,
+    pub choices: Option<Vec<ChoiceInfo>>,
+}
+
+/// A named choice for an enum/discrete parameter.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChoiceInfo {
+    /// Value to pass to set_parameter (float index: 0.0, 1.0, 2.0, ...).
+    pub value: f32,
+    /// Choice identifier string.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+}
+
+/// Information about a module port.
+#[derive(Debug, Clone, Serialize)]
+pub struct PortTypeInfo {
+    /// Port name (use with connect/disconnect).
+    pub name: String,
+    /// Signal type: "audio", "control", "gate", or "midi".
+    pub signal_type: String,
 }
 
 /// Information about an available module type.
@@ -210,14 +242,20 @@ pub struct ModuleTypeInfo {
     pub type_key: String,
     /// Display name (e.g. "Oscillator", "Math Oscillator").
     pub name: String,
+    /// Module description.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Category: "voice", "effect", or "visualizer".
     pub category: String,
-    /// Input port names (from descriptor).
-    pub input_ports: Vec<String>,
-    /// Output port names (from descriptor).
-    pub output_ports: Vec<String>,
-    /// Parameters with optional choice values.
+    /// Input ports with signal type info.
+    pub input_ports: Vec<PortTypeInfo>,
+    /// Output ports with signal type info.
+    pub output_ports: Vec<PortTypeInfo>,
+    /// Parameters with range, unit, and choice metadata.
     pub parameters: Vec<ParamTypeInfo>,
+    /// Typical signal flow hint (e.g. "osc → filter → amp → out").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal_flow_hint: Option<String>,
 }
 
 /// Two modules that overlap in the UI.

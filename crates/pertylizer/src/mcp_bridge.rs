@@ -755,6 +755,7 @@ impl SynthBridge for AppSynthBridge {
     fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
         use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
         use synth_core::PortDirection;
+        use synth_mcp::types::{ChoiceInfo, PortTypeInfo};
 
         let mut result = Vec::new();
         for &mt in ALL_MODULE_TYPES {
@@ -767,42 +768,69 @@ impl SynthBridge for AppSynthBridge {
                     "visualizer"
                 };
 
+                let port_to_info = |p: &synth_core::PortDescriptor| PortTypeInfo {
+                    name: p.name.to_string(),
+                    signal_type: match p.port_type {
+                        synth_core::PortType::Audio => "audio",
+                        synth_core::PortType::Control => "control",
+                        synth_core::PortType::Gate => "gate",
+                        synth_core::PortType::Midi => "midi",
+                    }
+                    .to_owned(),
+                };
+
                 let input_ports = desc
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Input)
-                    .map(|p| p.name.to_string())
+                    .map(port_to_info)
                     .collect();
                 let output_ports = desc
                     .ports
                     .iter()
                     .filter(|p| p.direction == PortDirection::Output)
-                    .map(|p| p.name.to_string())
+                    .map(port_to_info)
                     .collect();
                 let parameters = desc
                     .parameters
                     .iter()
                     .map(|p| ParamTypeInfo {
                         name: p.name.clone(),
-                        choices: p
-                            .choices
-                            .as_ref()
-                            .map(|opts| opts.iter().map(|c| c.id.clone()).collect()),
+                        description: p.description.clone(),
+                        min: p.range.min,
+                        max: p.range.max,
+                        default: p.range.default,
+                        unit: p.unit.suffix().to_owned(),
+                        choices: p.choices.as_ref().map(|opts| {
+                            opts.iter()
+                                .enumerate()
+                                .map(|(i, c)| ChoiceInfo {
+                                    value: i as f32,
+                                    id: c.id.clone(),
+                                    name: c.name.clone(),
+                                })
+                                .collect()
+                        }),
                     })
                     .collect();
+
+                let signal_flow_hint = signal_flow_hint(&desc.category);
 
                 result.push(ModuleTypeInfo {
                     type_key: mt.prefix().to_string(),
                     name: mt.name().to_string(),
+                    description: desc.description.clone(),
                     category: category.to_string(),
                     input_ports,
                     output_ports,
                     parameters,
+                    signal_flow_hint,
                 });
             }
         }
         Ok(result)
     }
+
 
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
@@ -2676,5 +2704,45 @@ fn format_param_display(param: &Param) -> String {
         format!("{value:.2}")
     } else {
         format!("{value:.3}")
+    }
+}
+
+/// Return a signal flow hint based on module category.
+fn signal_flow_hint(category: &synth_core::ModuleCategory) -> Option<String> {
+    use synth_core::ModuleCategory;
+    match category {
+        ModuleCategory::Oscillator => Some(
+            "Connect 'out' → filter or mixer input. Use 'gate' and 'freq' CV inputs from note data."
+                .to_owned(),
+        ),
+        ModuleCategory::Filter => Some(
+            "Connect audio 'in' from oscillator/mixer, 'out' → amplifier. Use 'cutoff_cv' for envelope modulation."
+                .to_owned(),
+        ),
+        ModuleCategory::Amplifier => Some(
+            "Connect audio 'in' from filter, 'out' → output module. Use 'cv_gain' from envelope for volume shaping."
+                .to_owned(),
+        ),
+        ModuleCategory::Envelope => Some(
+            "Connect 'out' → amplifier 'cv_gain' or filter 'cutoff_cv'. Needs 'gate' input from note data."
+                .to_owned(),
+        ),
+        ModuleCategory::LFO => Some(
+            "Connect 'out' → any CV input for modulation (e.g. filter cutoff, oscillator frequency)."
+                .to_owned(),
+        ),
+        ModuleCategory::Mixer => Some(
+            "Connect multiple audio sources to 'in1'..'in8', output mixed signal from 'out'."
+                .to_owned(),
+        ),
+        ModuleCategory::Output => Some(
+            "Final module in voice chain. Connect audio to 'in_l'/'in_r'. Sends audio to instrument output."
+                .to_owned(),
+        ),
+        ModuleCategory::Effect => Some(
+            "Effect module in the instrument's effect chain. Audio passes through automatically."
+                .to_owned(),
+        ),
+        _ => None,
     }
 }
