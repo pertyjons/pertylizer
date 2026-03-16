@@ -14,7 +14,7 @@ use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 10;
 const SPACING: f32 = 2.8;
-const EMISSIVE_STRENGTH: f32 = 5.0;
+const EMISSIVE_STRENGTH: f32 = 2.0;
 
 /// Shatter decay rate (per second).
 const SHATTER_DECAY: f32 = 3.0;
@@ -68,7 +68,7 @@ pub fn setup(
 
             // Shatter direction: away from center in XZ
             let dir_xz = (pos - center).normalize_or(Vec3::X);
-            let shatter_dir = Vec3::new(dir_xz.x, 0.0, dir_xz.z).normalize();
+            let shatter_dir = Vec3::new(dir_xz.x, 0.0, dir_xz.z).normalize_or(Vec3::X);
 
             commands.spawn((
                 Mesh3d(mesh.clone()),
@@ -142,6 +142,7 @@ pub fn update_material(
     mut last_hue: Local<f32>,
     mut last_fade: Local<f32>,
     mut last_shatter: Local<f32>,
+    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
@@ -151,12 +152,14 @@ pub fn update_material(
     if (hue - *last_hue).abs() < 1.0
         && (fade - *last_fade).abs() < super::effects::FADE_EPSILON
         && (shatter - *last_shatter).abs() < 0.01
+        && *last_policy_version == policy.version
     {
         return;
     }
     *last_hue = hue;
     *last_fade = fade;
     *last_shatter = shatter;
+    *last_policy_version = policy.version;
 
     let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
     // Shatter makes cells brighter

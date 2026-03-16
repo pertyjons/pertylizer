@@ -33,6 +33,8 @@ pub struct SpectrumAnalyzer {
     fft_output: Vec<Complex<f32>>,
     /// Pre-allocated magnitude buffer (dB values per bin).
     magnitude_buf: Vec<f32>,
+    /// Pre-allocated windowed buffer (avoids clone in run_fft).
+    windowed_buffer: Vec<f32>,
     /// Current write position in the ring buffer.
     write_pos: usize,
 }
@@ -55,6 +57,7 @@ impl SpectrumAnalyzer {
             window,
             fft_output: vec![Complex { re: 0.0, im: 0.0 }; complex_size],
             magnitude_buf: vec![0.0; complex_size],
+            windowed_buffer: vec![0.0; FFT_SIZE],
             write_pos: 0,
         }
     }
@@ -168,17 +171,17 @@ impl AudioEffect for SpectrumAnalyzer {
 impl SpectrumAnalyzer {
     /// Run FFT on the collected input and update the visualization buffer.
     fn run_fft(&mut self) {
-        // Apply window function to a copy (fft_input is mutated by FFT)
-        let mut windowed = self.fft_input.clone();
+        // Copy input and apply window function in-place (no allocation)
+        self.windowed_buffer.copy_from_slice(&self.fft_input);
         for i in 0..FFT_SIZE {
-            windowed[i] *= self.window[i];
+            self.windowed_buffer[i] *= self.window[i];
         }
 
         // Run forward FFT
-        self.fft.forward(&mut windowed, &mut self.fft_output);
+        self.fft
+            .forward(&mut self.windowed_buffer, &mut self.fft_output);
 
-        // Compute magnitude in dB
-        let gain = self.gain.as_f32();
+        // Compute magnitude in dB (gain is applied by the GUI widget)
         let norm = 1.0 / FFT_SIZE as f32;
         for (i, bin) in self.fft_output.iter().enumerate() {
             let magnitude = (bin.re * bin.re + bin.im * bin.im).sqrt() * norm * 2.0;
@@ -188,8 +191,8 @@ impl SpectrumAnalyzer {
             } else {
                 -100.0
             };
-            // Normalize: map -100dB..0dB to 0.0..1.0, apply gain
-            self.magnitude_buf[i] = ((db + 100.0) / 100.0 * gain).clamp(0.0, 1.0);
+            // Normalize: map -100dB..0dB to 0.0..1.0
+            self.magnitude_buf[i] = ((db + 100.0) / 100.0).clamp(0.0, 1.0);
         }
 
         // Write magnitude data as L-channel snapshot for GUI to read

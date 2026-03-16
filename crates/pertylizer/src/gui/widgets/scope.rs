@@ -1,6 +1,6 @@
 //! Oscilloscope display widget.
 
-use eframe::egui::{Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
+use eframe::egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
@@ -42,36 +42,7 @@ pub fn draw_oscilloscope(
         );
     }
 
-    // Draw waveform
-    if samples.len() >= 2 {
-        let step = samples.len() as f32 / width;
-        let half_height = (height - 8.0) / 2.0;
-
-        let mut points: Vec<Pos2> = Vec::with_capacity(width as usize);
-
-        for x in 0..(width as usize) {
-            let sample_idx = ((x as f32) * step) as usize;
-            if sample_idx < samples.len() {
-                let sample = samples[sample_idx] * gain;
-                let y = center_y - sample.clamp(-1.0, 1.0) * half_height;
-                points.push(Pos2::new(rect.left() + x as f32, y));
-            }
-        }
-
-        // Draw as single optimized line shape (batched GPU draw call)
-        if points.len() >= 2 {
-            painter.add(Shape::line(points, Stroke::new(1.5, color)));
-        }
-    } else {
-        // No data - draw flat line
-        painter.line_segment(
-            [
-                Pos2::new(rect.left() + 4.0, center_y),
-                Pos2::new(rect.right() - 4.0, center_y),
-            ],
-            Stroke::new(1.5, color.gamma_multiply(0.5)),
-        );
-    }
+    draw_waveform(painter, &rect, samples, width, height, gain, color);
 
     // Border
     painter.rect_stroke(
@@ -139,25 +110,86 @@ pub fn draw_oscilloscope_with_trigger(
         );
     }
 
-    // Draw waveform
+    draw_waveform(painter, &rect, samples, width, height, gain, color);
+
+    // Border
+    painter.rect_stroke(
+        rect,
+        4.0,
+        Stroke::new(1.0, theme().colors.border),
+        eframe::egui::StrokeKind::Outside,
+    );
+}
+
+/// Draw a waveform into the given rect.
+/// When there are more samples than pixels, uses min/max envelope per pixel
+/// column to avoid missing peaks from nearest-neighbor aliasing.
+fn draw_waveform(
+    painter: &eframe::egui::Painter,
+    rect: &Rect,
+    samples: &[f32],
+    width: f32,
+    height: f32,
+    gain: f32,
+    color: Color32,
+) {
+    let center_y = rect.center().y;
+
     if samples.len() >= 2 {
         let step = samples.len() as f32 / width;
         let half_height = (height - 8.0) / 2.0;
 
-        let mut points: Vec<Pos2> = Vec::with_capacity(width as usize);
-
-        for x in 0..(width as usize) {
-            let sample_idx = ((x as f32) * step) as usize;
-            if sample_idx < samples.len() {
-                let sample = samples[sample_idx] * gain;
-                let y = center_y - sample.clamp(-1.0, 1.0) * half_height;
-                points.push(Pos2::new(rect.left() + x as f32, y));
+        if step <= 1.0 {
+            // Fewer samples than pixels: one point per pixel column
+            let mut points: Vec<Pos2> = Vec::with_capacity(width as usize);
+            for x in 0..(width as usize) {
+                let sample_idx = ((x as f32) * step) as usize;
+                if sample_idx < samples.len() {
+                    let sample = samples[sample_idx] * gain;
+                    let y = center_y - sample.clamp(-1.0, 1.0) * half_height;
+                    points.push(Pos2::new(rect.left() + x as f32, y));
+                }
             }
-        }
+            if points.len() >= 2 {
+                painter.add(Shape::line(points, Stroke::new(1.5, color)));
+            }
+        } else {
+            // More samples than pixels: use min/max envelope to avoid missing peaks
+            let stroke = Stroke::new(1.5, color);
+            let mut envelope_points: Vec<Pos2> = Vec::with_capacity(width as usize * 2);
 
-        // Draw as single optimized line shape (batched GPU draw call)
-        if points.len() >= 2 {
-            painter.add(Shape::line(points, Stroke::new(1.5, color)));
+            for x in 0..(width as usize) {
+                let start = ((x as f32) * step) as usize;
+                let end = ((((x + 1) as f32) * step) as usize).min(samples.len());
+                let mut min_val = f32::MAX;
+                let mut max_val = f32::MIN;
+                for idx in start..end {
+                    let s = samples[idx] * gain;
+                    if s < min_val {
+                        min_val = s;
+                    }
+                    if s > max_val {
+                        max_val = s;
+                    }
+                }
+                let px = rect.left() + x as f32;
+                let y_top = center_y - max_val.clamp(-1.0, 1.0) * half_height;
+                let y_bot = center_y - min_val.clamp(-1.0, 1.0) * half_height;
+
+                // Draw vertical line spanning the sample range for this pixel
+                if (y_bot - y_top).abs() > 0.5 {
+                    painter.line_segment([Pos2::new(px, y_top), Pos2::new(px, y_bot)], stroke);
+                }
+
+                // Collect midpoints for the connecting outline
+                let mid_y = (y_top + y_bot) * 0.5;
+                envelope_points.push(Pos2::new(px, mid_y));
+            }
+
+            // Draw envelope outline connecting midpoints
+            if envelope_points.len() >= 2 {
+                painter.add(Shape::line(envelope_points, stroke));
+            }
         }
     } else {
         // No data - draw flat line
@@ -169,12 +201,4 @@ pub fn draw_oscilloscope_with_trigger(
             Stroke::new(1.5, color.gamma_multiply(0.5)),
         );
     }
-
-    // Border
-    painter.rect_stroke(
-        rect,
-        4.0,
-        Stroke::new(1.0, theme().colors.border),
-        eframe::egui::StrokeKind::Outside,
-    );
 }

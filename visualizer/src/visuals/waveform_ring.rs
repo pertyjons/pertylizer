@@ -25,7 +25,7 @@ const MAX_HEIGHT: f32 = 8.0;
 const BAR_THICKNESS: f32 = 0.15;
 
 /// Emissive intensity multiplier.
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
 
 /// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
 const DECAY_RATE: f32 = 6.0;

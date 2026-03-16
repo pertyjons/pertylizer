@@ -1,6 +1,7 @@
 //! Spectrum analyzer display widget.
 
 use eframe::egui::{Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
+use eframe::epaint::PathShape;
 
 use crate::gui::theme::theme;
 
@@ -9,6 +10,7 @@ use crate::gui::theme::theme;
 ///
 /// `magnitudes` should be FFT magnitude bins (normalized 0.0-1.0),
 /// `gain` scales the vertical display.
+/// `sample_rate` is the audio sample rate in Hz used to map FFT bins to frequencies.
 pub fn draw_spectrum_analyzer(
     ui: &mut Ui,
     magnitudes: &[f32],
@@ -16,6 +18,7 @@ pub fn draw_spectrum_analyzer(
     height: f32,
     gain: f32,
     color: Color32,
+    sample_rate: f32,
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter();
@@ -65,8 +68,7 @@ pub fn draw_spectrum_analyzer(
     // Draw spectrum as filled area
     if magnitudes.len() >= 2 {
         let num_bins = magnitudes.len();
-        // Assume sample rate ~48kHz, bin spacing = sr / fft_size
-        // We map bins to log-frequency x positions
+        // Map bins to log-frequency x positions using the provided sample rate
         let mut points: Vec<Pos2> = Vec::with_capacity(width as usize + 2);
 
         // Start from bottom-left
@@ -80,7 +82,7 @@ pub fn draw_spectrum_analyzer(
 
             // Find corresponding bin
             let fft_size = (num_bins - 1) * 2;
-            let bin_f = freq * fft_size as f32 / 48000.0;
+            let bin_f = freq * fft_size as f32 / sample_rate;
             let bin = (bin_f as usize).min(num_bins - 1);
 
             // Interpolate between bins for smoother display
@@ -98,14 +100,15 @@ pub fn draw_spectrum_analyzer(
         // Close the shape at bottom-right
         points.push(Pos2::new(rect.right(), rect.bottom()));
 
-        // Draw filled area
+        // Draw filled area using PathShape (the spectrum is non-convex)
         let fill_color =
             Color32::from_rgba_premultiplied(color.r() / 3, color.g() / 3, color.b() / 3, 80);
-        painter.add(Shape::convex_polygon(
-            points.clone(),
-            fill_color,
-            Stroke::NONE,
-        ));
+        painter.add(Shape::Path(PathShape {
+            points: points.clone(),
+            closed: true,
+            fill: fill_color,
+            stroke: Stroke::NONE.into(),
+        }));
 
         // Draw outline on top (skip first and last points which are the bottom corners)
         if points.len() > 2 {

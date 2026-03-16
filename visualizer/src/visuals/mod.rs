@@ -284,7 +284,7 @@ fn setup_scene(mut commands: Commands) {
             intensity: 0.0,
             range: 40.0,
             color: Color::srgb(1.0, 0.9, 0.8),
-            shadows_enabled: false,
+            shadows_enabled: true,
             ..default()
         },
         Transform::from_xyz(0.0, 10.0, 0.0),
@@ -297,7 +297,7 @@ fn setup_scene(mut commands: Commands) {
             intensity: 40_000.0,
             range: 80.0,
             color: Color::srgb(0.2, 0.4, 1.0),
-            shadows_enabled: false,
+            shadows_enabled: true,
             ..default()
         },
         Transform::from_xyz(-20.0, 18.0, -15.0),
@@ -317,8 +317,8 @@ fn setup_scene(mut commands: Commands) {
             angle: 0.0,
         },
         Bloom {
-            intensity: 0.4,
-            low_frequency_boost: 0.6,
+            intensity: 0.3,
+            low_frequency_boost: 0.25,
             low_frequency_boost_curvature: 0.5,
             high_pass_frequency: 0.7,
             ..default()

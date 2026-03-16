@@ -16,7 +16,7 @@ const NEBULA_PARTICLES: usize = 500;
 const BOUNDS: f32 = 15.0;
 
 /// Emissive multiplier.
-const EMISSIVE_STRENGTH: f32 = 4.0;
+const EMISSIVE_STRENGTH: f32 = 1.5;
 
 /// Per-second centroid smoothing rate (symmetric, time-based).
 const CENTROID_SMOOTH_RATE: f32 = 4.0;
@@ -75,17 +75,23 @@ pub fn setup(
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
+    effect_state: Res<EffectState>,
     mut query: Query<(&NebulaParticle, &mut Transform)>,
     mut last_centroid: Local<f32>,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
+    let fade = effect_state.fade;
 
     // Smooth the centroid value so it doesn't jitter violently (time-based)
     // Typical centroid is 500Hz - 8000Hz
     let raw_centroid = telemetry.centroid_hz.clamp(200.0, 10000.0);
     let alpha = 1.0 - (-CENTROID_SMOOTH_RATE * dt).exp();
-    let centroid = *last_centroid + (raw_centroid - *last_centroid) * alpha;
+    let centroid = if *last_centroid == 0.0 {
+        raw_centroid
+    } else {
+        *last_centroid + (raw_centroid - *last_centroid) * alpha
+    };
     *last_centroid = centroid;
 
     // Normalize centroid to a 0.0 - 1.0 range (logarithmic is better for frequency)
@@ -112,10 +118,9 @@ pub fn update(
             (p * 1.1).sin() * 2.0 * centroid_norm,
         );
 
-        transform.translation = particle.base_pos * spread + offset;
-
-        // Scale based on energy
-        transform.scale = Vec3::splat(particle.base_size * energy);
+        // Scale transforms by fade so particles shrink/grow during crossfade
+        transform.translation = (particle.base_pos * spread + offset) * fade;
+        transform.scale = Vec3::splat(particle.base_size * energy * fade);
     }
 }
 

@@ -17,7 +17,7 @@ const NUM_RINGS: usize = 6;
 const SCALE_STEP: f32 = 1.5;
 
 /// Base emissive strength.
-const EMISSIVE_STRENGTH: f32 = 8.0;
+const EMISSIVE_STRENGTH: f32 = 3.0;
 
 #[derive(Component)]
 pub struct FractalRing {
@@ -76,6 +76,7 @@ pub fn setup(
 pub struct FractalState {
     full_update_needed: bool,
     last_policy_version: u64,
+    last_hue_offset: f32,
 }
 
 pub fn update(
@@ -111,6 +112,12 @@ pub fn update(
         state.last_policy_version = policy.version;
     }
 
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let hue_changed = (hue_offset - state.last_hue_offset).abs() > 1.0;
+    if hue_changed {
+        state.last_hue_offset = hue_offset;
+    }
+
     for (ring, mut transform, material_handle) in &mut query {
         // Rotate
         let speed = ring.base_speed * tempo_mult;
@@ -126,7 +133,7 @@ pub fn update(
         let base_scale = 1.0 + ring.index as f32 * SCALE_STEP;
         transform.scale = Vec3::splat(base_scale + pulse_amount * 2.0);
 
-        if (fade < 1.0 || state.full_update_needed)
+        if (fade < 1.0 || state.full_update_needed || hue_changed)
             && let Some(material) = materials.get_mut(&material_handle.0)
         {
             let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
@@ -134,7 +141,6 @@ pub fn update(
             let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
             let metallic = policy.metallic;
             let roughness = policy.roughness;
-            let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
             let hue = ((ring.index as f32 / NUM_RINGS as f32) * 360.0 + hue_offset) % 360.0;
             let color = Color::hsl(hue, sat, lit * fade);
             material.base_color = color;
@@ -144,7 +150,7 @@ pub fn update(
         }
     }
 
-    if fade == 1.0 {
+    if fade > 0.999 {
         state.full_update_needed = false;
     }
 }

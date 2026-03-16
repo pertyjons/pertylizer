@@ -470,8 +470,7 @@ fn draw_transport_bar(
                         if p.pattern_id == pattern_id {
                             let pat = s.pattern(pattern_id)?;
                             let tpb = SeqDuration(s.time_signature_at(p.start).ticks_per_bar());
-                            let is_selected_track =
-                                view_state.selected_track == Some(p.track_id);
+                            let is_selected_track = view_state.selected_track == Some(p.track_id);
                             if best.is_none() || is_selected_track {
                                 best = Some((p.start, pat.length, tpb, p.track_id));
                             }
@@ -4058,10 +4057,7 @@ pub(crate) fn draw_sequencer_view(
         && let Some(ad) = &arrangement_data
     {
         ad.placements.iter().find_map(|p| {
-            if p.track_id == track_id
-                && current_tick >= p.start_tick
-                && current_tick < p.end_tick
-            {
+            if p.track_id == track_id && current_tick >= p.start_tick && current_tick < p.end_tick {
                 Some(p.pattern_id)
             } else {
                 None

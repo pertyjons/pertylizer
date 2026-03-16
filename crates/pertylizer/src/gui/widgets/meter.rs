@@ -268,7 +268,8 @@ fn draw_meter_bar(
 
     // Peak indicator
     if peak_norm > 0.01 {
-        let peak_y = rect.bottom() - 14.0 - rect.height() * peak_norm + 7.0;
+        let segment_area_height = rect.height() - 14.0;
+        let peak_y = rect.bottom() - 14.0 - segment_area_height * peak_norm;
         painter.rect_filled(
             Rect::from_min_size(
                 Pos2::new(rect.left() + t.style.border_width, peak_y),

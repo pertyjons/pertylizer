@@ -13,7 +13,7 @@ use crate::telemetry::{NoteOnEvent, SynthTelemetry};
 const MAX_BLOOMS: usize = 10;
 const BURST_LIFETIME: f32 = 1.5;
 const MAX_RADIUS: f32 = 40.0;
-const EMISSIVE_STRENGTH: f32 = 8.0;
+const EMISSIVE_STRENGTH: f32 = 3.0;
 const SEGMENTS_PER_BLOOM: usize = 12;
 /// Number of shared material buckets.
 const NUM_MATERIAL_BUCKETS: usize = 8;
@@ -129,11 +129,14 @@ pub fn spawn_and_update(
             segments.push(seg_ent);
         }
 
-        commands.spawn(BloomRing {
-            life: BURST_LIFETIME,
-            max_life: BURST_LIFETIME,
-            segments,
-        });
+        commands.spawn((
+            BloomRing {
+                life: BURST_LIFETIME,
+                max_life: BURST_LIFETIME,
+                segments,
+            },
+            EffectLayer(EffectId::ChordBloom),
+        ));
     }
 
     // 2. Update expanding blooms — transform only, no per-entity material mutation

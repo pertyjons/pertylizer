@@ -14,7 +14,7 @@ use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 20; // 20x20 grid
 const GRID_SPACING: f32 = 1.5;
-const EMISSIVE_STRENGTH: f32 = 5.0;
+const EMISSIVE_STRENGTH: f32 = 2.0;
 
 /// Per-second terrain height smoothing rate. Responsive but smooth.
 const TERRAIN_SMOOTH_RATE: f32 = 10.0;

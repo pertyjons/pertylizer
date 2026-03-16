@@ -50,7 +50,7 @@ pub fn setup(
 
     let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.6 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = 15.0 * policy.emissive_multiplier;
+    let emissive = 6.0 * policy.emissive_multiplier;
 
     let mut shared_mats = Vec::with_capacity(128);
     for note in 0..128 {
@@ -139,7 +139,7 @@ pub fn update(
     if *last_policy_version != policy.version || (hue_offset - *last_hue_offset).abs() > 1.0 {
         let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
         let lit = (0.6 + policy.lightness_offset).clamp(0.0, 1.0);
-        let emissive = 15.0 * policy.emissive_multiplier;
+        let emissive = 6.0 * policy.emissive_multiplier;
 
         for (note, handle) in meteor_materials.materials.iter().enumerate() {
             if let Some(material) = materials.get_mut(handle) {
@@ -155,6 +155,7 @@ pub fn update(
         *last_hue_offset = hue_offset;
     }
 
+    let mut alive = 0usize;
     for (entity, mut meteor, mut transform) in &mut query {
         let fall_amt = FALL_SPEED * dt;
         meteor.fallen += fall_amt;
@@ -166,7 +167,10 @@ pub fn update(
 
         if meteor.fallen >= FALL_DISTANCE {
             commands.entity(entity).despawn();
-            meteor_count.count = meteor_count.count.saturating_sub(1);
+        } else {
+            alive += 1;
         }
     }
+    // Resync counter with actual alive count to prevent desync drift
+    meteor_count.count = alive;
 }

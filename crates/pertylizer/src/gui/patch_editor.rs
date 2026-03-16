@@ -4231,13 +4231,19 @@ fn draw_visualizer_display(
 
         // Get samples from visualization buffer if available
         let samples = if let Some(buffer) = vis_buffer {
-            let (left, _right) = buffer.read_samples();
+            buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
             // Downsample to 256 points for display
-            let step = left.len().max(1) / 256;
+            let step = state.vis_buf_l.len().max(1) / 256;
             if step > 0 {
-                left.into_iter().step_by(step.max(1)).take(256).collect()
+                state
+                    .vis_buf_l
+                    .iter()
+                    .copied()
+                    .step_by(step.max(1))
+                    .take(256)
+                    .collect()
             } else {
-                left
+                state.vis_buf_l.clone()
             }
         } else {
             // Demo waveform if no buffer connected
@@ -4274,12 +4280,14 @@ fn draw_visualizer_display(
         let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
 
         // Get magnitude data from visualization buffer
-        let magnitudes = if let Some(buffer) = vis_buffer {
-            let (left, _right) = buffer.read_samples();
-            left
+        let demo_spectrum;
+        let magnitudes: &[f32] = if let Some(buffer) = vis_buffer {
+            buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
+            &state.vis_buf_l
         } else {
             // Demo flat spectrum if no buffer connected
-            vec![0.0; 256]
+            demo_spectrum = vec![0.0; 256];
+            &demo_spectrum
         };
 
         // Use available width, with min/max constraints
@@ -4288,11 +4296,12 @@ fn draw_visualizer_display(
 
         super::widgets::draw_spectrum_analyzer(
             ui,
-            &magnitudes,
+            magnitudes,
             width,
             height,
             gain,
             theme().colors.accent_green,
+            48000.0,
         );
 
         if vis_buffer.is_none() {

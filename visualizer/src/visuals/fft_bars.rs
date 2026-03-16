@@ -24,7 +24,7 @@ const MIN_BAR_WIDTH: f32 = TOTAL_WIDTH / MAX_FFT_BANDS as f32;
 const MAX_HEIGHT: f32 = 8.0;
 
 /// Emissive intensity multiplier for bloom visibility.
-const EMISSIVE_STRENGTH: f32 = 5.0;
+const EMISSIVE_STRENGTH: f32 = 2.0;
 
 /// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
 const DECAY_RATE: f32 = 6.0;

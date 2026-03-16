@@ -14,7 +14,7 @@ use crate::telemetry::SynthTelemetry;
 const NUM_TENDRILS: usize = 30;
 const RADIUS: f32 = 8.0;
 const MAX_HEIGHT: f32 = 12.0;
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
 
 #[derive(Component)]
 pub struct Tendril {

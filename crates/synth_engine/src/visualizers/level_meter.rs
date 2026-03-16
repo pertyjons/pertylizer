@@ -103,19 +103,9 @@ impl AudioEffect for LevelMeter {
         // Pass-through: copy input to output
         output.copy_from_slice(input);
 
-        // Extract L/R channels and update levels
-        let num_frames = input.len() / 2;
-        let mut left_samples = Vec::with_capacity(num_frames);
-        let mut right_samples = Vec::with_capacity(num_frames);
-
-        for i in 0..num_frames {
-            left_samples.push(input[i * 2]);
-            right_samples.push(input[i * 2 + 1]);
-        }
-
-        // Update visualization buffer
-        self.buffer.update_levels(&left_samples, &right_samples);
-        self.buffer.write_samples(&left_samples, &right_samples);
+        // Update levels and waveform display from interleaved data (no allocation)
+        self.buffer.update_levels_interleaved(input);
+        self.buffer.write_interleaved(input);
     }
 
     fn set_param(&mut self, param: Param) {

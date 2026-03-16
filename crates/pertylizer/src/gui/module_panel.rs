@@ -38,6 +38,9 @@ pub struct ModulePanelState {
     pub dragging: bool,
     /// Envelope position buffer for envelope modules (lock-free GUI sync).
     pub envelope_position: Option<Arc<EnvelopePositionBuffer>>,
+    /// Reusable visualization sample buffers (avoids per-frame allocation).
+    pub vis_buf_l: Vec<f32>,
+    pub vis_buf_r: Vec<f32>,
 }
 
 impl ModulePanelState {
@@ -50,6 +53,8 @@ impl ModulePanelState {
             selected: false,
             dragging: false,
             envelope_position: None,
+            vis_buf_l: Vec::new(),
+            vis_buf_r: Vec::new(),
         }
     }
 }

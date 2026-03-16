@@ -21,7 +21,7 @@ const LIFETIME: f32 = 2.5;
 const CUBES_PER_NOTE: usize = 8;
 
 /// Emissive intensity for bloom pickup.
-const EMISSIVE_STRENGTH: f32 = 12.0;
+const EMISSIVE_STRENGTH: f32 = 5.0;
 
 /// Radius of the emitter circle.
 const EMITTER_RADIUS: f32 = 8.0;
@@ -237,14 +237,16 @@ pub fn update(
         *last_policy_version = policy.version;
     }
 
+    let mut alive = 0usize;
     for (entity, mut cube, mut transform) in &mut query {
         cube.life -= dt;
 
         if cube.life <= 0.0 {
             commands.entity(entity).despawn();
-            cube_count.count = cube_count.count.saturating_sub(1);
             continue;
         }
+
+        alive += 1;
 
         // Apply velocity with gravity
         cube.velocity.y -= 2.5 * dt;
@@ -263,4 +265,6 @@ pub fn update(
         let t = cube.life / cube.max_life;
         transform.scale = Vec3::splat(t);
     }
+    // Resync counter with actual alive count to prevent desync drift
+    cube_count.count = alive;
 }

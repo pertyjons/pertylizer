@@ -13,7 +13,7 @@ const MAX_RIBBONS: usize = 32;
 const SEGMENTS_PER_RIBBON: usize = 40;
 const RIBBON_LIFETIME: f32 = 3.0;
 const SPEED: f32 = 10.0;
-const EMISSIVE_STRENGTH: f32 = 10.0;
+const EMISSIVE_STRENGTH: f32 = 4.0;
 /// Number of shared material buckets.
 const NUM_MATERIAL_BUCKETS: usize = 12;
 
@@ -113,13 +113,16 @@ pub fn spawn_and_update(
                 segments.push(seg_ent);
             }
 
-            commands.spawn(Ribbon {
-                life: RIBBON_LIFETIME * vel_norm, // Quieter notes die faster
-                age: 0.0,
-                base_y: y,
-                velocity: SPEED + vel_norm * 5.0,
-                segments,
-            });
+            commands.spawn((
+                Ribbon {
+                    life: RIBBON_LIFETIME * vel_norm, // Quieter notes die faster
+                    age: 0.0,
+                    base_y: y,
+                    velocity: SPEED + vel_norm * 5.0,
+                    segments,
+                },
+                EffectLayer(EffectId::HarmonicRibbons),
+            ));
         }
     }
 

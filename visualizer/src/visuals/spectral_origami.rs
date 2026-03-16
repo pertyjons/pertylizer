@@ -12,7 +12,11 @@ use crate::telemetry::SynthTelemetry;
 
 const GRID_SIZE: usize = 12;
 const SPACING: f32 = 2.5;
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
+/// Per-second smoothing rate for fold angles (frame-rate independent).
+const ANGLE_SMOOTH_RATE: f32 = 8.0;
+/// Per-second smoothing rate for vertical position.
+const Y_SMOOTH_RATE: f32 = 8.0;
 
 #[derive(Component)]
 pub struct OrigamiFold {
@@ -71,11 +75,15 @@ pub fn update(
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     mut query: Query<(&OrigamiFold, &mut Transform)>,
+    mut smoothed_values: Local<Vec<[f32; 3]>>,
 ) {
     // Transport stopped → slow down flutter
     let time_scale = if telemetry.playing { 1.0 } else { 0.15 };
     let t = time.elapsed_secs() * time_scale;
+    let dt = time.delta_secs();
     let fade = effect_state.fade;
+    let angle_alpha = 1.0 - (-ANGLE_SMOOTH_RATE * dt).exp();
+    let y_alpha = 1.0 - (-Y_SMOOTH_RATE * dt).exp();
 
     // Use centroid to drive how "open" the folds are globally
     let centroid_norm = (telemetry.centroid_hz / 5000.0).clamp(0.0, 1.0);
@@ -83,9 +91,17 @@ pub fn update(
     // Overall energy to drive chaotic fluttering
     let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 5.0).clamp(0.0, 2.0);
 
+    // Ensure smoothed storage is large enough
+    let total = GRID_SIZE * GRID_SIZE;
+    if smoothed_values.len() < total {
+        smoothed_values.resize(total, [0.0; 3]);
+    }
+
+    let bin_count = telemetry.fft_bin_count.max(1);
+
     for (fold, mut transform) in &mut query {
         // Tie to a specific FFT band (looping through available bands)
-        let band_idx = fold.index % 64;
+        let band_idx = fold.index % bin_count;
         let mag = telemetry.fft[band_idx];
 
         // Pitch bend adds extra fold angle
@@ -94,35 +110,51 @@ pub fn update(
         // Base fold angle driven by centroid + individual band magnitude + pitch bend
         let target_angle_x = (mag * 3.0 + centroid_norm * 2.0 + bend_fold) * fade;
         let target_angle_z = (mag * 2.0 + (fold.index as f32 * 0.1 + t).sin() * energy) * fade;
+        let target_y = fold.base_pos.y + (mag * 2.0 * fade);
 
-        // Apply rotation
-        transform.rotation = Quat::from_euler(EulerRot::XYZ, target_angle_x, 0.0, target_angle_z);
+        // Smooth angles and Y position with exponential interpolation
+        if let Some(stored) = smoothed_values.get_mut(fold.index) {
+            stored[0] += (target_angle_x - stored[0]) * angle_alpha;
+            stored[1] += (target_angle_z - stored[1]) * angle_alpha;
+            stored[2] += (target_y - stored[2]) * y_alpha;
 
-        // Add a slight vertical hop when fluttering
-        transform.translation.y = fold.base_pos.y + (mag * 2.0 * fade);
+            // Apply smoothed rotation
+            transform.rotation =
+                Quat::from_euler(EulerRot::XYZ, stored[0], 0.0, stored[1]);
+            // Apply smoothed Y position
+            transform.translation.y = stored[2];
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_material(
+    time: Res<Time>,
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
     origami_material: Res<OrigamiMaterial>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_hue: Local<f32>,
     mut frame_counter: Local<u32>,
+    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
     let fade = effect_state.fade;
 
-    // Base hue from centroid theme mapping, with slow drift over time
+    // Base hue from centroid theme mapping, with time-based drift (frame-rate independent)
     let base_hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
-    *last_hue = (base_hue + *frame_counter as f32 * 0.5) % 360.0;
+    *last_hue = (base_hue + time.elapsed_secs() * 15.0) % 360.0;
 
-    // Only update material every 3rd frame to reduce GPU re-uploads
+    // Only update material every 3rd frame to reduce GPU re-uploads,
+    // but always update during crossfades or policy changes
     *frame_counter = frame_counter.wrapping_add(1);
-    if !(*frame_counter).is_multiple_of(3) {
+    let policy_changed = *last_policy_version != policy.version;
+    if (*frame_counter).is_multiple_of(3) || fade < 1.0 || policy_changed {
+        // proceed with update
+    } else {
         return;
     }
+    *last_policy_version = policy.version;
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);

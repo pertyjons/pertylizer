@@ -133,7 +133,6 @@ pub struct CameraState {
     pub auto_cut: bool,
     /// Time since last auto-cut (seconds).
     auto_cut_timer: f32,
-    /// Previous beat (integer) for detecting beat crossings.
     /// Current shake intensity (decays over time).
     shake_intensity: f32,
     /// Orbit angle (shared across orbit modes).

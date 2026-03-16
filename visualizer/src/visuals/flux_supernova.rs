@@ -18,10 +18,10 @@ const FLUX_THRESHOLD: f32 = 0.5;
 const DECAY_RATE: f32 = 4.0;
 
 /// Base emissive strength.
-const BASE_EMISSIVE: f32 = 5.0;
+const BASE_EMISSIVE: f32 = 2.0;
 
 /// Peak emissive strength during supernova.
-const PEAK_EMISSIVE: f32 = 50.0;
+const PEAK_EMISSIVE: f32 = 20.0;
 
 #[derive(Component)]
 pub struct SupernovaCore;
@@ -44,7 +44,12 @@ pub fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Create an icosphere for the core
-    let core_mesh = meshes.add(Sphere::new(2.5).mesh().ico(3).unwrap());
+    let core_mesh = meshes.add(
+        Sphere::new(2.5)
+            .mesh()
+            .ico(3)
+            .unwrap_or_else(|_| Sphere::new(2.5).mesh().build()),
+    );
 
     let core_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.5, 0.0),
@@ -128,7 +133,7 @@ pub fn update(
                 material.perceptual_roughness = policy.roughness;
             }
 
-            if state.explosion == 0.0 && fade == 1.0 {
+            if state.explosion == 0.0 && fade > 0.999 {
                 state.is_idle = true;
             }
         }

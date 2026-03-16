@@ -38,8 +38,7 @@ pub fn setup(
     ));
 }
 
-pub fn update(mut query: Query<&mut Transform, With<BaseFloor>>) {
-    for _transform in &mut query {
-        // Floor is completely static
-    }
+pub fn update(query: Query<&Transform, With<BaseFloor>>) {
+    // Floor is completely static — immutable query to avoid triggering change detection
+    let _ = query;
 }

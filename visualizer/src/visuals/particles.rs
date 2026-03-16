@@ -21,7 +21,7 @@ const LIFETIME: f32 = 2.0;
 const PARTICLES_PER_NOTE: usize = 16;
 
 /// Emissive intensity multiplier (needs to be high for bloom to pick it up).
-const EMISSIVE_STRENGTH: f32 = 15.0;
+const EMISSIVE_STRENGTH: f32 = 6.0;
 
 /// Golden angle in radians for even spherical distribution.
 const GOLDEN_ANGLE: f32 = 2.399_963;
@@ -171,14 +171,16 @@ pub fn update(
         *last_hue_offset = hue_offset;
     }
 
+    let mut alive = 0usize;
     for (entity, mut particle, mut transform) in &mut query {
         particle.life -= dt;
 
         if particle.life <= 0.0 {
             commands.entity(entity).despawn();
-            particle_count.count = particle_count.count.saturating_sub(1);
             continue;
         }
+
+        alive += 1;
 
         // Apply velocity with gravity
         particle.velocity.y -= 3.0 * dt;
@@ -188,4 +190,6 @@ pub fn update(
         let scale = (particle.life / particle.max_life).max(0.0);
         transform.scale = Vec3::splat(scale);
     }
+    // Resync counter with actual alive count to prevent desync drift
+    particle_count.count = alive;
 }

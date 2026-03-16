@@ -831,7 +831,6 @@ impl SynthBridge for AppSynthBridge {
         Ok(result)
     }
 
-
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 

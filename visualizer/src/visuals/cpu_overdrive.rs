@@ -20,7 +20,7 @@ const CPU_SPEED_MULT: f32 = 10.0;
 const BASE_SCALE: f32 = 4.0;
 
 /// Base emissive strength.
-const BASE_EMISSIVE: f32 = 4.0;
+const BASE_EMISSIVE: f32 = 1.5;
 
 #[derive(Component)]
 pub struct CpuCore;
@@ -103,7 +103,7 @@ pub fn update(
             let lightness = 0.5 + (strain * 0.3); // Gets brighter when hot
 
             let color = Color::hsl(hue, 0.9, lightness * fade);
-            let emissive_strength = (BASE_EMISSIVE + (strain * 15.0)) * policy.emissive_multiplier;
+            let emissive_strength = (BASE_EMISSIVE + (strain * 6.0)) * policy.emissive_multiplier;
 
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive_strength * fade;

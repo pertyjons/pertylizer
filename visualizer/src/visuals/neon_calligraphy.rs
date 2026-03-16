@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 const NUM_STROKES: usize = 128; // One for each MIDI note
 const STROKE_LENGTH: f32 = 4.0;
-const EMISSIVE_STRENGTH: f32 = 8.0;
+const EMISSIVE_STRENGTH: f32 = 3.0;
 /// Number of shared material buckets (strokes are grouped by hue).
 const NUM_MATERIAL_BUCKETS: usize = 16;
 
@@ -142,7 +142,8 @@ pub fn update(
         let bend_stretch = 1.0 + telemetry.pitch_bend.abs() * 0.3;
 
         let target_scale = life_pct;
-        transform.scale.y += (target_scale - transform.scale.y) * 10.0 * dt;
+        let alpha = 1.0 - (-10.0 * dt).exp();
+        transform.scale.y += (target_scale - transform.scale.y) * alpha;
         transform.scale.x = aftertouch_scale * bend_stretch;
         transform.scale.z = aftertouch_scale;
 

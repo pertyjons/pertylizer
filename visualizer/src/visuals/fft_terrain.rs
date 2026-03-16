@@ -7,7 +7,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
@@ -23,15 +23,21 @@ const ROW_SPACING: f32 = 2.0;
 /// Maximum column height.
 const MAX_HEIGHT: f32 = 12.0;
 /// Base emissive strength.
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
+/// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
+const DECAY_RATE: f32 = 6.0;
 
 #[derive(Component)]
 pub struct TerrainColumn {
     pub base_pos: Vec3,
     /// Which FFT bin this column represents.
     pub fft_bin: usize,
-    /// Column index for color mapping.
-    pub col_index: usize,
+}
+
+/// Shared material handles — one per frequency column.
+#[derive(Resource)]
+pub struct TerrainMaterials {
+    pub materials: Vec<Handle<StandardMaterial>>,
 }
 
 pub fn setup(
@@ -49,6 +55,8 @@ pub fn setup(
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
+    let mut shared_mats = Vec::with_capacity(COLS);
+
     for col in 0..COLS {
         let band_pos = col as f32 / COLS as f32;
         let hue = telemetry_color::band_frequency_hue(band_pos);
@@ -60,6 +68,8 @@ pub fn setup(
             perceptual_roughness: policy.roughness,
             ..default()
         });
+
+        shared_mats.push(mat.clone());
 
         for row in 0..ROWS {
             let px = col as f32 * COL_SPACING - offset_x + COL_SPACING * 0.5;
@@ -77,39 +87,37 @@ pub fn setup(
                 TerrainColumn {
                     base_pos: pos,
                     fft_bin,
-                    col_index: col,
                 },
                 EffectLayer(EffectId::FftTerrain),
             ));
         }
     }
+
+    commands.insert_resource(TerrainMaterials {
+        materials: shared_mats,
+    });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update(
+    time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     policy: Res<ThemeMaterialPolicy>,
-    mut query: Query<(
-        &TerrainColumn,
-        &mut Transform,
-        &MeshMaterial3d<StandardMaterial>,
-    )>,
+    terrain_materials: Res<TerrainMaterials>,
+    mut query: Query<(&TerrainColumn, &mut Transform)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_policy_version: Local<u64>,
+    mut last_fade: Local<f32>,
+    mut last_hue_offset: Local<f32>,
 ) {
     let fade = effect_state.fade;
+    let dt = time.delta_secs();
+    let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
 
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
-    let policy_changed = *last_policy_version != policy.version;
-    if policy_changed {
-        *last_policy_version = policy.version;
-    }
 
-    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
-    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
-
-    for (col, mut transform, material_handle) in &mut query {
+    for (col, mut transform) in &mut query {
         // Get FFT magnitude for this column
         let mag = if col.fft_bin < telemetry.fft_bin_count {
             telemetry.fft[col.fft_bin]
@@ -118,20 +126,46 @@ pub fn update(
         };
 
         // Height driven by FFT magnitude + beat pulse
-        let height = (mag * MAX_HEIGHT * (1.0 + beat_pulse * 0.3)).max(0.1) * fade;
+        let target_height = (mag * MAX_HEIGHT * (1.0 + beat_pulse * 0.3)).max(0.1) * fade;
+
+        // Instant attack, smooth decay (same pattern as fft_bars)
+        let current = transform.scale.y;
+        let height = if target_height > current {
+            target_height
+        } else {
+            current + (target_height - current) * decay_alpha
+        };
 
         // Scale Y for height, keep X/Z at 1
         transform.scale = Vec3::new(1.0, height, 1.0);
         // Position: base + half height (cube origin is center)
         transform.translation = Vec3::new(col.base_pos.x, height * 0.5, col.base_pos.z);
+    }
 
-        // Update material color when policy changes or during fade
-        if (policy_changed || fade < 1.0)
-            && let Some(material) = materials.get_mut(&material_handle.0)
-        {
-            let band_pos = col.col_index as f32 / COLS as f32;
-            let hue = telemetry_color::band_frequency_hue(band_pos);
-            let color = Color::hsl(hue, sat, lit * fade);
+    // Update shared materials once each (not per entity)
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let policy_changed = *last_policy_version != policy.version;
+
+    if !policy_changed
+        && (fade - *last_fade).abs() < effects::FADE_EPSILON
+        && (hue_offset - *last_hue_offset).abs() < 1.0
+    {
+        return;
+    }
+    *last_policy_version = policy.version;
+    *last_fade = fade;
+    *last_hue_offset = hue_offset;
+
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
+
+    for (col, handle) in terrain_materials.materials.iter().enumerate() {
+        if let Some(material) = materials.get_mut(handle) {
+            let band_pos = col as f32 / COLS as f32;
+            let hue = telemetry_color::band_frequency_hue(band_pos) + hue_offset;
+            let color = Color::hsl(hue % 360.0, sat, lit * fade);
             material.base_color = color;
             material.emissive = LinearRgba::from(color) * emissive * fade;
             material.metallic = policy.metallic;

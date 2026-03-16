@@ -285,6 +285,10 @@ struct SynthApp {
 
     /// Module clipboard for copy/paste.
     clipboard: crate::gui::clipboard::ModuleClipboard,
+
+    /// Reusable buffers for master scope visualization (avoids per-frame allocation).
+    scope_buf_l: Vec<f32>,
+    scope_buf_r: Vec<f32>,
 }
 
 impl SynthApp {
@@ -360,6 +364,8 @@ impl SynthApp {
             dirty: false,
             unsaved_dialog: UnsavedChangesDialog::default(),
             clipboard: crate::gui::clipboard::ModuleClipboard::new(),
+            scope_buf_l: Vec::new(),
+            scope_buf_r: Vec::new(),
         }
     }
 
@@ -463,15 +469,10 @@ impl eframe::App for SynthApp {
                         if !overdub {
                             pattern.clear_notes();
                         }
-                        let instrument =
-                            self.sequencer_view_state.recording_instrument;
+                        let instrument = self.sequencer_view_state.recording_instrument;
                         for note in &notes {
-                            let nid = pattern.add_note(
-                                note.start,
-                                note.pitch,
-                                note.velocity,
-                                instrument,
-                            );
+                            let nid =
+                                pattern.add_note(note.start, note.pitch, note.velocity, instrument);
                             if let Some(n) = pattern.note_mut(nid) {
                                 n.duration = Some(note.duration);
                             }
@@ -962,7 +963,8 @@ impl eframe::App for SynthApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(egui::Button::new(
-                            RichText::new(format!("{} PANIC", ri::ALARM_WARNING_FILL)).color(theme().colors.accent_red),
+                            RichText::new(format!("{} PANIC", ri::ALARM_WARNING_FILL))
+                                .color(theme().colors.accent_red),
                         ))
                         .clicked()
                     {
@@ -2399,11 +2401,19 @@ impl SynthApp {
         let show_scopes = scope_total >= min_scope_width * 2.0;
         let scope_width = if show_scopes { scope_total / 2.0 } else { 0.0 };
 
-        let (samples_l, samples_r) = if show_scopes {
-            self.handle.state.master_scope.read_samples()
+        // Read samples into reusable buffers, then take ownership for this frame.
+        // The buffers are returned to self at the end to preserve capacity.
+        if show_scopes {
+            self.handle
+                .state
+                .master_scope
+                .read_samples_into(&mut self.scope_buf_l, &mut self.scope_buf_r);
         } else {
-            (Vec::new(), Vec::new())
-        };
+            self.scope_buf_l.clear();
+            self.scope_buf_r.clear();
+        }
+        let mut samples_l = std::mem::take(&mut self.scope_buf_l);
+        let mut samples_r = std::mem::take(&mut self.scope_buf_r);
 
         let (peak_l, peak_r) = self.handle.peak_meters();
         let (peak_l, peak_r) = (peak_l.as_f32(), peak_r.as_f32());
@@ -2459,6 +2469,12 @@ impl SynthApp {
             draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, meter_width, keys_height);
             ui.add_space(meter_margin);
         });
+
+        // Return buffers to self so their capacity is reused next frame
+        samples_l.clear();
+        samples_r.clear();
+        self.scope_buf_l = samples_l;
+        self.scope_buf_r = samples_r;
     }
 
     fn process_keyboard_input(&mut self, ctx: &egui::Context) {

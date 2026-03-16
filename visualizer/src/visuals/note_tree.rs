@@ -12,7 +12,7 @@ use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
 
 /// Growth rate when notes arrive (per second).
 const GROWTH_RATE: f32 = 3.0;

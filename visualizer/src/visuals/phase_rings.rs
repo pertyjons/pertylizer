@@ -20,7 +20,7 @@ const RING_THICKNESS: f32 = 0.5;
 const MAX_RINGS: usize = 8;
 
 /// Emissive intensity multiplier.
-const EMISSIVE_STRENGTH: f32 = 12.0;
+const EMISSIVE_STRENGTH: f32 = 5.0;
 
 /// A single expanding ring.
 #[derive(Component)]

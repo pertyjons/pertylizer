@@ -30,7 +30,7 @@ const ROW_DEPTH: f32 = 0.6;
 const CELL_SIZE: f32 = TOTAL_WIDTH / BANDS as f32;
 
 /// Emissive intensity multiplier.
-const EMISSIVE_STRENGTH: f32 = 8.0;
+const EMISSIVE_STRENGTH: f32 = 3.0;
 
 /// How often to scroll (seconds between row shifts).
 const SCROLL_INTERVAL: f32 = 0.05;

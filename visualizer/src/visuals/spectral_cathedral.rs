@@ -26,7 +26,7 @@ const ARCH_RADIUS: f32 = 15.0;
 const ARCH_SPACING: f32 = 2.0;
 
 /// Emissive multiplier.
-const EMISSIVE_STRENGTH: f32 = 6.0;
+const EMISSIVE_STRENGTH: f32 = 2.5;
 
 #[derive(Component)]
 pub struct ArchSegment {

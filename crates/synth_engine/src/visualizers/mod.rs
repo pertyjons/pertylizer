@@ -13,6 +13,7 @@ pub use spectrum_analyzer::SpectrumAnalyzer;
 
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Atomic float wrapper for lock-free level sharing.
@@ -55,8 +56,9 @@ pub struct VisualizationBuffer {
     rms_l: AtomicF32,
     rms_r: AtomicF32,
     /// Snapshot of samples for GUI (updated periodically).
-    snapshot_l: parking_lot::Mutex<Vec<f32>>,
-    snapshot_r: parking_lot::Mutex<Vec<f32>>,
+    /// Uses `VecDeque` so that draining from the front is O(1) amortized.
+    snapshot_l: parking_lot::Mutex<VecDeque<f32>>,
+    snapshot_r: parking_lot::Mutex<VecDeque<f32>>,
 
     // Sweep data for triggered oscilloscope display (SignalMonitor)
     /// Pre-allocated sweep buffer. Written by audio thread (try_lock),
@@ -105,8 +107,8 @@ impl VisualizationBuffer {
             peak_r: AtomicF32::new(0.0),
             rms_l: AtomicF32::new(0.0),
             rms_r: AtomicF32::new(0.0),
-            snapshot_l: parking_lot::Mutex::new(vec![0.0; size]),
-            snapshot_r: parking_lot::Mutex::new(vec![0.0; size]),
+            snapshot_l: parking_lot::Mutex::new(VecDeque::from(vec![0.0; size])),
+            snapshot_r: parking_lot::Mutex::new(VecDeque::from(vec![0.0; size])),
             // Sweep buffer pre-allocated with generous capacity
             sweep_data: parking_lot::Mutex::new(Vec::with_capacity(8192)),
             sweep_generation: AtomicU32::new(0),
@@ -229,41 +231,46 @@ impl VisualizationBuffer {
     }
 
     /// Read samples for display (called from GUI thread).
-    /// Returns a snapshot of the most recent samples.
-    pub fn read_samples(&self) -> (Vec<f32>, Vec<f32>) {
-        // Drain the ring buffers into snapshots
+    ///
+    /// Fills the caller-provided buffers with the current snapshot data,
+    /// avoiding per-frame heap allocations when the caller reuses the same Vecs.
+    /// The internal `VecDeque` snapshots are preserved for other readers
+    /// (e.g. [`copy_snapshot_windowed_into`](Self::copy_snapshot_windowed_into)).
+    pub fn read_samples_into(&self, dst_l: &mut Vec<f32>, dst_r: &mut Vec<f32>) {
         let mut snapshot_l = self.snapshot_l.lock();
         let mut snapshot_r = self.snapshot_r.lock();
 
         if let Some(mut cons_l) = self.samples_l_cons.try_lock()
             && let Some(mut cons_r) = self.samples_r_cons.try_lock()
         {
-            // Count available samples first
             let avail_l = cons_l.occupied_len();
             let avail_r = cons_r.occupied_len();
 
             if avail_l > 0 {
-                // Rotate snapshot left by the number of new samples (O(n) but only once)
+                // VecDeque drain from front is O(1) amortized
                 let len_l = snapshot_l.len();
                 let drain_count = avail_l.min(len_l);
-                snapshot_l.drain(0..drain_count);
-                // Append new samples
+                drop(snapshot_l.drain(0..drain_count));
                 while let Some(sample) = cons_l.try_pop() {
-                    snapshot_l.push(sample);
+                    snapshot_l.push_back(sample);
                 }
             }
 
             if avail_r > 0 {
                 let len_r = snapshot_r.len();
                 let drain_count = avail_r.min(len_r);
-                snapshot_r.drain(0..drain_count);
+                drop(snapshot_r.drain(0..drain_count));
                 while let Some(sample) = cons_r.try_pop() {
-                    snapshot_r.push(sample);
+                    snapshot_r.push_back(sample);
                 }
             }
         }
 
-        (snapshot_l.clone(), snapshot_r.clone())
+        // Copy into caller buffers — no allocation if dst already has capacity
+        dst_l.clear();
+        dst_l.extend(snapshot_l.iter());
+        dst_r.clear();
+        dst_r.extend(snapshot_r.iter());
     }
 
     /// Copy the left-channel snapshot into `dst` with windowing applied, without
@@ -271,11 +278,12 @@ impl VisualizationBuffer {
     ///
     /// Copies the last `dst.len()` samples from the snapshot into `dst`,
     /// multiplied element-wise by `window`. If the snapshot is shorter than `dst`,
-    /// the remaining elements are zeroed. Unlike [`read_samples`], this only locks
-    /// the snapshot mutex (not the consumer), so it does not compete with the GUI.
+    /// the remaining elements are zeroed. Unlike [`read_samples_into`](Self::read_samples_into),
+    /// this only locks the snapshot mutex (not the consumer), so it does not
+    /// compete with the GUI.
     pub fn copy_snapshot_windowed_into(&self, dst: &mut [f32], window: &[f32]) {
         let snapshot = self.snapshot_l.lock();
-        let copy_len = snapshot.len().min(dst.len());
+        let copy_len = snapshot.len().min(dst.len()).min(window.len());
         let src_offset = snapshot.len().saturating_sub(copy_len);
         for i in 0..copy_len {
             dst[i] = snapshot[src_offset + i] * window[i];
@@ -401,6 +409,13 @@ impl synth_core::VisualizationSink for VisualizationBuffer {
         if let Some(mut data) = self.sweep_data.try_lock() {
             self.sweep_last_writer
                 .store(voice_start_time, Ordering::Relaxed);
+            // Truncate if samples exceed pre-allocated capacity (no allocation)
+            let max_len = data.capacity();
+            let samples = if samples.len() > max_len {
+                &samples[..max_len]
+            } else {
+                samples
+            };
             // clear + extend reuses existing capacity (no allocation)
             data.clear();
             data.extend_from_slice(samples);

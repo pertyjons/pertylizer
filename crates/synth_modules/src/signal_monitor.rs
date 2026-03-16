@@ -179,7 +179,7 @@ impl Describable for SignalMonitor {
             )
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Audio att visa. Koppla in valfri signal för att se vågformen"),
+                    .description("Audio to display. Connect any signal to see the waveform"),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
