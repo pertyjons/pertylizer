@@ -11,81 +11,94 @@ Active development — **no backward compatibility required**. Break APIs freely
 ## Commands
 
 ### `git commit`
+
 ```bash
 git add --all
 git commit -m "<short description of changes>"
 ```
 
 ### `new version`
+
 1. Update `docs/history.md` with new version number and changes
 2. Review `docs/TODO.md` and mark completed tasks
 3. Update version number in `Cargo.toml`
 
 ---
 
-## Code Style & Patterns
+## Architecture
 
-### Newtype Pattern (CRITICAL — strictly enforced)
+### Crate Structure
 
-**NEVER use raw primitives** (`f32`, `u8`, `u16`, `u32`, `u64`, `usize`, `i32`) for domain concepts. ALWAYS wrap them in a newtype. This applies to: function parameters, return types, struct fields, and local variables representing domain concepts.
+| Crate             | Purpose                                                            |
+|-------------------|--------------------------------------------------------------------|
+| `pertylizer`      | GUI application (egui/eframe), MCP integration, project management |
+| `synth_core`      | Shared types, traits (`PolyModule`, `ModuleDescriptor`), newtypes  |
+| `synth_engine`    | Audio engine, voice management, instrument graph, recording        |
+| `synth_sequencer` | Song, patterns, tracks, arrangement, automation                    |
+| `synth_modules`   | DSP module implementations (oscillators, filters, envelopes, etc.) |
+| `synth_dsp`       | Low-level DSP primitives (biquad, delay lines, interpolation)      |
+| `synth_awe`       | Acoustic World Engine (room simulation)                            |
+| `synth_mcp`       | MCP server for external control                                    |
+| `synth_osc`       | OSC protocol support                                               |
 
-**Rule of thumb:** If the value has a *unit* or *meaning* beyond "just a number", it MUST be a newtype.
+### Thread Model
+
+- **Audio thread** — real-time, lock-free. Runs `SynthEngine::process()`. Communicates via `EngineCommand` (in) and
+  `EngineEvent` (out) ring buffers.
+- **UI thread** — egui rendering. Holds `EngineHandle` for sending commands and reading shared atomic state.
+- **Shared state** — `Arc<RwLock<Song>>` for sequencer data. Audio thread uses `try_read()` only. UI thread uses
+  `write()` for mutations. Collect snapshots before rendering, release lock, then draw.
+
+### GUI Architecture (egui)
+
+- Icons: `egui_remixicon::icons as ri` (Remix Icon font)
+- Panel order: TopPanel → SidePanel → TopBottomPanel::bottom → CentralPanel (last)
+- Patch editor modules use `egui::Area` at `Order::Background`. Keyboard panel renders at `Order::Middle` for input
+  priority.
+- Pattern data collected as snapshots (`collect_arrangement_data`, `collect_piano_roll_data`) before rendering to
+  minimize lock hold time.
+
+---
+
+## Newtype Pattern (CRITICAL)
+
+**NEVER use raw primitives** for domain concepts. ALWAYS wrap in a newtype.
 
 ```rust
-// WRONG:
+// WRONG — raw primitives for domain values
 fn set_frequency(hz: f32) { ... }
-struct ClipboardNote { pitch: u8, velocity: f32 }
 
-// RIGHT:
+// RIGHT — newtypes
 fn set_frequency(freq: Hertz) { ... }
-struct ClipboardNote { pitch: Pitch, velocity: Velocity }
 ```
 
-**Raw primitives are ONLY acceptable for:**
-- Loop counters and array indices (not domain concepts)
-- Intermediate arithmetic inside a function that returns a newtype
-- FFI boundaries and serialization internals
+**Raw primitives OK for:** loop counters, intermediate arithmetic, FFI/serialization internals.
 
-**Before adding a new primitive, ALWAYS search the codebase first** — a suitable newtype likely already exists. If none fits, create one. The list below shows *examples* of existing types, not a complete inventory:
+**Search the codebase first** — a suitable newtype likely exists:
 
-#### Existing domain types (examples, not exhaustive)
+| Crate             | Examples                                                                                                                                                                                                      | 
+|-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName` |
+| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `SeqInstrumentId`                                                                                     |
+| `synth_engine`    | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`, `ModuleId`                                                                                                                     |
+| `synth_awe`       | `Meters`, `SquareMeters`, `CubicMeters`, `SampleOffset`, `StretchFactor`                                                                                                                                      |
 
-| Crate | Examples |
-|-------|----------|
-| `synth_core` | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName` |
-| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex` |
-| `synth_engine` | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount` |
-| `synth_awe` | `Meters`, `SquareMeters`, `CubicMeters`, `SampleOffset`, `StretchFactor` |
+---
 
-### Naming Conventions
+## Code Style
 
-- **Types:** `PascalCase` — `Hertz`, `NormalizedValue`
-- **Functions/methods:** `snake_case` — `to_frequency()`, `as_f32()`
-- **Constants:** `SCREAMING_SNAKE_CASE` — `Hertz::A4`, `Gain::UNITY`
-- **Use `Self`** in impl blocks, not the type name
-
-### Error Handling
-
-- **`thiserror`** for all error types — no manual `Display + Error` impls
-- Return `Result<T, E>` with descriptive error variants, not stringly-typed errors
-- No `.unwrap()` or `.expect()` in production code — use `unwrap_or`, `unwrap_or_default`, `?`, or `if let`
-- `.unwrap()`/`.expect()` allowed in: tests, one-time init guaranteed to succeed
-
-### Code Organization
-
-- **`pub(crate)`** for internal types where reasonable — minimize public API surface
-- **`#[must_use]`** on newtypes, builder methods, and functions whose return values shouldn't be ignored
-- **No `unsafe` code** — discuss first if absolutely necessary
-- Prefer composition over deep inheritance-like trait hierarchies
-- Keep modules focused — split when a file exceeds ~500 lines
+- Use `Self` in impl blocks, not the type name
+- `thiserror` for error types — no manual `Display + Error` impls
+- No `.unwrap()` / `.expect()` in production code — use `unwrap_or`, `?`, or `if let`
+- `pub(crate)` for internal types — minimize public API surface
+- `#[must_use]` on newtypes and builder methods
+- No `unsafe` code without discussion
 
 ---
 
 ## Build & Code Quality
 
-### Required Checks
-
-Before a task is done, ALL must pass with **zero warnings or errors**:
+ALL must pass with **zero warnings or errors**:
 
 ```bash
 cargo build                  # RUSTFLAGS="-D warnings" in .cargo/config.toml
@@ -94,22 +107,8 @@ cargo test
 cargo fmt --check
 ```
 
-### Allowed Clippy Exceptions
-
-```rust
-#[allow(clippy::too_many_lines)]           // Large process() functions
-#[allow(clippy::cast_precision_loss)]      // usize -> f32 in audio
-#[allow(clippy::cast_possible_truncation)] // Value guaranteed to fit
-```
-
----
-
-## Testing
-
-- Test public behavior, not implementation details
-- Use descriptive test names: `test_velocity_clamps_to_valid_range`, not `test1`
-- Prefer small focused tests over large integration tests
-- Use `assert_eq!` / `assert_ne!` with meaningful messages for non-obvious comparisons
+Allowed clippy exceptions: `too_many_lines` (large `process()` functions), `cast_precision_loss` (usize → f32 in audio),
+`cast_possible_truncation` (value guaranteed to fit).
 
 ---
 
@@ -117,32 +116,9 @@ cargo fmt --check
 
 In `process()` functions and real-time-critical code:
 
-### Forbidden
-- **Heap allocations:** `Vec::push`, `HashMap::insert`, `String::clone`, `Box::new`
-- **Blocking locks:** `Mutex::lock`, `RwLock::write`
-- **Panics:** `unwrap()`, `expect()`, `panic!`, out-of-bounds indexing
-- **System calls:** file I/O, logging, printing
+**Forbidden:** heap allocations (`Vec::push`, `Box::new`, `String::clone`), blocking locks (`Mutex::lock`,
+`RwLock::write`), panics (`unwrap()`, `expect()`, out-of-bounds indexing), system calls (file I/O, logging).
 
-### Allowed
-- `unwrap_or(0.0)` for safe sample defaults
-- Pre-allocated buffers
-- Atomic operations and lock-free structures
+**Allowed:** `unwrap_or(0.0)` for safe defaults, pre-allocated buffers, atomics, lock-free structures.
 
-### For-loops vs Iterators
-
-**For-loops** in audio DSP sample processing:
-```rust
-for i in 0..samples {
-    output[i] = input[i] * gain;
-}
-```
-
-**Iterators** outside the hot path for collection operations.
-
----
-
-## GUI (egui)
-
-- Keep UI code separate from business logic
-- Avoid allocations in per-frame rendering where possible
-- Use `egui::Id` for stable widget identity across frames
+**For-loops** for DSP sample processing. **Iterators** outside the hot path.
