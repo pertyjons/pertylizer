@@ -100,7 +100,7 @@ impl VoiceAllocator {
         Self {
             config,
             voices,
-            held_notes: Vec::new(),
+            held_notes: Vec::with_capacity(32),
             time: SamplePosition::ZERO,
             last_note: None,
         }
@@ -119,7 +119,7 @@ impl VoiceAllocator {
         Self {
             config,
             voices,
-            held_notes: Vec::new(),
+            held_notes: Vec::with_capacity(32),
             time: SamplePosition::ZERO,
             last_note: None,
         }
@@ -138,7 +138,7 @@ impl VoiceAllocator {
         Self {
             config,
             voices,
-            held_notes: Vec::new(),
+            held_notes: Vec::with_capacity(32),
             time: SamplePosition::ZERO,
             last_note: None,
         }
@@ -383,11 +383,10 @@ impl VoiceAllocator {
 
         let voice_idx = self.find_voice_to_steal()?;
         let voice = &mut self.voices[voice_idx];
-        voice.steal();
 
-        // We need to wait for the steal to complete before triggering
-        // For now, just trigger immediately (could be improved)
-        voice.note_on(note, velocity, self.time);
+        // Start fade-out with pending note; instrument.rs will trigger
+        // note_on once the fade completes.
+        voice.steal_for(note, velocity, self.time);
         self.last_note = Some(note);
         Some(voice.id)
     }

@@ -12,6 +12,10 @@ use synth_sequencer::{
     Tick,
 };
 
+/// Minimum change threshold for automation value deduplication.
+/// Values changing less than this are considered unchanged and won't emit events.
+const AUTOMATION_DEDUP_THRESHOLD: f32 = 0.001;
+
 /// Playback state of the sequencer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlayState {
@@ -367,10 +371,9 @@ impl SequencerEngine {
 
         // Emit automation parameter events (deduplicated)
         for (target, value) in auto_events {
-            let changed = self
-                .last_automation_values
-                .get(&target)
-                .is_none_or(|last| (value.as_f32() - last.as_f32()).abs() > 0.001);
+            let changed = self.last_automation_values.get(&target).is_none_or(|last| {
+                (value.as_f32() - last.as_f32()).abs() > AUTOMATION_DEDUP_THRESHOLD
+            });
 
             if changed {
                 self.last_automation_values.insert(target.clone(), value);

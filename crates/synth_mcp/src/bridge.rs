@@ -3,6 +3,16 @@
 //! Implementors provide read access to engine state and write access
 //! via the command sender. The trait uses primitive types to avoid
 //! leaking synth_engine types into the MCP crate.
+//!
+//! # Design: raw primitives at the serialization boundary
+//!
+//! All bridge methods accept and return raw primitives (`f32`, `u8`, `u64`, etc.)
+//! rather than domain newtypes (`Hertz`, `BipolarValue`, `NormalizedValue`, etc.).
+//! This is intentional: the MCP protocol exchanges JSON, so the bridge sits at the
+//! serialization boundary where type-safe wrappers add friction without safety.
+//! Validation of ranges and semantics happens in `server.rs` (the MCP tool layer)
+//! before values reach the bridge, and conversion to domain newtypes happens in the
+//! bridge implementation (`mcp_bridge.rs` in the `pertylizer` crate).
 
 use crate::error::McpBridgeError;
 use crate::types::{
@@ -125,7 +135,7 @@ pub struct BridgeInstrumentDef {
     pub midi_channel: Option<u8>,
     /// Optional volume (0.0-2.0).
     pub volume: Option<f32>,
-    /// Optional pan (-1.0 to 1.0).
+    /// Optional pan (-1.0 = left, 0.0 = center, 1.0 = right).
     pub pan: Option<f32>,
     /// Modules to create.
     pub modules: Vec<BridgeModuleDef>,
@@ -190,7 +200,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Set instrument volume (0.0-2.0).
     fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError>;
 
-    /// Set instrument pan (-1.0 to 1.0).
+    /// Set instrument pan (-1.0 = left, 0.0 = center, 1.0 = right).
     fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError>;
 
     /// Set instrument mute state.
@@ -500,7 +510,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Set track volume (0.0-1.0).
     fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError>;
 
-    /// Set track pan (0.0-1.0, 0.5=center).
+    /// Set track pan (-1.0 = left, 0.0 = center, 1.0 = right).
     fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError>;
 
     /// Mute or unmute a track.
@@ -557,9 +567,13 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn new_project(&self) -> Result<String, McpBridgeError>;
 
     /// Save the current project to a file.
+    ///
+    /// **Warning:** Performs file I/O. Must not be called from the audio thread.
     fn save_project(&self, path: &str) -> Result<String, McpBridgeError>;
 
     /// Load a project from a file.
+    ///
+    /// **Warning:** Performs file I/O. Must not be called from the audio thread.
     fn load_project(&self, path: &str) -> Result<String, McpBridgeError>;
 
     /// Optimize the project by removing unused patterns, tracks, and instruments.

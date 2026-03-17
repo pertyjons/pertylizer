@@ -15,9 +15,12 @@ pub enum McpBridgeError {
     #[error("parameter not found: {0}")]
     ParameterNotFound(String),
 
-    /// Command failed to send.
-    #[error("command send failed")]
-    CommandSendFailed,
+    /// Command failed to send to the audio engine.
+    #[error("failed to send {command} command to audio engine")]
+    CommandSendFailed {
+        /// Which command was being sent.
+        command: &'static str,
+    },
 
     /// Example patch not found.
     #[error("example patch not found: {0}")]
@@ -51,7 +54,49 @@ pub enum McpBridgeError {
     #[error("song lock poisoned")]
     SongLockPoisoned,
 
-    /// Generic error.
+    /// MIDI note out of valid range.
+    #[error("invalid MIDI note {0}: must be 0-127")]
+    InvalidMidiNote(u8),
+
+    /// MIDI velocity out of valid range.
+    #[error("invalid velocity {0}: must be 0-127")]
+    InvalidVelocity(u8),
+
+    /// MIDI channel out of valid range.
+    #[error("invalid MIDI channel {0}: must be 1-16")]
+    InvalidMidiChannel(u8),
+
+    /// Numeric parameter out of valid range.
+    #[error("{name} value {value} out of range: must be {min}..={max}")]
+    ValueOutOfRange {
+        name: &'static str,
+        value: f32,
+        min: f32,
+        max: f32,
+    },
+
+    /// Invalid instrument category string.
+    #[error("invalid instrument category '{0}': valid categories are Drums, Bass, Lead, Pad, Keys, Strings, Brass, Woodwind, FX, Vocal, Other")]
+    InvalidCategory(String),
+
+    /// Invalid automation curve type.
+    #[error("invalid automation curve '{0}': valid curves are Linear, Step, Exponential, SCurve")]
+    InvalidCurve(String),
+
+    /// Index out of bounds in a batch operation.
+    #[error("{name} index {index} out of bounds: only {count} items available")]
+    IndexOutOfBounds {
+        name: &'static str,
+        index: usize,
+        count: usize,
+    },
+
+    /// Empty name not allowed.
+    #[error("{kind} name must not be empty")]
+    EmptyName { kind: &'static str },
+
+    /// Generic error — use sparingly; prefer a specific variant when the failure
+    /// mode is known so MCP clients can programmatically handle it.
     #[error("{0}")]
     Other(String),
 }

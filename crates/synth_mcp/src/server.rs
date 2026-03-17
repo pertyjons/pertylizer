@@ -17,6 +17,200 @@ use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::bridge::SynthBridge;
+use crate::error::McpBridgeError;
+
+// === Helper functions ===
+
+/// Serialize a value to pretty-printed JSON, returning an error string on failure.
+fn to_json<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("Serialization error: {e}"))
+}
+
+fn validate_midi_note(note: u8) -> Result<(), McpBridgeError> {
+    if note > 127 {
+        return Err(McpBridgeError::InvalidMidiNote(note));
+    }
+    Ok(())
+}
+
+fn validate_velocity(velocity: u8) -> Result<(), McpBridgeError> {
+    if velocity > 127 {
+        return Err(McpBridgeError::InvalidVelocity(velocity));
+    }
+    Ok(())
+}
+
+fn validate_midi_channel(channel: u8) -> Result<(), McpBridgeError> {
+    if !(1..=16).contains(&channel) {
+        return Err(McpBridgeError::InvalidMidiChannel(channel));
+    }
+    Ok(())
+}
+
+fn validate_range(name: &'static str, value: f32, min: f32, max: f32) -> Result<(), McpBridgeError> {
+    if value < min || value > max || value.is_nan() {
+        return Err(McpBridgeError::ValueOutOfRange {
+            name,
+            value,
+            min,
+            max,
+        });
+    }
+    Ok(())
+}
+
+fn validate_name(kind: &'static str, name: &str) -> Result<(), McpBridgeError> {
+    if name.trim().is_empty() {
+        return Err(McpBridgeError::EmptyName { kind });
+    }
+    Ok(())
+}
+
+/// Valid automation curve names.
+const VALID_CURVES: &[&str] = &["Linear", "Step", "Exponential", "SCurve"];
+
+fn validate_curve(curve: &str) -> Result<(), McpBridgeError> {
+    if !VALID_CURVES.contains(&curve) {
+        return Err(McpBridgeError::InvalidCurve(curve.to_string()));
+    }
+    Ok(())
+}
+
+/// Validate note fields that are always required (add_note, add_notes, etc.).
+fn validate_note_fields(
+    pitch: u8,
+    velocity: u8,
+    start_beat: f32,
+    duration_beats: f32,
+) -> Result<(), McpBridgeError> {
+    validate_midi_note(pitch)?;
+    validate_velocity(velocity)?;
+    validate_range("start_beat", start_beat, 0.0, 9999.0)?;
+    validate_range("duration_beats", duration_beats, f32::MIN_POSITIVE, 9999.0)?;
+    Ok(())
+}
+
+/// Validate optional note update fields.
+fn validate_note_update_fields(
+    pitch: Option<u8>,
+    velocity: Option<u8>,
+    start_beat: Option<f32>,
+    duration_beats: Option<f32>,
+) -> Result<(), McpBridgeError> {
+    if let Some(p) = pitch {
+        validate_midi_note(p)?;
+    }
+    if let Some(v) = velocity {
+        validate_velocity(v)?;
+    }
+    if let Some(s) = start_beat {
+        validate_range("start_beat", s, 0.0, 9999.0)?;
+    }
+    if let Some(d) = duration_beats {
+        validate_range("duration_beats", d, f32::MIN_POSITIVE, 9999.0)?;
+    }
+    Ok(())
+}
+
+/// Validate automation point fields.
+fn validate_automation_point(pt: &AutomationPointInput) -> Result<(), McpBridgeError> {
+    validate_range("value", pt.value, 0.0, 1.0)?;
+    validate_range("beat", pt.beat, 0.0, 9999.0)?;
+    if let Some(ref curve) = pt.curve {
+        validate_curve(curve)?;
+    }
+    Ok(())
+}
+
+/// Validate connection indices against the modules array length.
+fn validate_connection_indices(
+    connections: &[ConnectionDefInput],
+    module_count: usize,
+) -> Result<(), McpBridgeError> {
+    for conn in connections {
+        if conn.from >= module_count {
+            return Err(McpBridgeError::IndexOutOfBounds {
+                name: "from",
+                index: conn.from,
+                count: module_count,
+            });
+        }
+        if conn.to >= module_count {
+            return Err(McpBridgeError::IndexOutOfBounds {
+                name: "to",
+                index: conn.to,
+                count: module_count,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate a time signature: numerator 1..=32, denominator is a power of 2 (1..=32).
+fn validate_time_signature(numerator: u8, denominator: u8) -> Result<(), McpBridgeError> {
+    if !(1..=32).contains(&numerator) {
+        return Err(McpBridgeError::ValueOutOfRange {
+            name: "numerator",
+            value: f32::from(numerator),
+            min: 1.0,
+            max: 32.0,
+        });
+    }
+    if denominator == 0 || !denominator.is_power_of_two() || denominator > 32 {
+        return Err(McpBridgeError::Other(format!(
+            "denominator must be a power of 2 (1,2,4,8,16,32), got {denominator}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate fields common to `BuildInstrumentParam` / `InstrumentDefInput`.
+fn validate_build_instrument_fields(
+    name: &str,
+    midi_channel: Option<u8>,
+    volume: Option<f32>,
+    pan: Option<f32>,
+    modules: &[ModuleDefInput],
+    connections: Option<&[ConnectionDefInput]>,
+) -> Result<(), McpBridgeError> {
+    validate_name("instrument", name)?;
+    if let Some(ch) = midi_channel {
+        validate_midi_channel(ch)?;
+    }
+    if let Some(v) = volume {
+        validate_range("volume", v, 0.0, 2.0)?;
+    }
+    if let Some(p) = pan {
+        validate_range("pan", p, -1.0, 1.0)?;
+    }
+    if let Some(conns) = connections {
+        validate_connection_indices(conns, modules.len())?;
+    }
+    Ok(())
+}
+
+/// Validate a `NoteInput` (used in batch note operations).
+fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
+    validate_note_fields(n.pitch, n.velocity.unwrap_or(100), n.start_beat, n.duration_beats)
+}
+
+/// Validate an `AutomationPointInput` slice.
+fn validate_automation_points_input(points: &[AutomationPointInput]) -> Result<(), McpBridgeError> {
+    for pt in points {
+        validate_automation_point(pt)?;
+    }
+    Ok(())
+}
+
+/// Format a validation error for string-returning tool handlers.
+fn validation_err(e: McpBridgeError) -> String {
+    format!("Error: {e}")
+}
+
+/// Convert a [`McpBridgeError`] into the MCP [`ErrorData`] type used by tool handlers.
+fn mcp_err(e: McpBridgeError) -> ErrorData {
+    ErrorData::internal_error(e.to_string(), None)
+}
 
 // === MCP session tracking ===
 
@@ -536,7 +730,7 @@ pub struct SetTrackVolumeParam {
 pub struct SetTrackPanParam {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
-    #[schemars(description = "Pan (0.0 = left, 0.5 = center, 1.0 = right)")]
+    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
     pub pan: f32,
 }
 
@@ -1076,7 +1270,7 @@ impl ServerHandler for SynthMcpServer {
                     )
                 })?;
 
-            let json = serde_json::to_string_pretty(info).unwrap_or_default();
+            let json = to_json(info);
             Ok(ReadResourceResult::new(vec![ResourceContents::text(
                 json,
                 uri.clone(),
@@ -1101,7 +1295,7 @@ impl ServerHandler for SynthMcpServer {
                 .get_example_patch(&patch_name)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-            let json = serde_json::to_string_pretty(&data).unwrap_or_default();
+            let json = to_json(&data);
             Ok(ReadResourceResult::new(vec![ResourceContents::text(
                 json,
                 uri.clone(),
@@ -1122,8 +1316,7 @@ impl SynthMcpServer {
     )]
     async fn list_instruments(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_instruments() {
-            Ok(instruments) => serde_json::to_string_pretty(&instruments)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(instruments) => to_json(&instruments),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1133,8 +1326,7 @@ impl SynthMcpServer {
     )]
     async fn get_instrument_info(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_instrument_info(params.0.instrument_id) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1144,8 +1336,7 @@ impl SynthMcpServer {
     )]
     async fn list_modules(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.list_modules(params.0.instrument_id) {
-            Ok(modules) => serde_json::to_string_pretty(&modules)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(modules) => to_json(&modules),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1158,8 +1349,7 @@ impl SynthMcpServer {
             .bridge
             .get_module_info(params.0.instrument_id, &params.0.module_id)
         {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1169,8 +1359,7 @@ impl SynthMcpServer {
     )]
     async fn get_connections(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_connections(params.0.instrument_id) {
-            Ok(conns) => serde_json::to_string_pretty(&conns)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(conns) => to_json(&conns),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1184,8 +1373,7 @@ impl SynthMcpServer {
             &params.0.module_id,
             &params.0.param_name,
         ) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1195,8 +1383,7 @@ impl SynthMcpServer {
     )]
     async fn get_engine_status(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_engine_status() {
-            Ok(status) => serde_json::to_string_pretty(&status)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(status) => to_json(&status),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1206,8 +1393,7 @@ impl SynthMcpServer {
     )]
     async fn get_graph_diagnostics(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_graph_diagnostics(params.0.instrument_id) {
-            Ok(diags) => serde_json::to_string_pretty(&diags)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(diags) => to_json(&diags),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1216,14 +1402,24 @@ impl SynthMcpServer {
         description = "Set a module parameter to a new value. Returns the parameter info with the actual value set (may differ from requested due to clamping). Use list_modules and get_module_info to discover available parameters."
     )]
     async fn set_parameter(&self, params: Parameters<SetParameterParam>) -> String {
+        if params.0.value.is_nan() {
+            return format!(
+                "Error: {}",
+                McpBridgeError::ValueOutOfRange {
+                    name: "value",
+                    value: params.0.value,
+                    min: f32::NEG_INFINITY,
+                    max: f32::INFINITY,
+                }
+            );
+        }
         match self.bridge.set_parameter(
             params.0.instrument_id,
             &params.0.module_id,
             &params.0.param_name,
             params.0.value,
         ) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1232,7 +1428,16 @@ impl SynthMcpServer {
         description = "Play a MIDI note (note on). Use note=60 for middle C, velocity=100 for moderate strength."
     )]
     async fn note_on(&self, params: Parameters<NoteOnParam>) -> String {
+        if let Err(e) = validate_midi_note(params.0.note) {
+            return format!("Error: {e}");
+        }
+        if let Err(e) = validate_velocity(params.0.velocity) {
+            return format!("Error: {e}");
+        }
         let channel = params.0.channel.unwrap_or(1);
+        if let Err(e) = validate_midi_channel(channel) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .note_on(params.0.note, params.0.velocity, channel)
@@ -1249,7 +1454,13 @@ impl SynthMcpServer {
         description = "Stop a MIDI note (note off). Use the same note number as the corresponding note_on."
     )]
     async fn note_off(&self, params: Parameters<NoteOffParam>) -> String {
+        if let Err(e) = validate_midi_note(params.0.note) {
+            return format!("Error: {e}");
+        }
         let channel = params.0.channel.unwrap_or(1);
+        if let Err(e) = validate_midi_channel(channel) {
+            return format!("Error: {e}");
+        }
         match self.bridge.note_off(params.0.note, channel) {
             Ok(()) => format!("Note {} off (ch={})", params.0.note, channel),
             Err(e) => format!("Error: {e}"),
@@ -1263,8 +1474,14 @@ impl SynthMcpServer {
         &self,
         params: Parameters<PreviewNoteParam>,
     ) -> Result<CallToolResult, ErrorData> {
+        validate_midi_note(params.0.note).map_err(mcp_err)?;
+        validate_velocity(params.0.velocity).map_err(mcp_err)?;
         let duration_ms = params.0.duration_ms.unwrap_or(500);
         let tail_ms = params.0.tail_ms.unwrap_or(500);
+        #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
+        validate_range("duration_ms", duration_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
+        #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
+        validate_range("tail_ms", tail_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
 
         let preview = self
             .bridge
@@ -1304,8 +1521,7 @@ impl SynthMcpServer {
     )]
     async fn list_example_patches(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_example_patches() {
-            Ok(patches) => serde_json::to_string_pretty(&patches)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(patches) => to_json(&patches),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1335,8 +1551,7 @@ impl SynthMcpServer {
     )]
     async fn get_ui_snapshot(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_ui_snapshot(params.0.instrument_id) {
-            Ok(snapshot) => serde_json::to_string_pretty(&snapshot)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(snapshot) => to_json(&snapshot),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1346,8 +1561,7 @@ impl SynthMcpServer {
     )]
     async fn list_module_types(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_module_types() {
-            Ok(types) => serde_json::to_string_pretty(&types)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(types) => to_json(&types),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1446,9 +1660,11 @@ impl SynthMcpServer {
         description = "Create a new instrument. Returns the instrument info with its assigned ID."
     )]
     async fn create_instrument(&self, params: Parameters<CreateInstrumentParam>) -> String {
+        if let Err(e) = validate_name("instrument", &params.0.name) {
+            return format!("Error: {e}");
+        }
         match self.bridge.create_instrument(&params.0.name) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1467,6 +1683,9 @@ impl SynthMcpServer {
         description = "Rename an instrument. The name is shown in the UI instrument strip and track selector."
     )]
     async fn rename_instrument(&self, params: Parameters<RenameInstrumentParam>) -> String {
+        if let Err(e) = validate_name("instrument", &params.0.name) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .rename_instrument(params.0.instrument_id, &params.0.name)
@@ -1483,6 +1702,9 @@ impl SynthMcpServer {
         description = "Set the volume of an instrument (0.0 = silent, 1.0 = unity gain, 2.0 = max)."
     )]
     async fn set_instrument_volume(&self, params: Parameters<SetInstrumentVolumeParam>) -> String {
+        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .set_instrument_volume(params.0.instrument_id, params.0.volume)
@@ -1499,6 +1721,9 @@ impl SynthMcpServer {
         description = "Set the pan position of an instrument (-1.0 = left, 0.0 = center, 1.0 = right)."
     )]
     async fn set_instrument_pan(&self, params: Parameters<SetInstrumentPanParam>) -> String {
+        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .set_instrument_pan(params.0.instrument_id, params.0.pan)
@@ -1546,6 +1771,9 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetInstrumentMidiChannelParam>,
     ) -> String {
+        if let Err(e) = validate_midi_channel(params.0.channel) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .set_instrument_midi_channel(params.0.instrument_id, params.0.channel)
@@ -1626,8 +1854,7 @@ impl SynthMcpServer {
     )]
     async fn get_song_info(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_song_info() {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1636,6 +1863,9 @@ impl SynthMcpServer {
         description = "Set the song tempo in BPM (typically 60-200, e.g. 120.0 for standard pop tempo)."
     )]
     async fn set_song_tempo(&self, params: Parameters<SetSongTempoParam>) -> String {
+        if let Err(e) = validate_range("tempo", params.0.bpm, 20.0, 999.0) {
+            return format!("Error: {e}");
+        }
         match self.bridge.set_song_tempo(params.0.bpm) {
             Ok(()) => format!("OK: tempo set to {} BPM", params.0.bpm),
             Err(e) => format!("Error: {e}"),
@@ -1646,6 +1876,9 @@ impl SynthMcpServer {
         description = "Set the song name. Shown in the transport bar and saved with the project."
     )]
     async fn set_song_name(&self, params: Parameters<SetSongNameParam>) -> String {
+        if let Err(e) = validate_name("song", &params.0.name) {
+            return format!("Error: {e}");
+        }
         match self.bridge.set_song_name(&params.0.name) {
             Ok(()) => format!("OK: song name set to '{}'", params.0.name),
             Err(e) => format!("Error: {e}"),
@@ -1659,8 +1892,7 @@ impl SynthMcpServer {
     )]
     async fn list_patterns(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_patterns() {
-            Ok(patterns) => serde_json::to_string_pretty(&patterns)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(patterns) => to_json(&patterns),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1669,6 +1901,12 @@ impl SynthMcpServer {
         description = "Create a new pattern. length_beats: 4.0 = one bar in 4/4. Returns the pattern ID."
     )]
     async fn create_pattern(&self, params: Parameters<CreatePatternParam>) -> String {
+        if let Err(e) = validate_name("pattern", &params.0.name) {
+            return format!("Error: {e}");
+        }
+        if let Err(e) = validate_range("length_beats", params.0.length_beats, 0.001, 1024.0) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .create_pattern(&params.0.name, params.0.length_beats)
@@ -1693,8 +1931,7 @@ impl SynthMcpServer {
     )]
     async fn list_notes(&self, params: Parameters<PatternIdParam>) -> String {
         match self.bridge.list_notes(params.0.pattern_id) {
-            Ok(notes) => serde_json::to_string_pretty(&notes)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(notes) => to_json(&notes),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1703,6 +1940,14 @@ impl SynthMcpServer {
         description = "Add a note to a pattern. pitch: MIDI 0-127 (60=C4). start_beat/duration_beats in beats (1.0=quarter). velocity: 0-127."
     )]
     async fn add_note(&self, params: Parameters<AddNoteParam>) -> String {
+        if let Err(e) = validate_note_fields(
+            params.0.pitch,
+            params.0.velocity,
+            params.0.start_beat,
+            params.0.duration_beats,
+        ) {
+            return validation_err(e);
+        }
         match self.bridge.add_note(
             params.0.pattern_id,
             params.0.pitch,
@@ -1711,8 +1956,7 @@ impl SynthMcpServer {
             params.0.velocity,
             params.0.instrument_id,
         ) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1735,6 +1979,14 @@ impl SynthMcpServer {
         description = "Update a note's properties. Only provided fields are changed; null fields keep their current value."
     )]
     async fn update_note(&self, params: Parameters<UpdateNoteParam>) -> String {
+        if let Err(e) = validate_note_update_fields(
+            params.0.pitch,
+            params.0.velocity,
+            params.0.start_beat,
+            params.0.duration_beats,
+        ) {
+            return validation_err(e);
+        }
         match self.bridge.update_note(
             params.0.pattern_id,
             params.0.note_id,
@@ -1743,8 +1995,7 @@ impl SynthMcpServer {
             params.0.duration_beats,
             params.0.velocity,
         ) {
-            Ok(info) => serde_json::to_string_pretty(&info)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1756,8 +2007,7 @@ impl SynthMcpServer {
     )]
     async fn list_tracks(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_tracks() {
-            Ok(tracks) => serde_json::to_string_pretty(&tracks)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(tracks) => to_json(&tracks),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1766,6 +2016,9 @@ impl SynthMcpServer {
         description = "Create a new sequencer track. Optionally assign an instrument and set a name. Returns the track ID."
     )]
     async fn create_track(&self, params: Parameters<CreateTrackParam>) -> String {
+        if let Err(e) = validate_name("track", &params.0.name) {
+            return validation_err(e);
+        }
         match self
             .bridge
             .create_track(&params.0.name, params.0.instrument_id)
@@ -1781,6 +2034,9 @@ impl SynthMcpServer {
         description = "Place a pattern on a track at a beat position in the arrangement timeline"
     )]
     async fn place_pattern(&self, params: Parameters<PlacePatternParam>) -> String {
+        if let Err(e) = validate_range("start_beat", params.0.start_beat, 0.0, 9999.0) {
+            return validation_err(e);
+        }
         match self
             .bridge
             .place_pattern(params.0.pattern_id, params.0.track_id, params.0.start_beat)
@@ -1815,8 +2071,7 @@ impl SynthMcpServer {
     )]
     async fn list_arrangement(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_arrangement() {
-            Ok(placements) => serde_json::to_string_pretty(&placements)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(placements) => to_json(&placements),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1827,6 +2082,11 @@ impl SynthMcpServer {
         description = "Add multiple notes to a pattern in one call. Much faster than calling add_note repeatedly."
     )]
     async fn add_notes(&self, params: Parameters<AddNotesParam>) -> String {
+        for n in &params.0.notes {
+            if let Err(e) = validate_note_input(n) {
+                return validation_err(e);
+            }
+        }
         let notes: Vec<_> = params
             .0
             .notes
@@ -1840,8 +2100,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.add_notes(params.0.pattern_id, &notes) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1850,6 +2109,11 @@ impl SynthMcpServer {
         description = "Update multiple notes in a pattern in one call. Only provided fields are changed per note."
     )]
     async fn update_notes(&self, params: Parameters<UpdateNotesParam>) -> String {
+        for u in &params.0.updates {
+            if let Err(e) = validate_note_update_fields(u.pitch, u.velocity, u.start_beat, u.duration_beats) {
+                return validation_err(e);
+            }
+        }
         let updates: Vec<_> = params
             .0
             .updates
@@ -1863,8 +2127,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.update_notes(params.0.pattern_id, &updates) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1873,6 +2136,11 @@ impl SynthMcpServer {
         description = "Replace all notes in a pattern: clears existing notes, then adds the new ones. Use for full pattern rewrites."
     )]
     async fn replace_notes(&self, params: Parameters<ReplaceNotesParam>) -> String {
+        for n in &params.0.notes {
+            if let Err(e) = validate_note_input(n) {
+                return validation_err(e);
+            }
+        }
         let notes: Vec<_> = params
             .0
             .notes
@@ -1886,8 +2154,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.replace_notes(params.0.pattern_id, &notes) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1907,6 +2174,11 @@ impl SynthMcpServer {
         description = "Add automation points to a pattern. Each point specifies a parameter (e.g. Volume, Pan, FilterCutoff), position in beats, and a normalized value (0.0-1.0)."
     )]
     async fn add_automation_points(&self, params: Parameters<AddAutomationPointsParam>) -> String {
+        for pt in &params.0.points {
+            if let Err(e) = validate_automation_point(pt) {
+                return validation_err(e);
+            }
+        }
         let p = params.0;
         let points: Vec<_> = p
             .points
@@ -1920,7 +2192,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.add_automation_points(p.pattern_id, &points) {
-            Ok(result) => serde_json::to_string_pretty(&result).unwrap_or_default(),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1930,8 +2202,7 @@ impl SynthMcpServer {
     )]
     async fn list_automation_lanes(&self, params: Parameters<PatternIdParam>) -> String {
         match self.bridge.list_automation_lanes(params.0.pattern_id) {
-            Ok(lanes) => serde_json::to_string_pretty(&lanes)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(lanes) => to_json(&lanes),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1944,8 +2215,7 @@ impl SynthMcpServer {
             &p.target,
             p.instrument_id.unwrap_or(0),
         ) {
-            Ok(points) => serde_json::to_string_pretty(&points)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(points) => to_json(&points),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1962,8 +2232,7 @@ impl SynthMcpServer {
             p.instrument_id.unwrap_or(0),
             &p.beats,
         ) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -1987,6 +2256,9 @@ impl SynthMcpServer {
         description = "Set the volume of a track (0.0 = silent, 1.0 = full, up to 2.0 for boost)."
     )]
     async fn set_track_volume(&self, params: Parameters<SetTrackVolumeParam>) -> String {
+        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
+            return validation_err(e);
+        }
         match self
             .bridge
             .set_track_volume(params.0.track_id, params.0.volume)
@@ -2000,9 +2272,12 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set the pan position of a track (0.0 = left, 0.5 = center, 1.0 = right)."
+        description = "Set the pan position of a track (-1.0 = left, 0.0 = center, 1.0 = right)."
     )]
     async fn set_track_pan(&self, params: Parameters<SetTrackPanParam>) -> String {
+        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
+            return validation_err(e);
+        }
         match self.bridge.set_track_pan(params.0.track_id, params.0.pan) {
             Ok(()) => format!(
                 "OK: track {} pan set to {}",
@@ -2061,6 +2336,9 @@ impl SynthMcpServer {
 
     #[tool(description = "Rename a track. The name is shown in the sequencer track headers.")]
     async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
+        if let Err(e) = validate_name("track", &params.0.name) {
+            return validation_err(e);
+        }
         match self.bridge.rename_track(params.0.track_id, &params.0.name) {
             Ok(()) => format!(
                 "OK: track {} renamed to '{}'",
@@ -2084,6 +2362,9 @@ impl SynthMcpServer {
         description = "Rename a pattern. The name is shown in the arrangement timeline and piano roll."
     )]
     async fn rename_pattern(&self, params: Parameters<RenamePatternParam>) -> String {
+        if let Err(e) = validate_name("pattern", &params.0.name) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .rename_pattern(params.0.pattern_id, &params.0.name)
@@ -2100,6 +2381,9 @@ impl SynthMcpServer {
         description = "Set the length of a pattern in beats (e.g. 4.0 = one bar in 4/4, 8.0 = two bars)."
     )]
     async fn set_pattern_length(&self, params: Parameters<SetPatternLengthParam>) -> String {
+        if let Err(e) = validate_range("length_beats", params.0.length_beats, 0.001, 1024.0) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .set_pattern_length(params.0.pattern_id, params.0.length_beats)
@@ -2129,6 +2413,9 @@ impl SynthMcpServer {
 
     #[tool(description = "Set the song author name.")]
     async fn set_song_author(&self, params: Parameters<SetSongAuthorParam>) -> String {
+        if let Err(e) = validate_name("author", &params.0.author) {
+            return format!("Error: {e}");
+        }
         match self.bridge.set_song_author(&params.0.author) {
             Ok(()) => format!("OK: song author set to '{}'", params.0.author),
             Err(e) => format!("Error: {e}"),
@@ -2140,6 +2427,9 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetSongTimeSignatureParam>,
     ) -> String {
+        if let Err(e) = validate_time_signature(params.0.numerator, params.0.denominator) {
+            return validation_err(e);
+        }
         match self
             .bridge
             .set_song_time_signature(params.0.numerator, params.0.denominator)
@@ -2169,8 +2459,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.set_parameters(p.instrument_id, &param_sets) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2179,6 +2468,26 @@ impl SynthMcpServer {
         description = "Create multiple patterns in one call, optionally with inline notes and automation. Returns per-pattern results with assigned IDs."
     )]
     async fn create_patterns(&self, params: Parameters<CreatePatternsParam>) -> String {
+        for (i, pat) in params.0.patterns.iter().enumerate() {
+            if let Err(e) = validate_name("pattern", &pat.name) {
+                return validation_err(McpBridgeError::Other(format!("pattern[{i}]: {e}")));
+            }
+            if let Err(e) = validate_range("length_beats", pat.length_beats, 0.001, 1024.0) {
+                return validation_err(McpBridgeError::Other(format!("pattern[{i}]: {e}")));
+            }
+            if let Some(ref notes) = pat.notes {
+                for n in notes {
+                    if let Err(e) = validate_note_input(n) {
+                        return validation_err(McpBridgeError::Other(format!("pattern[{i}] note: {e}")));
+                    }
+                }
+            }
+            if let Some(ref auto) = pat.automation
+                && let Err(e) = validate_automation_points_input(auto)
+            {
+                return validation_err(McpBridgeError::Other(format!("pattern[{i}] automation: {e}")));
+            }
+        }
         let patterns: Vec<_> = params
             .0
             .patterns
@@ -2202,8 +2511,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.create_patterns(&patterns) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2212,6 +2520,11 @@ impl SynthMcpServer {
         description = "Create multiple tracks in one call. Returns per-track results with assigned IDs."
     )]
     async fn create_tracks(&self, params: Parameters<CreateTracksParam>) -> String {
+        for t in &params.0.tracks {
+            if let Err(e) = validate_name("track", &t.name) {
+                return validation_err(e);
+            }
+        }
         let tracks: Vec<_> = params
             .0
             .tracks
@@ -2222,8 +2535,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.create_tracks(&tracks) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2232,6 +2544,11 @@ impl SynthMcpServer {
         description = "Place multiple patterns in the arrangement in one call. Each placement specifies pattern_id, track_id, and start_beat."
     )]
     async fn place_patterns(&self, params: Parameters<PlacePatternsParam>) -> String {
+        for p in &params.0.placements {
+            if let Err(e) = validate_range("start_beat", p.start_beat, 0.0, 9999.0) {
+                return validation_err(e);
+            }
+        }
         let placements: Vec<_> = params
             .0
             .placements
@@ -2243,8 +2560,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.place_patterns(&placements) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2256,6 +2572,52 @@ impl SynthMcpServer {
     )]
     async fn set_song(&self, params: Parameters<SetSongParam>) -> String {
         let p = params.0;
+        // Validate song name
+        if let Err(e) = validate_name("song", &p.name) {
+            return validation_err(e);
+        }
+        // Validate patterns: length, notes, automation
+        for (i, pat) in p.patterns.iter().enumerate() {
+            if let Err(e) = validate_range("length_beats", pat.length_beats, 0.001, 1024.0) {
+                return validation_err(McpBridgeError::Other(format!("pattern[{i}]: {e}")));
+            }
+            for n in &pat.notes {
+                if let Err(e) = validate_note_input(n) {
+                    return validation_err(McpBridgeError::Other(format!("pattern[{i}] note: {e}")));
+                }
+            }
+            if let Some(ref auto) = pat.automation
+                && let Err(e) = validate_automation_points_input(auto)
+            {
+                return validation_err(McpBridgeError::Other(format!("pattern[{i}] automation: {e}")));
+            }
+        }
+        // Validate track names
+        for (i, t) in p.tracks.iter().enumerate() {
+            if let Err(e) = validate_name("track", &t.name) {
+                return validation_err(McpBridgeError::Other(format!("track[{i}]: {e}")));
+            }
+        }
+        // Validate placement indices and start_beat
+        for (i, pl) in p.placements.iter().enumerate() {
+            if pl.pattern_index >= p.patterns.len() {
+                return validation_err(McpBridgeError::IndexOutOfBounds {
+                    name: "pattern_index",
+                    index: pl.pattern_index,
+                    count: p.patterns.len(),
+                });
+            }
+            if pl.track_index >= p.tracks.len() {
+                return validation_err(McpBridgeError::IndexOutOfBounds {
+                    name: "track_index",
+                    index: pl.track_index,
+                    count: p.tracks.len(),
+                });
+            }
+            if let Err(e) = validate_range("start_beat", pl.start_beat, 0.0, 9999.0) {
+                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {e}")));
+            }
+        }
         let patterns: Vec<_> = p
             .patterns
             .into_iter()
@@ -2298,8 +2660,7 @@ impl SynthMcpServer {
             .bridge
             .set_song(&p.name, tempo, &patterns, &tracks, &placements)
         {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2341,6 +2702,16 @@ impl SynthMcpServer {
     )]
     async fn build_instrument(&self, params: Parameters<BuildInstrumentParam>) -> String {
         let p = params.0;
+        if let Err(e) = validate_build_instrument_fields(
+            &p.name,
+            p.midi_channel,
+            p.volume,
+            p.pan,
+            &p.modules,
+            p.connections.as_deref(),
+        ) {
+            return validation_err(e);
+        }
         let spec = convert_instrument_def(
             p.instrument_id,
             p.name,
@@ -2351,8 +2722,7 @@ impl SynthMcpServer {
             p.connections,
         );
         match self.bridge.build_instrument(&spec) {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2362,6 +2732,18 @@ impl SynthMcpServer {
                        Returns an array of results with instrument_id and module_ids per instrument."
     )]
     async fn build_instruments(&self, params: Parameters<BuildInstrumentsParam>) -> String {
+        for (idx, inst) in params.0.instruments.iter().enumerate() {
+            if let Err(e) = validate_build_instrument_fields(
+                &inst.name,
+                inst.midi_channel,
+                inst.volume,
+                inst.pan,
+                &inst.modules,
+                inst.connections.as_deref(),
+            ) {
+                return validation_err(McpBridgeError::Other(format!("instrument[{idx}]: {e}")));
+            }
+        }
         let specs: Vec<_> = params
             .0
             .instruments
@@ -2379,8 +2761,7 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.build_instruments(&specs) {
-            Ok(results) => serde_json::to_string_pretty(&results)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(results) => to_json(&results),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2395,8 +2776,7 @@ impl SynthMcpServer {
             .bridge
             .apply_example_patch(params.0.instrument_id, &params.0.patch_name)
         {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -2438,8 +2818,7 @@ impl SynthMcpServer {
     )]
     async fn optimize_project(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.optimize_project() {
-            Ok(result) => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|e| format!("Serialization error: {e}")),
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }

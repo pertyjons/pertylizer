@@ -347,7 +347,8 @@ mod tests {
             ..ProcessContext::default()
         };
 
-        let inputs = InputPorts::from_single("in", &input_buf);
+        let input_refs = [(PortName::IN, &input_buf)];
+        let inputs = InputPorts::new(&input_refs);
         sm.process(inputs, &mut outputs, &context);
 
         let out = &outputs["out"];

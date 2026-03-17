@@ -17,6 +17,9 @@ use crate::visualizers::VisualizationBuffer;
 use synth_core::ModuleType;
 use synth_core::{AudioBuffer, AudioEffect, ProcessContext, SampleRate};
 
+/// Maximum buffer size in samples (mono). Matches instrument.rs.
+const MAX_BUFFER_SIZE: usize = 4096;
+
 // ============================================================================
 // EnabledState - Descriptive enum for on/off state
 // ============================================================================
@@ -166,7 +169,9 @@ impl EffectChain {
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
-            working_buffer: AudioBuffer::new(512),
+            // Pre-allocate for max stereo interleaved size to avoid
+            // heap allocation in the real-time audio thread process().
+            working_buffer: AudioBuffer::new(MAX_BUFFER_SIZE * 2),
         }
     }
 
@@ -305,6 +310,14 @@ impl EffectChain {
     /// Visualizers are processed separately via `process_visualizers()` so they
     /// can run after AWE to show the final post-AWE signal.
     pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext) {
+        // Resize to active frame count. This never exceeds MAX_BUFFER_SIZE * 2
+        // which was pre-allocated in the constructor, so no heap allocation occurs.
+        debug_assert!(
+            context.samples.as_usize() * 2 <= MAX_BUFFER_SIZE * 2,
+            "Buffer size {} exceeds pre-allocated capacity {}",
+            context.samples.as_usize() * 2,
+            MAX_BUFFER_SIZE * 2
+        );
         self.working_buffer.resize(context.samples.as_usize() * 2);
 
         for slot in &mut self.slots {

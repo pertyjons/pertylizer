@@ -801,13 +801,8 @@ impl ModuleGraph {
             }
         }
 
-        // Build InputPorts reference slice (small Vec for typical 1-4 ports)
-        let input_refs: Vec<(PortName, &AudioBuffer)> = self
-            .input_buffers
-            .iter()
-            .map(|(name, buf)| (*name, buf))
-            .collect();
-        let inputs = InputPorts::new(&input_refs);
+        // Build InputPorts directly from owned buffers (zero allocation)
+        let inputs = InputPorts::from_owned(&self.input_buffers);
 
         // Get the node and process
         if let Some(node) = self.nodes.get_mut(&module_id) {

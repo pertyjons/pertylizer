@@ -321,9 +321,9 @@ impl EngineHandle {
         self.send(EngineCommand::SetFocusedInstrument(instrument_id))
     }
 
-    /// Get the currently focused instrument index.
+    /// Get the currently focused instrument ID.
     /// Returns None if using traditional MIDI channel routing.
-    pub fn get_focused_instrument(&self) -> Option<u32> {
+    pub fn get_focused_instrument(&self) -> Option<InstrumentId> {
         self.state.get_focused_instrument()
     }
 }
@@ -1193,15 +1193,15 @@ impl SynthEngine {
         let channel_raw = channel.as_zero_indexed();
         let mut note_triggered = false;
 
-        // Check if there's a focused instrument for keyboard input
-        let focused_idx = self.state.get_focused_instrument();
+        // Check if there's a focused instrument for keyboard input (by InstrumentId)
+        let focused_id = self.state.get_focused_instrument();
 
-        for (idx, instrument) in self.instruments.iter_mut().enumerate() {
+        for instrument in self.instruments.iter_mut() {
             // If focused instrument is set, only that instrument receives keyboard input
             // (Channel 0 is the default keyboard channel)
-            if let Some(focus_idx) = focused_idx {
+            if let Some(focus_id) = focused_id {
                 // Only send to focused instrument, and only for channel 0 (keyboard)
-                if channel_raw == 0 && idx != focus_idx as usize {
+                if channel_raw == 0 && instrument.id() != focus_id {
                     continue;
                 }
                 // For other channels (e.g., external MIDI), use traditional routing
@@ -1268,12 +1268,12 @@ impl SynthEngine {
 
     fn handle_note_off(&mut self, note: MidiNote, channel: MidiChannel) {
         let channel_raw = channel.as_zero_indexed();
-        let focused_idx = self.state.get_focused_instrument();
+        let focused_id = self.state.get_focused_instrument();
 
-        for (idx, instrument) in self.instruments.iter_mut().enumerate() {
+        for instrument in self.instruments.iter_mut() {
             // Same logic as note_on for focused instrument routing
-            if let Some(focus_idx) = focused_idx {
-                if channel_raw == 0 && idx != focus_idx as usize {
+            if let Some(focus_id) = focused_id {
+                if channel_raw == 0 && instrument.id() != focus_id {
                     continue;
                 }
                 if channel_raw != 0 && !instrument.responds_to_channel(channel_raw) {
@@ -1445,14 +1445,8 @@ impl SynthEngine {
     }
 
     fn handle_set_focused_instrument(&mut self, instrument_id: Option<InstrumentId>) {
-        // Convert InstrumentId to u32 index for atomic storage
-        let index = instrument_id.and_then(|id| {
-            self.instruments
-                .iter()
-                .position(|i| i.id() == id)
-                .map(|pos| pos as u32)
-        });
-        self.state.set_focused_instrument(index);
+        // Store InstrumentId directly — stable across add/remove unlike a vec index.
+        self.state.set_focused_instrument(instrument_id);
     }
 
     // ========================================================================
@@ -1562,12 +1556,18 @@ impl SynthEngine {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
+                } else {
+                    eprintln!(
+                        "SetEffectParameter: effect type {mt:?} not found in instrument {inst_id}"
+                    );
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
+                } else {
+                    eprintln!("SetEffectParameter: effect type {mt:?} not found in master effects");
                 }
             }
         }
@@ -1585,11 +1585,17 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
                     slot.state = state;
+                } else {
+                    eprintln!(
+                        "SetEffectEnabled: effect type {mt:?} not found in instrument {inst_id}"
+                    );
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
                     slot.state = state;
+                } else {
+                    eprintln!("SetEffectEnabled: effect type {mt:?} not found in master effects");
                 }
             }
         }
@@ -1847,7 +1853,13 @@ impl SynthEngine {
 
         // Build module snapshots from the voice graph
         let mut module_ids: Vec<ModuleId> = graph.module_ids().collect();
-        module_ids.sort_by_key(|id| format!("{id:?}"));
+        // Sort by (type prefix, instance) for stable ordering without allocating Strings.
+        module_ids.sort_by(|a, b| {
+            a.module_type
+                .prefix()
+                .cmp(b.module_type.prefix())
+                .then(a.instance.cmp(&b.instance))
+        });
 
         // Clear and rebuild only modules for THIS instrument
         shared.remove_modules_for_instrument(instrument_id);

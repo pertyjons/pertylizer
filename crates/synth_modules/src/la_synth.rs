@@ -368,7 +368,8 @@ mod tests {
             ..ProcessContext::default()
         };
 
-        let inputs = InputPorts::from_single("in", &in_buf);
+        let input_refs = [(PortName::IN, &in_buf)];
+        let inputs = InputPorts::new(&input_refs);
         la.process(inputs, &mut outputs, &context);
 
         // Without note_on, should pass through sustain

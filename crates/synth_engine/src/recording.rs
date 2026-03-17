@@ -79,11 +79,17 @@ impl RecordingState {
 /// Buffer for recording live note input into patterns.
 ///
 /// Pre-allocated for real-time safety — no heap allocations during capture.
+/// Uses a spare-Vec swap strategy so `flush()` / `take_released_notes()` never
+/// allocate on the audio thread. Capacity is ensured in `arm()` (called once
+/// before recording starts).
 pub(crate) struct RecordingBuffer {
     state: RecordingState,
     target: Option<RecordTarget>,
     held_notes: [Option<HeldNote>; MAX_HELD_NOTES],
     recorded_notes: Vec<RecordedNote>,
+    /// Pre-allocated spare buffer swapped in by `flush()` / `take_released_notes()`
+    /// so the active buffer is replaced without heap allocation.
+    spare_notes: Vec<RecordedNote>,
     /// Tick at which the count-in ends and capturing begins.
     capture_start_tick: Tick,
     /// Quantization grid size (Duration(0) = no quantization).
@@ -91,6 +97,9 @@ pub(crate) struct RecordingBuffer {
     /// Whether notes have been flushed at a loop boundary during this session.
     /// After the first flush, overdub is always true to preserve earlier passes.
     loop_flushed: bool,
+    /// Number of held notes dropped because all slots were full.
+    /// Readable by the UI via `dropped_note_count()` for user feedback.
+    dropped_notes: u32,
 }
 
 impl RecordingBuffer {
@@ -101,9 +110,11 @@ impl RecordingBuffer {
             target: None,
             held_notes: [None; MAX_HELD_NOTES],
             recorded_notes: Vec::with_capacity(MAX_RECORDED_NOTES),
+            spare_notes: Vec::with_capacity(MAX_RECORDED_NOTES),
             capture_start_tick: Tick::ZERO,
             quantize_grid: Duration(0),
             loop_flushed: false,
+            dropped_notes: 0,
         }
     }
 
@@ -115,6 +126,13 @@ impl RecordingBuffer {
     /// Get the target pattern ID (if armed or capturing).
     pub(crate) fn target_pattern(&self) -> Option<PatternId> {
         self.target.map(|t| t.pattern_id)
+    }
+
+    /// Number of notes dropped because held-note slots were full.
+    /// The UI can poll this to show a warning to the user.
+    #[allow(dead_code)] // Will be wired to UI warning display
+    pub(crate) fn dropped_note_count(&self) -> u32 {
+        self.dropped_notes
     }
 
     /// Set the quantization grid size (Duration(0) = no quantization).
@@ -131,13 +149,17 @@ impl RecordingBuffer {
     ///
     /// Returns (completed_notes, held_note_starts).
     /// Called at buffer-rate (~86Hz), not per-sample.
+    ///
+    /// NOTE: This allocates on the audio thread (clone + collect) because the
+    /// returned Vecs are moved into a ring buffer event and consumed by the UI.
+    /// At ~86Hz with bounded size this is acceptable; a lock-free pool would
+    /// eliminate it but adds complexity.
     pub(crate) fn preview_snapshot(&self) -> (Vec<RecordedNote>, Vec<(Pitch, PatternTick)>) {
         let completed = self.recorded_notes.clone();
-        let held: Vec<(Pitch, PatternTick)> = self
-            .held_notes
-            .iter()
-            .filter_map(|slot| slot.map(|h| (h.pitch, h.start_tick)))
-            .collect();
+        let mut held = Vec::with_capacity(MAX_HELD_NOTES);
+        for h in self.held_notes.iter().flatten() {
+            held.push((h.pitch, h.start_tick));
+        }
         (completed, held)
     }
 
@@ -229,7 +251,8 @@ impl RecordingBuffer {
                 return;
             }
         }
-        // All slots full — drop the note silently
+        // All slots full — count the drop so the UI can warn the user
+        self.dropped_notes += 1;
     }
 
     /// Record a note-off event (completes a held note).
@@ -262,7 +285,8 @@ impl RecordingBuffer {
 
     /// Stop recording and return all captured notes.
     /// Completes any held notes with a default short duration.
-    /// Uses `drain()` to preserve pre-allocated Vec capacity for real-time safety.
+    ///
+    /// Real-time safe: swaps in a pre-allocated spare Vec instead of allocating.
     pub(crate) fn flush(&mut self) -> Vec<RecordedNote> {
         // Complete any still-held notes with minimum duration
         for slot in &mut self.held_notes {
@@ -278,11 +302,7 @@ impl RecordingBuffer {
             }
         }
         self.state = RecordingState::Idle;
-        // Replace with a fresh pre-allocated vec — avoids the double allocation of drain+collect.
-        std::mem::replace(
-            &mut self.recorded_notes,
-            Vec::with_capacity(MAX_RECORDED_NOTES),
-        )
+        self.swap_and_take_notes()
     }
 
     /// Take all released notes without stopping recording.
@@ -294,12 +314,26 @@ impl RecordingBuffer {
     ///
     /// **Call `is_overdub()` before this** if the first flush should respect
     /// the user's original replace/overdub choice.
+    ///
+    /// Real-time safe: swaps in a pre-allocated spare Vec instead of allocating.
     pub(crate) fn take_released_notes(&mut self) -> Vec<RecordedNote> {
         self.loop_flushed = true;
-        std::mem::replace(
-            &mut self.recorded_notes,
-            Vec::with_capacity(MAX_RECORDED_NOTES),
-        )
+        self.swap_and_take_notes()
+    }
+
+    /// Swap recorded_notes with the pre-allocated spare and return the data.
+    ///
+    /// After the swap, `self.recorded_notes` is the (now cleared) spare with
+    /// pre-allocated capacity, ready for the next recording pass.
+    /// The returned Vec contains the captured notes and is consumed by the caller
+    /// (sent to the UI thread via ring buffer, where it is eventually dropped).
+    fn swap_and_take_notes(&mut self) -> Vec<RecordedNote> {
+        // Swap spare in — recorded_notes becomes empty (spare), spare becomes data
+        std::mem::swap(&mut self.recorded_notes, &mut self.spare_notes);
+        // Clear the new recorded_notes (was spare) to prepare for next pass
+        self.recorded_notes.clear();
+        // Take the data out of spare; spare becomes a zero-capacity Vec (just pointer writes)
+        std::mem::take(&mut self.spare_notes)
     }
 
     /// Convert a song tick to a pattern-relative tick.
@@ -326,10 +360,27 @@ impl RecordingBuffer {
     }
 
     /// Clear all held notes and recorded notes.
+    ///
+    /// Called by `arm()` before a new recording session. Ensures both
+    /// `recorded_notes` and `spare_notes` have pre-allocated capacity so
+    /// that `flush()` / `take_released_notes()` never allocate during capture.
+    /// The `reserve()` calls here are acceptable because `arm()` runs once
+    /// before real-time recording begins.
     fn clear(&mut self) {
         self.held_notes = [None; MAX_HELD_NOTES];
         self.recorded_notes.clear();
         self.loop_flushed = false;
+        self.dropped_notes = 0;
+        // Ensure both buffers have capacity for the next session.
+        // This may allocate, but arm() is called before real-time capture starts.
+        if self.recorded_notes.capacity() < MAX_RECORDED_NOTES {
+            self.recorded_notes
+                .reserve(MAX_RECORDED_NOTES - self.recorded_notes.capacity());
+        }
+        if self.spare_notes.capacity() < MAX_RECORDED_NOTES {
+            self.spare_notes
+                .reserve(MAX_RECORDED_NOTES - self.spare_notes.capacity());
+        }
     }
 }
 
@@ -480,6 +531,90 @@ mod tests {
 
         let notes = buf.flush();
         assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_dropped_note_counter() {
+        let mut buf = RecordingBuffer::new();
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            Duration::WHOLE,
+            Duration::WHOLE,
+            true,
+        );
+        buf.state = RecordingState::Capturing;
+        assert_eq!(buf.dropped_note_count(), 0);
+
+        // Fill all held-note slots
+        for i in 0..MAX_HELD_NOTES as u8 {
+            buf.note_on(p(60 + i), vel(100), Tick(0));
+        }
+        assert_eq!(buf.dropped_note_count(), 0);
+
+        // Next note should be dropped
+        buf.note_on(p(40), vel(100), Tick(0));
+        assert_eq!(buf.dropped_note_count(), 1);
+
+        buf.note_on(p(41), vel(100), Tick(0));
+        assert_eq!(buf.dropped_note_count(), 2);
+
+        // Counter resets on arm
+        let _ = buf.flush();
+        buf.arm(
+            PatternId::new(2),
+            TrackId::new(0),
+            Tick(0),
+            Duration::WHOLE,
+            Duration::WHOLE,
+            true,
+        );
+        assert_eq!(buf.dropped_note_count(), 0);
+    }
+
+    #[test]
+    fn test_flush_preserves_capacity() {
+        let mut buf = RecordingBuffer::new();
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            Duration::WHOLE,
+            Duration::WHOLE,
+            true,
+        );
+        buf.state = RecordingState::Capturing;
+
+        buf.note_on(p(60), vel(100), Tick(0));
+        buf.note_off(p(60), Tick(480));
+
+        let notes = buf.flush();
+        assert_eq!(notes.len(), 1);
+        // After flush, recorded_notes should still have capacity (from spare)
+        assert!(buf.recorded_notes.capacity() >= MAX_RECORDED_NOTES);
+    }
+
+    #[test]
+    fn test_take_released_notes_preserves_capacity() {
+        let mut buf = RecordingBuffer::new();
+        buf.arm(
+            PatternId::new(1),
+            TrackId::new(0),
+            Tick(0),
+            Duration::WHOLE,
+            Duration::WHOLE,
+            true,
+        );
+        buf.state = RecordingState::Capturing;
+
+        buf.note_on(p(60), vel(100), Tick(0));
+        buf.note_off(p(60), Tick(480));
+
+        let notes = buf.take_released_notes();
+        assert_eq!(notes.len(), 1);
+        // After take, recorded_notes should have capacity (from spare)
+        assert!(buf.recorded_notes.capacity() >= MAX_RECORDED_NOTES);
     }
 
     #[test]

@@ -924,11 +924,21 @@ impl Instrument {
                 voice.age = voice.age + samples;
 
                 // Handle stealing fade-out completion
-                if let VoiceState::Stealing { fade_counter, .. } = voice.state
+                if let VoiceState::Stealing {
+                    fade_counter,
+                    pending_note,
+                    ..
+                } = voice.state
                     && fade_counter.as_usize() == 0
                 {
-                    voice.reset();
-                    continue;
+                    if let Some((note, velocity, time)) = pending_note {
+                        // Fade-out done: trigger the pending note on this voice
+                        voice.reset();
+                        voice.note_on(note, velocity, time);
+                    } else {
+                        voice.reset();
+                        continue;
+                    }
                 }
 
                 // Clear temp buffers for this voice
@@ -967,6 +977,7 @@ impl Instrument {
                 if let VoiceState::Stealing {
                     fade_counter,
                     fade_total,
+                    pending_note,
                 } = voice.state
                 {
                     let fc = fade_counter.as_usize();
@@ -989,6 +1000,7 @@ impl Instrument {
                     voice.state = VoiceState::Stealing {
                         fade_counter: new_counter,
                         fade_total,
+                        pending_note,
                     };
                 }
 
@@ -996,11 +1008,18 @@ impl Instrument {
                 if spatial_ctx.is_some()
                     && let Some(note) = voice.note()
                 {
+                    // Decimate oversampled voice data to original rate for spatial bank
+                    let mut dec_left = [0.0f32; 1024];
+                    let mut dec_right = [0.0f32; 1024];
+                    for i in 0..sample_count {
+                        dec_left[i] = temp_left[i * os_factor];
+                        dec_right[i] = temp_right[i * os_factor];
+                    }
                     spatial_bank.write_voice(
                         note,
-                        temp_left.as_slice(),
-                        temp_right.as_slice(),
-                        SampleCount::new(sample_count.min(temp_left.len())),
+                        &dec_left[..sample_count],
+                        &dec_right[..sample_count],
+                        SampleCount::new(sample_count),
                     );
                 }
 
@@ -1043,11 +1062,21 @@ impl Instrument {
                 voice.age = voice.age + samples;
 
                 // Handle stealing fade-out completion
-                if let VoiceState::Stealing { fade_counter, .. } = voice.state
+                if let VoiceState::Stealing {
+                    fade_counter,
+                    pending_note,
+                    ..
+                } = voice.state
                     && fade_counter.as_usize() == 0
                 {
-                    voice.reset();
-                    continue;
+                    if let Some((note, velocity, time)) = pending_note {
+                        // Fade-out done: trigger the pending note on this voice
+                        voice.reset();
+                        voice.note_on(note, velocity, time);
+                    } else {
+                        voice.reset();
+                        continue;
+                    }
                 }
 
                 // Clear temp buffers for this voice
@@ -1063,18 +1092,30 @@ impl Instrument {
                 // Process the voice signal chain
                 voice.process_audio(&mut temp_left, &mut temp_right, &voice_context);
 
-                // Reclaim releasing voices once all envelopes have finished
-                if matches!(voice.state, VoiceState::Releasing { .. })
-                    && voice.graph.all_releases_done()
-                {
-                    voice.reset();
-                    continue;
+                // Reclaim releasing voices once output is silent
+                if matches!(voice.state, VoiceState::Releasing { .. }) {
+                    let mut peak: f32 = 0.0;
+                    for i in 0..sample_count {
+                        let l = temp_left[i].abs();
+                        let r = temp_right[i].abs();
+                        if l > peak {
+                            peak = l;
+                        }
+                        if r > peak {
+                            peak = r;
+                        }
+                    }
+                    if peak < 1e-6 {
+                        voice.reset();
+                        continue;
+                    }
                 }
 
                 // Apply stealing fade-out if needed
                 if let VoiceState::Stealing {
                     fade_counter,
                     fade_total,
+                    pending_note,
                 } = voice.state
                 {
                     let fc = fade_counter.as_usize();
@@ -1094,6 +1135,7 @@ impl Instrument {
                     voice.state = VoiceState::Stealing {
                         fade_counter: new_counter,
                         fade_total,
+                        pending_note,
                     };
                 }
 

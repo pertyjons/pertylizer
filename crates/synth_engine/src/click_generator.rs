@@ -68,7 +68,13 @@ impl ClickGenerator {
     }
 
     /// Trigger a click sound.
+    ///
+    /// Does nothing if sample rate is zero (avoids division by zero).
     pub(crate) fn trigger_click(&mut self, accented: bool) {
+        if self.sample_rate.as_f32() <= 0.0 {
+            return;
+        }
+
         self.accented = accented;
 
         let freq = if accented { ACCENT_FREQ } else { NORMAL_FREQ };

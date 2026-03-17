@@ -231,11 +231,15 @@ impl CommandBatch {
     }
 
     /// Generate rollback commands for this batch.
+    ///
+    /// Only reversible commands contribute to rollback. Reverse commands are
+    /// always clonable types (e.g., `RemoveModule`, `Disconnect`), so
+    /// `try_clone()` will always return `Some` here.
     pub fn rollback_commands(&self) -> Vec<EngineCommand> {
         self.commands
             .iter()
             .rev() // Reverse order for rollback
-            .filter_map(|c| c.reverse.as_ref().map(|r| (**r).clone()))
+            .filter_map(|c| c.reverse.as_ref().and_then(|r| r.try_clone()))
             .collect()
     }
 
@@ -244,11 +248,15 @@ impl CommandBatch {
         self.commands.iter().all(|c| c.reversible)
     }
 
-    /// Extract just the EngineCommands (without metadata), sorted.
+    /// Extract just the clonable EngineCommands (without metadata), sorted.
+    ///
+    /// Commands containing unique owned resources (e.g., `AddModuleInstance`,
+    /// `AddInstrument`) are skipped. Use `into_commands()` to consume the
+    /// batch and get all commands including non-clonable ones.
     pub fn extract_commands(&self) -> Vec<EngineCommand> {
         self.commands()
             .into_iter()
-            .map(|c| c.command.clone())
+            .filter_map(|c| c.command.try_clone())
             .collect()
     }
 }
@@ -367,11 +375,15 @@ impl BatchResult {
     }
 }
 
-// We need to implement Clone for EngineCommand for rollback support
-// This is a workaround since EngineCommand contains Box<dyn PolyModule>
-impl Clone for EngineCommand {
-    fn clone(&self) -> Self {
-        match self {
+impl EngineCommand {
+    /// Try to clone this command. Returns `None` for commands that contain
+    /// unique owned resources (`Box<dyn PolyModule>`, `Box<dyn AudioEffect>`,
+    /// `Box<Instrument>`, `Arc<VisualizationBuffer>`) which cannot be duplicated.
+    ///
+    /// Used by `CommandBatch::rollback_commands()` and `extract_commands()`.
+    /// Reverse commands (e.g., `RemoveModule`, `Disconnect`) are always clonable.
+    pub fn try_clone(&self) -> Option<Self> {
+        Some(match self {
             // Commands that can be cloned
             Self::NoteOn {
                 note,
@@ -562,19 +574,11 @@ impl Clone for EngineCommand {
             Self::SetSong { song } => Self::SetSong {
                 song: std::sync::Arc::clone(song),
             },
-            // Commands with Box<dyn ...> cannot be cloned - panic if attempted
-            Self::AddInstrument { .. } => {
-                panic!("AddInstrument cannot be cloned - instrument instances are unique")
-            }
-            Self::AddModuleInstance { .. } => {
-                panic!("AddModuleInstance cannot be cloned - module instances are unique")
-            }
-            Self::AddEffectInstance { .. } => {
-                panic!("AddEffectInstance cannot be cloned - effect instances are unique")
-            }
-            Self::AddVisualizer { .. } => {
-                panic!("AddVisualizer cannot be cloned - visualizer buffers are shared")
-            }
+            // Commands with unique owned resources cannot be cloned
+            Self::AddInstrument { .. }
+            | Self::AddModuleInstance { .. }
+            | Self::AddEffectInstance { .. }
+            | Self::AddVisualizer { .. } => return None,
             // AWE commands
             Self::SetAweParameter { param } => Self::SetAweParameter { param: *param },
             Self::SetAweEnabled { enabled } => Self::SetAweEnabled { enabled: *enabled },
@@ -612,7 +616,7 @@ impl Clone for EngineCommand {
                 module_id: *module_id,
                 direction: *direction,
             },
-        }
+        })
     }
 }
 

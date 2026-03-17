@@ -1,5 +1,22 @@
 # Version History
 
+## [0.243.0] - 2026-03-17
+### Engine real-time safety fixes and MCP input validation
+- **Fixed Vec allocation in audio thread** — `graph.rs` process_module() no longer heap-allocates per frame; added `InputPorts::from_owned()` to accept owned buffers directly
+- **Fixed recording heap allocations** — `flush()` and `take_released_notes()` now use swap-based approach with pre-allocated spare Vec instead of `Vec::with_capacity()` on audio thread
+- **Fixed spatial voice bank sample count** — oversampled path now decimates audio before writing to spatial bank instead of passing wrong sample count
+- **Fixed voice stealing** — `steal_for()` stores pending note that activates after fade-out completes, instead of immediately overwriting the Stealing state
+- **Fixed shared_state race conditions** — `is_live()` TOCTOU race eliminated; `bump_version()` now called inside write lock scope in 9 methods
+- **Fixed focused instrument routing** — uses `InstrumentId` directly instead of stale vector index that could become invalid after instrument add/remove
+- **Consistent release detection** — both oversampled and normal voice paths now use peak-based silence detection
+- **Eliminated panic in EngineCommand clone** — replaced `panic!` with `try_clone() -> Option<Self>` for non-clonable variants
+- **Pre-allocated audio buffers** — effect chain working buffer and voice allocator held_notes pre-allocated to prevent runtime allocation
+- **Click generator safety** — early return if sample_rate is zero
+- **MCP input validation** — 34+ tool handlers now validate all inputs (MIDI note/velocity/channel ranges, volume/pan/tempo bounds, pattern lengths, automation values, time signatures, array indices, non-empty names) with descriptive error messages for AI self-correction
+- **MCP error improvements** — 8 new typed error variants replace generic `Other(String)`; `CommandSendFailed` now includes command name context
+- **Pan range unified** — MCP API consistently uses bipolar -1.0..1.0 for both instrument and track pan with conversion at bridge boundary
+- **Serialization helper** — extracted `to_json()` replacing 38 repeated serialization blocks
+
 ## [0.242.0] - 2026-03-17
 ### Visualizer: Bevy events, material buckets, and code quality fixes
 - **Bevy Message events** — replaced manual `pending_note_events: Vec` buffer in `SynthTelemetry` with Bevy's `Message` system (`NoteOnEvent`, `CameraModeEvent`); OSC receiver writes via `MessageWriter`, effects consume via `MessageReader`

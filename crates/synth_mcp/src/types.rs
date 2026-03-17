@@ -15,7 +15,7 @@ pub struct InstrumentInfo {
     pub midi_channel: u8,
     /// Volume (0.0-2.0).
     pub volume: f32,
-    /// Pan (-1.0 to 1.0).
+    /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).
     pub pan: f32,
     /// Whether the instrument is enabled (not muted).
     pub enabled: bool,
@@ -411,6 +411,8 @@ pub struct TrackInfo {
     pub instrument_id: Option<u16>,
     /// Volume (0.0-1.0).
     pub volume: f32,
+    /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).
+    pub pan: f32,
     /// Whether the track is muted.
     pub mute: bool,
     /// Whether the track is soloed.

@@ -423,9 +423,10 @@ impl SharedGraphState {
 
     /// Check if a module is connected to output.
     pub fn is_live(&self, instrument_id: InstrumentId, id: ModuleId) -> bool {
-        // live_modules is a flat set; check both the set and existence in modules map
-        self.live_modules.read().contains(&id)
-            && self.modules.read().contains_key(&(instrument_id, id))
+        // Acquire both locks before checking to avoid TOCTOU race
+        let live = self.live_modules.read();
+        let modules = self.modules.read();
+        live.contains(&id) && modules.contains_key(&(instrument_id, id))
     }
 
     /// Get connectivity status for a module.
@@ -494,10 +495,10 @@ impl SharedGraphState {
 
     /// Remove all modules belonging to a specific instrument.
     pub fn remove_modules_for_instrument(&self, id: InstrumentId) {
-        self.modules
-            .write()
-            .retain(|&(inst_id, _), _| inst_id != id);
+        let mut modules = self.modules.write();
+        modules.retain(|&(inst_id, _), _| inst_id != id);
         self.bump_version();
+        drop(modules);
     }
 
     /// Replace all connections for a specific instrument, keeping connections for other instruments.
@@ -509,8 +510,8 @@ impl SharedGraphState {
         let mut all = self.connections.write();
         all.retain(|c| c.instrument_id != id);
         all.extend(connections);
-        drop(all);
         self.bump_version();
+        drop(all);
     }
 
     // === Update methods (called from main thread after receiving engine events) ===
@@ -518,26 +519,34 @@ impl SharedGraphState {
     /// Add or update a module.
     pub fn set_module(&self, snapshot: ModuleStateSnapshot) {
         let key = (snapshot.instrument_id, snapshot.id);
-        self.modules.write().insert(key, snapshot);
+        let mut modules = self.modules.write();
+        modules.insert(key, snapshot);
         self.bump_version();
+        drop(modules);
     }
 
     /// Remove a module.
     pub fn remove_module(&self, instrument_id: InstrumentId, id: ModuleId) {
-        self.modules.write().remove(&(instrument_id, id));
+        let mut modules = self.modules.write();
+        modules.remove(&(instrument_id, id));
         self.bump_version();
+        drop(modules);
     }
 
     /// Set all connections.
     pub fn set_connections(&self, connections: Vec<ConnectionSnapshot>) {
-        *self.connections.write() = connections;
+        let mut conns = self.connections.write();
+        *conns = connections;
         self.bump_version();
+        drop(conns);
     }
 
     /// Add a connection.
     pub fn add_connection(&self, connection: ConnectionSnapshot) {
-        self.connections.write().push(connection);
+        let mut conns = self.connections.write();
+        conns.push(connection);
         self.bump_version();
+        drop(conns);
     }
 
     /// Remove a connection.
@@ -548,25 +557,31 @@ impl SharedGraphState {
         to_module: ModuleId,
         to_port: &str,
     ) {
-        self.connections.write().retain(|c| {
+        let mut conns = self.connections.write();
+        conns.retain(|c| {
             !(c.from_module == from_module
                 && c.from_port == from_port
                 && c.to_module == to_module
                 && c.to_port == to_port)
         });
         self.bump_version();
+        drop(conns);
     }
 
     /// Set the processing order.
     pub fn set_processing_order(&self, order: Vec<ModuleId>) {
-        *self.processing_order.write() = order;
+        let mut proc_order = self.processing_order.write();
+        *proc_order = order;
         self.bump_version();
+        drop(proc_order);
     }
 
     /// Set live modules.
     pub fn set_live_modules(&self, live: HashSet<ModuleId>) {
-        *self.live_modules.write() = live;
+        let mut live_mods = self.live_modules.write();
+        *live_mods = live;
         self.bump_version();
+        drop(live_mods);
     }
 
     /// Update a module's connectivity status.

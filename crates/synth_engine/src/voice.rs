@@ -65,6 +65,8 @@ pub enum VoiceState {
         fade_counter: SampleCount,
         /// Total fade samples (for calculating fade ratio)
         fade_total: SampleCount,
+        /// Pending note to trigger after fade-out completes.
+        pending_note: Option<(MidiNote, Velocity, SamplePosition)>,
     },
 }
 
@@ -490,6 +492,16 @@ impl Voice {
         self.state = VoiceState::Stealing {
             fade_counter: self.steal_fade_samples,
             fade_total: self.steal_fade_samples,
+            pending_note: None,
+        };
+    }
+
+    /// Start voice stealing with a pending note to trigger after fade-out.
+    pub fn steal_for(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
+        self.state = VoiceState::Stealing {
+            fade_counter: self.steal_fade_samples,
+            fade_total: self.steal_fade_samples,
+            pending_note: Some((note, velocity, time)),
         };
     }
 

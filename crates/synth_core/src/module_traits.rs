@@ -156,20 +156,42 @@ use crate::types::PortName;
 ///
 /// Used in `PolyModule::process()` to avoid HashMap allocation every audio frame.
 /// Provides O(n) linear search which is fast for the typical 1-4 input ports.
+///
+/// Supports two storage modes: reference slices `&[(PortName, &AudioBuffer)]`
+/// and owned slices `&[(PortName, AudioBuffer)]`, avoiding heap allocation
+/// when the graph already stores owned buffers.
 #[derive(Clone, Copy)]
-pub struct InputPorts<'a>(&'a [(PortName, &'a AudioBuffer)]);
+pub struct InputPorts<'a>(InputPortsInner<'a>);
+
+#[derive(Clone, Copy)]
+enum InputPortsInner<'a> {
+    /// Slice of (name, reference) pairs — used by tests and external callers.
+    Refs(&'a [(PortName, &'a AudioBuffer)]),
+    /// Slice of (name, owned buffer) pairs — used by the audio graph to avoid
+    /// allocating a temporary Vec of references every frame.
+    Owned(&'a [(PortName, AudioBuffer)]),
+}
 
 impl<'a> InputPorts<'a> {
-    /// Create a new InputPorts wrapper from a slice.
+    /// Create a new `InputPorts` wrapper from a slice of references.
     #[inline]
     pub fn new(ports: &'a [(PortName, &'a AudioBuffer)]) -> Self {
-        Self(ports)
+        Self(InputPortsInner::Refs(ports))
+    }
+
+    /// Create a new `InputPorts` wrapper from a slice of owned buffers.
+    ///
+    /// This avoids heap-allocating a temporary `Vec<(PortName, &AudioBuffer)>`
+    /// on every audio frame, which is critical for real-time safety.
+    #[inline]
+    pub fn from_owned(ports: &'a [(PortName, AudioBuffer)]) -> Self {
+        Self(InputPortsInner::Owned(ports))
     }
 
     /// Create an empty InputPorts (no inputs connected).
     #[inline]
     pub fn empty() -> Self {
-        Self(&[])
+        Self(InputPortsInner::Refs(&[]))
     }
 
     /// Get an input buffer by port name.
@@ -180,8 +202,15 @@ impl<'a> InputPorts<'a> {
     /// Uses direct `u32` comparison via `PortName` for maximum speed
     /// (no string comparison, no locking).
     #[inline]
-    pub fn get(&self, name: PortName) -> Option<&AudioBuffer> {
-        self.0.iter().find(|(n, _)| *n == name).map(|(_, buf)| *buf)
+    pub fn get(&self, name: PortName) -> Option<&'a AudioBuffer> {
+        match self.0 {
+            InputPortsInner::Refs(ports) => {
+                ports.iter().find(|(n, _)| *n == name).map(|(_, buf)| *buf)
+            }
+            InputPortsInner::Owned(ports) => {
+                ports.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
+            }
+        }
     }
 
     /// Get an input buffer by port name string (convenience method).
@@ -189,23 +218,35 @@ impl<'a> InputPorts<'a> {
     /// **Note:** For hot paths, prefer `get(PortName::IN)` with constants.
     /// This method is provided for backwards compatibility.
     #[inline]
-    pub fn get_str(&self, name: &str) -> Option<&AudioBuffer> {
-        self.0
-            .iter()
-            .find(|(n, _)| n.as_str() == name)
-            .map(|(_, buf)| *buf)
+    pub fn get_str(&self, name: &str) -> Option<&'a AudioBuffer> {
+        match self.0 {
+            InputPortsInner::Refs(ports) => ports
+                .iter()
+                .find(|(n, _)| n.as_str() == name)
+                .map(|(_, buf)| *buf),
+            InputPortsInner::Owned(ports) => ports
+                .iter()
+                .find(|(n, _)| n.as_str() == name)
+                .map(|(_, buf)| buf),
+        }
     }
 
     /// Check if any inputs are connected.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        match &self.0 {
+            InputPortsInner::Refs(ports) => ports.is_empty(),
+            InputPortsInner::Owned(ports) => ports.is_empty(),
+        }
     }
 
     /// Get the number of connected inputs.
     #[inline]
     pub fn len(&self) -> usize {
-        self.0.len()
+        match &self.0 {
+            InputPortsInner::Refs(ports) => ports.len(),
+            InputPortsInner::Owned(ports) => ports.len(),
+        }
     }
 
     /// Get a zero-cost reader for a port with a default value.
@@ -223,7 +264,7 @@ impl<'a> InputPorts<'a> {
     /// ```
     #[inline]
     pub fn reader(&self, name: PortName, default: f32) -> InputReader<'a> {
-        let buffer = self.0.iter().find(|(n, _)| *n == name).map(|(_, buf)| *buf);
+        let buffer = self.get(name);
         InputReader { buffer, default }
     }
 }

@@ -292,8 +292,9 @@ impl Default for TransportState {
     }
 }
 
-/// Constant indicating no focused instrument (use MIDI channel routing).
-pub const NO_FOCUSED_INSTRUMENT: u32 = u32::MAX;
+/// Sentinel value indicating no focused instrument (use MIDI channel routing).
+/// Uses `u64::MAX` which matches `InstrumentId::MASTER` — a non-real instrument.
+pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 
 /// Complete engine state shared between threads.
 #[derive(Debug)]
@@ -310,10 +311,10 @@ pub struct EngineState {
     pub cpu_usage: AtomicF32,
     /// Sample rate.
     pub sample_rate: AtomicU32,
-    /// Focused instrument for keyboard input.
+    /// Focused instrument for keyboard input (stores `InstrumentId` as u64).
     /// When set (not NO_FOCUSED_INSTRUMENT), keyboard input goes only to this instrument.
     /// When NO_FOCUSED_INSTRUMENT, traditional MIDI channel routing is used.
-    pub focused_instrument: AtomicU32,
+    pub focused_instrument: AtomicU64,
     /// Master output waveform buffer for oscilloscope display.
     pub master_scope: VisualizationBuffer,
     /// Shared graph state for MCP and multi-GUI access.
@@ -335,7 +336,7 @@ impl EngineState {
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
-            focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
+            focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
@@ -346,18 +347,18 @@ impl EngineState {
 
     /// Set the focused instrument for keyboard input.
     /// Pass None to use traditional MIDI channel routing.
-    pub fn set_focused_instrument(&self, instrument_index: Option<u32>) {
-        let value = instrument_index.unwrap_or(NO_FOCUSED_INSTRUMENT);
-        self.focused_instrument.store(value);
+    pub fn set_focused_instrument(&self, instrument_id: Option<crate::instrument::InstrumentId>) {
+        let value = instrument_id.map_or(NO_FOCUSED_INSTRUMENT, |id| id.as_u64());
+        self.focused_instrument.store(value, Ordering::Relaxed);
     }
 
-    /// Get the focused instrument index, or None if using MIDI channel routing.
-    pub fn get_focused_instrument(&self) -> Option<u32> {
-        let value = self.focused_instrument.load();
+    /// Get the focused instrument ID, or None if using MIDI channel routing.
+    pub fn get_focused_instrument(&self) -> Option<crate::instrument::InstrumentId> {
+        let value = self.focused_instrument.load(Ordering::Relaxed);
         if value == NO_FOCUSED_INSTRUMENT {
             None
         } else {
-            Some(value)
+            Some(crate::instrument::InstrumentId::new(value))
         }
     }
 }
@@ -371,7 +372,7 @@ impl Default for EngineState {
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
-            focused_instrument: AtomicU32::new(NO_FOCUSED_INSTRUMENT),
+            focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
