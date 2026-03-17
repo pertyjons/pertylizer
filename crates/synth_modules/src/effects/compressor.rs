@@ -23,8 +23,9 @@ pub struct Compressor {
     /// One-pole HPF state for sidechain filter.
     sc_filter_state: f32,
 
-    // Sidechain input buffer (filled externally before process)
+    // Sidechain input buffer (pre-allocated, filled externally before process)
     sidechain_buffer: Vec<f32>,
+    sidechain_len: usize,
 
     // Envelope state
     envelope: f32,
@@ -45,7 +46,8 @@ impl Compressor {
             sidechain_enabled: false,
             sidechain_filter_freq: Hertz::new(80.0),
             sc_filter_state: 0.0,
-            sidechain_buffer: Vec::new(),
+            sidechain_buffer: vec![0.0; 4096],
+            sidechain_len: 0,
             envelope: 0.0,
             sample_rate: SampleRate::DVD_QUALITY,
         }
@@ -54,8 +56,9 @@ impl Compressor {
     /// Set the sidechain input buffer for the next process() call.
     /// The buffer should be interleaved stereo, same length as the main input.
     pub fn set_sidechain_input(&mut self, buffer: &[f32]) {
-        self.sidechain_buffer.clear();
-        self.sidechain_buffer.extend_from_slice(buffer);
+        let len = buffer.len().min(self.sidechain_buffer.len());
+        self.sidechain_buffer[..len].copy_from_slice(&buffer[..len]);
+        self.sidechain_len = len;
     }
 
     /// Calculate attack coefficient using type-safe Milliseconds.
@@ -218,7 +221,7 @@ impl AudioEffect for Compressor {
             0.0 // No filtering
         };
 
-        let use_sidechain = self.sidechain_enabled && !self.sidechain_buffer.is_empty();
+        let use_sidechain = self.sidechain_enabled && self.sidechain_len > 0;
 
         // Process stereo interleaved
         for frame in 0..context.samples.as_usize() {
@@ -243,7 +246,7 @@ impl AudioEffect for Compressor {
                 in_l.abs().max(in_r.abs())
             };
 
-            let peak_db = Decibels::from_linear(detect_peak).as_f32();
+            let peak_db = Decibels::from_linear(detect_peak.max(1e-6)).as_f32();
 
             // Envelope follower with attack/release
             let coeff = if peak_db > self.envelope {
@@ -270,7 +273,7 @@ impl AudioEffect for Compressor {
     fn reset(&mut self) {
         self.envelope = 0.0;
         self.sc_filter_state = 0.0;
-        self.sidechain_buffer.clear();
+        self.sidechain_len = 0;
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

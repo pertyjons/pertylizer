@@ -275,6 +275,10 @@ impl Describable for ShimmerReverb {
 
 impl AudioEffect for ShimmerReverb {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+        debug_assert_eq!(
+            self.sample_rate, context.sample_rate,
+            "ShimmerReverb sample rate mismatch - call set_sample_rate() before processing"
+        );
         self.update_params();
 
         let feedback_gain = self.feedback_gain();

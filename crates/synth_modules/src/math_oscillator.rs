@@ -300,7 +300,7 @@ impl MathOscillator {
             MathAlgo::Logistic => {
                 // Logistic map chaos
                 let r = 3.0 + a; // r from 3.0 to 4.0 (chaotic region)
-                self.logistic_x = r * self.logistic_x * (1.0 - self.logistic_x);
+                self.logistic_x = (r * self.logistic_x * (1.0 - self.logistic_x)).clamp(0.0, 1.0);
                 // Center and scale output
                 (self.logistic_x * 2.0 - 1.0) * b
             }
@@ -341,7 +341,7 @@ impl MathOscillator {
             MathAlgo::KarplusStrong => {
                 // Karplus-Strong physical modeling
                 let delay_samples =
-                    (self.sample_rate.as_f32() / self.frequency.as_f32()).round() as usize;
+                    (self.sample_rate.as_f32() / self.frequency.as_f32().max(1.0)).round() as usize;
                 let delay_samples = delay_samples.clamp(1, MAX_DELAY_SIZE - 1);
 
                 // Read from delay line

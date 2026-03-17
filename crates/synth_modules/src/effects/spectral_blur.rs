@@ -17,6 +17,8 @@ use synth_dsp::{Complex, StftProcessor, WindowType};
 const MAX_FFT: usize = 4096;
 /// Number of complex bins for max FFT.
 const MAX_BINS: usize = MAX_FFT / 2 + 1;
+/// Maximum block size for pre-allocated mono buffers.
+const MAX_BLOCK_SIZE: usize = 4096;
 
 /// STFT-based spectral blur/smear effect.
 pub struct SpectralBlur {
@@ -36,6 +38,12 @@ pub struct SpectralBlur {
     mag_smooth_r: Vec<f32>,
     // Temp buffer for spectral smoothing
     mag_temp: Vec<f32>,
+
+    // Pre-allocated mono I/O buffers (max block size)
+    mono_l: Vec<f32>,
+    mono_r: Vec<f32>,
+    out_l: Vec<f32>,
+    out_r: Vec<f32>,
 
     sample_rate: SampleRate,
     needs_rebuild: bool,
@@ -58,6 +66,11 @@ impl SpectralBlur {
             mag_smooth_l: vec![0.0; MAX_BINS],
             mag_smooth_r: vec![0.0; MAX_BINS],
             mag_temp: vec![0.0; MAX_BINS],
+
+            mono_l: vec![0.0; MAX_BLOCK_SIZE],
+            mono_r: vec![0.0; MAX_BLOCK_SIZE],
+            out_l: vec![0.0; MAX_BLOCK_SIZE],
+            out_r: vec![0.0; MAX_BLOCK_SIZE],
 
             sample_rate: SampleRate::DVD_QUALITY,
             needs_rebuild: false,
@@ -183,19 +196,13 @@ impl AudioEffect for SpectralBlur {
         let freeze = self.freeze;
         let mix = self.mix.as_f32();
 
-        // Deinterleave input
+        // Deinterleave input — use pre-allocated buffers, clamp to max size
         let num_frames = context.samples.as_usize();
-        // Use stack-allocated buffers for typical block sizes, fall back to zeros for overflow
-        let mut mono_l = [0.0f32; 1024];
-        let mut mono_r = [0.0f32; 1024];
-        let mut out_l = [0.0f32; 1024];
-        let mut out_r = [0.0f32; 1024];
-
-        let frames = num_frames.min(1024);
+        let frames = num_frames.min(MAX_BLOCK_SIZE);
         for i in 0..frames {
             let frame = StereoSample::read_frame(input, i);
-            mono_l[i] = frame.left;
-            mono_r[i] = frame.right;
+            self.mono_l[i] = frame.left;
+            self.mono_r[i] = frame.right;
         }
 
         // Capture references to smooth buffers for the closure
@@ -204,7 +211,7 @@ impl AudioEffect for SpectralBlur {
 
         // Process left channel
         self.stft_l
-            .process(&mono_l[..frames], &mut out_l[..frames], |spectrum| {
+            .process(&self.mono_l[..frames], &mut self.out_l[..frames], |spectrum| {
                 for (k, bin) in spectrum.iter_mut().enumerate().take(num_bins) {
                     let mag = bin.norm();
 
@@ -235,7 +242,7 @@ impl AudioEffect for SpectralBlur {
 
         // Process right channel
         self.stft_r
-            .process(&mono_r[..frames], &mut out_r[..frames], |spectrum| {
+            .process(&self.mono_r[..frames], &mut self.out_r[..frames], |spectrum| {
                 for (k, bin) in spectrum.iter_mut().enumerate().take(num_bins) {
                     let mag = bin.norm();
 
@@ -260,8 +267,8 @@ impl AudioEffect for SpectralBlur {
 
         // Re-interleave with dry/wet mix
         for i in 0..frames {
-            let result = StereoSample::new(mono_l[i], mono_r[i])
-                .blend(StereoSample::new(out_l[i], out_r[i]), mix);
+            let result = StereoSample::new(self.mono_l[i], self.mono_r[i])
+                .blend(StereoSample::new(self.out_l[i], self.out_r[i]), mix);
             StereoSample::write_frame(output, i, result);
         }
     }

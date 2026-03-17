@@ -206,6 +206,10 @@ impl Describable for EnsembleChorus {
 impl AudioEffect for EnsembleChorus {
     #[allow(clippy::too_many_lines)]
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+        debug_assert_eq!(
+            self.sample_rate, context.sample_rate,
+            "EnsembleChorus sample rate mismatch - call set_sample_rate() before processing"
+        );
         let sr = self.sample_rate.as_f32();
         let phase_inc = self.rate.phase_increment(self.sample_rate);
         let depth_samples = self.depth.as_f32() / 1000.0 * sr;

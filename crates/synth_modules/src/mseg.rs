@@ -276,12 +276,22 @@ impl Mseg {
     }
 
     /// Get the effective segment time, scaled by the time_scale parameter.
+    ///
+    /// Maps `NormalizedValue` (0.0..1.0) to a musically useful range:
+    /// - 0.0 → 0.01x (100x slower)
+    /// - 0.5 → 1.0x  (normal speed)
+    /// - 1.0 → 10.0x (10x faster)
     #[inline]
     fn effective_time(&self, seg_idx: u8) -> f32 {
         let raw_time = self.segments[seg_idx as usize].time.as_f32();
-        // time_scale: 0.0 maps to 0.01x, 1.0 maps to 10.0x
-        // Using NormalizedValue stored as raw float for TimeScale
-        let scale = self.time_scale.as_f32();
+        let t = self.time_scale.as_f32();
+        let scale = if t < 0.5 {
+            // 0.0..0.5 maps to 0.01..1.0
+            0.01 + (1.0 - 0.01) * (t * 2.0)
+        } else {
+            // 0.5..1.0 maps to 1.0..10.0
+            1.0 + (10.0 - 1.0) * ((t - 0.5) * 2.0)
+        };
         raw_time * scale
     }
 
@@ -358,8 +368,21 @@ impl Mseg {
                 }
             }
             MsegState::Running(idx) => {
-                // If currently running before sustain, jump to release
-                self.state = MsegState::Release(idx);
+                // If currently running before sustain, skip to first post-sustain segment
+                if idx <= self.sustain_segment {
+                    let release_idx = self.sustain_segment + 1;
+                    if release_idx >= self.segment_count {
+                        self.state = MsegState::Idle;
+                    } else {
+                        self.state = MsegState::Release(release_idx);
+                        self.phase = Phase::ZERO;
+                        // Start release from the current interpolated level for smooth transition
+                        self.start_level = self.current_level();
+                    }
+                } else {
+                    // Already past sustain, just switch to release mode
+                    self.state = MsegState::Release(idx);
+                }
             }
             MsegState::Idle | MsegState::Release(_) => {
                 // Already idle or releasing, do nothing

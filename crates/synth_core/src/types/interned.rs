@@ -48,15 +48,17 @@ const ID_VELOCITY: u32 = 22;
 const ID_PITCH: u32 = 23;
 const ID_PITCH_CV: u32 = 24;
 const ID_ACCENT: u32 = 25;
+// Retrigger port
+const ID_RETRIGGER: u32 = 26;
 // Mixer input ports (for zero-allocation mixer processing)
-const ID_IN1: u32 = 26;
-const ID_IN2: u32 = 27;
-const ID_IN3: u32 = 28;
-const ID_IN4: u32 = 29;
-const ID_IN5: u32 = 30;
-const ID_IN6: u32 = 31;
-const ID_IN7: u32 = 32;
-const ID_IN8: u32 = 33;
+const ID_IN1: u32 = 27;
+const ID_IN2: u32 = 28;
+const ID_IN3: u32 = 29;
+const ID_IN4: u32 = 30;
+const ID_IN5: u32 = 31;
+const ID_IN6: u32 = 32;
+const ID_IN7: u32 = 33;
+const ID_IN8: u32 = 34;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -198,6 +200,8 @@ impl PortName {
     pub const PITCH_CV: Self = Self(ID_PITCH_CV);
     /// Accent port "accent".
     pub const ACCENT: Self = Self(ID_ACCENT);
+    /// Retrigger port "retrigger".
+    pub const RETRIGGER: Self = Self(ID_RETRIGGER);
     // Mixer input ports "in1" through "in8"
     /// Mixer input port 1 "in1".
     pub const IN1: Self = Self(ID_IN1);

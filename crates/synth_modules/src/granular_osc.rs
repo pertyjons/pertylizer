@@ -116,7 +116,6 @@ pub struct GranularOsc {
     note_freq: f32,
     samples_until_next_grain: f32,
     rng: Xorshift32,
-    source_dirty: bool,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -145,7 +144,6 @@ impl GranularOsc {
             note_freq: 440.0,
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
-            source_dirty: true,
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -153,7 +151,6 @@ impl GranularOsc {
 
     /// Fill the source buffer with the selected waveform at a fixed base pitch.
     fn fill_source_buffer(&mut self) {
-        self.source_dirty = false;
         let sr = self.sample_rate.as_f32();
         self.source_len = (SOURCE_BUFFER_SECONDS * sr) as usize;
         self.source_len = self.source_len.min(MAX_SOURCE_SAMPLES);
@@ -383,10 +380,6 @@ impl PolyModule for GranularOsc {
         self.output_buffer.resize(samples);
         self.output_buffer.clear();
 
-        if self.source_dirty {
-            self.fill_source_buffer();
-        }
-
         let sr = self.sample_rate.as_f32();
         let level = self.level.as_f32();
 
@@ -409,6 +402,11 @@ impl PolyModule for GranularOsc {
             let mut mix = 0.0f32;
             for grain in &mut self.grains {
                 if !grain.active {
+                    continue;
+                }
+
+                if grain.length == 0 {
+                    grain.active = false;
                     continue;
                 }
 
@@ -462,7 +460,7 @@ impl PolyModule for GranularOsc {
                 GranularParam::Source(s) => {
                     if s != self.source {
                         self.source = s;
-                        self.source_dirty = true;
+                        self.fill_source_buffer();
                     }
                 }
                 GranularParam::Level(g) => self.level = g,
@@ -532,7 +530,7 @@ impl PolyModule for GranularOsc {
 
     fn set_sample_rate(&mut self, rate: SampleRate) {
         self.sample_rate = rate;
-        self.source_dirty = true;
+        self.fill_source_buffer();
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

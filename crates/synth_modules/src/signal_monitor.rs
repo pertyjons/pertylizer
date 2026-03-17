@@ -26,6 +26,9 @@ use synth_core::{
     WidgetHint,
 };
 
+/// Maximum sweep buffer size: max time_scale (0.1s) * max sample rate (192 kHz).
+const MAX_SWEEP_SAMPLES: usize = 19200;
+
 /// Signal Monitor — inline waveform visualizer for the voice graph.
 ///
 /// Pass-through module: copies input to output without modification.
@@ -73,8 +76,7 @@ impl SignalMonitor {
         let time_scale = Seconds::new(0.01);
         let display_samples = (time_scale.as_f32() * sample_rate.as_f32()) as usize;
 
-        let mut sweep_buffer = Vec::new();
-        sweep_buffer.resize(display_samples.max(1), 0.0);
+        let sweep_buffer = vec![0.0; MAX_SWEEP_SAMPLES];
 
         Self {
             vis_sink: None,
@@ -101,11 +103,11 @@ impl SignalMonitor {
     }
 
     /// Recalculate display_samples from time_scale and sample_rate.
+    /// Never resizes sweep_buffer — it stays at MAX_SWEEP_SAMPLES to avoid
+    /// heap allocation on the audio thread (set_param is called from RT context).
     fn update_display_samples(&mut self) {
         let samples = (self.time_scale.as_f32() * self.sample_rate.as_f32()) as usize;
-        self.display_samples = SampleCount::new(samples.max(1));
-        // Ensure sweep_buffer has capacity (no allocation during process)
-        self.sweep_buffer.resize(samples.max(1), 0.0);
+        self.display_samples = SampleCount::new(samples.clamp(1, MAX_SWEEP_SAMPLES));
     }
 }
 
@@ -376,9 +378,9 @@ mod tests {
     #[test]
     fn test_sweep_buffer_preallocated() {
         let sm = SignalMonitor::new();
-        // Buffer should be pre-allocated to display_samples size
-        assert_eq!(sm.sweep_buffer.len(), sm.display_samples.as_usize());
-        assert!(sm.sweep_buffer.len() > 0);
+        // Buffer should be pre-allocated to MAX_SWEEP_SAMPLES (never resized at runtime)
+        assert_eq!(sm.sweep_buffer.len(), MAX_SWEEP_SAMPLES);
+        assert!(sm.display_samples.as_usize() <= sm.sweep_buffer.len());
     }
 
     #[test]

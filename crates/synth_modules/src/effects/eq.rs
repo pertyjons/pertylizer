@@ -20,6 +20,7 @@ struct BiquadCoeffs {
 impl BiquadCoeffs {
     /// Create from raw unnormalized coefficients, dividing all by a0.
     fn from_raw(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
+        let a0 = if a0.abs() < 1e-6 { 1e-6 } else { a0 };
         Self {
             b0: b0 / a0,
             b1: b1 / a0,

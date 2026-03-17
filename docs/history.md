@@ -1,5 +1,17 @@
 # Version History
 
+## [0.244.0] - 2026-03-17
+### DSP module fixes: RT-safety, numerical stability, and logic bugs
+- **Fixed RT-safety violations** — phase_vocoder, spectral_blur, signal_monitor, compressor, granular_osc, euclidean: eliminated heap allocations in audio thread by pre-allocating buffers and using fixed-size arrays
+- **Fixed oscillator unison panning** — pan angle calculation used π/4 instead of π/2, giving only half the stereo width
+- **Fixed math oscillator stability** — clamped logistic map to [0,1] preventing NaN divergence; guarded Karplus-Strong against zero-frequency division
+- **Fixed MSEG release transition** — releasing gate before sustain now correctly skips to post-sustain segment instead of replaying current segment
+- **Fixed LFO retrigger edge detection** — prev_retrigger state now always tracks input regardless of retrigger mode, preventing stale state on mode toggle
+- **Fixed LFO RT-safety** — replaced `PortName::intern("retrigger")` (takes RwLock) with compile-time `PortName::RETRIGGER` constant
+- **Fixed compressor silent sidechain** — clamped detect_peak to 1e-6 before dB conversion, preventing -infinity envelope
+- **Numerical stability** — fractal_osc sum_a guard strengthened to 1e-7; EQ biquad a0 zero-guard; delay feedback decay clamped to 0.99; keyboard_panner curve singularity clamped to ±0.99
+- **Debug assertions** — ensemble_chorus and shimmer_reverb now assert sample rate consistency in process()
+
 ## [0.243.0] - 2026-03-17
 ### Engine real-time safety fixes and MCP input validation
 - **Fixed Vec allocation in audio thread** — `graph.rs` process_module() no longer heap-allocates per frame; added `InputPorts::from_owned()` to accept owned buffers directly

@@ -80,9 +80,9 @@ impl Euclidean {
             return;
         }
 
-        // Björklund algorithm
-        let mut counts = vec![0u32; steps];
-        let mut remainders = vec![0u32; steps];
+        // Björklund algorithm (fixed-size arrays to avoid heap allocation)
+        let mut counts = [0u32; MAX_STEPS];
+        let mut remainders = [0u32; MAX_STEPS];
         let mut level = 0;
 
         remainders[0] = pulses as u32;

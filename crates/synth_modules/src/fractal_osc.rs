@@ -145,7 +145,7 @@ impl FractalOscillator {
         }
 
         // Normalize by total amplitude to keep consistent output level
-        if sum_a > 0.0 {
+        if sum_a > 1e-7 {
             out_l /= sum_a;
             out_r /= sum_a;
         }

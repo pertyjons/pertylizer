@@ -9,7 +9,7 @@
 //! - Intra-voice unison with detune and stereo spread
 
 use std::collections::HashMap;
-use std::f32::consts::{FRAC_PI_4, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -444,7 +444,7 @@ impl PolyModule for Oscillator {
                         self.generate_single_sample(voice_freq, phase, pm, effective_pulse_width);
                     self.unison_phases[j] = new_phase;
 
-                    let angle = (self.unison_pans[j] + 1.0) * FRAC_PI_4;
+                    let angle = ((self.unison_pans[j] + 1.0) * 0.5) * FRAC_PI_2;
                     left += sample * angle.cos() * gain;
                     right += sample * angle.sin() * gain;
                 }

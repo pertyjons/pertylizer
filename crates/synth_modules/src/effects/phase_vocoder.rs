@@ -16,6 +16,9 @@ use synth_core::{
 };
 use synth_dsp::{StftProcessor, WindowType};
 
+/// Maximum block size for pre-allocated mono buffers.
+const MAX_BLOCK_SIZE: usize = 4096;
+
 /// Phase vocoder with pitch shifting.
 pub struct PhaseVocoder {
     // Parameters
@@ -39,7 +42,7 @@ pub struct PhaseVocoder {
     frozen_right: Vec<Complex<f32>>,
     has_frozen: bool,
 
-    // Internal buffers for interleaved -> deinterleaved
+    // Pre-allocated buffers for interleaved -> deinterleaved (max block size)
     mono_in_l: Vec<f32>,
     mono_in_r: Vec<f32>,
     mono_out_l: Vec<f32>,
@@ -73,10 +76,10 @@ impl PhaseVocoder {
             frozen_right: vec![Complex::new(0.0, 0.0); complex_size],
             has_frozen: false,
 
-            mono_in_l: Vec::new(),
-            mono_in_r: Vec::new(),
-            mono_out_l: Vec::new(),
-            mono_out_r: Vec::new(),
+            mono_in_l: vec![0.0; MAX_BLOCK_SIZE],
+            mono_in_r: vec![0.0; MAX_BLOCK_SIZE],
+            mono_out_l: vec![0.0; MAX_BLOCK_SIZE],
+            mono_out_r: vec![0.0; MAX_BLOCK_SIZE],
 
             needs_rebuild: false,
         }
@@ -224,11 +227,8 @@ impl AudioEffect for PhaseVocoder {
         let fft_size = self.fft_size_option.size();
         let hop_size = fft_size / 4;
 
-        // Deinterleave
-        self.mono_in_l.resize(num_frames, 0.0);
-        self.mono_in_r.resize(num_frames, 0.0);
-        self.mono_out_l.resize(num_frames, 0.0);
-        self.mono_out_r.resize(num_frames, 0.0);
+        // Deinterleave — use pre-allocated buffers, clamp to max size
+        let num_frames = num_frames.min(MAX_BLOCK_SIZE);
 
         for i in 0..num_frames {
             let frame = StereoSample::read_frame(input, i);
@@ -242,8 +242,10 @@ impl AudioEffect for PhaseVocoder {
         let frozen_l = &self.frozen_left;
         let has_frozen = self.has_frozen;
 
-        self.stft_left
-            .process(&self.mono_in_l, &mut self.mono_out_l, |spectrum| {
+        self.stft_left.process(
+            &self.mono_in_l[..num_frames],
+            &mut self.mono_out_l[..num_frames],
+            |spectrum| {
                 if freeze && has_frozen {
                     spectrum.copy_from_slice(frozen_l);
                 } else {
@@ -255,15 +257,18 @@ impl AudioEffect for PhaseVocoder {
                         hop_size,
                     );
                 }
-            });
+            },
+        );
 
         // Process right channel
         let prev_phase_r = &mut self.prev_phase_right;
         let phase_accum_r = &mut self.phase_accum_right;
         let frozen_r = &self.frozen_right;
 
-        self.stft_right
-            .process(&self.mono_in_r, &mut self.mono_out_r, |spectrum| {
+        self.stft_right.process(
+            &self.mono_in_r[..num_frames],
+            &mut self.mono_out_r[..num_frames],
+            |spectrum| {
                 if freeze && has_frozen {
                     spectrum.copy_from_slice(frozen_r);
                 } else {
@@ -275,7 +280,8 @@ impl AudioEffect for PhaseVocoder {
                         hop_size,
                     );
                 }
-            });
+            },
+        );
 
         // Capture frozen spectrum if freeze just activated
         if freeze && !self.has_frozen {

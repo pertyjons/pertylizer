@@ -168,17 +168,22 @@ impl PolyModule for Lfo {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let retrigger_reader = inputs.reader(PortName::intern("retrigger"), 0.0);
+        let retrigger_reader = inputs.reader(PortName::RETRIGGER, 0.0);
         let rate_cv_reader = inputs.reader(PortName::RATE_CV, 0.0);
 
         // In tempo sync mode, derive phase directly from beat position for lock
         let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
 
         for i in 0..context.samples.as_usize() {
-            // Only process retrigger input if retrigger_mode is set to Retrigger
-            if self.retrigger_mode.should_retrigger() && retrigger_reader.is_connected() {
+            // Always track retrigger input for edge detection, but only act on it
+            // when retrigger_mode is enabled. This prevents stale prev_retrigger
+            // state when the mode is toggled.
+            if retrigger_reader.is_connected() {
                 let val = retrigger_reader[i];
-                if val > 0.5 && self.prev_retrigger.as_f32() <= 0.5 {
+                if self.retrigger_mode.should_retrigger()
+                    && val > 0.5
+                    && self.prev_retrigger.as_f32() <= 0.5
+                {
                     self.retrigger();
                 }
                 self.prev_retrigger = NormalizedValue::new(val);
