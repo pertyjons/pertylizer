@@ -403,10 +403,12 @@ impl SynthBridge for AppSynthBridge {
     // === Instrument lifecycle ===
 
     fn create_instrument(&self, name: &str) -> Result<InstrumentInfo, McpBridgeError> {
-        let id = self
-            .session
-            .add_instrument(name)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "create_instrument" })?;
+        let id =
+            self.session
+                .add_instrument(name)
+                .map_err(|_| McpBridgeError::CommandSendFailed {
+                    command: "create_instrument",
+                })?;
 
         // Return basic info — the engine will update the snapshots asynchronously
         Ok(InstrumentInfo {
@@ -433,7 +435,9 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .remove_instrument(InstrumentId::new(instrument_id))
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "delete_instrument" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "delete_instrument",
+            })
     }
 
     fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError> {
@@ -450,7 +454,9 @@ impl SynthBridge for AppSynthBridge {
                 InstrumentId::new(instrument_id),
                 synth_core::Gain::new(volume),
             )
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_volume" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_volume",
+            })
     }
 
     fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError> {
@@ -460,21 +466,27 @@ impl SynthBridge for AppSynthBridge {
                 InstrumentId::new(instrument_id),
                 synth_core::BipolarValue::new(pan),
             )
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_pan" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_pan",
+            })
     }
 
     fn set_instrument_mute(&self, instrument_id: u64, muted: bool) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_mute(InstrumentId::new(instrument_id), muted)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_mute" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_mute",
+            })
     }
 
     fn set_instrument_solo(&self, instrument_id: u64, solo: bool) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_solo(InstrumentId::new(instrument_id), solo)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_solo" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_solo",
+            })
     }
 
     fn set_instrument_midi_channel(
@@ -488,7 +500,9 @@ impl SynthBridge for AppSynthBridge {
         })?;
         self.session
             .set_instrument_midi_channel(InstrumentId::new(instrument_id), midi_channel)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_midi_channel" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_midi_channel",
+            })
     }
 
     fn set_instrument_enabled(
@@ -499,7 +513,9 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_enabled(InstrumentId::new(instrument_id), enabled)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_enabled" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_enabled",
+            })
     }
 
     fn set_instrument_category(
@@ -512,7 +528,9 @@ impl SynthBridge for AppSynthBridge {
             category.parse().map_err(McpBridgeError::Other)?;
         self.session
             .set_instrument_category(InstrumentId::new(instrument_id), cat)
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "set_instrument_category" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_category",
+            })
     }
 
     fn set_parameter(
@@ -544,7 +562,9 @@ impl SynthBridge for AppSynthBridge {
                 crate::session::SessionError::ParameterNotFound(s) => {
                     McpBridgeError::ParameterNotFound(s)
                 }
-                _ => McpBridgeError::CommandSendFailed { command: "set_parameter" },
+                _ => McpBridgeError::CommandSendFailed {
+                    command: "set_parameter",
+                },
             })?;
 
         // Read back the actual value directly from the descriptor (avoids listing all modules)
@@ -607,7 +627,9 @@ impl SynthBridge for AppSynthBridge {
         }) {
             Ok(())
         } else {
-            Err(McpBridgeError::CommandSendFailed { command: "note_off" })
+            Err(McpBridgeError::CommandSendFailed {
+                command: "note_off",
+            })
         }
     }
 
@@ -924,7 +946,9 @@ impl SynthBridge for AppSynthBridge {
                 to_id,
                 to_port.to_string(),
             )
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "disconnect" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "disconnect",
+            })
     }
 
     fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
@@ -932,7 +956,9 @@ impl SynthBridge for AppSynthBridge {
 
         self.session
             .clear_graph(InstrumentId::new(instrument_id))
-            .map_err(|_| McpBridgeError::CommandSendFailed { command: "clear_graph" })
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "clear_graph",
+            })
     }
 
     // === Sequencer: Song ===
@@ -2429,7 +2455,9 @@ impl SynthBridge for AppSynthBridge {
         let snapshots = self.session.list_instruments();
         for snap in &snapshots {
             #[allow(clippy::cast_possible_truncation)]
-            if !used_instrument_ids.contains(&(snap.id.as_u64() as u16)) {
+            if !used_instrument_ids
+                .contains(&synth_sequencer::SeqInstrumentId(snap.id.as_u64() as u16))
+            {
                 removed_instruments.push(snap.name.clone());
                 let _ = self.session.remove_instrument(snap.id);
             }

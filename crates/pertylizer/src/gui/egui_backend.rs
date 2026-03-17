@@ -2620,7 +2620,7 @@ impl SynthApp {
             .iter()
             .filter(|inst| {
                 #[allow(clippy::cast_possible_truncation)]
-                let seq_id = inst.id.as_u64() as u16;
+                let seq_id = synth_sequencer::SeqInstrumentId(inst.id.as_u64() as u16);
                 !used_instrument_ids.contains(&seq_id)
             })
             .map(|inst| inst.id)

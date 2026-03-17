@@ -848,7 +848,7 @@ fn draw_arrangement(
                 .clicked()
                 && let Ok(mut song_w) = song.write()
             {
-                song_w.create_track("Track 1");
+                let _ = song_w.create_track("Track 1");
             }
         });
         return None;
@@ -1036,7 +1036,7 @@ fn draw_arrangement(
                 && let Ok(mut song_w) = song.write()
             {
                 let count = song_w.track_count();
-                song_w.create_track(format!("Track {}", count + 1));
+                let _ = song_w.create_track(format!("Track {}", count + 1));
             }
         });
 

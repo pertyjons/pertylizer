@@ -4,7 +4,7 @@
 
 use super::ids::{NoteId, PatternId, SeqInstrumentId};
 use super::pitch::{Pitch, Velocity};
-use super::time::{Duration, PatternTick, Tick};
+use super::time::{Duration, PatternTick, Tick, TimeSignature};
 use synth_core::{Bpm, NormalizedValue, Octaves, Semitones};
 
 /// Input commands from any source.
@@ -161,7 +161,7 @@ pub enum InputCommand {
     /// Tap tempo.
     TapTempo,
     /// Set time signature.
-    SetTimeSignature { numerator: u8, denominator: u8 },
+    SetTimeSignature(TimeSignature),
 
     // === Pattern management ===
     /// Create new pattern.
@@ -182,6 +182,7 @@ pub enum InputCommand {
 
 impl InputCommand {
     /// Check if this command requires a pattern context.
+    #[must_use]
     pub fn requires_pattern(&self) -> bool {
         matches!(
             self,
@@ -208,6 +209,7 @@ impl InputCommand {
     }
 
     /// Check if this is a transport command.
+    #[must_use]
     pub fn is_transport(&self) -> bool {
         matches!(
             self,
@@ -224,6 +226,7 @@ impl InputCommand {
     }
 
     /// Check if this is an editing command.
+    #[must_use]
     pub fn is_editing(&self) -> bool {
         matches!(
             self,
@@ -246,6 +249,7 @@ impl InputCommand {
     }
 
     /// Check if this command should be recorded for undo.
+    #[must_use]
     pub fn is_undoable(&self) -> bool {
         self.is_editing()
             || matches!(
@@ -258,6 +262,7 @@ impl InputCommand {
     }
 
     /// Check if this is a real-time input (note on/off).
+    #[must_use]
     pub fn is_realtime_input(&self) -> bool {
         matches!(self, Self::NoteOn { .. } | Self::NoteOff { .. })
     }
@@ -293,6 +298,7 @@ pub struct KeyboardInputSource {
 
 impl KeyboardInputSource {
     /// Create a new keyboard input source.
+    #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -309,6 +315,7 @@ impl KeyboardInputSource {
     }
 
     /// Get the current base octave.
+    #[must_use]
     pub fn base_octave(&self) -> Octaves {
         self.base_octave
     }
@@ -319,6 +326,7 @@ impl KeyboardInputSource {
     }
 
     /// Get the current velocity.
+    #[must_use]
     pub fn velocity(&self) -> Velocity {
         self.velocity
     }
@@ -331,9 +339,11 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key press (note on).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn key_down(&mut self, note_offset: u8, instrument: Option<SeqInstrumentId>) {
-        let midi_note = (self.base_octave.as_i32() + 1) as u8 * 12 + note_offset;
+        let midi_note = (self.base_octave.as_i32() + 1) * 12 + i32::from(note_offset);
+        let Ok(midi_note) = u8::try_from(midi_note) else {
+            return;
+        };
         if let Some(pitch) = Pitch::new(midi_note) {
             self.push_command(InputCommand::NoteOn {
                 pitch,
@@ -344,9 +354,11 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key release (note off).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn key_up(&mut self, note_offset: u8) {
-        let midi_note = (self.base_octave.as_i32() + 1) as u8 * 12 + note_offset;
+        let midi_note = (self.base_octave.as_i32() + 1) * 12 + i32::from(note_offset);
+        let Ok(midi_note) = u8::try_from(midi_note) else {
+            return;
+        };
         if let Some(pitch) = Pitch::new(midi_note) {
             self.push_command(InputCommand::NoteOff { pitch });
         }
@@ -385,6 +397,7 @@ pub struct InputMultiplexer {
 
 impl InputMultiplexer {
     /// Create a new input multiplexer.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             sources: Vec::new(),
@@ -406,7 +419,7 @@ impl InputMultiplexer {
     pub fn poll_all(&mut self) -> Vec<InputCommand> {
         let mut commands = Vec::new();
         for source in &mut self.sources {
-            if source.is_active() && source.is_enabled() {
+            if source.is_active() {
                 commands.extend(source.poll());
             }
         }
@@ -414,11 +427,13 @@ impl InputMultiplexer {
     }
 
     /// Get list of source names.
+    #[must_use]
     pub fn source_names(&self) -> Vec<&str> {
         self.sources.iter().map(|s| s.name()).collect()
     }
 
     /// Get number of sources.
+    #[must_use]
     pub fn source_count(&self) -> usize {
         self.sources.len()
     }

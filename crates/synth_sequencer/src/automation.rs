@@ -7,6 +7,7 @@ use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
 
 /// A single automation point.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AutomationPoint {
     /// Position within the pattern.
@@ -51,6 +52,7 @@ pub enum CurveType {
 impl CurveType {
     /// Interpolate between two values using this curve type.
     /// `t` is the normalized position (0.0 to 1.0).
+    #[must_use]
     pub fn interpolate(
         &self,
         from: NormalizedValue,
@@ -92,6 +94,7 @@ pub struct AutomationLane {
 
 impl AutomationLane {
     /// Create a new empty automation lane.
+    #[must_use]
     pub fn new(target: AutomationTarget) -> Self {
         Self {
             target,
@@ -123,6 +126,7 @@ impl AutomationLane {
     }
 
     /// Get interpolated value at the given tick.
+    #[must_use]
     pub fn value_at(&self, tick: PatternTick) -> Option<NormalizedValue> {
         if self.points.is_empty() {
             return None;
@@ -143,6 +147,11 @@ impl AutomationLane {
         let before = &self.points[idx - 1];
         let after = &self.points[idx];
 
+        // Guard against division by zero when both points share the same tick
+        if after.tick.0 == before.tick.0 {
+            return Some(before.value);
+        }
+
         // Calculate interpolation position
         let t = NormalizedValue::new(
             (tick.0 - before.tick.0) as f32 / (after.tick.0 - before.tick.0) as f32,
@@ -152,16 +161,19 @@ impl AutomationLane {
     }
 
     /// Get the value at a tick, or a default if no points exist.
+    #[must_use]
     pub fn value_at_or(&self, tick: PatternTick, default: NormalizedValue) -> NormalizedValue {
         self.value_at(tick).unwrap_or(default)
     }
 
     /// Check if the lane is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.points.is_empty()
     }
 
     /// Get number of points.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.points.len()
     }

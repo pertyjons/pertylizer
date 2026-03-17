@@ -40,6 +40,7 @@ pub struct SequencerTrack {
 
 impl SequencerTrack {
     /// Create a new sequencer track.
+    #[must_use]
     pub fn new(id: TrackId, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -55,24 +56,28 @@ impl SequencerTrack {
     }
 
     /// Set the instrument (builder pattern).
+    #[must_use]
     pub fn with_instrument(mut self, instrument: SeqInstrumentId) -> Self {
         self.instrument = Some(instrument);
         self
     }
 
     /// Set the volume (builder pattern).
+    #[must_use]
     pub fn with_volume(mut self, volume: NormalizedValue) -> Self {
         self.volume = volume;
         self
     }
 
     /// Set the panning (builder pattern).
+    #[must_use]
     pub fn with_pan(mut self, pan: NormalizedValue) -> Self {
         self.pan = pan;
         self
     }
 
     /// Set the color (builder pattern).
+    #[must_use]
     pub fn with_color(mut self, color: TrackColor) -> Self {
         self.color = color;
         self
@@ -89,6 +94,7 @@ impl SequencerTrack {
     }
 
     /// Check if this track should be audible given solo states.
+    #[must_use]
     pub fn is_audible(&self, any_solo: bool) -> bool {
         if self.mute {
             return false;
@@ -101,6 +107,7 @@ impl SequencerTrack {
 }
 
 /// Track color for UI display.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackColor {
     pub r: u8,
@@ -155,11 +162,13 @@ impl TrackColor {
     }
 
     /// Get as RGB tuple.
+    #[must_use]
     pub fn as_rgb(&self) -> (u8, u8, u8) {
         (self.r, self.g, self.b)
     }
 
     /// Get as normalized RGB.
+    #[must_use]
     pub fn as_rgb_f32(&self) -> (f32, f32, f32) {
         (
             self.r as f32 / 255.0,

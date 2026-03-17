@@ -16,6 +16,7 @@ use synth_core::{NormalizedValue, Semitones};
 // ============================================================================
 
 /// Row resolution configuration for pattern view.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowResolution {
     /// Number of rows in this pattern.
@@ -83,7 +84,7 @@ impl RowResolution {
     pub fn quantize_with_strength(&self, tick: PatternTick, strength: f32) -> PatternTick {
         let quantized = self.quantize(tick);
         let diff = quantized.0 as f32 - tick.0 as f32;
-        PatternTick((tick.0 as f32 + diff * strength.clamp(0.0, 1.0)) as u32)
+        PatternTick((tick.0 as f32 + diff * strength.clamp(0.0, 1.0)).round() as u32)
     }
 }
 
@@ -114,6 +115,7 @@ pub struct Pattern {
 
 impl Pattern {
     /// Create a new empty pattern.
+    #[must_use]
     pub fn new(id: PatternId, length: Duration) -> Self {
         Self {
             id,
@@ -185,6 +187,7 @@ impl Pattern {
     }
 
     /// Get a note by ID.
+    #[must_use]
     pub fn note(&self, id: NoteId) -> Option<&Note> {
         self.notes.iter().find(|n| n.id == id)
     }
@@ -195,6 +198,7 @@ impl Pattern {
     }
 
     /// Get all notes (sorted).
+    #[must_use]
     pub fn notes(&self) -> &[Note] {
         &self.notes
     }
@@ -308,7 +312,7 @@ impl Pattern {
             let quantized = ((note.start.0 + grid / 2) / grid) * grid;
             let diff = quantized as f32 - note.start.0 as f32;
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let new_tick = (note.start.0 as f32 + diff * str_f) as u32;
+            let new_tick = (note.start.0 as f32 + diff * str_f).round() as u32;
             note.start = PatternTick(new_tick);
         }
         self.notes.sort_by_key(|n| n.start);
@@ -331,7 +335,7 @@ impl Pattern {
             let timing_offset = fastrand::i32(-(timing_ticks as i32)..=(timing_ticks as i32));
             #[allow(clippy::cast_sign_loss)]
             let new_tick = (note.start.0 as i64 + timing_offset as i64).max(0) as u32;
-            note.start = PatternTick(new_tick);
+            note.start = PatternTick(new_tick.min(self.length.0.saturating_sub(1)));
 
             // Random velocity offset: ±velocity_range
             let vel_offset = fastrand::f32() * 2.0 * vel_range - vel_range;
@@ -378,7 +382,8 @@ impl Pattern {
             // Odd grid positions (the "even" subdivisions in musical terms) get shifted
             if grid_pos % 2 == 1 {
                 let shift = (max_shift * swing_f) as u32;
-                note.start = PatternTick(note.start.0 + shift);
+                note.start =
+                    PatternTick((note.start.0 + shift).min(self.length.0.saturating_sub(1)));
             }
         }
         self.notes.sort_by_key(|n| n.start);
@@ -399,11 +404,13 @@ impl Pattern {
     }
 
     /// Get number of notes.
+    #[must_use]
     pub fn note_count(&self) -> usize {
         self.notes.len()
     }
 
     /// Check if pattern is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.notes.is_empty() && self.automation.iter().all(|l| l.is_empty())
     }
@@ -432,6 +439,7 @@ impl Pattern {
     }
 
     /// Get automation lane for a target.
+    #[must_use]
     pub fn automation_lane(
         &self,
         target: &super::automation::AutomationTarget,
@@ -461,8 +469,9 @@ impl Pattern {
         } else {
             PatternTick(0)
         };
-        let local_end =
-            PatternTick(((range_end.0.saturating_sub(pattern_start.0)) as u32).min(self.length.0));
+        let local_end = PatternTick(
+            (range_end.0.saturating_sub(pattern_start.0)).min(self.length.0 as u64) as u32,
+        );
 
         for note in &self.notes {
             let instrument = instrument_override.unwrap_or(note.instrument);
@@ -537,19 +546,19 @@ mod tests {
     fn test_notes_stay_sorted() {
         let mut pattern = test_pattern();
 
-        pattern.add_note(
+        let _ = pattern.add_note(
             PatternTick(480),
             Pitch::new(60).unwrap(),
             Velocity::MF,
             SeqInstrumentId(0),
         );
-        pattern.add_note(
+        let _ = pattern.add_note(
             PatternTick(0),
             Pitch::new(62).unwrap(),
             Velocity::MF,
             SeqInstrumentId(0),
         );
-        pattern.add_note(
+        let _ = pattern.add_note(
             PatternTick(240),
             Pitch::new(64).unwrap(),
             Velocity::MF,
@@ -654,9 +663,9 @@ mod tests {
         )
         .with_duration(Duration(40));
 
-        pattern.insert_note(note1);
-        pattern.insert_note(note2);
-        pattern.insert_note(note3);
+        let _ = pattern.insert_note(note1);
+        let _ = pattern.insert_note(note2);
+        let _ = pattern.insert_note(note3);
 
         let notes: Vec<_> = pattern
             .notes_in_range(PatternTick(150), PatternTick(250))
@@ -666,13 +675,13 @@ mod tests {
 
         // Test notes without duration
         let mut pattern2 = test_pattern();
-        pattern2.add_note(
+        let _ = pattern2.add_note(
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
             SeqInstrumentId(0),
         );
-        pattern2.add_note(
+        let _ = pattern2.add_note(
             PatternTick(200),
             Pitch::new(62).unwrap(),
             Velocity::MF,

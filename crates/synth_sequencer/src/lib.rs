@@ -22,7 +22,6 @@
 //! - [`events`] - Runtime events for playback
 //! - [`input`] - Input command abstraction
 
-#![allow(clippy::must_use_candidate)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::too_many_lines)]
@@ -41,7 +40,7 @@ pub mod track;
 // Re-export commonly used types
 pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
-pub use events::{EventSorting, SequencerEvent};
+pub use events::SequencerEvent;
 pub use ids::{
     NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
     TrackIndex,

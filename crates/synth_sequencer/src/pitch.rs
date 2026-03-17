@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use synth_core::{Hertz, Semitones};
 
 /// MIDI-compatible pitch (0-127).
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Pitch(u8);
 
@@ -21,47 +22,49 @@ impl Pitch {
     /// Create a pitch from octave and note name.
     /// Octave -1 contains MIDI notes 0-11, octave 4 contains middle C (60).
     pub fn from_octave_note(octave: i8, note: NoteName) -> Option<Self> {
-        let midi = (octave + 1) as i16 * 12 + note as i16;
+        let midi = (octave as i16 + 1) * 12 + note as i16;
         (0..=127).contains(&midi).then_some(Self(midi as u8))
     }
 
     /// Get the octave (-1 to 9).
+    #[must_use]
     pub fn octave(&self) -> i8 {
         (self.0 / 12) as i8 - 1
     }
 
     /// Get the note name within the octave.
+    #[must_use]
     pub fn note_name(&self) -> NoteName {
         NoteName::from_midi(self.0 % 12)
     }
 
     /// Calculate the frequency in Hz.
     /// Uses A4 = 440 Hz as reference by default.
+    #[must_use]
     pub fn frequency(&self, a4_hz: Hertz) -> Hertz {
         Hertz(a4_hz.0 * 2.0_f32.powf((self.0 as f32 - 69.0) / 12.0))
     }
 
     /// Get the raw MIDI note number.
+    #[must_use]
     pub fn as_midi(&self) -> u8 {
         self.0
+    }
+
+    /// Saturating subtraction of a raw offset (clamped to valid MIDI range).
+    pub fn saturating_sub(self, offset: u8) -> Self {
+        Self(self.0.saturating_sub(offset))
+    }
+
+    /// Saturating addition of a raw offset (clamped to 127).
+    pub fn saturating_add(self, offset: u8) -> Self {
+        Self(self.0.saturating_add(offset).min(127))
     }
 
     /// Transpose by semitones.
     ///
     /// Returns `None` if the result would be outside valid MIDI range (0-127).
     #[allow(clippy::cast_possible_truncation)]
-    /// Saturating subtraction of a raw offset (clamped to valid MIDI range).
-    #[must_use]
-    pub fn saturating_sub(self, offset: u8) -> Self {
-        Self(self.0.saturating_sub(offset))
-    }
-
-    /// Saturating addition of a raw offset (clamped to 127).
-    #[must_use]
-    pub fn saturating_add(self, offset: u8) -> Self {
-        Self(self.0.saturating_add(offset).min(127))
-    }
-
     pub fn transpose(&self, semitones: Semitones) -> Option<Self> {
         let transposed = self.0 as i16 + semitones.as_f32().round() as i16;
         if (0..=127).contains(&transposed) {
@@ -104,6 +107,7 @@ pub enum NoteName {
 
 impl NoteName {
     /// Create from MIDI note number mod 12.
+    #[must_use]
     pub fn from_midi(value: u8) -> Self {
         match value % 12 {
             0 => Self::C,
@@ -122,6 +126,7 @@ impl NoteName {
     }
 
     /// Check if this is a black key (sharp/flat).
+    #[must_use]
     pub fn is_black_key(&self) -> bool {
         matches!(self, Self::Cs | Self::Ds | Self::Fs | Self::Gs | Self::As)
     }

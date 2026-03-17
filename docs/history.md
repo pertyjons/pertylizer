@@ -1,5 +1,12 @@
 # Version History
 
+## [0.246.0] - 2026-03-18
+### Sequencer code quality: #[must_use] enforcement and count validation
+- **Removed crate-level `#![allow(clippy::must_use_candidate)]`** — added explicit `#[must_use]` to all public newtypes, constructors, builder methods, and query methods across the synth_sequencer crate
+- **Fixed TrackCount/RowCount allowing 0** — constructors and `From` impls now clamp to minimum 1; updated docs to reflect valid range
+- **Fixed unused return values in tests** — pattern test code now properly handles `NoteId` returns from `add_note`/`insert_note`
+- **Fixed `vec!` lint in event sorting test** — replaced with `Vec::from` array construction
+
 ## [0.245.0] - 2026-03-18
 ### Application fixes: RT-safety, error handling, UX improvements
 - **Fixed RT-safety in CPAL error callback** — removed blocking Mutex lock and heap-allocating format! from audio thread error callback; uses atomic counter only

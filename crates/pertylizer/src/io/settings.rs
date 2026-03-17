@@ -107,8 +107,7 @@ impl AppSettings {
         match Self::try_load() {
             Ok(s) => s,
             Err(e) => {
-                let warning =
-                    format!("Could not load settings, using defaults: {e}");
+                let warning = format!("Could not load settings, using defaults: {e}");
                 eprintln!("Settings: {warning}");
                 Self {
                     load_warning: Some(warning),

@@ -47,7 +47,12 @@ fn validate_midi_channel(channel: u8) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
-fn validate_range(name: &'static str, value: f32, min: f32, max: f32) -> Result<(), McpBridgeError> {
+fn validate_range(
+    name: &'static str,
+    value: f32,
+    min: f32,
+    max: f32,
+) -> Result<(), McpBridgeError> {
     if value < min || value > max || value.is_nan() {
         return Err(McpBridgeError::ValueOutOfRange {
             name,
@@ -191,7 +196,12 @@ fn validate_build_instrument_fields(
 
 /// Validate a `NoteInput` (used in batch note operations).
 fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
-    validate_note_fields(n.pitch, n.velocity.unwrap_or(100), n.start_beat, n.duration_beats)
+    validate_note_fields(
+        n.pitch,
+        n.velocity.unwrap_or(100),
+        n.start_beat,
+        n.duration_beats,
+    )
 }
 
 /// Validate an `AutomationPointInput` slice.
@@ -2110,7 +2120,9 @@ impl SynthMcpServer {
     )]
     async fn update_notes(&self, params: Parameters<UpdateNotesParam>) -> String {
         for u in &params.0.updates {
-            if let Err(e) = validate_note_update_fields(u.pitch, u.velocity, u.start_beat, u.duration_beats) {
+            if let Err(e) =
+                validate_note_update_fields(u.pitch, u.velocity, u.start_beat, u.duration_beats)
+            {
                 return validation_err(e);
             }
         }
@@ -2478,14 +2490,18 @@ impl SynthMcpServer {
             if let Some(ref notes) = pat.notes {
                 for n in notes {
                     if let Err(e) = validate_note_input(n) {
-                        return validation_err(McpBridgeError::Other(format!("pattern[{i}] note: {e}")));
+                        return validation_err(McpBridgeError::Other(format!(
+                            "pattern[{i}] note: {e}"
+                        )));
                     }
                 }
             }
             if let Some(ref auto) = pat.automation
                 && let Err(e) = validate_automation_points_input(auto)
             {
-                return validation_err(McpBridgeError::Other(format!("pattern[{i}] automation: {e}")));
+                return validation_err(McpBridgeError::Other(format!(
+                    "pattern[{i}] automation: {e}"
+                )));
             }
         }
         let patterns: Vec<_> = params
@@ -2583,13 +2599,17 @@ impl SynthMcpServer {
             }
             for n in &pat.notes {
                 if let Err(e) = validate_note_input(n) {
-                    return validation_err(McpBridgeError::Other(format!("pattern[{i}] note: {e}")));
+                    return validation_err(McpBridgeError::Other(format!(
+                        "pattern[{i}] note: {e}"
+                    )));
                 }
             }
             if let Some(ref auto) = pat.automation
                 && let Err(e) = validate_automation_points_input(auto)
             {
-                return validation_err(McpBridgeError::Other(format!("pattern[{i}] automation: {e}")));
+                return validation_err(McpBridgeError::Other(format!(
+                    "pattern[{i}] automation: {e}"
+                )));
             }
         }
         // Validate track names

@@ -163,10 +163,8 @@ pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgres
             match render_to_wav(&project, &config, &progress_clone) {
                 Ok(warnings) => {
                     if !warnings.is_empty() {
-                        let msg = format!(
-                            "Export completed with warnings: {}",
-                            warnings.join("; ")
-                        );
+                        let msg =
+                            format!("Export completed with warnings: {}", warnings.join("; "));
                         let mut err = progress_clone
                             .error
                             .lock()
@@ -190,10 +188,7 @@ pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgres
         });
 
     if let Err(e) = spawn_result {
-        let mut err = progress
-            .error
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut err = progress.error.lock().unwrap_or_else(|e| e.into_inner());
         *err = Some(format!("Failed to spawn export thread: {e}"));
         progress.completed.store(true, Ordering::Release);
     }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{PatternId, TrackId};
+use super::ids::{PatternId, SeqInstrumentId, TrackId};
 use super::pattern::Pattern;
 use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
@@ -29,6 +29,7 @@ pub struct TimeSignatureChange {
 }
 
 /// A pattern placement in the arrangement.
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatternPlacement {
     /// Which pattern to play.
@@ -103,6 +104,7 @@ pub struct Song {
 
 impl Song {
     /// Create a new empty song.
+    #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -120,18 +122,21 @@ impl Song {
     }
 
     /// Set the author (builder pattern).
+    #[must_use]
     pub fn with_author(mut self, author: impl Into<String>) -> Self {
         self.author = author.into();
         self
     }
 
     /// Set the default tempo (builder pattern).
+    #[must_use]
     pub fn with_tempo(mut self, bpm: Bpm) -> Self {
         self.default_tempo = bpm;
         self
     }
 
     /// Set the default time signature (builder pattern).
+    #[must_use]
     pub fn with_time_signature(mut self, sig: TimeSignature) -> Self {
         self.default_time_signature = sig;
         self
@@ -142,12 +147,13 @@ impl Song {
     /// Create a new pattern and add it to the song.
     pub fn create_pattern(&mut self, length: Duration) -> PatternId {
         let id = PatternId(self.next_pattern_id);
-        self.next_pattern_id += 1;
+        self.next_pattern_id = self.next_pattern_id.saturating_add(1);
         self.patterns.insert(id, Pattern::new(id, length));
         id
     }
 
     /// Get a pattern by ID.
+    #[must_use]
     pub fn pattern(&self, id: PatternId) -> Option<&Pattern> {
         self.patterns.get(&id)
     }
@@ -163,6 +169,7 @@ impl Song {
     }
 
     /// Get the number of patterns.
+    #[must_use]
     pub fn pattern_count(&self) -> usize {
         self.patterns.len()
     }
@@ -178,7 +185,7 @@ impl Song {
     pub fn duplicate_pattern(&mut self, id: PatternId) -> Option<PatternId> {
         let pattern = self.patterns.get(&id)?.clone();
         let new_id = PatternId(self.next_pattern_id);
-        self.next_pattern_id += 1;
+        self.next_pattern_id = self.next_pattern_id.saturating_add(1);
 
         let mut new_pattern = Pattern::new(new_id, pattern.length);
         new_pattern.name = format!("{} (copy)", pattern.name);
@@ -186,7 +193,7 @@ impl Song {
 
         // Copy notes
         for note in pattern.notes() {
-            new_pattern.insert_note(note.clone());
+            let _ = new_pattern.insert_note(note.clone());
         }
 
         self.patterns.insert(new_id, new_pattern);
@@ -198,12 +205,13 @@ impl Song {
     /// Create a new track.
     pub fn create_track(&mut self, name: impl Into<String>) -> TrackId {
         let id = TrackId(self.next_track_id);
-        self.next_track_id += 1;
+        self.next_track_id = self.next_track_id.saturating_add(1);
         self.tracks.insert(id, SequencerTrack::new(id, name));
         id
     }
 
     /// Get a track by ID.
+    #[must_use]
     pub fn track(&self, id: TrackId) -> Option<&SequencerTrack> {
         self.tracks.get(&id)
     }
@@ -219,6 +227,7 @@ impl Song {
     }
 
     /// Get the number of tracks.
+    #[must_use]
     pub fn track_count(&self) -> usize {
         self.tracks.len()
     }
@@ -231,6 +240,7 @@ impl Song {
     }
 
     /// Check if any track is soloed.
+    #[must_use]
     pub fn any_solo(&self) -> bool {
         self.tracks.values().any(|t| t.solo)
     }
@@ -238,12 +248,19 @@ impl Song {
     // === Arrangement ===
 
     /// Place a pattern in the arrangement.
-    pub fn place_pattern(&mut self, pattern_id: PatternId, track_id: TrackId, start: Tick) {
+    ///
+    /// Returns `false` if the pattern or track does not exist.
+    pub fn place_pattern(&mut self, pattern_id: PatternId, track_id: TrackId, start: Tick) -> bool {
+        if !self.patterns.contains_key(&pattern_id) || !self.tracks.contains_key(&track_id) {
+            return false;
+        }
+
         let placement = PatternPlacement::new(pattern_id, track_id, start);
 
         // Insert sorted by start time
         let pos = self.arrangement.partition_point(|p| p.start <= start);
         self.arrangement.insert(pos, placement);
+        true
     }
 
     /// Remove a placement at a specific position.
@@ -259,7 +276,7 @@ impl Song {
             .position(|p| p.pattern_id == pattern_id && p.track_id == track_id && p.start == start);
 
         if let Some(idx) = pos {
-            self.arrangement.remove(idx);
+            let _ = self.arrangement.remove(idx);
             true
         } else {
             false
@@ -323,6 +340,7 @@ impl Song {
 
     /// Find the pattern playing at a given tick.
     /// Returns the pattern ID and the tick offset within that pattern.
+    #[must_use]
     pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
         for placement in &self.arrangement {
             if let Some(pattern) = self.patterns.get(&placement.pattern_id) {
@@ -349,16 +367,18 @@ impl Song {
     }
 
     /// Get tempo at a position.
+    #[must_use]
     pub fn tempo_at(&self, tick: Tick) -> Bpm {
-        self.tempo_changes
-            .iter()
-            .rev()
-            .find(|t| t.tick <= tick)
-            .map(|t| t.bpm)
-            .unwrap_or(self.default_tempo)
+        let pos = self.tempo_changes.partition_point(|t| t.tick <= tick);
+        if pos > 0 {
+            self.tempo_changes[pos - 1].bpm
+        } else {
+            self.default_tempo
+        }
     }
 
     /// Get all tempo changes.
+    #[must_use]
     pub fn tempo_changes(&self) -> &[TempoChange] {
         &self.tempo_changes
     }
@@ -386,17 +406,20 @@ impl Song {
 
     /// Get time signature at a position.
     pub fn time_signature_at(&self, tick: Tick) -> TimeSignature {
-        self.time_signature_changes
-            .iter()
-            .rev()
-            .find(|t| t.tick <= tick)
-            .map(|t| t.signature)
-            .unwrap_or(self.default_time_signature)
+        let pos = self
+            .time_signature_changes
+            .partition_point(|t| t.tick <= tick);
+        if pos > 0 {
+            self.time_signature_changes[pos - 1].signature
+        } else {
+            self.default_time_signature
+        }
     }
 
     // === Time conversion ===
 
     /// Convert tick to seconds (handles tempo changes).
+    #[must_use]
     pub fn tick_to_seconds(&self, target: Tick) -> f64 {
         let mut seconds = 0.0;
         let mut current_tick = Tick(0);
@@ -461,7 +484,13 @@ impl Song {
     /// Remove patterns and tracks not referenced by any arrangement placement.
     /// Returns `(removed_pattern_names, removed_track_names, used_instrument_ids)`.
     /// The caller is responsible for removing unused instruments from the engine.
-    pub fn remove_unused(&mut self) -> (Vec<String>, Vec<String>, std::collections::HashSet<u16>) {
+    pub fn remove_unused(
+        &mut self,
+    ) -> (
+        Vec<String>,
+        Vec<String>,
+        std::collections::HashSet<SeqInstrumentId>,
+    ) {
         use std::collections::HashSet;
 
         // Find used patterns and tracks from arrangement
@@ -506,12 +535,12 @@ impl Song {
         let mut used_instruments = HashSet::new();
         for track in self.tracks.values() {
             if let Some(inst) = track.instrument {
-                used_instruments.insert(inst.0);
+                used_instruments.insert(inst);
             }
         }
         for pattern in self.patterns.values() {
             for note in pattern.notes() {
-                used_instruments.insert(note.instrument.0);
+                used_instruments.insert(note.instrument);
             }
         }
 
@@ -532,6 +561,7 @@ impl Song {
     }
 
     /// Get length in seconds.
+    #[must_use]
     pub fn length_seconds(&self) -> f64 {
         self.tick_to_seconds(self.calculate_length())
     }

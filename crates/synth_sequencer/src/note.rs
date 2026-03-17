@@ -29,6 +29,7 @@ pub struct Note {
 
 impl Note {
     /// Create a new note with default duration.
+    #[must_use]
     pub fn new(
         id: NoteId,
         start: PatternTick,
@@ -48,12 +49,14 @@ impl Note {
     }
 
     /// Set the duration (builder pattern).
+    #[must_use]
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.duration = Some(duration);
         self
     }
 
     /// Set the track (builder pattern).
+    #[must_use]
     pub fn with_track(mut self, track: TrackId) -> Self {
         self.track = Some(track);
         self
@@ -65,6 +68,7 @@ impl Note {
     }
 
     /// Check if the note is playing at the given tick.
+    #[must_use]
     pub fn is_playing_at(&self, tick: PatternTick) -> bool {
         if tick < self.start {
             return false;
@@ -76,6 +80,7 @@ impl Note {
     }
 
     /// Check if this note overlaps with another time range.
+    #[must_use]
     pub fn overlaps(&self, start: PatternTick, end: PatternTick) -> bool {
         let note_end = self.end().unwrap_or(PatternTick(u32::MAX));
         self.start < end && note_end > start

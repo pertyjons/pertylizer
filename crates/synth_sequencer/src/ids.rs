@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a pattern.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PatternId(pub u32);
 
@@ -19,6 +20,7 @@ impl PatternId {
 // ============================================================================
 
 /// Index for track within a pattern (0-255).
+#[must_use]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -36,12 +38,14 @@ impl TrackIndex {
 
     /// Get the raw u8 value.
     #[inline]
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         self.0
     }
 
     /// Get as usize for array indexing.
     #[inline]
+    #[must_use]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
@@ -66,6 +70,7 @@ impl std::fmt::Display for TrackIndex {
 }
 
 /// Index for row within a pattern (0-65535).
+#[must_use]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -83,46 +88,45 @@ impl RowIndex {
 
     /// Get the raw u16 value.
     #[inline]
+    #[must_use]
     pub const fn as_u16(self) -> u16 {
         self.0
     }
 
     /// Get as usize for array indexing.
     #[inline]
+    #[must_use]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
 
     /// Get as u32 for calculations.
     #[inline]
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0 as u32
     }
 
     /// Advance to next row.
     #[inline]
-    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
 
     /// Go to previous row (saturating).
     #[inline]
-    #[must_use]
     pub const fn prev(self) -> Self {
         Self(self.0.saturating_sub(1))
     }
 
     /// Saturating addition.
     #[inline]
-    #[must_use]
     pub const fn saturating_add(self, delta: u16) -> Self {
         Self(self.0.saturating_add(delta))
     }
 
     /// Saturating subtraction.
     #[inline]
-    #[must_use]
     pub const fn saturating_sub(self, delta: u16) -> Self {
         Self(self.0.saturating_sub(delta))
     }
@@ -146,7 +150,10 @@ impl std::fmt::Display for RowIndex {
     }
 }
 
-/// Number of tracks in a pattern (1-256).
+/// Number of tracks in a pattern (1-255).
+///
+/// Clamped to a minimum of 1 — a pattern always has at least one track.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TrackCount(u8);
 
@@ -163,20 +170,22 @@ impl TrackCount {
     /// Sixteen tracks.
     pub const SIXTEEN: Self = Self(16);
 
-    /// Create a new track count.
+    /// Create a new track count (clamped to minimum 1).
     #[inline]
     pub const fn new(count: u8) -> Self {
-        Self(count)
+        if count == 0 { Self(1) } else { Self(count) }
     }
 
     /// Get the raw u8 value.
     #[inline]
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         self.0
     }
 
     /// Get as usize for array sizing.
     #[inline]
+    #[must_use]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
@@ -195,13 +204,13 @@ impl Default for TrackCount {
 
 impl From<u8> for TrackCount {
     fn from(count: u8) -> Self {
-        Self(count)
+        Self::new(count)
     }
 }
 
 impl From<usize> for TrackCount {
     fn from(count: usize) -> Self {
-        Self(count.min(255) as u8)
+        Self::new(count.min(255) as u8)
     }
 }
 
@@ -211,7 +220,10 @@ impl std::fmt::Display for TrackCount {
     }
 }
 
-/// Number of rows in a pattern (1-65536).
+/// Number of rows in a pattern (1-65535).
+///
+/// Clamped to a minimum of 1 — a pattern always has at least one row.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RowCount(u16);
 
@@ -225,20 +237,22 @@ impl RowCount {
     /// 256 rows.
     pub const ROWS_256: Self = Self(256);
 
-    /// Create a new row count.
+    /// Create a new row count (clamped to minimum 1).
     #[inline]
     pub const fn new(count: u16) -> Self {
-        Self(count)
+        if count == 0 { Self(1) } else { Self(count) }
     }
 
     /// Get the raw u16 value.
     #[inline]
+    #[must_use]
     pub const fn as_u16(self) -> u16 {
         self.0
     }
 
     /// Get as usize for array sizing.
     #[inline]
+    #[must_use]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
@@ -257,13 +271,13 @@ impl Default for RowCount {
 
 impl From<u16> for RowCount {
     fn from(count: u16) -> Self {
-        Self(count)
+        Self::new(count)
     }
 }
 
 impl From<usize> for RowCount {
     fn from(count: usize) -> Self {
-        Self(count.min(65535) as u16)
+        Self::new(count.min(65535) as u16)
     }
 }
 
@@ -277,6 +291,7 @@ impl std::fmt::Display for RowCount {
 ///
 /// Controls how many song ticks pass before advancing to the next row.
 /// Default: 240 song ticks/row = 4 rows per quarter note (16th note resolution).
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TicksPerRow(u16);
 
@@ -299,12 +314,14 @@ impl TicksPerRow {
 
     /// Get the raw u16 value (song ticks).
     #[inline]
+    #[must_use]
     pub const fn as_u16(self) -> u16 {
         self.0
     }
 
     /// Get as u32 for calculations.
     #[inline]
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0 as u32
     }
@@ -323,6 +340,7 @@ impl From<u16> for TicksPerRow {
 }
 
 /// Unique identifier for a track.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TrackId(pub u16);
 
@@ -337,6 +355,7 @@ impl TrackId {
 ///
 /// This is a compact u16 ID used for pattern data storage.
 /// For engine-level instrument identification, see `engine::instrument::InstrumentId`.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SeqInstrumentId(pub u16);
 
@@ -349,6 +368,7 @@ impl SeqInstrumentId {
 
 /// Unique identifier for a note within a pattern.
 /// Used for selection, undo/redo, and editing operations.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteId(pub u64);
 

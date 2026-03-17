@@ -3,7 +3,6 @@
 //! These events are NOT stored - they are generated in real-time from Pattern data.
 
 use serde::{Deserialize, Serialize};
-
 use synth_core::NormalizedValue;
 
 use super::automation::AutomationTarget;
@@ -56,18 +55,34 @@ impl SequencerEvent {
     }
 
     /// Check if this is a note-on event.
+    #[must_use]
     pub fn is_note_on(&self) -> bool {
         matches!(self, Self::NoteOn { .. })
     }
 
     /// Check if this is a note-off event.
+    #[must_use]
     pub fn is_note_off(&self) -> bool {
         matches!(self, Self::NoteOff { .. })
     }
 
     /// Check if this is a parameter event.
+    #[must_use]
     pub fn is_parameter(&self) -> bool {
         matches!(self, Self::Parameter { .. })
+    }
+
+    /// Sort priority for events at the same tick.
+    ///
+    /// `NoteOff` events come first (0) so notes are released before new ones start,
+    /// then `NoteOn` (1), then `Parameter` (2).
+    #[must_use]
+    pub fn sort_priority(&self) -> u8 {
+        match self {
+            Self::NoteOff { .. } => 0,
+            Self::NoteOn { .. } => 1,
+            Self::Parameter { .. } => 2,
+        }
     }
 
     /// Get the instrument ID if this is a note event.
@@ -89,23 +104,10 @@ impl SequencerEvent {
     }
 }
 
-/// Extension trait for sorting events.
-pub trait EventSorting {
-    /// Sort events by tick position.
-    fn sort_by_tick(&mut self);
-}
-
-impl EventSorting for Vec<SequencerEvent> {
-    fn sort_by_tick(&mut self) {
-        self.sort_by_key(|e| e.tick());
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use synth_core::NormalizedValue;
 
     #[test]
     fn test_event_tick() {
@@ -140,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_event_sorting() {
-        let mut events = vec![
+        let mut events = Vec::from([
             SequencerEvent::NoteOn {
                 tick: Tick(500),
                 pitch: Pitch::new(60).unwrap(),
@@ -158,9 +160,9 @@ mod tests {
                 pitch: Pitch::new(60).unwrap(),
                 instrument: SeqInstrumentId(0),
             },
-        ];
+        ]);
 
-        events.sort_by_tick();
+        events.sort_by_key(|e| (e.tick(), e.sort_priority()));
 
         let ticks: Vec<_> = events.iter().map(|e| e.tick().0).collect();
         assert_eq!(ticks, vec![100, 300, 500]);
@@ -175,7 +177,5 @@ mod tests {
             instrument: SeqInstrumentId(5),
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
-
-        let _unused = NormalizedValue::MIN; // keep import used
     }
 }

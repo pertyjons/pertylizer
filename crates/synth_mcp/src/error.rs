@@ -76,7 +76,9 @@ pub enum McpBridgeError {
     },
 
     /// Invalid instrument category string.
-    #[error("invalid instrument category '{0}': valid categories are Drums, Bass, Lead, Pad, Keys, Strings, Brass, Woodwind, FX, Vocal, Other")]
+    #[error(
+        "invalid instrument category '{0}': valid categories are Drums, Bass, Lead, Pad, Keys, Strings, Brass, Woodwind, FX, Vocal, Other"
+    )]
     InvalidCategory(String),
 
     /// Invalid automation curve type.

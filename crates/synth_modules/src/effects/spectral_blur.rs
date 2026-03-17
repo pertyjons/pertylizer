@@ -210,8 +210,10 @@ impl AudioEffect for SpectralBlur {
         let mag_temp = &mut self.mag_temp;
 
         // Process left channel
-        self.stft_l
-            .process(&self.mono_l[..frames], &mut self.out_l[..frames], |spectrum| {
+        self.stft_l.process(
+            &self.mono_l[..frames],
+            &mut self.out_l[..frames],
+            |spectrum| {
                 for (k, bin) in spectrum.iter_mut().enumerate().take(num_bins) {
                     let mag = bin.norm();
 
@@ -235,14 +237,17 @@ impl AudioEffect for SpectralBlur {
                     let phase = bin.arg();
                     *bin = Complex::new(freq_out[k] * phase.cos(), freq_out[k] * phase.sin());
                 }
-            });
+            },
+        );
 
         let mag_smooth_r = &mut self.mag_smooth_r;
         let mag_temp = &mut self.mag_temp;
 
         // Process right channel
-        self.stft_r
-            .process(&self.mono_r[..frames], &mut self.out_r[..frames], |spectrum| {
+        self.stft_r.process(
+            &self.mono_r[..frames],
+            &mut self.out_r[..frames],
+            |spectrum| {
                 for (k, bin) in spectrum.iter_mut().enumerate().take(num_bins) {
                     let mag = bin.norm();
 
@@ -263,7 +268,8 @@ impl AudioEffect for SpectralBlur {
                     let phase = bin.arg();
                     *bin = Complex::new(freq_out[k] * phase.cos(), freq_out[k] * phase.sin());
                 }
-            });
+            },
+        );
 
         // Re-interleave with dry/wet mix
         for i in 0..frames {

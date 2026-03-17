@@ -10,6 +10,7 @@ use synth_core::Bpm;
 pub const TICKS_PER_QUARTER: u32 = 960;
 
 /// Absolute position on the song timeline.
+#[must_use]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -24,6 +25,7 @@ impl Tick {
     }
 
     /// Convert to seconds at a given tempo.
+    #[must_use]
     pub fn to_seconds(&self, tempo_bpm: Bpm) -> f64 {
         let beats = self.0 as f64 / TICKS_PER_QUARTER as f64;
         beats * 60.0 / tempo_bpm.as_f32() as f64
@@ -36,11 +38,12 @@ impl Tick {
     }
 
     /// Convert to bar, beat, tick representation.
+    #[must_use]
     pub fn to_bar_beat_tick(&self, time_sig: TimeSignature) -> (u32, u32, u32) {
         let ticks_per_bar = time_sig.ticks_per_bar();
         let bar = (self.0 / ticks_per_bar as u64) as u32;
         let remaining = self.0 % ticks_per_bar as u64;
-        let ticks_per_beat = TICKS_PER_QUARTER * 4 / time_sig.denominator as u32;
+        let ticks_per_beat = time_sig.ticks_per_beat();
         let beat = (remaining / ticks_per_beat as u64) as u32;
         let tick = (remaining % ticks_per_beat as u64) as u32;
         (bar, beat, tick)
@@ -49,7 +52,7 @@ impl Tick {
     /// Create from bar, beat, tick representation.
     pub fn from_bar_beat_tick(bar: u32, beat: u32, tick: u32, time_sig: TimeSignature) -> Self {
         let ticks_per_bar = time_sig.ticks_per_bar();
-        let ticks_per_beat = TICKS_PER_QUARTER * 4 / time_sig.denominator as u32;
+        let ticks_per_beat = time_sig.ticks_per_beat();
         Self(bar as u64 * ticks_per_bar as u64 + beat as u64 * ticks_per_beat as u64 + tick as u64)
     }
 }
@@ -57,7 +60,7 @@ impl Tick {
 impl Add for Tick {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
@@ -70,7 +73,7 @@ impl Sub for Tick {
 
 impl AddAssign for Tick {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        self.0 = self.0.saturating_add(rhs.0);
     }
 }
 
@@ -83,11 +86,12 @@ impl SubAssign for Tick {
 impl Add<Duration> for Tick {
     type Output = Self;
     fn add(self, rhs: Duration) -> Self::Output {
-        Self(self.0 + rhs.0 as u64)
+        Self(self.0.saturating_add(rhs.0 as u64))
     }
 }
 
 /// Relative position within a pattern (0 = pattern start).
+#[must_use]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -100,7 +104,7 @@ impl PatternTick {
 impl Add for PatternTick {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
@@ -113,7 +117,7 @@ impl Sub for PatternTick {
 
 impl AddAssign for PatternTick {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        self.0 = self.0.saturating_add(rhs.0);
     }
 }
 
@@ -126,11 +130,12 @@ impl SubAssign for PatternTick {
 impl Add<Duration> for PatternTick {
     type Output = Self;
     fn add(self, rhs: Duration) -> Self::Output {
-        Self(self.0 + rhs.0)
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
 /// Duration in ticks.
+#[must_use]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -160,7 +165,6 @@ impl Duration {
     }
 
     /// Convert this duration to a pattern-relative tick position.
-    #[must_use]
     pub fn as_pattern_tick(self) -> PatternTick {
         PatternTick(self.0)
     }
@@ -169,7 +173,7 @@ impl Duration {
 impl Add for Duration {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
@@ -182,14 +186,14 @@ impl Sub for Duration {
 
 impl AddAssign for Duration {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        self.0 = self.0.saturating_add(rhs.0);
     }
 }
 
 impl std::ops::Mul<u32> for Duration {
     type Output = Self;
     fn mul(self, rhs: u32) -> Self::Output {
-        Self(self.0 * rhs)
+        Self(self.0.saturating_mul(rhs))
     }
 }
 
@@ -200,6 +204,7 @@ impl SubAssign for Duration {
 }
 
 /// Time signature (e.g., 4/4, 3/4, 6/8).
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TimeSignature {
     pub numerator: u8,
@@ -227,16 +232,18 @@ impl TimeSignature {
     pub fn new(numerator: u8, denominator: u8) -> Self {
         Self {
             numerator,
-            denominator,
+            denominator: if denominator == 0 { 4 } else { denominator },
         }
     }
 
     /// Ticks per bar.
+    #[must_use]
     pub fn ticks_per_bar(&self) -> u32 {
         TICKS_PER_QUARTER * self.numerator as u32 * 4 / self.denominator as u32
     }
 
     /// Ticks per beat.
+    #[must_use]
     pub fn ticks_per_beat(&self) -> u32 {
         TICKS_PER_QUARTER * 4 / self.denominator as u32
     }
