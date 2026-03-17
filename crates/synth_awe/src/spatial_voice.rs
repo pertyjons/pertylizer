@@ -1,4 +1,4 @@
-//! Per-voice spatial processing for AWE Fas 3.
+//! Per-voice spatial processing for AWE Phase 3.
 //!
 //! Maps each active voice to a position in the room based on its MIDI note,
 //! then processes individual early reflections and spatialisation per voice.
@@ -55,7 +55,8 @@ impl NotePositionMapping {
                 Meters::new(room_height_f * 0.5),
             ),
             Self::LinearX => {
-                let x = margin + t * (room_length_f - 2.0 * margin);
+                let span = (room_length_f - 2.0 * margin).max(0.0);
+                let x = margin.min(room_length_f * 0.5) + t * span;
                 Position3::new(
                     Meters::new(x),
                     Meters::new(room_width_f * 0.5),
@@ -63,7 +64,8 @@ impl NotePositionMapping {
                 )
             }
             Self::LinearY => {
-                let y = margin + t * (room_width_f - 2.0 * margin);
+                let span = (room_width_f - 2.0 * margin).max(0.0);
+                let y = margin.min(room_width_f * 0.5) + t * span;
                 Position3::new(
                     Meters::new(room_length_f * 0.5),
                     Meters::new(y),
@@ -221,16 +223,16 @@ impl SpatialVoiceBank {
         self.active_count
     }
 
-    /// Get info for a slot.
+    /// Get info for a slot, or `None` if `idx` is out of bounds.
     #[must_use]
-    pub fn info(&self, idx: usize) -> &SpatialVoiceInfo {
-        &self.infos[idx]
+    pub fn info(&self, idx: usize) -> Option<&SpatialVoiceInfo> {
+        self.infos.get(idx)
     }
 
-    /// Get the mono buffer for a slot.
+    /// Get the mono buffer for a slot, or `None` if `idx` is out of bounds.
     #[must_use]
-    pub fn buffer(&self, idx: usize) -> &[f32] {
-        &self.buffers[idx]
+    pub fn buffer(&self, idx: usize) -> Option<&[f32]> {
+        self.buffers.get(idx).map(|b| b.as_slice())
     }
 }
 
@@ -286,6 +288,8 @@ impl SpatialVoicePool {
     }
 
     /// Update a slot's geometry for the given note and room parameters.
+    ///
+    /// Returns silently if `idx` is out of bounds.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_slot(
         &mut self,
@@ -302,7 +306,9 @@ impl SpatialVoicePool {
         diffusion: NormalizedValue,
         sample_rate: SampleRate,
     ) {
-        let slot = &mut self.slots[idx];
+        let Some(slot) = self.slots.get_mut(idx) else {
+            return;
+        };
         let pos = mapping.position_for_note(note, room_length, room_width, room_height);
         slot.position = pos;
         slot.note = note;
@@ -327,10 +333,12 @@ impl SpatialVoicePool {
 
     /// Process a single mono sample through a slot's early reflections and spatializer.
     ///
-    /// Returns `(early_l, early_r, spat_l, spat_r)`.
+    /// Returns `(early_l, early_r, spat_l, spat_r)`, or silence if `idx` is out of bounds.
     #[inline]
     pub(crate) fn process_slot(&mut self, idx: usize, mono_sample: f32) -> (f32, f32, f32, f32) {
-        let slot = &mut self.slots[idx];
+        let Some(slot) = self.slots.get_mut(idx) else {
+            return (0.0, 0.0, 0.0, 0.0);
+        };
         let (el, er) = slot.early_reflections.process(mono_sample);
         let (sl, sr) = slot.spatializer.process(mono_sample);
         (el, er, sl, sr)
@@ -413,11 +421,12 @@ mod tests {
         let idx = bank.write_voice(MidiNote::new(60), &left, &right, SampleCount::new(64));
         assert_eq!(idx, Some(0));
         assert_eq!(bank.active_count(), 1);
-        assert!(bank.info(0).active);
-        assert_eq!(bank.info(0).note, MidiNote::new(60));
-        assert_eq!(bank.info(0).sample_count, SampleCount::new(64));
+        let info = bank.info(0).expect("slot 0 should exist");
+        assert!(info.active);
+        assert_eq!(info.note, MidiNote::new(60));
+        assert_eq!(info.sample_count, SampleCount::new(64));
         // Mono should be average of left and right
-        assert!((bank.buffer(0)[0] - 0.4).abs() < 0.01);
+        assert!((bank.buffer(0).expect("buffer 0 should exist")[0] - 0.4).abs() < 0.01);
     }
 
     #[test]

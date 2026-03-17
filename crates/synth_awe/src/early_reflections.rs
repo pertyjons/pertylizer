@@ -92,7 +92,7 @@ impl EarlyReflections {
 
     /// Create with a custom maximum delay line size (in samples).
     ///
-    /// Use this for per-voice instances where the default 14400 samples
+    /// Use this for per-voice instances where the default 96000 samples
     /// may be too large or too small.
     pub fn with_max_delay(max_samples: SampleCount) -> Self {
         Self {
@@ -163,7 +163,6 @@ impl EarlyReflections {
 
         let max_delay = SampleOffset::new(MAX_DELAY_SECONDS.as_f32() * sample_rate.as_f32());
         let reflection_coeff = NormalizedValue::new(1.0 - weighted_avg.clamp(0.0, 0.99));
-        let diffusion = NormalizedValue::new(diffusion.as_f32());
         let jitter_max = SampleOffset::new(MAX_JITTER_SECONDS.as_f32() * sample_rate.as_f32());
 
         // Frequency-dependent damping: sqrt() mapping for perceptual spread
@@ -184,7 +183,7 @@ impl EarlyReflections {
                 (distance.as_f32() / SPEED_OF_SOUND.as_f32()) * sample_rate.as_f32() + jitter;
             let delay_clamped = delay.clamp(1.0, max_delay.as_f32());
 
-            let total_gain = (1.0 / distance.as_f32()) * reflection_coeff.as_f32();
+            let total_gain = ((1.0 / distance.as_f32()) * reflection_coeff.as_f32()).min(2.0);
 
             // Pan based on X-axis offset between mirror source and listener.
             let mut pan = if room_length_f > 0.0 {

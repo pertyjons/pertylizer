@@ -207,7 +207,7 @@ mod tests {
         for _ in 0..50 {
             lfo.advance(SampleCount::new(128), SampleRate::new(48000.0));
         }
-        assert!(lfo.value().as_f32().abs() > f32::EPSILON || true); // phase may land near zero
+        assert!((0.0..=1.0).contains(&lfo.value().as_f32())); // LFO value should be in [0, 1]
 
         lfo.reset();
         assert!((lfo.value().as_f32() - 0.0).abs() < f32::EPSILON);

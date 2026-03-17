@@ -14,6 +14,9 @@ use synth_dsp::DelayLine;
 /// Number of axial modes (one per room axis).
 const NUM_MODES: usize = 3;
 
+/// Precomputed reciprocal of `NUM_MODES` to avoid division in the audio path.
+const INV_NUM_MODES: f32 = 1.0 / NUM_MODES as f32;
+
 /// Maximum delay line size in samples.
 /// At 96 kHz the lowest mode for a 150 m room is ~2.3 Hz -> 96000/2.3 ≈ 42000.
 /// We pre-allocate 48000 to cover large-room presets with headroom.
@@ -166,9 +169,9 @@ impl RoomModeBank {
     #[must_use]
     pub fn process(&mut self, input: f32) -> f32 {
         if self.amount.as_f32() <= 0.0 {
-            // Still advance delay lines to keep state consistent
+            // Still process all modes to keep filter state consistent
             for mode in &mut self.modes {
-                mode.delay_line.write(input);
+                let _ = mode.process(input);
             }
             return 0.0;
         }
@@ -179,7 +182,7 @@ impl RoomModeBank {
         }
 
         // Scale by 1/NUM_MODES to normalize and then by amount
-        sum * self.amount.as_f32() / NUM_MODES as f32
+        sum * self.amount.as_f32() * INV_NUM_MODES
     }
 
     /// Set the amount (wet mix level for modes).

@@ -1,5 +1,23 @@
 # Version History
 
+## [0.247.0] - 2026-03-18
+### AWE fixes: RT-safety, div-by-zero guards, portal scaling, Swedish→English
+- **Translated all Swedish text to English** — doc comments in room.rs (10 material descriptions), preset descriptions in presets.rs, module docs in awe_engine.rs and spatial_voice.rs
+- **Fixed portal delay not scaling by room size** — was a fixed 200ms despite comment claiming room-size scaling; now uses avg dimension ratio
+- **Fixed division-by-zero in axial_modes()** — dimensions clamped to minimum 0.01 before dividing
+- **Fixed room_modes bypass state inconsistency** — bypass path now calls mode.process() to maintain comb filter state during amount=0
+- **Fixed unbounded early reflection gain** — clamped per-tap gain to 2.0 (was up to 10x at MIN_DISTANCE)
+- **Fixed RT-safety in spatial_voice** — update_slot/process_slot/info/buffer use bounds-checked indexing instead of panicking
+- **Fixed Position3 Index/IndexMut panic** — index clamped to 0..=2
+- **Fixed small room position mapping** — LinearX/LinearY guard against rooms < 0.6m
+- **Fixed spatializer LP coefficient comment** — was inverted ("closer to 0" vs actual "closer to 1")
+- **Extracted FdnParams helper** — eliminated large code duplication between process() and process_spatial()
+- **Replaced magic numbers with named constants** — AVG_REFERENCE_DIMENSION, REFERENCE_SAMPLE_RATE, AVG_BASE_FDN_DELAY, DEFAULT_PORTAL_FEEDBACK/DAMPING
+- **Fixed stale doc comment** — early reflections default was "14400" but actual is 96000
+- **Removed redundant NormalizedValue re-wrapping** in early_reflections
+- **Precomputed INV_NUM_MODES** — replaced division with multiplication in audio path
+- **Fixed no-op test assertion** — lfo.rs `|| true` replaced with proper range check
+
 ## [0.246.0] - 2026-03-18
 ### Sequencer code quality: #[must_use] enforcement and count validation
 - **Removed crate-level `#![allow(clippy::must_use_candidate)]`** — added explicit `#[must_use]` to all public newtypes, constructors, builder methods, and query methods across the synth_sequencer crate

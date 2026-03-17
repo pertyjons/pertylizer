@@ -109,7 +109,7 @@ pub fn awe_presets() -> Vec<AwePreset> {
         // 4. Pipeline
         AwePreset {
             name: "Pipeline",
-            description: "Metalliskt rör med flutterekos",
+            description: "Metallic pipe with flutter echoes",
             state: AweState {
                 enabled: true,
                 room: RoomShape::Tube {
@@ -402,7 +402,7 @@ pub fn awe_presets() -> Vec<AwePreset> {
         // 14. Portal
         AwePreset {
             name: "Portal",
-            description: "Maxad portal-effekt i glasformat L-rum",
+            description: "Maxed portal effect in glass L-shaped room",
             state: AweState {
                 enabled: true,
                 room: RoomShape::LShape {

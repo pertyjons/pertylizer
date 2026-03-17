@@ -218,23 +218,31 @@ impl RoomShape {
     ///
     /// Returns (length_mode, width_mode, height_mode) in Hz.
     /// Formula: f = c / (2 * L), where c = 343 m/s (speed of sound).
+    /// Dimensions <= 0 are clamped to 0.01m to avoid division by zero.
+    #[must_use]
     pub fn axial_modes(self) -> (Hertz, Hertz, Hertz) {
+        /// Compute mode frequency safely, clamping the divisor to avoid division by zero.
+        #[inline]
+        fn safe_mode(divisor: f32) -> Hertz {
+            Hertz::new(SPEED_OF_SOUND.as_f32() / divisor.max(0.01))
+        }
+
         match self {
             Self::Box {
                 length,
                 width,
                 height,
             } => (
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * length.as_f32())),
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * width.as_f32())),
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * height.as_f32())),
+                safe_mode(2.0 * length.as_f32()),
+                safe_mode(2.0 * width.as_f32()),
+                safe_mode(2.0 * height.as_f32()),
             ),
             Self::Cylinder { radius, length } => {
                 let diameter = radius * 2.0;
                 (
-                    Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * length.as_f32())),
-                    Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * diameter.as_f32())),
-                    Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * diameter.as_f32())),
+                    safe_mode(2.0 * length.as_f32()),
+                    safe_mode(2.0 * diameter.as_f32()),
+                    safe_mode(2.0 * diameter.as_f32()),
                 )
             }
             Self::LShape {
@@ -244,24 +252,24 @@ impl RoomShape {
                 width_b,
                 height,
             } => (
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * (length_a + length_b).as_f32())),
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * width_a.max(width_b).as_f32())),
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * height.as_f32())),
+                safe_mode(2.0 * (length_a + length_b).as_f32()),
+                safe_mode(2.0 * width_a.max(width_b).as_f32()),
+                safe_mode(2.0 * height.as_f32()),
             ),
             Self::Sphere { radius } => {
                 // All modes coincide at c / (4r)
-                let mode = Hertz::new(SPEED_OF_SOUND.as_f32() / (4.0 * radius.as_f32()));
+                let mode = safe_mode(4.0 * radius.as_f32());
                 (mode, mode, mode)
             }
             Self::Dome { radius } => (
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (4.0 * radius.as_f32())), // length mode (diameter)
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (4.0 * radius.as_f32())), // width mode (diameter)
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * radius.as_f32())), // height mode (radius)
+                safe_mode(4.0 * radius.as_f32()), // length mode (diameter)
+                safe_mode(4.0 * radius.as_f32()), // width mode (diameter)
+                safe_mode(2.0 * radius.as_f32()), // height mode (radius)
             ),
             Self::Tube { radius, length } => (
-                Hertz::new(SPEED_OF_SOUND.as_f32() / length.as_f32()), // open-open length mode: c/L
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (4.0 * radius.as_f32())), // radial mode
-                Hertz::new(SPEED_OF_SOUND.as_f32() / (4.0 * radius.as_f32())), // radial mode
+                safe_mode(length.as_f32()),       // open-open length mode: c/L
+                safe_mode(4.0 * radius.as_f32()), // radial mode
+                safe_mode(4.0 * radius.as_f32()), // radial mode
             ),
         }
     }
@@ -287,7 +295,7 @@ pub struct Material {
 }
 
 impl Material {
-    /// Hard concrete walls — hårt, mörkt, kallt.
+    /// Hard concrete walls — hard, dark, cold.
     pub const CONCRETE: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.05),
         absorption_mid: NormalizedValue::new_unchecked(0.08),
@@ -295,7 +303,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.15),
     };
 
-    /// Wood paneling — varmt, balanserat.
+    /// Wood paneling — warm, balanced.
     pub const WOOD: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.20),
         absorption_mid: NormalizedValue::new_unchecked(0.18),
@@ -303,7 +311,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.35),
     };
 
-    /// Glass windows — ljust men tunt i basen.
+    /// Glass windows — bright but thin in the bass.
     pub const GLASS: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.35),
         absorption_mid: NormalizedValue::new_unchecked(0.12),
@@ -311,7 +319,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.05),
     };
 
-    /// Metal surface — ultraljust, ringande.
+    /// Metal surface — ultra-bright, ringing.
     pub const METAL: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.02),
         absorption_mid: NormalizedValue::new_unchecked(0.03),
@@ -319,7 +327,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.05),
     };
 
-    /// Fabric / curtains — mycket mörkt.
+    /// Fabric / curtains — very dark.
     pub const FABRIC: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.10),
         absorption_mid: NormalizedValue::new_unchecked(0.45),
@@ -327,7 +335,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.75),
     };
 
-    /// Ceramic tile — hårt, ljust, kliniskt.
+    /// Ceramic tile — hard, bright, clinical.
     pub const TILE: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.03),
         absorption_mid: NormalizedValue::new_unchecked(0.04),
@@ -335,7 +343,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.10),
     };
 
-    /// Polished marble — varmare hårdyta.
+    /// Polished marble — warmer hard surface.
     pub const MARBLE: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.08),
         absorption_mid: NormalizedValue::new_unchecked(0.10),
@@ -343,7 +351,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.20),
     };
 
-    /// Ice / frozen surfaces — krispigt, märkbar HF-absorption.
+    /// Ice / frozen surfaces — crisp, noticeable HF absorption.
     pub const ICE: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.06),
         absorption_mid: NormalizedValue::new_unchecked(0.15),
@@ -351,7 +359,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.15),
     };
 
-    /// Thick carpet — dött, absorberar allt.
+    /// Thick carpet — dead, absorbs everything.
     pub const CARPET: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.30),
         absorption_mid: NormalizedValue::new_unchecked(0.60),
@@ -359,7 +367,7 @@ impl Material {
         diffusion: NormalizedValue::new_unchecked(0.85),
     };
 
-    /// Water-lined chamber — mumlande, medium-mörkt.
+    /// Water-lined chamber — murmuring, medium-dark.
     pub const WATER: Self = Self {
         absorption_low: NormalizedValue::new_unchecked(0.15),
         absorption_mid: NormalizedValue::new_unchecked(0.30),

@@ -317,18 +317,27 @@ impl From<Position3> for [Meters; 3] {
     }
 }
 
+impl Position3 {
+    /// Safe access by index. Returns `None` if index is out of range (0..3).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&Meters> {
+        self.0.get(index)
+    }
+}
+
 impl std::ops::Index<usize> for Position3 {
     type Output = Meters;
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+        &self.0[index.min(2)]
     }
 }
 
 impl std::ops::IndexMut<usize> for Position3 {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.0[index]
+        &mut self.0[index.min(2)]
     }
 }

@@ -1,6 +1,6 @@
 //! AWE engine — real-time room simulation processor.
 //!
-//! Full DSP pipeline (Fas 1):
+//! Full DSP pipeline (Phase 1):
 //! 1. Early reflections via Image Source Method (ISM)
 //! 2. Late reverb via FDN (geometry-driven parameters)
 //! 3. Axial room modes via comb-filter bank
@@ -28,6 +28,21 @@ const PORTAL_MAX_DELAY: SampleCount = SampleCount::new(28_800);
 
 /// Portal max delay for interpolation in samples.
 const PORTAL_MAX_DELAY_SAMPLES: SampleOffset = SampleOffset::new(28_000.0);
+
+/// Average dimension of the default room (8+5+3) / 3.
+const AVG_REFERENCE_DIMENSION: f32 = 5.33;
+
+/// Reference sample rate for FDN delay scaling.
+const REFERENCE_SAMPLE_RATE: f32 = 44100.0;
+
+/// Average of `BASE_DELAY_TIMES` in the FDN.
+const AVG_BASE_FDN_DELAY: f32 = 2806.0;
+
+/// Fixed feedback gain for the acoustic portal path.
+const DEFAULT_PORTAL_FEEDBACK: f32 = 0.4;
+
+/// LP damping coefficient for muffled portal sound.
+const DEFAULT_PORTAL_DAMPING: f32 = 0.6;
 
 /// The Acoustic World Engine processor.
 ///
@@ -74,6 +89,18 @@ pub struct AweEngine {
     spatial_enabled: bool,
     note_mapping: NotePositionMapping,
     voice_pool: SpatialVoicePool,
+}
+
+struct FdnParams {
+    ramp_coeff: f32,
+    lp_coeff: NormalizedValue,
+    hp_coeff: NormalizedValue,
+    feedback_gain: Gain,
+    diffusion: NormalizedValue,
+    width: NormalizedValue,
+    portal_delay: SampleOffset,
+    portal_feedback: Gain,
+    portal_damping: NormalizedValue,
 }
 
 impl AweEngine {
@@ -140,55 +167,12 @@ impl AweEngine {
             self.geometry_dirty = false;
         }
 
-        // Compute ramp coefficient for ~5 ms smoothing
-        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
-
-        // Pre-compute FDN parameters from per-band material absorption
-        let abs_low = self.material.absorption_low.as_f32();
-        let abs_high = self.material.absorption_high.as_f32();
-        let material_diffusion = self.material.diffusion;
-        let rt60 = self.calculate_rt60();
-
-        // sqrt() mapping spreads hard materials while preserving soft material range
-        let abs_high_eff = abs_high.sqrt();
-        let abs_low_eff = abs_low.sqrt();
-
-        // Freq warp: positive = bass decays faster (brighter), negative = HF decays faster (darker)
-        let freq_warp = self.snapshot.freq_warp;
-
-        // HF damping: driven by high-frequency absorption
-        // Metal (0.05): lp~0.33 → bright tail. Carpet (0.90): lp~0.91 → very dark tail.
-        let lp_coeff = NormalizedValue::new(
-            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999),
-        );
-
-        // LF damping: driven by low-frequency absorption
-        // Metal (0.02): hp~0.93 → full bass. Glass (0.35): hp~0.73 → thinner bass.
-        let hp_coeff = NormalizedValue::new(
-            ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999),
-        );
-
-        // Resonance boost: adds energy to feedback (with safety clamp)
-        let resonance_boost = self.snapshot.resonance_boost;
-        let feedback_gain = Gain::new(
-            (self.rt60_to_feedback(rt60, sample_rate).as_f32() + resonance_boost.as_f32() * 0.15)
-                .min(0.97),
-        );
-        let diffusion =
-            NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
-        let width = NormalizedValue::new(1.0);
+        let fdn = self.compute_fdn_params(sample_rate);
         let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
         let target_dry_wet = self.snapshot.dry_wet.as_f32();
         let target_early_late = self.snapshot.early_late_balance.as_f32();
         let target_portal = self.snapshot.portal_amount.as_f32();
-
-        // Portal delay time: ~200ms scaled by room size
-        let portal_delay_samples = SampleOffset::new(
-            (0.2 * sample_rate.as_f32()).clamp(1.0, PORTAL_MAX_DELAY_SAMPLES.as_f32()),
-        );
-        let portal_feedback = Gain::new(0.4); // Fixed feedback for adjoining room simulation
-        let portal_damping = NormalizedValue::new(0.6); // LP damping for muffled portal sound
 
         let mut current_dry_wet = self.current_dry_wet.as_f32();
         let mut current_early_late = self.current_early_late.as_f32();
@@ -206,9 +190,9 @@ impl AweEngine {
             let mono_input = (dry_left + dry_right) * 0.5;
 
             // Smooth ramp toward target parameters
-            current_dry_wet += ramp_coeff * (target_dry_wet - current_dry_wet);
-            current_early_late += ramp_coeff * (target_early_late - current_early_late);
-            current_portal += ramp_coeff * (target_portal - current_portal);
+            current_dry_wet += fdn.ramp_coeff * (target_dry_wet - current_dry_wet);
+            current_early_late += fdn.ramp_coeff * (target_early_late - current_early_late);
+            current_portal += fdn.ramp_coeff * (target_portal - current_portal);
 
             // --- Early reflections (ISM) ---
             let (early_left, early_right) = self.early_reflections.process(mono_input);
@@ -216,11 +200,11 @@ impl AweEngine {
             // --- Late reverb (FDN) ---
             let fdn_out = self.fdn.process_sample(
                 mono_input,
-                feedback_gain,
-                lp_coeff,
-                hp_coeff,
-                diffusion,
-                width,
+                fdn.feedback_gain,
+                fdn.lp_coeff,
+                fdn.hp_coeff,
+                fdn.diffusion,
+                fdn.width,
                 sample_rate_recip,
             );
 
@@ -242,33 +226,28 @@ impl AweEngine {
 
             // --- Acoustic portal (delayed feedback from adjoining virtual room) ---
             let (spat_left, spat_right) = if current_portal > 0.001 {
-                // Read delayed signal from portal
                 let portal_l = self
                     .portal_delay_left
-                    .read_interpolated(portal_delay_samples.as_f32());
+                    .read_interpolated(fdn.portal_delay.as_f32());
                 let portal_r = self
                     .portal_delay_right
-                    .read_interpolated(portal_delay_samples.as_f32());
+                    .read_interpolated(fdn.portal_delay.as_f32());
 
-                // One-pole LP for muffled portal sound
                 let filtered_l =
-                    portal_feedback_state_l.one_pole(portal_l, portal_damping.as_f32());
+                    portal_feedback_state_l.one_pole(portal_l, fdn.portal_damping.as_f32());
                 let filtered_r =
-                    portal_feedback_state_r.one_pole(portal_r, portal_damping.as_f32());
+                    portal_feedback_state_r.one_pole(portal_r, fdn.portal_damping.as_f32());
 
-                // Write current wet + feedback back into portal delay
                 self.portal_delay_left
-                    .write(spat_left + portal_feedback.apply(filtered_l));
+                    .write(spat_left + fdn.portal_feedback.apply(filtered_l));
                 self.portal_delay_right
-                    .write(spat_right + portal_feedback.apply(filtered_r));
+                    .write(spat_right + fdn.portal_feedback.apply(filtered_r));
 
-                // Mix portal into output
                 (
                     spat_left + filtered_l * current_portal,
                     spat_right + filtered_r * current_portal,
                 )
             } else {
-                // Portal off — still write silence to keep delay line advancing
                 self.portal_delay_left.write(0.0);
                 self.portal_delay_right.write(0.0);
                 (spat_left, spat_right)
@@ -544,7 +523,9 @@ impl AweEngine {
 
         // Update active slots
         for i in 0..active {
-            let info = bank.info(i);
+            let Some(info) = bank.info(i) else {
+                continue;
+            };
             self.voice_pool.update_slot(
                 i,
                 info.note,
@@ -561,42 +542,13 @@ impl AweEngine {
             );
         }
 
-        // 4. Compute ramp coefficient
-        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
-
-        // Pre-compute FDN parameters from per-band material absorption
-        let abs_low = self.material.absorption_low.as_f32();
-        let abs_high = self.material.absorption_high.as_f32();
-        let abs_high_eff = abs_high.sqrt();
-        let abs_low_eff = abs_low.sqrt();
-        let rt60 = self.calculate_rt60();
-        let freq_warp = self.snapshot.freq_warp;
-        let lp_coeff = NormalizedValue::new(
-            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999),
-        );
-        let hp_coeff = NormalizedValue::new(
-            ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999),
-        );
-        let resonance_boost = self.snapshot.resonance_boost;
-        let feedback_gain = Gain::new(
-            (self.rt60_to_feedback(rt60, sample_rate).as_f32() + resonance_boost.as_f32() * 0.15)
-                .min(0.97),
-        );
-        let material_diffusion = self.material.diffusion;
-        let diffusion =
-            NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
-        let width = NormalizedValue::new(1.0);
+        // 4. Compute shared FDN parameters
+        let fdn = self.compute_fdn_params(sample_rate);
         let sample_rate_recip = 1.0 / sample_rate.as_f32();
 
         let target_dry_wet = self.snapshot.dry_wet.as_f32();
         let target_early_late = self.snapshot.early_late_balance.as_f32();
         let target_portal = self.snapshot.portal_amount.as_f32();
-
-        let portal_delay_samples = SampleOffset::new(
-            (0.2 * sample_rate.as_f32()).clamp(1.0, PORTAL_MAX_DELAY_SAMPLES.as_f32()),
-        );
-        let portal_feedback = Gain::new(0.4);
-        let portal_damping = NormalizedValue::new(0.6);
 
         let mut current_dry_wet = self.current_dry_wet.as_f32();
         let mut current_early_late = self.current_early_late.as_f32();
@@ -611,9 +563,9 @@ impl AweEngine {
             let dry_right = buffer[idx + 1];
 
             // Smooth ramp
-            current_dry_wet += ramp_coeff * (target_dry_wet - current_dry_wet);
-            current_early_late += ramp_coeff * (target_early_late - current_early_late);
-            current_portal += ramp_coeff * (target_portal - current_portal);
+            current_dry_wet += fdn.ramp_coeff * (target_dry_wet - current_dry_wet);
+            current_early_late += fdn.ramp_coeff * (target_early_late - current_early_late);
+            current_portal += fdn.ramp_coeff * (target_portal - current_portal);
 
             let mut total_early_l = 0.0_f32;
             let mut total_early_r = 0.0_f32;
@@ -623,12 +575,12 @@ impl AweEngine {
 
             // Per active voice: process through per-voice early reflections + spatializer
             for v in 0..active {
-                let info = bank.info(v);
-                let mono = if i < info.sample_count.as_usize() {
-                    bank.buffer(v)[i]
-                } else {
-                    0.0
-                };
+                let mono = bank
+                    .info(v)
+                    .filter(|info| i < info.sample_count.as_usize())
+                    .and_then(|_| bank.buffer(v))
+                    .and_then(|buf| buf.get(i).copied())
+                    .unwrap_or(0.0);
                 global_mono += mono;
 
                 let (el, er, sl, sr) = self.voice_pool.process_slot(v, mono);
@@ -641,11 +593,11 @@ impl AweEngine {
             // Late reverb (shared FDN, fed by global mono)
             let fdn_out = self.fdn.process_sample(
                 global_mono,
-                feedback_gain,
-                lp_coeff,
-                hp_coeff,
-                diffusion,
-                width,
+                fdn.feedback_gain,
+                fdn.lp_coeff,
+                fdn.hp_coeff,
+                fdn.diffusion,
+                fdn.width,
                 sample_rate_recip,
             );
 
@@ -670,20 +622,20 @@ impl AweEngine {
             let (spat_left, spat_right) = if current_portal > 0.001 {
                 let portal_l = self
                     .portal_delay_left
-                    .read_interpolated(portal_delay_samples.as_f32());
+                    .read_interpolated(fdn.portal_delay.as_f32());
                 let portal_r = self
                     .portal_delay_right
-                    .read_interpolated(portal_delay_samples.as_f32());
+                    .read_interpolated(fdn.portal_delay.as_f32());
 
                 let filtered_l =
-                    portal_feedback_state_l.one_pole(portal_l, portal_damping.as_f32());
+                    portal_feedback_state_l.one_pole(portal_l, fdn.portal_damping.as_f32());
                 let filtered_r =
-                    portal_feedback_state_r.one_pole(portal_r, portal_damping.as_f32());
+                    portal_feedback_state_r.one_pole(portal_r, fdn.portal_damping.as_f32());
 
                 self.portal_delay_left
-                    .write(spat_left + portal_feedback.apply(filtered_l));
+                    .write(spat_left + fdn.portal_feedback.apply(filtered_l));
                 self.portal_delay_right
-                    .write(spat_right + portal_feedback.apply(filtered_r));
+                    .write(spat_right + fdn.portal_feedback.apply(filtered_r));
 
                 (
                     spat_left + filtered_l * current_portal,
@@ -711,6 +663,56 @@ impl AweEngine {
     }
 
     // --- Internal helpers ---
+
+    fn compute_fdn_params(&self, sample_rate: SampleRate) -> FdnParams {
+        let ramp_coeff = 1.0 - (-1.0 / (RAMP_TIME_SECONDS.as_f32() * sample_rate.as_f32())).exp();
+
+        let abs_low = self.material.absorption_low.as_f32();
+        let abs_high = self.material.absorption_high.as_f32();
+        let abs_high_eff = abs_high.sqrt();
+        let abs_low_eff = abs_low.sqrt();
+        let rt60 = self.calculate_rt60();
+        let freq_warp = self.snapshot.freq_warp;
+
+        let lp_coeff = NormalizedValue::new(
+            ((0.15 + abs_high_eff * 0.80) * (1.0 - freq_warp.as_f32() * 0.3)).clamp(0.0, 0.999),
+        );
+        let hp_coeff = NormalizedValue::new(
+            ((0.997 - abs_low_eff * 0.45) - freq_warp.as_f32() * 0.05).clamp(0.0, 0.999),
+        );
+
+        let resonance_boost = self.snapshot.resonance_boost;
+        let feedback_gain = Gain::new(
+            (self.rt60_to_feedback(rt60, sample_rate).as_f32() + resonance_boost.as_f32() * 0.15)
+                .min(0.97),
+        );
+        let material_diffusion = self.material.diffusion;
+        let diffusion =
+            NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
+        let width = NormalizedValue::new(1.0);
+
+        let room = &self.room;
+        let avg_dim =
+            (room.length().as_f32() + room.width().as_f32() + room.height().as_f32()) / 3.0;
+        let portal_delay_s = 0.2 * (avg_dim / AVG_REFERENCE_DIMENSION);
+        let portal_delay = SampleOffset::new(
+            (portal_delay_s * sample_rate.as_f32()).clamp(1.0, PORTAL_MAX_DELAY_SAMPLES.as_f32()),
+        );
+        let portal_feedback = Gain::new(DEFAULT_PORTAL_FEEDBACK);
+        let portal_damping = NormalizedValue::new(DEFAULT_PORTAL_DAMPING);
+
+        FdnParams {
+            ramp_coeff,
+            lp_coeff,
+            hp_coeff,
+            feedback_gain,
+            diffusion,
+            width,
+            portal_delay,
+            portal_feedback,
+            portal_damping,
+        }
+    }
 
     /// Advance LFOs and apply their modulation to snapshot parameters.
     ///
@@ -949,8 +951,8 @@ impl AweEngine {
 
         // Update FDN delay times based on room dimensions
         let avg_dimension = (room_length + room_width + room_height) / 3.0;
-        let room_scale = avg_dimension.as_f32() / 5.33; // normalize to default room avg
-        let sample_rate_scale = sample_rate.as_f32() / 44100.0;
+        let room_scale = avg_dimension.as_f32() / AVG_REFERENCE_DIMENSION;
+        let sample_rate_scale = sample_rate.as_f32() / REFERENCE_SAMPLE_RATE;
         self.fdn.set_delay_times(
             sample_rate_scale,
             room_scale * self.snapshot.tail_stretch.as_f32(),
@@ -991,11 +993,10 @@ impl AweEngine {
     #[must_use]
     fn rt60_to_feedback(&self, rt60: Seconds, sample_rate: SampleRate) -> Gain {
         // Average base delay time scaled for current room
-        let avg_base_delay = 2806.0; // average of BASE_DELAY_TIMES
         let avg_dimension = (self.room.length() + self.room.width() + self.room.height()) / 3.0;
-        let room_scale = avg_dimension.as_f32() / 5.33;
-        let sample_rate_scale = sample_rate.as_f32() / 44100.0;
-        let avg_delay = avg_base_delay * sample_rate_scale * room_scale;
+        let room_scale = avg_dimension.as_f32() / AVG_REFERENCE_DIMENSION;
+        let sample_rate_scale = sample_rate.as_f32() / REFERENCE_SAMPLE_RATE;
+        let avg_delay = AVG_BASE_FDN_DELAY * sample_rate_scale * room_scale;
 
         let decay_per_sample = -3.0 / (rt60.as_f32() * sample_rate.as_f32());
         let feedback = (10.0_f32).powf(decay_per_sample * avg_delay);

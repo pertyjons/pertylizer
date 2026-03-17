@@ -100,8 +100,8 @@ impl Spatializer {
         self.gain_right = Gain::new((1.0 + pan.as_f32() * 0.5).sqrt());
 
         // --- Head shadow ---
-        // More HF attenuation on the far ear. Coefficient closer to 0 = more LP.
-        // Near ear gets coefficient ~1.0 (no filtering), far ear gets lower.
+        // More HF attenuation on the far ear. Coefficient closer to 1 = more LP.
+        // Near ear gets coefficient ~0.0 (no filtering), far ear gets higher.
         let shadow_amount = NormalizedValue::new(0.3 + 0.5 * angle.abs() / std::f32::consts::PI);
 
         if angle >= 0.0 {
@@ -163,7 +163,7 @@ impl Default for Spatializer {
 mod tests {
     use super::*;
 
-    const SAMPLE_RATE: SampleRate = SampleRate::new(48_000.0);
+    const SAMPLE_RATE: SampleRate = SampleRate(48_000.0);
 
     fn pos(x: f32, y: f32, z: f32) -> Position3 {
         Position3::new(Meters::new(x), Meters::new(y), Meters::new(z))
