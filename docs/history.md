@@ -1,5 +1,30 @@
 # Version History
 
+## [0.245.0] - 2026-03-18
+### Application fixes: RT-safety, error handling, UX improvements
+- **Fixed RT-safety in CPAL error callback** — removed blocking Mutex lock and heap-allocating format! from audio thread error callback; uses atomic counter only
+- **Fixed export thread spawn failure** — spawn errors now set progress error and mark completed instead of silently returning hanging progress
+- **Fixed MCP parameter value return** — `set_parameter` was returning parameter ID instead of actual value
+- **Fixed session clear_graph desync** — command send failures now checked; registry preserved for modules whose removal failed to send
+- **Fixed Tokio panic** — MCP server startup gracefully degrades instead of panicking on runtime creation failure
+- **Fixed session counter reset** — `apply_patch()` now resets module ID counters before loading, preventing ID mismatches
+- **Fixed auto-layout dirty flag** — project now marked as modified after auto-layout changes module positions
+- **Fixed MCP add_notes batch** — per-note error handling with pitch validation, matching update_notes pattern
+- **Fixed title bar allocation** — cached last title string, only updates viewport when title actually changes
+- **Export instrument warnings** — failed instrument loads during export now reported as warnings to the GUI
+- **Preview duration validation** — rejects zero-duration preview requests with descriptive error
+- **MIDI error logging** — dropped MIDI messages and connection failures now logged via eprintln
+- **Patch load parse warnings** — invalid module IDs during patch load now logged for diagnostics
+- **Settings load warning** — added `load_warning` field shown as GUI toast when settings fail to load
+- **Patch directory error logging** — `flatten()` replaced with explicit error handling for directory entries
+- **NullStream documented** — single-use limitation documented on start() method
+- **Undo stubs documented** — AddModule/RemoveModule undo now logs warning instead of silent no-op
+- **Envelope label fix** — sustain point label offset adjusted to avoid overlap with release label
+- **Knob bounds check** — double-click default reset now clamped to valid range
+- **Meter clip threshold** — changed from >0.98 to >=1.0 for accurate 0dB clip detection
+- **Tooltip refactored** — extracted shared rendering logic into `render_tooltip()` helper
+- **Spectrum label overlap** — frequency labels now skip drawing when they would overlap previous label
+
 ## [0.244.0] - 2026-03-17
 ### DSP module fixes: RT-safety, numerical stability, and logic bugs
 - **Fixed RT-safety violations** — phase_vocoder, spectral_blur, signal_monitor, compressor, granular_osc, euclidean: eliminated heap allocations in audio thread by pre-allocating buffers and using fixed-size arrays

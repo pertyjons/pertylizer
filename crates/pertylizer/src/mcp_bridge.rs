@@ -558,8 +558,8 @@ impl SynthBridge for AppSynthBridge {
         {
             return Ok(ParameterInfo {
                 name: pd.name.clone(),
-                value: pd.id.as_f32(),
-                display: format_param_display(&pd.id),
+                value,
+                display: format!("{value}"),
                 min: Some(pd.range.min),
                 max: Some(pd.range.max),
                 default: Some(pd.range.default),
@@ -581,7 +581,10 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
-        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
+        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or_else(|| {
+            eprintln!("mcp_bridge: invalid MIDI channel {channel}, falling back to CH1");
+            MidiChannel::CH1
+        });
         if self.session.command_sender().send(EngineCommand::NoteOn {
             note: MidiNote::new(note),
             velocity: Velocity::from_midi(velocity),
@@ -594,7 +597,10 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn note_off(&self, note: u8, channel: u8) -> Result<(), McpBridgeError> {
-        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or(MidiChannel::CH1);
+        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or_else(|| {
+            eprintln!("mcp_bridge: invalid MIDI channel {channel}, falling back to CH1");
+            MidiChannel::CH1
+        });
         if self.session.command_sender().send(EngineCommand::NoteOff {
             note: MidiNote::new(note),
             channel: midi_channel,
@@ -1301,14 +1307,25 @@ impl SynthBridge for AppSynthBridge {
         let mut succeeded = 0usize;
 
         for (i, n) in notes.iter().enumerate() {
-            let note_id = insert_note_into_pattern(pattern, n);
-            items.push(BatchItemResult {
-                index: i,
-                success: true,
-                id: Some(note_id),
-                error: None,
-            });
-            succeeded += 1;
+            match try_insert_note_into_pattern(pattern, n) {
+                Ok(note_id) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: true,
+                        id: Some(note_id),
+                        error: None,
+                    });
+                    succeeded += 1;
+                }
+                Err(err) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(err),
+                    });
+                }
+            }
         }
 
         Ok(BatchResult {
@@ -1400,14 +1417,25 @@ impl SynthBridge for AppSynthBridge {
         let mut succeeded = 0usize;
 
         for (i, n) in notes.iter().enumerate() {
-            let note_id = insert_note_into_pattern(pattern, n);
-            items.push(BatchItemResult {
-                index: i,
-                success: true,
-                id: Some(note_id),
-                error: None,
-            });
-            succeeded += 1;
+            match try_insert_note_into_pattern(pattern, n) {
+                Ok(note_id) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: true,
+                        id: Some(note_id),
+                        error: None,
+                    });
+                    succeeded += 1;
+                }
+                Err(err) => {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(err),
+                    });
+                }
+            }
         }
 
         Ok(BatchResult {
@@ -2490,7 +2518,33 @@ impl AppSynthBridge {
     }
 }
 
+/// Try to insert a note from `BridgeNoteData` into a pattern.
+/// Returns the assigned note ID as u64, or an error string if the pitch is invalid.
+fn try_insert_note_into_pattern(
+    pattern: &mut synth_sequencer::Pattern,
+    n: &BridgeNoteData,
+) -> Result<u64, String> {
+    let pitch = synth_sequencer::Pitch::new(n.pitch)
+        .ok_or_else(|| format!("invalid pitch: {} (must be 0..=127)", n.pitch))?;
+    let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
+    let vel = synth_core::Velocity::from_midi(n.velocity);
+    let instrument = synth_sequencer::SeqInstrumentId(n.instrument_id.unwrap_or(0));
+
+    let note = synth_sequencer::Note::new(
+        synth_sequencer::NoteId(0), // reassigned by insert_note
+        start,
+        pitch,
+        vel,
+        instrument,
+    )
+    .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
+
+    Ok(pattern.insert_note(note).0)
+}
+
 /// Insert a note from `BridgeNoteData` into a pattern. Returns the assigned note ID as u64.
+/// Falls back to middle C for invalid pitches (used in bulk import paths where per-note
+/// errors are not reported).
 fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNoteData) -> u64 {
     let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));

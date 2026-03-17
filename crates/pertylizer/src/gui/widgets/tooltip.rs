@@ -15,31 +15,7 @@ use crate::gui::theme::theme;
 /// * `text` - Text to display
 /// * `accent_color` - Color for the border accent
 pub fn draw_value_tooltip(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
-    let t = theme();
-    let painter = ui
-        .ctx()
-        .layer_painter(LayerId::new(Order::Tooltip, egui::Id::new("value_tooltip")));
-
-    let tooltip_bg = Color32::from_rgba_unmultiplied(30, 30, 35, 240);
-    let text_size = t.fonts.small();
-
-    let galley = painter.layout_no_wrap(text.to_string(), text_size, t.colors.text_primary);
-    let padding = Vec2::new(6.0, 3.0);
-    let text_rect = egui::Rect::from_min_size(pos, galley.size() + padding * 2.0);
-
-    // Background
-    painter.rect_filled(text_rect, 3.0, tooltip_bg);
-
-    // Border with accent color
-    painter.rect_stroke(
-        text_rect,
-        3.0,
-        Stroke::new(1.0, accent_color.gamma_multiply(0.6)),
-        egui::StrokeKind::Inside,
-    );
-
-    // Text
-    painter.galley(pos + padding, galley, t.colors.text_primary);
+    render_tooltip(ui, pos, text, accent_color);
 }
 
 /// Draw a tooltip to the right of a center point (useful for knobs).
@@ -61,16 +37,27 @@ pub fn draw_tooltip_above(ui: &Ui, point: Pos2, text: &str, accent_color: Color3
         .ctx()
         .layer_painter(LayerId::new(Order::Tooltip, egui::Id::new("value_tooltip")));
 
-    let tooltip_bg = Color32::from_rgba_unmultiplied(30, 30, 35, 240);
-    let text_size = t.fonts.small();
-
-    let galley = painter.layout_no_wrap(text.to_string(), text_size, t.colors.text_primary);
+    let galley = painter.layout_no_wrap(text.to_string(), t.fonts.small(), t.colors.text_primary);
     let padding = Vec2::new(6.0, 3.0);
     let size = galley.size() + padding * 2.0;
 
     // Position above and slightly to the right
     let pos = Pos2::new(point.x + 8.0, point.y - size.y - 4.0);
-    let text_rect = egui::Rect::from_min_size(pos, size);
+    render_tooltip(ui, pos, text, accent_color);
+}
+
+/// Shared tooltip rendering logic: background, border, and text on the tooltip layer.
+fn render_tooltip(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
+    let t = theme();
+    let painter = ui
+        .ctx()
+        .layer_painter(LayerId::new(Order::Tooltip, egui::Id::new("value_tooltip")));
+
+    let tooltip_bg = Color32::from_rgba_unmultiplied(30, 30, 35, 240);
+
+    let galley = painter.layout_no_wrap(text.to_string(), t.fonts.small(), t.colors.text_primary);
+    let padding = Vec2::new(6.0, 3.0);
+    let text_rect = egui::Rect::from_min_size(pos, galley.size() + padding * 2.0);
 
     // Background
     painter.rect_filled(text_rect, 3.0, tooltip_bg);

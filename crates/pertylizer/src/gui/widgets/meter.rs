@@ -140,7 +140,7 @@ pub fn draw_level_meter(
     }
 
     // Clip indicator at top
-    if peak_norm > 0.98 {
+    if peak_norm >= 1.0 {
         let clip_rect = if horizontal {
             Rect::from_min_size(
                 Pos2::new(rect.right() - 6.0, rect.top()),

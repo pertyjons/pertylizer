@@ -100,7 +100,7 @@ impl<'a> Knob<'a> {
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
         if response.double_clicked() {
-            *self.value = self.range.default;
+            *self.value = self.range.default.clamp(self.range.min, self.range.max);
         }
 
         if response.dragged() {

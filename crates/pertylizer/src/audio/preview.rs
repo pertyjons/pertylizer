@@ -163,6 +163,12 @@ pub fn render_note_preview(
     let note_frames = (f64::from(duration_ms) / 1000.0 * f64::from(PREVIEW_SAMPLE_RATE)) as u64;
     let tail_frames = (f64::from(tail_ms) / 1000.0 * f64::from(PREVIEW_SAMPLE_RATE)) as u64;
     let total_frames = note_frames + tail_frames;
+
+    if total_frames == 0 {
+        return Err(McpBridgeError::Other(
+            "Total render duration is 0 — duration_ms and tail_ms must not both be 0".to_string(),
+        ));
+    }
     let total_seconds = total_frames as f32 / PREVIEW_SAMPLE_RATE as f32;
 
     // Create in-memory WAV writer (16-bit for smaller size)

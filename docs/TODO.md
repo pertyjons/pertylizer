@@ -1,4 +1,4 @@
-# TODO - Pertylizer (v0.244.0)
+# TODO - Pertylizer
 
 ## 0. Known Bugs
 

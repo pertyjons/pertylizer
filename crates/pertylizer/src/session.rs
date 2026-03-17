@@ -448,6 +448,7 @@ impl SynthSession {
                 .collect()
         };
 
+        let mut failed_modules = Vec::new();
         for (module_id, category) in &modules {
             let cmd = match category {
                 ModuleCategory::Effect => EngineCommand::RemoveEffect {
@@ -463,13 +464,21 @@ impl SynthSession {
                     id: *module_id,
                 },
             };
-            self.command_sender.send(cmd);
+            if !self.command_sender.send(cmd) {
+                eprintln!(
+                    "clear_graph: failed to send remove command for module {} in instrument {}",
+                    module_id, instrument_id
+                );
+                failed_modules.push(*module_id);
+            }
         }
 
-        // Clear registry entries for this instrument
+        // Clear registry entries for this instrument, keeping modules whose removal failed
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.retain(|&(inst_id, _), _| inst_id != instrument_id);
+            registry.retain(|&(inst_id, mod_id), _| {
+                inst_id != instrument_id || failed_modules.contains(&mod_id)
+            });
         }
 
         Ok(())
@@ -641,6 +650,9 @@ impl SynthSession {
             errors: Vec::new(),
         };
 
+        // Reset counters so stale state from a previous patch doesn't cause ID collisions
+        self.reset_counters_for_instrument(instrument_id);
+
         // Clear existing modules
         if let Err(e) = self.clear_graph(instrument_id) {
             result.errors.push(format!("clear_graph failed: {e}"));
@@ -668,7 +680,7 @@ impl SynthSession {
             };
 
             match self.add_module_with_id(instrument_id, module_id, module_type) {
-                Ok(descriptor) => {
+                Ok(_descriptor) => {
                     result.module_count += 1;
                     result.module_ids.push(Some(module_id.to_string()));
 
@@ -682,7 +694,6 @@ impl SynthSession {
                                 .push(format!("{} param '{}': {e}", module_id, param_name));
                         }
                     }
-                    drop(descriptor);
                 }
                 Err(e) => {
                     result

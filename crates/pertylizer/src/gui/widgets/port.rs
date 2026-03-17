@@ -247,6 +247,7 @@ fn draw_convex(painter: &egui::Painter, points: &[Pos2], fill: Color32, stroke: 
     use eframe::epaint::{PathShape, PathStroke};
 
     if fill != Color32::TRANSPARENT {
+        // Vec allocation required by egui PathShape API
         painter.add(PathShape::convex_polygon(
             points.to_vec(),
             fill,
@@ -254,6 +255,7 @@ fn draw_convex(painter: &egui::Painter, points: &[Pos2], fill: Color32, stroke: 
         ));
     }
     if stroke != Stroke::NONE {
+        // Vec allocation required by egui PathShape API
         painter.add(PathShape::convex_polygon(
             points.to_vec(),
             Color32::TRANSPARENT,

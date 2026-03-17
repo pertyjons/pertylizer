@@ -104,8 +104,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let registry = shared.mcp_sessions.clone();
         let shared_for_flag = std::sync::Arc::clone(&shared);
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new()
-                .unwrap_or_else(|e| panic!("Failed to create tokio runtime: {e}"));
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("Failed to create tokio runtime for MCP: {e}");
+                    return;
+                }
+            };
             rt.block_on(async {
                 shared_for_flag
                     .mcp_listening

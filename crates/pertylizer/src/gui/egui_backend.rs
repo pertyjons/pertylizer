@@ -289,6 +289,9 @@ struct SynthApp {
     /// Reusable buffers for master scope visualization (avoids per-frame allocation).
     scope_buf_l: Vec<f32>,
     scope_buf_r: Vec<f32>,
+
+    /// Cached window title to avoid allocating every frame.
+    last_title: String,
 }
 
 impl SynthApp {
@@ -334,6 +337,12 @@ impl SynthApp {
         let mut dialog_state = DialogState::new();
         dialog_state.current_theme = settings.theme;
 
+        // Surface settings load warnings as a GUI toast so the user knows
+        // defaults are being used (the file may be corrupt or missing).
+        if let Some(warning) = &settings.load_warning {
+            dialog_state.set_status(warning.clone());
+        }
+
         Self {
             handle,
             host: Some(host),
@@ -366,6 +375,7 @@ impl SynthApp {
             clipboard: crate::gui::clipboard::ModuleClipboard::new(),
             scope_buf_l: Vec::new(),
             scope_buf_r: Vec::new(),
+            last_title: String::new(),
         }
     }
 
@@ -1563,6 +1573,7 @@ impl eframe::App for SynthApp {
                 && let Some(canvas_rect) = result.canvas_rect
             {
                 patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
+                self.mark_dirty();
             }
 
             // Mark dirty if any mutations occurred
@@ -1598,7 +1609,7 @@ impl eframe::App for SynthApp {
         #[cfg(feature = "mcp")]
         self.write_mcp_layout(ctx);
 
-        // Update window title to reflect dirty state
+        // Update window title to reflect dirty state (only when changed)
         {
             let project_name = self
                 .current_project_path
@@ -1611,7 +1622,10 @@ impl eframe::App for SynthApp {
             } else {
                 format!("Pertylizer - {project_name}")
             };
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+            if title != self.last_title {
+                self.last_title = title.clone();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+            }
         }
 
         // Intercept close request when there are unsaved changes
@@ -2738,18 +2752,23 @@ impl SynthApp {
                 instrument_id,
                 module_state,
             } => {
-                // Re-add the module (via session + patch editor).
-                // This is complex — for now we record it but full re-add
-                // would require reconstructing the module from ModuleState.
-                // Minimal: update patch editor position if module exists.
+                // TODO: Full undo requires recreating the module from ModuleState
+                // via the session, rebuilding connections, and updating the patch
+                // editor. This needs significant refactoring of the session API
+                // to support module reconstruction from serialized state.
                 let _ = (instrument_id, module_state);
+                eprintln!("Undo: AddModule not yet implemented — requires session refactoring");
             }
             UndoAction::RemoveModule {
                 instrument_id,
                 module_state,
                 connections: _,
             } => {
+                // TODO: Full undo requires re-adding the removed module from its
+                // saved ModuleState and restoring all connections. Same session
+                // refactoring needed as AddModule above.
                 let _ = (instrument_id, module_state);
+                eprintln!("Undo: RemoveModule not yet implemented — requires session refactoring");
             }
             UndoAction::MoveModule {
                 module_id, new_pos, ..

@@ -183,7 +183,9 @@ impl MidiHandler {
 
         if let Some(port) = preferred_port {
             println!("MIDI: Auto-selecting '{}'", port);
-            let _ = handler.connect_to(port);
+            if let Err(e) = handler.connect_to(port) {
+                eprintln!("MIDI: failed to connect to '{port}': {e}");
+            }
         } else {
             println!("MIDI: No ports available");
         }
@@ -221,8 +223,10 @@ impl MidiHandler {
                 port,
                 "pertylizer-input",
                 move |_timestamp, message, _| {
-                    if let Some(command) = parse_midi(message) {
-                        let _ = sender.send(command);
+                    if let Some(command) = parse_midi(message)
+                        && !sender.send(command)
+                    {
+                        eprintln!("MIDI: dropped message (channel full)");
                     }
                 },
                 (),

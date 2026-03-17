@@ -32,6 +32,12 @@ pub struct AppSettings {
     /// Recently opened project file paths (newest first, max 10).
     #[serde(default)]
     pub recent_projects: Vec<PathBuf>,
+
+    /// Warning message from the last load attempt (e.g. corrupt config file).
+    /// Populated when settings fail to load and defaults are used instead.
+    /// Not serialized — only lives for the current session.
+    #[serde(skip)]
+    pub load_warning: Option<String>,
 }
 
 /// Directory preferences for file dialogs.
@@ -91,13 +97,23 @@ impl Default for WindowSettings {
 
 impl AppSettings {
     /// Load settings from disk, falling back to defaults on any error.
+    ///
+    /// When loading fails (missing file, parse error, etc.), the returned
+    /// `AppSettings` will have [`Self::load_warning`] set with a description
+    /// of what went wrong. The GUI can check this field on startup to show a
+    /// user-visible notification.
     #[must_use]
     pub fn load() -> Self {
         match Self::try_load() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Settings: using defaults ({e})");
-                Self::default()
+                let warning =
+                    format!("Could not load settings, using defaults: {e}");
+                eprintln!("Settings: {warning}");
+                Self {
+                    load_warning: Some(warning),
+                    ..Self::default()
+                }
             }
         }
     }

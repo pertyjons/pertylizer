@@ -157,11 +157,23 @@ pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgres
     let progress = ExportProgress::new(config.total_frames());
     let progress_clone = progress.clone_internals();
 
-    std::thread::Builder::new()
+    let spawn_result = std::thread::Builder::new()
         .name("wav-export".to_string())
         .spawn(move || {
             match render_to_wav(&project, &config, &progress_clone) {
-                Ok(()) => {}
+                Ok(warnings) => {
+                    if !warnings.is_empty() {
+                        let msg = format!(
+                            "Export completed with warnings: {}",
+                            warnings.join("; ")
+                        );
+                        let mut err = progress_clone
+                            .error
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        *err = Some(msg);
+                    }
+                }
                 Err(ExportError::Cancelled) => {
                     // Clean up partial file on cancel
                     let _ = std::fs::remove_file(&config.path);
@@ -175,18 +187,28 @@ pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgres
                 }
             }
             progress_clone.completed.store(true, Ordering::Release);
-        })
-        .ok();
+        });
+
+    if let Err(e) = spawn_result {
+        let mut err = progress
+            .error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *err = Some(format!("Failed to spawn export thread: {e}"));
+        progress.completed.store(true, Ordering::Release);
+    }
 
     progress
 }
 
 /// Render the project to a WAV file (blocking, runs in background thread).
+///
+/// Returns a list of non-fatal warnings (e.g. instruments that failed to load).
 fn render_to_wav(
     project: &ProjectFile,
     config: &ExportConfig,
     progress: &ExportProgress,
-) -> Result<(), ExportError> {
+) -> Result<Vec<String>, ExportError> {
     // 1. Create a fresh engine
     let (mut engine, mut handle) = SynthEngine::new();
 
@@ -200,7 +222,7 @@ fn render_to_wav(
     });
 
     // 4. Load all instruments and their patches into the engine
-    load_project_into_engine(project, &session, &mut handle)?;
+    let warnings = load_project_into_engine(project, &session, &mut handle)?;
 
     // 5. Apply global settings
     handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
@@ -352,7 +374,7 @@ fn render_to_wav(
     // 11. Finalize WAV file
     writer.finalize()?;
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Load a `ProjectFile` into a fresh engine via commands.
@@ -363,15 +385,16 @@ fn load_project_into_engine(
     project: &ProjectFile,
     session: &SynthSession,
     handle: &mut synth_engine::EngineHandle,
-) -> Result<(), ExportError> {
+) -> Result<Vec<String>, ExportError> {
+    let mut warnings = Vec::new();
+
     for inst_state in &project.instruments {
         let inst_id = inst_state.id;
 
         if let Err(e) = session.add_instrument_with_id(inst_id, &inst_state.name) {
-            eprintln!(
-                "Warning: failed to create instrument {}: {e}",
-                inst_state.name
-            );
+            let msg = format!("Failed to load instrument '{}': {e}", inst_state.name);
+            eprintln!("Warning: {msg}");
+            warnings.push(msg);
             continue;
         }
 
@@ -422,7 +445,7 @@ fn load_project_into_engine(
         });
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Load modules and connections from a patch into the engine (no GUI state).

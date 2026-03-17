@@ -75,10 +75,16 @@ pub fn load_patch(
 
     // Add connections to both patch_editor and engine
     for conn in &patch.connections {
-        if let (Ok(from_id), Ok(to_id)) = (
-            conn.from.0.parse::<ModuleId>(),
-            conn.to.0.parse::<ModuleId>(),
-        ) {
+        let from_result = conn.from.0.parse::<ModuleId>();
+        let to_result = conn.to.0.parse::<ModuleId>();
+        if from_result.is_err() || to_result.is_err() {
+            eprintln!(
+                "Patch load: skipping connection with invalid module ID(s): '{}' -> '{}'",
+                conn.from.0, conn.to.0
+            );
+            continue;
+        }
+        if let (Ok(from_id), Ok(to_id)) = (from_result, to_result) {
             let connection = Connection::new(from_id, &*conn.from.1, to_id, &*conn.to.1);
             patch_editor.add_connection(connection);
 

@@ -6,7 +6,6 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig as CpalStreamConfig};
-use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -194,14 +193,10 @@ struct CpalStream {
     info: StreamInfo,
     running: Arc<AtomicBool>,
     position: Arc<AtomicU64>,
-    /// Counter for audio stream errors (incremented on each error).
-    /// Stored for future use when GUI error display is implemented.
+    /// Counter for audio stream errors (incremented on each error callback).
+    /// Lock-free: safe to increment from the audio thread and read from the UI thread.
     #[allow(dead_code)]
     error_count: Arc<AtomicU64>,
-    /// Last error message (for display in GUI).
-    /// Stored for future use when GUI error display is implemented.
-    #[allow(dead_code)]
-    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl CpalStream {
@@ -241,13 +236,10 @@ impl CpalStream {
         let running = Arc::new(AtomicBool::new(false));
         let position = Arc::new(AtomicU64::new(0));
         let error_count = Arc::new(AtomicU64::new(0));
-        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-
         // Clone for the callback
         let running_clone = Arc::clone(&running);
         let position_clone = Arc::clone(&position);
         let error_count_clone = Arc::clone(&error_count);
-        let last_error_clone = Arc::clone(&last_error);
         let sample_rate = config.sample_rate;
         let start_time = Instant::now();
 
@@ -284,11 +276,10 @@ impl CpalStream {
                     position_clone.fetch_add(frames as u64, Ordering::Relaxed);
                 },
                 move |err| {
-                    // Log to stderr for debugging
+                    // Log to stderr (non-RT but acceptable for error paths)
                     eprintln!("Audio stream error: {err}");
-                    // Increment error count and store last error for GUI access
+                    // Atomic increment — lock-free, RT-safe
                     error_count_clone.fetch_add(1, Ordering::Relaxed);
-                    *last_error_clone.lock() = Some(format!("{err}"));
                 },
                 None, // No timeout, blocking mode
             )
@@ -300,7 +291,6 @@ impl CpalStream {
             running,
             position,
             error_count,
-            last_error,
         })
     }
 }
@@ -350,7 +340,7 @@ impl AudioStream for CpalStream {
 // 1. The `stream` field (cpal::Stream) is managed by cpal and its audio callback
 //    runs on a separate audio thread - we only control start/pause from here.
 // 2. The `info` field (StreamInfo) contains only Copy/Send types.
-// 3. The `running` and `position` fields are Arc<Atomic*> which are Send+Sync.
+// 3. The `running`, `position`, and `error_count` fields are Arc<Atomic*> which are Send+Sync.
 // 4. All mutable operations on `stream` (play/pause) are &mut self, ensuring
 //    exclusive access. The audio callback closure captures its own Arc references.
 // 5. This is required because AudioStream trait requires Send for use in

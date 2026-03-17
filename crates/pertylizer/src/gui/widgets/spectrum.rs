@@ -43,6 +43,8 @@ pub fn draw_spectrum_analyzer(
     // Vertical grid lines at decade frequencies: 100Hz, 1kHz, 10kHz
     // Using log scale: log10(freq/20) / log10(20000/20)
     let log_range = (20000.0_f32 / 20.0).log10(); // ~3.0
+    let label_font = eframe::egui::FontId::proportional(8.0);
+    let mut last_label_right = f32::NEG_INFINITY;
     for &freq in &[100.0_f32, 1000.0, 10000.0] {
         let x_frac = (freq / 20.0).log10() / log_range;
         let x = rect.left() + x_frac * rect.width();
@@ -50,19 +52,24 @@ pub fn draw_spectrum_analyzer(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
             Stroke::new(0.5, grid_color),
         );
-        // Frequency label
+        // Frequency label — skip if it would overlap the previous one
         let label = if freq >= 1000.0 {
             format!("{}k", freq as u32 / 1000)
         } else {
             format!("{}", freq as u32)
         };
-        painter.text(
-            Pos2::new(x + 2.0, rect.bottom() - 10.0),
-            eframe::egui::Align2::LEFT_BOTTOM,
-            label,
-            eframe::egui::FontId::proportional(8.0),
-            text_color,
-        );
+        let label_width = label.len() as f32 * 5.0;
+        let label_left = x + 2.0;
+        if label_left > last_label_right + 4.0 {
+            painter.text(
+                Pos2::new(label_left, rect.bottom() - 10.0),
+                eframe::egui::Align2::LEFT_BOTTOM,
+                label,
+                label_font.clone(),
+                text_color,
+            );
+            last_label_right = label_left + label_width;
+        }
     }
 
     // Draw spectrum as filled area

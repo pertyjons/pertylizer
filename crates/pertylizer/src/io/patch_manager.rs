@@ -76,7 +76,14 @@ impl PatchManager {
         let entries = fs::read_dir(&self.patches_dir)
             .map_err(|e| PatchError::Io(format!("Failed to read patches directory: {}", e)))?;
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Patch directory: skipping unreadable entry: {e}");
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json")
                 && let Ok(info) = self.get_patch_info(&path)

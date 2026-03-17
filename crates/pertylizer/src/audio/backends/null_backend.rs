@@ -106,6 +106,13 @@ impl NullStream {
 }
 
 impl AudioStream for NullStream {
+    /// Start the null audio processing thread.
+    ///
+    /// **Limitation:** The processor is moved into the spawned thread and not
+    /// returned on [`stop`](Self::stop). Calling `start` a second time after
+    /// `stop` will fail with [`AudioError::StreamNotRunning`] because the
+    /// processor has been consumed. This is acceptable for a test-only backend;
+    /// create a new `NullStream` if you need to restart.
     fn start(&mut self) -> AudioResult<()> {
         if self.running.load(Ordering::Relaxed) {
             return Err(AudioError::StreamAlreadyRunning);

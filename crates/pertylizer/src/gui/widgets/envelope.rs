@@ -406,10 +406,10 @@ impl<'a> EnvelopeEditor<'a> {
             painter.circle_filled(*point, radius, point_color);
 
             // Label above point
-            let label_offset = if *drag_type == DragPoint::Release {
-                Vec2::new(-10.0, -12.0)
-            } else {
-                Vec2::new(0.0, -12.0)
+            let label_offset = match *drag_type {
+                DragPoint::Release => Vec2::new(-10.0, -12.0),
+                DragPoint::Sustain => Vec2::new(-8.0, -12.0),
+                _ => Vec2::new(0.0, -12.0),
             };
 
             painter.text(
