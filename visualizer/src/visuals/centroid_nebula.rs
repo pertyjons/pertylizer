@@ -1,7 +1,6 @@
 //! Centroid Nebula — Particle cloud shifting color and shape based on spectral brightness.
 
 use super::rand_f32;
-use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
@@ -21,6 +20,23 @@ const EMISSIVE_STRENGTH: f32 = 1.5;
 /// Per-second centroid smoothing rate (symmetric, time-based).
 const CENTROID_SMOOTH_RATE: f32 = 4.0;
 
+/// Number of shared material buckets.
+const NUM_MATERIAL_BUCKETS: usize = 16;
+
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 60.0, // Spread hue slightly for a colorful nebula
+    saturation: 0.8,
+    lightness: 0.5,
+    emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: false,
+};
+
+/// Shared materials bucketed by hue.
+#[derive(Resource)]
+pub struct NebulaMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
+
 /// A single particle in the nebula.
 #[derive(Component)]
 pub struct NebulaParticle {
@@ -36,14 +52,14 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Sphere::new(0.15));
 
-    // Create one shared material for all particles since they share color state
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.1, 0.1, 0.3),
-        emissive: LinearRgba::from(Color::srgb(0.1, 0.1, 0.3)) * EMISSIVE_STRENGTH,
-        ..default()
+    let shared_mats =
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
+    commands.insert_resource(NebulaMaterials {
+        materials: shared_mats.clone(),
     });
 
     let mut rng = fastrand::Rng::new();
@@ -57,9 +73,12 @@ pub fn setup(
         let phase = rand_f32(&mut rng, 0.0..std::f32::consts::TAU);
         let base_size = rand_f32(&mut rng, 0.5..1.5);
 
+        // Assign material bucket based on spatial position to create color clusters
+        let bucket = ((x + y + z).abs() as usize) % NUM_MATERIAL_BUCKETS;
+
         commands.spawn((
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(material.clone()),
+            MeshMaterial3d(shared_mats[bucket].clone()),
             Transform::from_translation(pos).with_scale(Vec3::splat(base_size)),
             Visibility::Hidden,
             NebulaParticle {
@@ -129,13 +148,11 @@ pub fn update_material(
     time: Res<Time>,
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
-    query: Query<&MeshMaterial3d<StandardMaterial>, With<NebulaParticle>>,
+    nebula_materials: Res<NebulaMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_centroid: Local<f32>,
-    mut last_hue: Local<f32>,
-    mut last_fade: Local<f32>,
-    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
+    mut tracker: Local<effects::HueMaterialTracker>,
 ) {
     let fade = effect_state.fade;
     let dt = time.delta_secs();
@@ -149,32 +166,17 @@ pub fn update_material(
     };
     *last_centroid = centroid;
 
-    let hue = telemetry_color::centroid_to_hue(centroid, &policy);
+    let hue_offset = telemetry_color::centroid_to_hue(centroid, &policy);
+    let emissive_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
 
-    // Only update material when hue or fade changes meaningfully
-    if (hue - *last_hue).abs() < 1.0
-        && (fade - *last_fade).abs() < effects::FADE_EPSILON
-        && *last_policy_version == policy.version
-    {
-        return;
-    }
-
-    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
-    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
-
-    if let Some(handle) = query.iter().next()
-        && let Some(material) = materials.get_mut(&handle.0)
-    {
-        let color = Color::hsl(hue, sat, lit * fade);
-        material.base_color = color;
-        material.emissive = LinearRgba::from(color) * emissive * fade;
-        material.metallic = policy.metallic;
-        material.perceptual_roughness = policy.roughness;
-    }
-
-    *last_hue = hue;
-    *last_fade = fade;
-    *last_policy_version = policy.version;
+    effects::update_hue_materials_for_fade(
+        &mut materials,
+        &nebula_materials.materials,
+        &MAT_CONFIG,
+        &policy,
+        fade,
+        hue_offset,
+        emissive_boost,
+        &mut tracker,
+    );
 }

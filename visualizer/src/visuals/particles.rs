@@ -88,11 +88,12 @@ pub fn spawn(
     particle_mesh: Res<ParticleMesh>,
     particle_materials: Res<ParticleMaterials>,
     mut particle_count: ResMut<ParticleCount>,
+    mut ev_note: MessageReader<crate::telemetry::NoteOnEvent>,
 ) {
     // Voice count scales burst size: more voices → more particles per note
     let voice_scale = 1.0 + (telemetry.voice_count as f32 / 32.0).clamp(0.0, 1.0);
 
-    for note_event in &telemetry.pending_note_events {
+    for note_event in ev_note.read() {
         if particle_count.count >= MAX_PARTICLES {
             break;
         }

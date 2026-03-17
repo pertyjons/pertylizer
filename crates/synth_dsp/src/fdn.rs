@@ -9,11 +9,10 @@
 use synth_core::{BufferIndex, FilterState, Gain, Hertz, NormalizedValue, Phase, StereoSample};
 
 /// Number of channels in the FDN.
-pub const FDN_CHANNELS: usize = 8;
+const FDN_CHANNELS: usize = 8;
 
 /// Base delay times in samples at 44100 Hz (prime numbers for minimal modal coincidence).
-pub const BASE_DELAY_TIMES: [usize; FDN_CHANNELS] =
-    [2039, 2311, 2543, 2719, 2917, 3109, 3301, 3511];
+const BASE_DELAY_TIMES: [usize; FDN_CHANNELS] = [2039, 2311, 2543, 2719, 2917, 3109, 3301, 3511];
 
 /// Normalized 8x8 Hadamard matrix (each element is +/-1/sqrt(8)).
 ///
@@ -40,7 +39,7 @@ const HADAMARD_8: [[f32; FDN_CHANNELS]; FDN_CHANNELS] = {
 };
 
 /// Per-channel LFO rates in Hz for delay modulation (~0.3 Hz, slightly different per channel).
-pub const LFO_RATES: [Hertz; FDN_CHANNELS] = [
+const LFO_RATES: [Hertz; FDN_CHANNELS] = [
     Hertz::new(0.27),
     Hertz::new(0.31),
     Hertz::new(0.29),
@@ -131,7 +130,7 @@ impl FdnChannel {
         let mod_depth = diffusion.as_f32() * MAX_MOD_DEPTH_SAMPLES;
         let delay = self.delay_samples as f32 + lfo_value * mod_depth;
         // Clamp to valid range
-        delay.max(1.0).min((self.buffer.len() - 2) as f32)
+        delay.clamp(1.0, (self.buffer.len() - 2) as f32)
     }
 
     /// Clear all state.
@@ -146,6 +145,7 @@ impl FdnChannel {
 
 /// Stereo output from the FDN.
 #[derive(Debug, Clone, Copy)]
+#[must_use]
 pub struct FdnStereoOutput {
     /// Left channel sample.
     pub left: f32,
@@ -173,16 +173,7 @@ impl FdnCore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            channels: [
-                FdnChannel::new(BASE_DELAY_TIMES[0], LFO_RATES[0]),
-                FdnChannel::new(BASE_DELAY_TIMES[1], LFO_RATES[1]),
-                FdnChannel::new(BASE_DELAY_TIMES[2], LFO_RATES[2]),
-                FdnChannel::new(BASE_DELAY_TIMES[3], LFO_RATES[3]),
-                FdnChannel::new(BASE_DELAY_TIMES[4], LFO_RATES[4]),
-                FdnChannel::new(BASE_DELAY_TIMES[5], LFO_RATES[5]),
-                FdnChannel::new(BASE_DELAY_TIMES[6], LFO_RATES[6]),
-                FdnChannel::new(BASE_DELAY_TIMES[7], LFO_RATES[7]),
-            ],
+            channels: core::array::from_fn(|i| FdnChannel::new(BASE_DELAY_TIMES[i], LFO_RATES[i])),
         }
     }
 

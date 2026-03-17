@@ -27,5 +27,7 @@ fn main() {
         .add_plugins(osc_receiver::OscReceiverPlugin)
         .add_plugins(visuals::VisualsPlugin)
         .init_resource::<telemetry::SynthTelemetry>()
+        .add_message::<telemetry::NoteOnEvent>()
+        .add_message::<visuals::camera::CameraModeEvent>()
         .run();
 }

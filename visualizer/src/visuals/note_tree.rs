@@ -41,23 +41,33 @@ pub struct TreeBranch {
 }
 
 #[derive(Resource)]
-pub struct TreeMaterial(Handle<StandardMaterial>);
+pub struct TreeMaterials(Vec<Handle<StandardMaterial>>);
 
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let cylinder = meshes.add(Cylinder::new(0.15, 1.0));
     let thin_cylinder = meshes.add(Cylinder::new(0.08, 1.0));
 
-    let color = Color::hsl(120.0, 0.7, 0.4);
-    let material = materials.add(StandardMaterial {
-        base_color: color,
-        emissive: LinearRgba::from(color) * EMISSIVE_STRENGTH,
-        ..default()
-    });
-    commands.insert_resource(TreeMaterial(material.clone()));
+    // Create 3 materials based on level (0 = trunk, 1 = branches, 2 = twigs)
+    let mut tree_mats = Vec::with_capacity(3);
+    let base_color = Color::hsl(120.0, 0.7, 0.4);
+    for level in 0..3 {
+        // Increase emissive strength for outer branches
+        let emissive_mult = 1.0 + (level as f32 * 0.8);
+        tree_mats.push(materials.add(StandardMaterial {
+            base_color,
+            emissive: LinearRgba::from(base_color) * EMISSIVE_STRENGTH * emissive_mult * policy.emissive_multiplier,
+            metallic: policy.metallic,
+            perceptual_roughness: policy.roughness,
+            ..default()
+        }));
+    }
+    
+    commands.insert_resource(TreeMaterials(tree_mats.clone()));
 
     // Define the tree structure
     let branches: Vec<BranchDef> = vec![
@@ -162,9 +172,11 @@ pub fn setup(
             scale: def.scale,
         };
 
+        let mat_idx = def.level.min(2) as usize;
+        
         commands.spawn((
             Mesh3d(mesh_handle),
-            MeshMaterial3d(material.clone()),
+            MeshMaterial3d(tree_mats[mat_idx].clone()),
             base_transform,
             Visibility::Hidden,
             TreeBranch {
@@ -185,10 +197,11 @@ pub fn update(
     effect_state: Res<EffectState>,
     mut query: Query<(&mut TreeBranch, &mut Transform)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    tree_material: Res<TreeMaterial>,
+    tree_materials: Res<TreeMaterials>,
     policy: Res<ThemeMaterialPolicy>,
     mut last_policy_version: Local<u64>,
     mut last_rms: Local<f32>,
+    mut last_fade: Local<f32>,
 ) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
@@ -212,18 +225,32 @@ pub fn update(
     if rms_changed {
         *last_rms = rms_mono;
     }
-    if policy_changed || fade < 1.0 || rms_changed {
+    
+    let fade_changed = (fade - *last_fade).abs() > super::effects::FADE_EPSILON;
+    if fade_changed {
+        *last_fade = fade;
+    }
+    
+    if policy_changed || fade_changed || rms_changed {
         let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
         let sat = (0.6 + policy.saturation_offset).clamp(0.0, 1.0);
-        let lit = (0.4 + rms_mono * 0.3 + policy.lightness_offset).clamp(0.0, 1.0);
-        let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+        
+        for (level, handle) in tree_materials.0.iter().enumerate() {
+            // Inner branches are darker, outer branches are brighter
+            let lit_boost = level as f32 * 0.15;
+            let lit = (0.3 + lit_boost + rms_mono * 0.3 + policy.lightness_offset).clamp(0.0, 1.0);
+            
+            // Outer branches glow more
+            let emissive_mult = 1.0 + (level as f32 * 0.8);
+            let emissive = EMISSIVE_STRENGTH * emissive_mult * policy.emissive_multiplier;
 
-        if let Some(material) = materials.get_mut(&tree_material.0) {
-            let color = Color::hsl(hue, sat, lit * fade);
-            material.base_color = color;
-            material.emissive = LinearRgba::from(color) * emissive * fade;
-            material.metallic = policy.metallic;
-            material.perceptual_roughness = policy.roughness;
+            if let Some(material) = materials.get_mut(handle) {
+                let color = Color::hsl(hue, sat, lit * fade);
+                material.base_color = color;
+                material.emissive = LinearRgba::from(color) * emissive * fade;
+                material.metallic = policy.metallic;
+                material.perceptual_roughness = policy.roughness;
+            }
         }
     }
 

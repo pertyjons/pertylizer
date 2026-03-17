@@ -7,7 +7,7 @@ use synth_core::{
 use synth_core::{Decibels, Hertz, NormalizedValue, SampleRate};
 use synth_core::{EqParam, ModuleType, Param};
 
-/// Biquad filter coefficients.
+/// Biquad filter coefficients (local to EQ, uses Direct Form I for stereo state).
 #[derive(Clone, Copy, Default)]
 struct BiquadCoeffs {
     b0: f32,
@@ -15,6 +15,19 @@ struct BiquadCoeffs {
     b2: f32,
     a1: f32,
     a2: f32,
+}
+
+impl BiquadCoeffs {
+    /// Create from raw unnormalized coefficients, dividing all by a0.
+    fn from_raw(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+        }
+    }
 }
 
 /// Biquad filter state (stereo).
@@ -114,23 +127,19 @@ impl Eq {
         let w0 = 2.0 * std::f32::consts::PI * self.low_freq.as_f32() / self.sample_rate.as_f32();
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / 0.9 - 1.0) + 2.0).sqrt();
+        // Shelf slope parameter S = 0.9 (controls transition bandwidth; 1.0 = standard slope)
+        let shelf_slope = 0.9_f32;
+        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / shelf_slope - 1.0) + 2.0).sqrt();
         let sqrt_a = a.sqrt();
 
-        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha;
-        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha;
-        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha);
-        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha);
-
-        self.low_coeffs = BiquadCoeffs {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        };
+        self.low_coeffs = BiquadCoeffs::from_raw(
+            a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0),
+            a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+            (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
+            (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+        );
     }
 
     /// Calculate peaking EQ filter coefficients.
@@ -141,20 +150,14 @@ impl Eq {
         let sin_w0 = w0.sin();
         let alpha = sin_w0 / (2.0 * self.mid_q);
 
-        let a0 = 1.0 + alpha / a;
-        let a1 = -2.0 * cos_w0;
-        let a2 = 1.0 - alpha / a;
-        let b0 = 1.0 + alpha * a;
-        let b1 = -2.0 * cos_w0;
-        let b2 = 1.0 - alpha * a;
-
-        self.mid_coeffs = BiquadCoeffs {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        };
+        self.mid_coeffs = BiquadCoeffs::from_raw(
+            1.0 + alpha * a,
+            -2.0 * cos_w0,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * cos_w0,
+            1.0 - alpha / a,
+        );
     }
 
     /// Calculate high shelf filter coefficients.
@@ -163,23 +166,19 @@ impl Eq {
         let w0 = 2.0 * std::f32::consts::PI * self.high_freq.as_f32() / self.sample_rate.as_f32();
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / 0.9 - 1.0) + 2.0).sqrt();
+        // Shelf slope parameter S = 0.9 (controls transition bandwidth; 1.0 = standard slope)
+        let shelf_slope = 0.9_f32;
+        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / shelf_slope - 1.0) + 2.0).sqrt();
         let sqrt_a = a.sqrt();
 
-        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha;
-        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha;
-        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha);
-        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha);
-
-        self.high_coeffs = BiquadCoeffs {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        };
+        self.high_coeffs = BiquadCoeffs::from_raw(
+            a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0),
+            a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+            (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+            2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
+            (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+        );
     }
 
     /// Update all filter coefficients.

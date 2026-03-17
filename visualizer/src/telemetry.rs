@@ -10,7 +10,7 @@ pub const MAX_FFT_BANDS: usize = synth_osc_protocol::MAX_FFT_BANDS;
 pub const EXPECTED_PROTOCOL_VERSION: i32 = synth_osc_protocol::PROTOCOL_VERSION;
 
 /// A single note-on event received from the synth.
-#[derive(Debug, Clone, Copy)]
+#[derive(Message, Debug, Clone, Copy)]
 pub struct NoteOnEvent {
     pub midi_note: u8,
     pub velocity: u8,
@@ -60,9 +60,6 @@ pub struct SynthTelemetry {
     pub last_note_on: Option<NoteOnEvent>,
     /// Frame counter since last note-on (for decay).
     pub note_age_frames: u32,
-    /// Queued note-on events this frame.
-    /// Consumed each frame by effects that need per-instrument events.
-    pub pending_note_events: Vec<NoteOnEvent>,
 
     // -- Transport --
     /// Whether the sequencer is playing.
@@ -110,7 +107,6 @@ impl Default for SynthTelemetry {
             fft_bin_count: synth_osc_protocol::NUM_FFT_BANDS,
             last_note_on: None,
             note_age_frames: u32::MAX,
-            pending_note_events: Vec::new(),
             playing: false,
             tempo: 120.0,
             beat_position: 0.0,

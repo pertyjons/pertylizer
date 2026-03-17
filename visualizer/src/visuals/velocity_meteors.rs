@@ -27,6 +27,8 @@ pub struct Meteor {
     pub fallen: f32,
     /// Base scale derived from velocity (preserved across frames).
     pub base_scale: f32,
+    /// True if this is a "crit" meteor.
+    pub is_crit: bool,
 }
 
 /// Cached mesh handle.
@@ -37,6 +39,7 @@ pub struct MeteorMesh(Handle<Mesh>);
 #[derive(Resource)]
 pub struct MeteorMaterials {
     materials: Vec<Handle<StandardMaterial>>,
+    crit_material: Handle<StandardMaterial>,
 }
 
 /// Create the shared meteor mesh and materials.
@@ -62,8 +65,16 @@ pub fn setup(
             ..default()
         }));
     }
+    
+    let crit_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::from(Color::WHITE) * emissive * 2.0,
+        ..default()
+    });
+
     commands.insert_resource(MeteorMaterials {
         materials: shared_mats,
+        crit_material,
     });
 }
 
@@ -77,14 +88,15 @@ pub struct MeteorCount {
 pub fn spawn(
     mut commands: Commands,
     time: Res<Time>,
-    telemetry: Res<SynthTelemetry>,
     meteor_mesh: Res<MeteorMesh>,
     meteor_materials: Res<MeteorMaterials>,
     mut meteor_count: ResMut<MeteorCount>,
+    mut ev_note: MessageReader<crate::telemetry::NoteOnEvent>,
 ) {
     let t = time.elapsed_secs();
+    let mut rng = fastrand::Rng::new();
 
-    for note_event in &telemetry.pending_note_events {
+    for note_event in ev_note.read() {
         if meteor_count.count >= MAX_METEORS {
             break;
         }
@@ -102,16 +114,24 @@ pub fn spawn(
         // Vary Z depth using elapsed time and note pitch for pseudo-random spread
         let spread_z = ((t * 7.3 + note_event.midi_note as f32 * 0.37).sin()) * 10.0;
 
-        let material = meteor_materials.materials[note_idx].clone();
+        let is_crit = rng.f32() < 0.05;
+        let material = if is_crit {
+            meteor_materials.crit_material.clone()
+        } else {
+            meteor_materials.materials[note_idx].clone()
+        };
+        
+        let base_scale = if is_crit { vel_scale * 4.0 } else { vel_scale * 2.0 };
 
         commands.spawn((
             Mesh3d(meteor_mesh.0.clone()),
             MeshMaterial3d(material),
             Transform::from_xyz(spread_x, START_HEIGHT, spread_z)
-                .with_scale(Vec3::splat(vel_scale * 2.0)),
+                .with_scale(Vec3::splat(base_scale)),
             Meteor {
                 fallen: 0.0,
-                base_scale: vel_scale * 2.0,
+                base_scale,
+                is_crit,
             },
             EffectLayer(EffectId::VelocityMeteors),
         ));
@@ -160,6 +180,11 @@ pub fn update(
         let fall_amt = FALL_SPEED * dt;
         meteor.fallen += fall_amt;
         transform.translation.y -= fall_amt;
+
+        // Rotate as it falls
+        let spin_speed = if meteor.is_crit { 10.0 } else { 3.0 };
+        transform.rotate_local_x(spin_speed * dt);
+        transform.rotate_local_y(spin_speed * 0.7 * dt);
 
         // Shrink as it falls, like it's burning up
         let life_pct = (1.0 - (meteor.fallen / FALL_DISTANCE)).max(0.01);

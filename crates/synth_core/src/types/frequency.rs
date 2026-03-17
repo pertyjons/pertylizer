@@ -109,6 +109,9 @@ impl Hertz {
     #[inline]
     #[must_use]
     pub fn to_midi(self) -> f32 {
+        if self.0 <= 0.0 {
+            return 0.0;
+        }
         69.0 + 12.0 * (self.0 / 440.0).log2()
     }
 
@@ -180,7 +183,8 @@ impl Hertz {
     #[inline]
     #[must_use]
     pub fn to_tan_coeff(self, sample_rate: SampleRate) -> f32 {
-        (std::f32::consts::PI * self.0 / sample_rate.0).tan()
+        let clamped = self.0.clamp(0.0, sample_rate.as_f32() * 0.499);
+        (std::f32::consts::PI * clamped / sample_rate.0).tan()
     }
 
     /// Calculate exponential decay coefficient.
@@ -234,6 +238,9 @@ impl Hertz {
     #[inline]
     #[must_use]
     pub fn cents_between(self, other: Self) -> f32 {
+        if self.0 <= 0.0 {
+            return 0.0;
+        }
         1200.0 * (other.0 / self.0).log2()
     }
 }
@@ -282,7 +289,11 @@ impl Interpolate for Hertz {
 
     fn exp_lerp(self, other: Self, t: f32) -> Self {
         // Exponential interpolation is better for frequencies
-        Self(self.0 * (other.0 / self.0).powf(t))
+        if self.0 > 0.0 && other.0 > 0.0 {
+            Self(self.0 * (other.0 / self.0).powf(t))
+        } else {
+            self.lerp(other, t)
+        }
     }
 }
 
@@ -332,10 +343,10 @@ impl std::fmt::Display for Hertz {
 pub struct SampleRate(pub f32);
 
 impl SampleRate {
-    /// Create a new sample rate.
+    /// Create a new sample rate. Ensures the value is positive.
     #[inline]
-    pub const fn new(rate: f32) -> Self {
-        Self(rate)
+    pub fn new(rate: f32) -> Self {
+        Self(if rate > 0.0 { rate } else { 1.0 })
     }
 
     /// Common sample rates.

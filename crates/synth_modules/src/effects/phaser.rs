@@ -1,11 +1,11 @@
 //! Phaser effect using cascaded all-pass filters.
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
-    PortDescriptor, ProcessContext, WidgetHint,
+    AllpassState, BipolarValue, Hertz, NormalizedValue, Phase, SampleRate, StereoSample,
 };
 use synth_core::{
-    BipolarValue, FilterState, Hertz, NormalizedValue, Phase, SampleRate, StereoSample,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{ModuleType, Param, PhaserParam};
 
@@ -13,30 +13,20 @@ use synth_core::{ModuleType, Param, PhaserParam};
 const NUM_STAGES: usize = 6;
 
 /// A single first-order all-pass filter stage.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct AllPassStage {
-    delay: FilterState,
-}
-
-impl Default for AllPassStage {
-    fn default() -> Self {
-        Self {
-            delay: FilterState::ZERO,
-        }
-    }
+    state: AllpassState,
 }
 
 impl AllPassStage {
     /// Process a sample through the all-pass filter.
-    /// First-order all-pass: y[n] = coeff * (x[n] - y[n-1]) + y[n-1]
-    /// The coefficient determines the center frequency of the phase shift.
     #[inline]
     fn process(&mut self, input: f32, coeff: f32) -> f32 {
-        self.delay.process_allpass(input, coeff)
+        self.state.process(input, coeff)
     }
 
     fn reset(&mut self) {
-        self.delay.reset();
+        self.state.reset();
     }
 }
 

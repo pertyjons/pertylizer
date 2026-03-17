@@ -9,7 +9,7 @@ use bevy::prelude::*;
 
 use super::effects::{EffectId, EffectLayer};
 use super::theme::ThemeMaterialPolicy;
-use crate::telemetry::SynthTelemetry;
+
 
 /// Maximum live cubes across all instruments.
 const MAX_CUBES: usize = 1024;
@@ -61,6 +61,7 @@ pub struct CubeMesh(Handle<Mesh>);
 #[derive(Resource)]
 pub struct CubeMaterials {
     materials: Vec<Handle<StandardMaterial>>,
+    crit_material: Handle<StandardMaterial>,
 }
 
 /// Tracks emitter positions keyed by instrument_id.
@@ -139,7 +140,15 @@ pub fn setup(
         }));
     }
 
-    commands.insert_resource(CubeMaterials { materials: mats });
+    let crit_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::from(Color::WHITE) * emissive * 2.0,
+        metallic: 0.95,
+        perceptual_roughness: 0.05,
+        ..default()
+    });
+
+    commands.insert_resource(CubeMaterials { materials: mats, crit_material });
     commands.insert_resource(EmitterRegistry::default());
     commands.insert_resource(CubeCount::default());
 }
@@ -147,13 +156,15 @@ pub fn setup(
 /// Spawn cubes for each note-on event this frame.
 pub fn spawn(
     mut commands: Commands,
-    telemetry: Res<SynthTelemetry>,
     cube_mesh: Res<CubeMesh>,
     cube_materials: Res<CubeMaterials>,
     mut emitters: ResMut<EmitterRegistry>,
     mut cube_count: ResMut<CubeCount>,
+    mut ev_note: MessageReader<crate::telemetry::NoteOnEvent>,
 ) {
-    for &event in &telemetry.pending_note_events {
+    let mut rng = fastrand::Rng::new();
+
+    for &event in ev_note.read() {
         if cube_count.count >= MAX_CUBES {
             break;
         }
@@ -161,7 +172,7 @@ pub fn spawn(
         let origin = emitters.position_for(event.instrument_id);
         let speed = 1.5 + (event.velocity as f32 / 127.0) * 4.0;
         let mat_idx = (event.category.as_u8() as usize).min(cube_materials.materials.len() - 1);
-        let material = cube_materials.materials[mat_idx].clone();
+        let base_material = cube_materials.materials[mat_idx].clone();
 
         let spawn_count = CUBES_PER_NOTE.min(MAX_CUBES - cube_count.count);
 
@@ -177,15 +188,27 @@ pub fn spawn(
 
             // Vary initial rotation and spin based on note + index
             let seed = (event.midi_note as f32 * 0.1 + i as f32 * 0.7).sin();
+            
+            // 5% chance of being a crit
+            let is_crit = rng.f32() < 0.05;
+            let material = if is_crit {
+                cube_materials.crit_material.clone()
+            } else {
+                base_material.clone()
+            };
+            
+            // Crit cubes spin much faster
+            let spin_multiplier = if is_crit { 3.0 } else { 1.0 };
+            
             let spin = Vec3::new(
                 seed * 4.0,
                 (seed * 1.3).cos() * 3.0,
                 (seed * 2.7).sin() * 5.0,
-            );
+            ) * spin_multiplier;
 
             commands.spawn((
                 Mesh3d(cube_mesh.0.clone()),
-                MeshMaterial3d(material.clone()),
+                MeshMaterial3d(material),
                 Transform::from_translation(origin).with_rotation(Quat::from_euler(
                     EulerRot::XYZ,
                     seed,

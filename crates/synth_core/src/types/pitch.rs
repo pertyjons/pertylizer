@@ -367,10 +367,10 @@ impl std::fmt::Display for Octaves {
 pub struct MidiNote(pub u8);
 
 impl MidiNote {
-    /// Create a new MIDI note.
+    /// Create a new MIDI note (clamped to 0-127).
     #[inline]
     pub const fn new(note: u8) -> Self {
-        Self(note)
+        Self(if note > 127 { 127 } else { note })
     }
 
     // === Standard note constants ===
@@ -445,7 +445,7 @@ impl MidiNote {
 
 impl From<u8> for MidiNote {
     fn from(note: u8) -> Self {
-        Self(note)
+        Self::new(note)
     }
 }
 

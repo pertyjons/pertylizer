@@ -72,7 +72,7 @@ impl Sub for SampleCount {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
+        Self(self.0.saturating_sub(rhs.0))
     }
 }
 
@@ -159,7 +159,7 @@ impl SamplePosition {
     /// Convert to time at a given sample rate.
     #[inline]
     pub fn to_seconds(self, sample_rate: SampleRate) -> Seconds {
-        Seconds::new(self.0 as f32 / sample_rate.0)
+        Seconds::new((self.0 as f64 / sample_rate.0 as f64) as f32)
     }
 
     /// Get position within a buffer (wrapping).
@@ -183,7 +183,7 @@ impl Sub for SamplePosition {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self::Output {
-        SampleCount((self.0 - rhs.0) as usize)
+        SampleCount(self.0.saturating_sub(rhs.0) as usize)
     }
 }
 

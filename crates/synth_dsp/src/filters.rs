@@ -26,16 +26,14 @@ pub enum SvfFilterType {
 /// simultaneous lowpass, highpass, and bandpass outputs.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SvfCoeffs {
-    /// Filter gain coefficient
-    pub g: f32,
     /// Resonance/damping coefficient
-    pub k: f32,
+    pub(crate) k: f32,
     /// Derived coefficient a1 = 1 / (1 + g * (g + k))
-    pub a1: f32,
+    pub(crate) a1: f32,
     /// Derived coefficient a2 = g * a1
-    pub a2: f32,
+    pub(crate) a2: f32,
     /// Derived coefficient a3 = g * a2
-    pub a3: f32,
+    pub(crate) a3: f32,
 }
 
 impl SvfCoeffs {
@@ -55,7 +53,7 @@ impl SvfCoeffs {
         let a2 = g * a1;
         let a3 = g * a2;
 
-        Self { g, k, a1, a2, a3 }
+        Self { k, a1, a2, a3 }
     }
 
     /// Process a single sample through the SVF.
@@ -116,16 +114,28 @@ impl SvfCoeffs {
 /// Uses Direct Form II transposed implementation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BiquadCoeffs {
-    /// Numerator coefficients
-    pub b0: f32,
-    pub b1: f32,
-    pub b2: f32,
-    /// Denominator coefficients (normalized, a0 = 1)
-    pub a1: f32,
-    pub a2: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
 }
 
 impl BiquadCoeffs {
+    /// Create biquad coefficients from raw unnormalized values.
+    ///
+    /// Normalizes all coefficients by dividing by `a0`.
+    #[must_use]
+    pub fn from_raw(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+        }
+    }
+
     /// Precompute common biquad variables from cutoff and Q.
     ///
     /// Returns `(sin_omega, cos_omega, alpha)`.
@@ -142,63 +152,34 @@ impl BiquadCoeffs {
     #[must_use]
     pub fn lowpass(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> Self {
         let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(cutoff, q, sample_rate);
-
         let b0 = (1.0 - cos_omega) / 2.0;
         let b1 = 1.0 - cos_omega;
-        let b2 = (1.0 - cos_omega) / 2.0;
-        let a0 = 1.0 + alpha;
-        let a1 = -2.0 * cos_omega;
-        let a2 = 1.0 - alpha;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        }
+        let b2 = b0;
+        Self::from_raw(b0, b1, b2, 1.0 + alpha, -2.0 * cos_omega, 1.0 - alpha)
     }
 
     /// Create highpass biquad coefficients.
     #[must_use]
     pub fn highpass(cutoff: Hertz, q: f32, sample_rate: SampleRate) -> Self {
         let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(cutoff, q, sample_rate);
-
         let b0 = (1.0 + cos_omega) / 2.0;
         let b1 = -(1.0 + cos_omega);
-        let b2 = (1.0 + cos_omega) / 2.0;
-        let a0 = 1.0 + alpha;
-        let a1 = -2.0 * cos_omega;
-        let a2 = 1.0 - alpha;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        }
+        let b2 = b0;
+        Self::from_raw(b0, b1, b2, 1.0 + alpha, -2.0 * cos_omega, 1.0 - alpha)
     }
 
     /// Create bandpass biquad coefficients.
     #[must_use]
     pub fn bandpass(center: Hertz, q: f32, sample_rate: SampleRate) -> Self {
         let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(center, q, sample_rate);
-
-        let b0 = alpha;
-        let b1 = 0.0;
-        let b2 = -alpha;
-        let a0 = 1.0 + alpha;
-        let a1 = -2.0 * cos_omega;
-        let a2 = 1.0 - alpha;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-        }
+        Self::from_raw(
+            alpha,
+            0.0,
+            -alpha,
+            1.0 + alpha,
+            -2.0 * cos_omega,
+            1.0 - alpha,
+        )
     }
 
     /// Process a single sample through the biquad filter.
@@ -230,8 +211,8 @@ impl BiquadCoeffs {
 /// between filter outputs controlled by the morph parameter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FluidFilter {
-    pub ic1eq: FilterState,
-    pub ic2eq: FilterState,
+    ic1eq: FilterState,
+    ic2eq: FilterState,
 }
 
 impl FluidFilter {
@@ -272,8 +253,8 @@ impl FluidFilter {
 
         // Morph: 3 zones (LP→BP, BP→HP, HP→Notch)
         let morph_scaled = morph.as_f32() * 3.0;
-        let zone = morph_scaled as u32;
-        let t = morph_scaled - zone as f32;
+        let zone = (morph_scaled as u32).min(2);
+        let t = (morph_scaled - zone as f32).clamp(0.0, 1.0);
         let half_pi = std::f32::consts::FRAC_PI_2;
         let cos_t = (t * half_pi).cos();
         let sin_t = (t * half_pi).sin();
@@ -296,16 +277,16 @@ impl FluidFilter {
 // CHARACTER FILTER: SCREAMER (MS-20 Sallen-Key with diode clipping)
 // ============================================================================
 
-/// MS-20 inspired Sallen-Key filter with asymmetric diode clipping.
+/// MS-20 inspired filter with asymmetric diode clipping.
 ///
-/// Features a 2-pole HP→LP cascade with diode-clipped feedback
+/// Features a 4-pole cascade with diode-clipped feedback from the output
 /// that creates the aggressive, screaming resonance character.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScreamerFilter {
-    pub hp_s1: FilterState,
-    pub hp_s2: FilterState,
-    pub lp_s1: FilterState,
-    pub lp_s2: FilterState,
+    s1: FilterState,
+    s2: FilterState,
+    s3: FilterState,
+    s4: FilterState,
 }
 
 impl ScreamerFilter {
@@ -333,41 +314,41 @@ impl ScreamerFilter {
     pub fn process(&mut self, input: f32, g: f32, resonance: NormalizedValue, drive: Gain) -> f32 {
         let res = resonance.as_f32();
         let drv = drive.as_f32();
-        // Diode-clipped feedback
-        let feedback = Self::diode_clip(self.lp_s2.as_f32() * drv) * res * 4.0;
+        // Diode-clipped feedback from 4th stage output
+        let feedback = Self::diode_clip(self.s4.as_f32() * drv) * res * 4.0;
         let input_fb = input - feedback;
 
-        // HP section: trapezoidal integrator
-        let hp_s1 = self.hp_s1.as_f32();
-        let hp_v = (input_fb - hp_s1) * g / (1.0 + g);
-        let hp_out = hp_v + hp_s1;
-        self.hp_s1 = FilterState::new(hp_out + hp_v);
+        // 4-pole cascade: each stage is a trapezoidal integrator (one-pole lowpass).
+        // The topology produces a resonant lowpass via the nonlinear feedback path.
+        let s1_prev = self.s1.as_f32();
+        let v1 = (input_fb - s1_prev) * g / (1.0 + g);
+        let out1 = v1 + s1_prev;
+        self.s1 = FilterState::new(out1 + v1);
 
-        let hp_s2 = self.hp_s2.as_f32();
-        let hp2_v = (hp_out - hp_s2) * g / (1.0 + g);
-        let hp2_out = hp2_v + hp_s2;
-        self.hp_s2 = FilterState::new(hp2_out + hp2_v);
+        let s2_prev = self.s2.as_f32();
+        let v2 = (out1 - s2_prev) * g / (1.0 + g);
+        let out2 = v2 + s2_prev;
+        self.s2 = FilterState::new(out2 + v2);
 
-        // LP section: trapezoidal integrator
-        let lp_s1 = self.lp_s1.as_f32();
-        let lp_v = (hp2_out - lp_s1) * g / (1.0 + g);
-        let lp_out = lp_v + lp_s1;
-        self.lp_s1 = FilterState::new(lp_out + lp_v);
+        let s3_prev = self.s3.as_f32();
+        let v3 = (out2 - s3_prev) * g / (1.0 + g);
+        let out3 = v3 + s3_prev;
+        self.s3 = FilterState::new(out3 + v3);
 
-        let lp_s2 = self.lp_s2.as_f32();
-        let lp2_v = (lp_out - lp_s2) * g / (1.0 + g);
-        let lp2_out = lp2_v + lp_s2;
-        self.lp_s2 = FilterState::new(lp2_out + lp2_v);
+        let s4_prev = self.s4.as_f32();
+        let v4 = (out3 - s4_prev) * g / (1.0 + g);
+        let out4 = v4 + s4_prev;
+        self.s4 = FilterState::new(out4 + v4);
 
-        lp2_out
+        out4
     }
 
     /// Reset filter state.
     pub fn reset(&mut self) {
-        self.hp_s1 = FilterState::ZERO;
-        self.hp_s2 = FilterState::ZERO;
-        self.lp_s1 = FilterState::ZERO;
-        self.lp_s2 = FilterState::ZERO;
+        self.s1 = FilterState::ZERO;
+        self.s2 = FilterState::ZERO;
+        self.s3 = FilterState::ZERO;
+        self.s4 = FilterState::ZERO;
     }
 }
 
@@ -382,8 +363,8 @@ impl ScreamerFilter {
 /// Supports LP, BP, and HP modes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AcidFilter {
-    pub s1: FilterState,
-    pub s2: FilterState,
+    s1: FilterState,
+    s2: FilterState,
 }
 
 impl AcidFilter {
@@ -536,7 +517,6 @@ mod tests {
             NormalizedValue::new(0.5),
             SampleRate::DVD_QUALITY,
         );
-        assert!(coeffs.g > 0.0);
         assert!(coeffs.a1 > 0.0);
     }
 

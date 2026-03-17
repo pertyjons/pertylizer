@@ -7,7 +7,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
@@ -15,6 +15,16 @@ use crate::telemetry::SynthTelemetry;
 const GRID_SIZE: usize = 10;
 const SPACING: f32 = 2.8;
 const EMISSIVE_STRENGTH: f32 = 2.0;
+const NUM_MATERIAL_BUCKETS: usize = 32;
+
+/// Purple-ish hue-distributed materials for voronoi cells.
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 120.0, // Purple spread (centered via hue_offset in setup)
+    saturation: 0.75,
+    lightness: 0.5,
+    emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: false,
+};
 
 /// Shatter decay rate (per second).
 const SHATTER_DECAY: f32 = 3.0;
@@ -31,7 +41,7 @@ pub struct VoronoiCell {
 }
 
 #[derive(Resource)]
-pub struct VoronoiMaterial(Handle<StandardMaterial>);
+pub struct VoronoiMaterials(Vec<Handle<StandardMaterial>>);
 
 #[derive(Resource, Default)]
 pub struct VoronoiState {
@@ -43,17 +53,27 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     let mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(SPACING * 0.42)));
 
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.6, 0.3, 0.9),
-        emissive: LinearRgba::from(Color::srgb(0.6, 0.3, 0.9)) * EMISSIVE_STRENGTH,
-        double_sided: true,
-        ..default()
-    });
+    // Purple-centered: offset by 270 so the hue range spans ~210..330
+    let material_handles = effects::create_hue_materials_with_offset(
+        &mut materials,
+        NUM_MATERIAL_BUCKETS,
+        &MAT_CONFIG,
+        &policy,
+        270.0,
+    );
 
-    commands.insert_resource(VoronoiMaterial(material.clone()));
+    // Voronoi cells are flat planes that tumble during shatter, so they need double-sided rendering.
+    for handle in &material_handles {
+        if let Some(mat) = materials.get_mut(handle) {
+            mat.double_sided = true;
+        }
+    }
+
+    commands.insert_resource(VoronoiMaterials(material_handles.clone()));
     commands.init_resource::<VoronoiState>();
 
     let offset = (GRID_SIZE as f32 * SPACING) / 2.0;
@@ -69,10 +89,11 @@ pub fn setup(
             // Shatter direction: away from center in XZ
             let dir_xz = (pos - center).normalize_or(Vec3::X);
             let shatter_dir = Vec3::new(dir_xz.x, 0.0, dir_xz.z).normalize_or(Vec3::X);
+            let mat_idx = i % NUM_MATERIAL_BUCKETS;
 
             commands.spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
+                MeshMaterial3d(material_handles[mat_idx].clone()),
                 Transform::from_translation(pos),
                 Visibility::Hidden,
                 VoronoiCell {
@@ -136,7 +157,7 @@ pub fn update(
 pub fn update_material(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
-    voronoi_material: Res<VoronoiMaterial>,
+    voronoi_materials: Res<VoronoiMaterials>,
     voronoi_state: Res<VoronoiState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_hue: Local<f32>,
@@ -161,18 +182,28 @@ pub fn update_material(
     *last_shatter = shatter;
     *last_policy_version = policy.version;
 
-    let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
+    let sat_base = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
     // Shatter makes cells brighter
     let shatter_boost = 1.0 + voronoi_state.shatter * 0.5;
-    let lit = ((0.4 + policy.lightness_offset) * shatter_boost).clamp(0.0, 1.0);
+    let lit_base = ((0.4 + policy.lightness_offset) * shatter_boost).clamp(0.0, 1.0);
     let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
 
-    if let Some(material) = materials.get_mut(&voronoi_material.0) {
-        let color = Color::hsl(hue, sat, lit * fade);
-        material.base_color = color;
-        material.emissive = LinearRgba::from(color) * emissive * fade;
-        material.metallic = policy.metallic;
-        material.perceptual_roughness = policy.roughness;
+    for (i, handle) in voronoi_materials.0.iter().enumerate() {
+        if let Some(material) = materials.get_mut(handle) {
+            // Vary lightness per bucket
+            let lightness_variation = (i as f32 / NUM_MATERIAL_BUCKETS as f32) * 0.3 - 0.15; // +/- 0.15
+            let lit = (lit_base + lightness_variation).clamp(0.0, 1.0);
+            
+            // Vary saturation per bucket
+            let sat_variation = ((i * 7) % 11) as f32 * 0.02; // deterministic pseudo-random variation
+            let sat = (sat_base + sat_variation).clamp(0.0, 1.0);
+
+            let color = Color::hsl(hue, sat, lit * fade);
+            material.base_color = color;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = policy.metallic;
+            material.perceptual_roughness = policy.roughness;
+        }
     }
 }

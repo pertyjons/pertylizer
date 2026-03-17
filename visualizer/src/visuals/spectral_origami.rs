@@ -5,7 +5,7 @@
 use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
-use super::effects::{EffectId, EffectLayer, EffectState};
+use super::effects::{self, EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
@@ -13,6 +13,15 @@ use crate::telemetry::SynthTelemetry;
 const GRID_SIZE: usize = 12;
 const SPACING: f32 = 2.5;
 const EMISSIVE_STRENGTH: f32 = 2.5;
+const NUM_MATERIAL_BUCKETS: usize = 32;
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 360.0,
+    saturation: 0.8,
+    lightness: 0.5,
+    emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: false,
+};
+
 /// Per-second smoothing rate for fold angles (frame-rate independent).
 const ANGLE_SMOOTH_RATE: f32 = 8.0;
 /// Per-second smoothing rate for vertical position.
@@ -25,25 +34,28 @@ pub struct OrigamiFold {
 }
 
 #[derive(Resource)]
-pub struct OrigamiMaterial(Handle<StandardMaterial>);
+pub struct OrigamiMaterials(Vec<Handle<StandardMaterial>>);
 
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
     // A simple plane that we can rotate to look like it's folding
     let mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(SPACING * 0.45)));
 
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.2, 0.5),
-        emissive: LinearRgba::from(Color::srgb(0.8, 0.2, 0.5)) * EMISSIVE_STRENGTH,
-        // Double sided so we see it when it folds over
-        double_sided: true,
-        ..default()
-    });
+    let material_handles =
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
 
-    commands.insert_resource(OrigamiMaterial(material.clone()));
+    // Double sided so we see it when it folds over
+    for handle in &material_handles {
+        if let Some(mat) = materials.get_mut(handle) {
+            mat.double_sided = true;
+        }
+    }
+
+    commands.insert_resource(OrigamiMaterials(material_handles.clone()));
 
     let offset = (GRID_SIZE as f32 * SPACING) / 2.0;
 
@@ -53,10 +65,11 @@ pub fn setup(
             let px = x as f32 * SPACING - offset;
             let pz = z as f32 * SPACING - offset;
             let pos = Vec3::new(px, 0.0, pz);
+            let mat_idx = i % NUM_MATERIAL_BUCKETS;
 
             commands.spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
+                MeshMaterial3d(material_handles[mat_idx].clone()),
                 Transform::from_translation(pos),
                 Visibility::Hidden,
                 OrigamiFold {
@@ -132,7 +145,7 @@ pub fn update_material(
     time: Res<Time>,
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
-    origami_material: Res<OrigamiMaterial>,
+    origami_materials: Res<OrigamiMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last_hue: Local<f32>,
     mut frame_counter: Local<u32>,
@@ -163,11 +176,15 @@ pub fn update_material(
     let metallic = policy.metallic;
     let roughness = policy.roughness;
 
-    if let Some(material) = materials.get_mut(&origami_material.0) {
-        let color = Color::hsl(*last_hue, sat, lit * fade);
-        material.base_color = color;
-        material.emissive = LinearRgba::from(color) * emissive * fade;
-        material.metallic = metallic;
-        material.perceptual_roughness = roughness;
+    for (i, handle) in origami_materials.0.iter().enumerate() {
+        if let Some(material) = materials.get_mut(handle) {
+            // Vary hue slightly per material bucket to give each tile a distinct look
+            let tile_hue = (*last_hue + (i as f32 * 11.0)) % 360.0;
+            let color = Color::hsl(tile_hue, sat, lit * fade);
+            material.base_color = color;
+            material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.metallic = metallic;
+            material.perceptual_roughness = roughness;
+        }
     }
 }

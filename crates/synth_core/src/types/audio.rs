@@ -34,19 +34,28 @@ impl BufferIndex {
     /// Advance by one, wrapping at buffer size.
     #[inline]
     pub fn advance(self, buffer_size: usize) -> Self {
+        if buffer_size == 0 {
+            return self;
+        }
         Self((self.0 + 1) % buffer_size)
     }
 
     /// Wrap to buffer size.
     #[inline]
     pub fn wrap(self, buffer_size: usize) -> Self {
+        if buffer_size == 0 {
+            return self;
+        }
         Self(self.0 % buffer_size)
     }
 
     /// Calculate read position for delay.
     #[inline]
     pub fn delay_read(self, delay_samples: usize, buffer_size: usize) -> Self {
-        Self((self.0 + buffer_size - delay_samples) % buffer_size)
+        if buffer_size == 0 {
+            return self;
+        }
+        Self((self.0 + buffer_size - delay_samples.min(buffer_size)) % buffer_size)
     }
 
     /// Read from a circular buffer with linear interpolation.
@@ -55,6 +64,9 @@ impl BufferIndex {
     /// and interpolates between two adjacent samples.
     #[inline]
     pub fn read_interpolated(self, buffer: &[f32], delay_samples: f32) -> f32 {
+        if buffer.is_empty() {
+            return 0.0;
+        }
         let len = buffer.len();
         let read_pos = (self.0 as f32 - delay_samples).rem_euclid(len as f32);
         let idx0 = (read_pos as usize) % len;
@@ -141,9 +153,10 @@ pub struct NoiseState(pub u32);
 
 impl NoiseState {
     /// Create a new noise state with a seed.
+    /// A zero seed is replaced with the default to avoid the xorshift fixed point.
     #[inline]
     pub const fn new(seed: u32) -> Self {
-        Self(seed)
+        Self(if seed == 0 { 0x1234_5678 } else { seed })
     }
 
     /// Default seed value.
@@ -232,10 +245,9 @@ impl FilterState {
 
     /// Process through first-order allpass filter.
     ///
-    /// Implements: y[n] = coeff * (x[n] - y[n-1]) + y[n-1]
-    /// The state stores the previous output (y[n-1]).
-    /// Used in phasers for frequency-dependent phase shifting.
+    /// **Deprecated:** This was actually a one-pole lowpass. Use `AllpassState::process` instead.
     #[inline]
+    #[deprecated(note = "Use AllpassState::process instead — this was a lowpass, not allpass")]
     pub fn process_allpass(&mut self, input: f32, coeff: f32) -> f32 {
         let prev_output = self.0;
         let output = coeff * (input - prev_output) + prev_output;
@@ -299,13 +311,51 @@ impl FilterState {
     /// Applies gentle saturation to prevent harsh clipping.
     #[inline]
     pub fn soft_saturate(value: f32, threshold: f32) -> f32 {
-        if value.abs() < threshold {
+        if value.abs() < threshold || threshold >= 1.0 {
             value
         } else {
             let sign = value.signum();
             let x = (value.abs() - threshold) / (1.0 - threshold);
             sign * (threshold + (1.0 - threshold) * x / (1.0 + x))
         }
+    }
+}
+
+/// First-order allpass filter state.
+///
+/// Implements the correct allpass formula: `y[n] = coeff * x[n] + x[n-1] - coeff * y[n-1]`
+/// which produces frequency-dependent phase shift without changing amplitude.
+/// Used in phasers and other phase-based effects.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AllpassState {
+    prev_input: f32,
+    prev_output: f32,
+}
+
+impl AllpassState {
+    /// Create a new allpass filter state.
+    pub const ZERO: Self = Self {
+        prev_input: 0.0,
+        prev_output: 0.0,
+    };
+
+    /// Process a sample through the first-order allpass filter.
+    ///
+    /// The coefficient controls the frequency at which 90° phase shift occurs.
+    /// `coeff = (tan(π * freq / sample_rate) - 1) / (tan(π * freq / sample_rate) + 1)`
+    #[inline]
+    pub fn process(&mut self, input: f32, coeff: f32) -> f32 {
+        let output = coeff * input + self.prev_input - coeff * self.prev_output;
+        self.prev_input = input;
+        self.prev_output = output;
+        output
+    }
+
+    /// Reset to zero state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.prev_input = 0.0;
+        self.prev_output = 0.0;
     }
 }
 
@@ -1213,6 +1263,7 @@ impl std::fmt::Display for StepCount {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::SampleRate;
 
     #[test]
     fn test_voice_count() {
@@ -1542,13 +1593,13 @@ mod tests {
 
     #[test]
     fn test_one_pole_smooth_converges() {
-        let sr = super::SampleRate::CD_QUALITY;
+        let sr = SampleRate::CD_QUALITY;
         let mut smoother = OnePoleSmooth::new(super::Seconds::new(0.01), sr); // 10ms
         smoother.set(0.0);
 
         // Process toward target 1.0
         for _ in 0..10000 {
-            smoother.process(1.0);
+            let _ = smoother.process(1.0);
         }
         assert!(
             (smoother.current() - 1.0).abs() < 0.001,
@@ -1558,7 +1609,7 @@ mod tests {
 
     #[test]
     fn test_one_pole_smooth_immediate_set() {
-        let sr = super::SampleRate::CD_QUALITY;
+        let sr = SampleRate::CD_QUALITY;
         let mut smoother = OnePoleSmooth::new(super::Seconds::new(0.01), sr);
         smoother.set(0.75);
         assert_eq!(smoother.current(), 0.75);
@@ -1566,7 +1617,7 @@ mod tests {
 
     #[test]
     fn test_one_pole_smooth_zero_time() {
-        let sr = super::SampleRate::CD_QUALITY;
+        let sr = SampleRate::CD_QUALITY;
         let mut smoother = OnePoleSmooth::new(super::Seconds::ZERO, sr);
         // With zero time, should track instantly
         let result = smoother.process(0.5);

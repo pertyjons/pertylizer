@@ -3,7 +3,6 @@
 //! Visual idea: Vertical pillars that group together and stretch up smoothly
 //! based on lower frequency bands, resembling ferrofluid on a magnet.
 
-use bevy::color::LinearRgba;
 use bevy::prelude::*;
 
 use super::effects::{self, EffectId, EffectLayer, EffectState};
@@ -23,27 +22,34 @@ pub struct Tendril {
     pub current_height: f32,
 }
 
+const NUM_MATERIAL_BUCKETS: usize = 32;
+
+const MAT_CONFIG: effects::HueMaterialConfig = effects::HueMaterialConfig {
+    hue_range: 360.0, // Overridden by frequency_mapped: true
+    saturation: 0.7,
+    lightness: 0.3,
+    emissive_strength: EMISSIVE_STRENGTH,
+    frequency_mapped: true,
+};
+
 #[derive(Resource)]
-pub struct FerrofluidMaterial(Handle<StandardMaterial>);
+pub struct FerrofluidMaterials {
+    materials: Vec<Handle<StandardMaterial>>,
+}
 
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    policy: Res<ThemeMaterialPolicy>,
 ) {
-    // Tall cylinder
     let mesh = meshes.add(Cylinder::new(0.6, 1.0));
 
-    // Very dark, glossy material
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.02, 0.02, 0.05),
-        emissive: LinearRgba::from(Color::srgb(0.1, 0.2, 0.5)) * EMISSIVE_STRENGTH,
-        perceptual_roughness: 0.1, // Shiny
-        metallic: 0.9,             // Metallic
-        ..default()
+    let shared_mats =
+        effects::create_hue_materials(&mut materials, NUM_MATERIAL_BUCKETS, &MAT_CONFIG, &policy);
+    commands.insert_resource(FerrofluidMaterials {
+        materials: shared_mats.clone(),
     });
-
-    commands.insert_resource(FerrofluidMaterial(material.clone()));
 
     for i in 0..NUM_TENDRILS {
         let angle = (i as f32 / NUM_TENDRILS as f32) * std::f32::consts::TAU;
@@ -58,9 +64,12 @@ pub fn setup(
         let r_offset = (i as f32 * 2.4).sin() * 2.0;
         let pos = Vec3::new(x + r_offset, 0.0, z + r_offset);
 
+        // Assign material bucket based on the frequency band
+        let bucket = band_index % NUM_MATERIAL_BUCKETS;
+
         commands.spawn((
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(material.clone()),
+            MeshMaterial3d(shared_mats[bucket].clone()),
             Transform::from_translation(pos).with_scale(Vec3::new(1.0, 0.01, 1.0)),
             Visibility::Hidden,
             Tendril {
@@ -114,43 +123,23 @@ pub fn update(
 pub fn update_material(
     effect_state: Res<EffectState>,
     telemetry: Res<SynthTelemetry>,
-    material_res: Res<FerrofluidMaterial>,
+    material_res: Res<FerrofluidMaterials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut last_energy: Local<f32>,
-    mut last_fade: Local<f32>,
-    mut last_hue: Local<f32>,
-    mut last_policy_version: Local<u64>,
     policy: Res<ThemeMaterialPolicy>,
+    mut tracker: Local<effects::HueMaterialTracker>,
 ) {
     let fade = effect_state.fade;
-    let energy = ((telemetry.rms[0] + telemetry.rms[1]) * 0.5 * 3.0).clamp(0.1, 1.0);
-    let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
+    let emissive_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
 
-    if (energy - *last_energy).abs() < 0.02
-        && (fade - *last_fade).abs() < effects::FADE_EPSILON
-        && (hue - *last_hue).abs() < 1.0
-        && *last_policy_version == policy.version
-    {
-        return;
-    }
-
-    if let Some(material) = materials.get_mut(&material_res.0) {
-        let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
-        let lit = (0.3 + energy * 0.3 + policy.lightness_offset).clamp(0.0, 1.0);
-        let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
-        let color = Color::hsl(hue, sat, lit * fade);
-        material.base_color = color;
-        material.emissive = LinearRgba::from(color)
-            * EMISSIVE_STRENGTH
-            * policy.emissive_multiplier
-            * flux_boost
-            * fade;
-        material.metallic = policy.metallic;
-        material.perceptual_roughness = policy.roughness;
-    }
-
-    *last_energy = energy;
-    *last_fade = fade;
-    *last_hue = hue;
-    *last_policy_version = policy.version;
+    effects::update_hue_materials_for_fade(
+        &mut materials,
+        &material_res.materials,
+        &MAT_CONFIG,
+        &policy,
+        fade,
+        hue_offset,
+        emissive_boost,
+        &mut tracker,
+    );
 }

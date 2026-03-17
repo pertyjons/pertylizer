@@ -162,7 +162,9 @@ pub fn spawn_and_update(
                 let tail_scale = (1.0 - (i_f / total_f)).max(0.01);
                 // Head scales down as it dies, encode fade into scale
                 let scale_y = tail_scale * life_pct * fade;
-                transform.scale = Vec3::new(1.0, scale_y, tail_scale);
+                // Z-scale pulses drastically with pitch bend
+                let z_pulse = 1.0 + telemetry.pitch_bend.abs() * 4.0;
+                transform.scale = Vec3::new(1.0, scale_y, tail_scale * z_pulse);
 
                 transform.rotation = Quat::from_rotation_x(wave * 0.2);
             }

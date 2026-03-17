@@ -28,7 +28,7 @@ impl NormalizedValue {
 
     /// Create without clamping (for performance in hot paths).
     ///
-    /// # Safety
+    /// # Correctness
     /// Caller must ensure value is in [0, 1].
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {
@@ -62,6 +62,9 @@ impl NormalizedValue {
     #[inline]
     #[must_use]
     pub fn scale_log(self, min: f32, max: f32) -> f32 {
+        if min <= 0.0 {
+            return min + (max - min) * self.0;
+        }
         min * (max / min).powf(self.0)
     }
 
@@ -187,6 +190,9 @@ impl NormalizedValue {
     #[inline]
     #[must_use]
     pub fn dead_zone(self, zone: f32) -> Self {
+        if zone >= 0.5 {
+            return Self::CENTER;
+        }
         let centered = self.0 - 0.5;
         if centered.abs() < zone {
             Self::CENTER
@@ -272,7 +278,7 @@ impl BipolarValue {
 
     /// Create without clamping (for performance in hot paths).
     ///
-    /// # Safety
+    /// # Correctness
     /// Caller must ensure value is in [-1, 1].
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {

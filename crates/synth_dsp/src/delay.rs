@@ -163,9 +163,10 @@ impl InterpolatedDelayLine {
             return self.read_interpolated(delay_samples);
         }
 
-        let delay_clamped = delay_samples.clamp(1.0, (len - 2) as f32);
+        let delay_clamped = delay_samples.clamp(0.0, (len - 2) as f32);
         let read_pos = (self.write_pos.as_usize() as f32 - delay_clamped).rem_euclid(len as f32);
         let idx1 = (read_pos as usize) % len;
+        // For sub-1-sample delays, idx0 wraps around safely
         let idx0 = (idx1 + len - 1) % len;
         let idx2 = (idx1 + 1) % len;
         let idx3 = (idx1 + 2) % len;

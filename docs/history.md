@@ -1,5 +1,16 @@
 # Version History
 
+## [0.242.0] - 2026-03-17
+### Visualizer: Bevy events, material buckets, and code quality fixes
+- **Bevy Message events** — replaced manual `pending_note_events: Vec` buffer in `SynthTelemetry` with Bevy's `Message` system (`NoteOnEvent`, `CameraModeEvent`); OSC receiver writes via `MessageWriter`, effects consume via `MessageReader`
+- **Material buckets for all effects** — centroid_nebula (16 spatial buckets), ferrofluid_tendrils (32 frequency-mapped), pulse_terrain (16 distance-based with center-bright gradient), spectral_origami (32 hue-varied), voronoi_shatter (32 with saturation/lightness variation), chord_bloom (alternating segment colors), note_tree (3 level-based: trunk/branch/twig)
+- **FFT terrain Z-fade** — per-row lightness and emissive fade backward in Z for depth
+- **Crit mechanics** — 5% chance for instrument_cubes and velocity_meteors to spawn as "crit" (white, 2x size, 3x spin)
+- **Harmonic ribbons pitch bend** — Z-scale pulses drastically with pitch_bend
+- **Meteor rotation** — meteors now spin as they fall, crit meteors spin faster
+- **Fixed compilation errors** — removed non-functional `shader_test` module that broke build (invalid `ShaderRef` import, misplaced `mod` before doc comment)
+- **Eliminated duplicated logic** — extracted `bucket_color()` helper in pulse_terrain, refactored voronoi_shatter and spectral_origami to use `create_hue_materials()` consistently
+
 ## [0.241.0] - 2026-03-14
 ### Fix modules invisible after project load
 - **Removed `reset_areas()` call** — `ctx.memory_mut(|mem| mem.reset_areas())` was clearing egui's internal Area state on the frame after project load, making module panels invisible until the user switched instruments and back; since `current_pos()` already overrides stored positions every frame, the reset was unnecessary

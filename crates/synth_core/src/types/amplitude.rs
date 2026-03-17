@@ -218,7 +218,7 @@ impl Clampable for Decibels {
 
     fn is_valid(&self) -> bool {
         // Negative infinity is valid (represents silence)
-        self.0.is_nan().not() && self.0 <= 100.0
+        !self.0.is_nan() && self.0 <= 100.0
     }
 }
 
@@ -271,16 +271,6 @@ impl std::fmt::Display for Decibels {
         } else {
             write!(f, "{:+.1} dB", self.0)
         }
-    }
-}
-
-trait Not {
-    fn not(self) -> bool;
-}
-
-impl Not for bool {
-    fn not(self) -> bool {
-        !self
     }
 }
 

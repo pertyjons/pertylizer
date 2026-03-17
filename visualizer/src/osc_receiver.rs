@@ -200,23 +200,21 @@ fn receive_osc(
     time: Res<Time>,
     socket: Res<OscSocket>,
     mut telemetry: ResMut<SynthTelemetry>,
-    mut camera_state: ResMut<crate::visuals::camera::CameraState>,
+    mut ev_note: MessageWriter<NoteOnEvent>,
+    mut ev_camera: MessageWriter<crate::visuals::camera::CameraModeEvent>,
 ) {
-    // Clear pending events from previous frame before processing new snapshots
-    telemetry.pending_note_events.clear();
-
     let mut received_any = false;
     let mut latest: Option<OscSnapshot> = None;
 
     // Drain all snapshots forwarded by the background thread
     while let Ok(snapshot) = socket.rx.try_recv() {
         // Collect note events from every snapshot (not just the latest)
-        telemetry.pending_note_events.extend(&snapshot.note_events);
+        ev_note.write_batch(snapshot.note_events.iter().copied());
 
         // Handle camera mode request from any snapshot
         if let Some(ref mode_name) = snapshot.camera_mode_request {
             if let Some(mode) = crate::visuals::camera::CameraMode::from_name(mode_name) {
-                camera_state.osc_requested_mode = Some(mode);
+                ev_camera.write(crate::visuals::camera::CameraModeEvent(mode));
             } else {
                 warn!("Unknown camera mode via OSC: {mode_name}");
             }

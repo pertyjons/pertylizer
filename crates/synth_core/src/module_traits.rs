@@ -372,8 +372,9 @@ impl ResponseCurve {
                 }
             }
             Self::Exponential => {
-                // Fast start, slow end
-                let curved = n * n;
+                // Slow start, fast end (exponential growth)
+                let base = std::f32::consts::E;
+                let curved = (base.powf(n) - 1.0) / (base - 1.0);
                 min + curved * (max - min)
             }
             Self::SCurve => {
@@ -409,17 +410,22 @@ impl ResponseCurve {
             }
             Self::Exponential => {
                 let linear = (clamped - min) / (max - min);
-                linear.sqrt()
+                let base = std::f32::consts::E;
+                (linear * (base - 1.0) + 1.0).ln()
             }
             Self::SCurve => {
-                // Inverse smoothstep approximation using Newton-Raphson
+                // Inverse smoothstep via Newton-Raphson iteration
                 let linear = (clamped - min) / (max - min);
-                // Simple approximation
-                if linear <= 0.5 {
-                    (0.5 * (2.0 * linear)).sqrt() * 0.5
-                } else {
-                    1.0 - (0.5 * (2.0 * (1.0 - linear))).sqrt() * 0.5
+                let mut t = linear;
+                for _ in 0..4 {
+                    let f = 3.0 * t * t - 2.0 * t * t * t - linear;
+                    let df = 6.0 * t - 6.0 * t * t;
+                    if df.abs() > 1e-10 {
+                        t -= f / df;
+                    }
+                    t = t.clamp(0.0, 1.0);
                 }
+                t
             }
             Self::Squared => {
                 let linear = (clamped - min) / (max - min);

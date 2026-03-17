@@ -27,6 +27,10 @@ pub fn fill_window(buf: &mut [f32], window: WindowType) {
     if n == 0 {
         return;
     }
+    if n == 1 {
+        buf[0] = 1.0;
+        return;
+    }
     let nm1 = (n - 1) as f32;
     for (i, sample) in buf.iter_mut().enumerate() {
         let x = i as f32 / nm1;
@@ -59,7 +63,14 @@ pub struct FftProcessor {
 
 impl FftProcessor {
     /// Create a new FFT processor for the given size (must be power of 2).
+    ///
+    /// # Panics
+    /// Panics if `fft_size` is not a power of 2 or is zero.
     pub fn new(fft_size: usize) -> Self {
+        assert!(
+            fft_size > 0 && fft_size.is_power_of_two(),
+            "FFT size must be a power of 2, got {fft_size}"
+        );
         let mut planner = RealFftPlanner::<f32>::new();
         let forward = planner.plan_fft_forward(fft_size);
         let inverse = planner.plan_fft_inverse(fft_size);
@@ -147,6 +158,7 @@ impl StftProcessor {
     /// Create a new STFT processor.
     ///
     /// `fft_size` must be a power of 2. `hop_size` is typically `fft_size / 4`.
+    #[must_use]
     pub fn new(fft_size: usize, hop_size: usize, window: WindowType) -> Self {
         let complex_size = fft_size / 2 + 1;
         let mut win = vec![0.0f32; fft_size];
@@ -263,9 +275,6 @@ pub struct PartitionedConvolver {
     fft_out: Vec<Complex<f32>>,
     accum: Vec<Complex<f32>>,
     ifft_out: Vec<f32>,
-
-    /// Overlap-save tail from previous block.
-    overlap: Vec<f32>,
 }
 
 impl PartitionedConvolver {
@@ -273,6 +282,7 @@ impl PartitionedConvolver {
     ///
     /// `partition_size` is the hop size (typically 256-2048).
     /// `ir` is the full impulse response.
+    #[must_use]
     pub fn new(partition_size: usize, ir: &[f32]) -> Self {
         let fft_size = partition_size * 2;
         let complex_size = fft_size / 2 + 1;
@@ -314,7 +324,6 @@ impl PartitionedConvolver {
             fft_out: vec![Complex::new(0.0, 0.0); complex_size],
             accum: vec![Complex::new(0.0, 0.0); complex_size],
             ifft_out: vec![0.0; fft_size],
-            overlap: vec![0.0; partition_size],
         }
     }
 
@@ -328,7 +337,6 @@ impl PartitionedConvolver {
             }
         }
         self.input_spectra_pos = 0;
-        self.overlap.fill(0.0);
     }
 
     /// Process a block of exactly `partition_size` samples.

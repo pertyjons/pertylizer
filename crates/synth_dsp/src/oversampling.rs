@@ -115,8 +115,9 @@ impl HalfBandFilter {
     /// Decimate a block by factor 2: for each pair of input samples, output one sample.
     ///
     /// `input.len()` must be `output.len() * 2`.
+    #[inline]
     fn decimate(&mut self, input: &[f32], output: &mut [f32]) {
-        let out_len = input.len() / 2;
+        let out_len = (input.len() / 2).min(output.len());
         for i in 0..out_len {
             self.push(input[i * 2]);
             output[i] = self.push(input[i * 2 + 1]);
@@ -165,6 +166,7 @@ impl Downsampler {
     /// Requirements:
     /// - `input.len() == output.len() * factor`
     /// - For 4x: `input.len() / 2 <= MAX_INTERMEDIATE` (8192)
+    #[inline]
     pub fn process(&mut self, input: &[f32], output: &mut [f32], factor: OversamplingFactor) {
         match factor {
             OversamplingFactor::X1 => {
@@ -175,9 +177,12 @@ impl Downsampler {
             }
             OversamplingFactor::X4 => {
                 // Two-stage cascade: 4x → 2x → 1x
-                let intermediate_len = input.len() / 2;
-                self.stage1
-                    .decimate(input, &mut self.intermediate[..intermediate_len]);
+                let intermediate_len = (input.len() / 2).min(MAX_INTERMEDIATE);
+                let usable_input_len = intermediate_len * 2;
+                self.stage1.decimate(
+                    &input[..usable_input_len],
+                    &mut self.intermediate[..intermediate_len],
+                );
                 self.stage2
                     .decimate(&self.intermediate[..intermediate_len], output);
             }

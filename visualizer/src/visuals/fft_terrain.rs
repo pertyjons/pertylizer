@@ -55,23 +55,28 @@ pub fn setup(
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    let mut shared_mats = Vec::with_capacity(COLS);
+    let mut shared_mats = Vec::with_capacity(COLS * ROWS);
 
     for col in 0..COLS {
-        let band_pos = col as f32 / COLS as f32;
-        let hue = telemetry_color::band_frequency_hue(band_pos);
-        let color = Color::hsl(hue, sat, lit);
-        let mat = materials.add(StandardMaterial {
-            base_color: color,
-            emissive: LinearRgba::from(color) * emissive,
-            metallic: policy.metallic,
-            perceptual_roughness: policy.roughness,
-            ..default()
-        });
-
-        shared_mats.push(mat.clone());
-
         for row in 0..ROWS {
+            let band_pos = col as f32 / COLS as f32;
+            let hue = telemetry_color::band_frequency_hue(band_pos);
+            
+            // Fade lightness backward in Z
+            let z_fade = 1.0 - (row as f32 / ROWS as f32);
+            let color_lit = lit * (0.2 + z_fade * 0.8);
+            
+            let color = Color::hsl(hue, sat, color_lit);
+            let mat = materials.add(StandardMaterial {
+                base_color: color,
+                emissive: LinearRgba::from(color) * emissive * z_fade,
+                metallic: policy.metallic,
+                perceptual_roughness: policy.roughness,
+                ..default()
+            });
+
+            shared_mats.push(mat.clone());
+
             let px = col as f32 * COL_SPACING - offset_x + COL_SPACING * 0.5;
             let pz = row as f32 * ROW_SPACING - offset_z + ROW_SPACING * 0.5;
             let pos = Vec3::new(px, 0.0, pz);
@@ -81,7 +86,7 @@ pub fn setup(
 
             commands.spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(mat.clone()),
+                MeshMaterial3d(mat),
                 Transform::from_translation(pos),
                 Visibility::Hidden,
                 TerrainColumn {
@@ -161,13 +166,21 @@ pub fn update(
     let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
 
-    for (col, handle) in terrain_materials.materials.iter().enumerate() {
+    for (i, handle) in terrain_materials.materials.iter().enumerate() {
         if let Some(material) = materials.get_mut(handle) {
+            let col = i / ROWS;
+            let row = i % ROWS;
+            
             let band_pos = col as f32 / COLS as f32;
             let hue = telemetry_color::band_frequency_hue(band_pos) + hue_offset;
-            let color = Color::hsl(hue % 360.0, sat, lit * fade);
+            
+            // Fade lightness backward in Z
+            let z_fade = 1.0 - (row as f32 / ROWS as f32);
+            let color_lit = lit * (0.2 + z_fade * 0.8);
+            
+            let color = Color::hsl(hue % 360.0, sat, color_lit * fade);
             material.base_color = color;
-            material.emissive = LinearRgba::from(color) * emissive * fade;
+            material.emissive = LinearRgba::from(color) * emissive * z_fade * fade;
             material.metallic = policy.metallic;
             material.perceptual_roughness = policy.roughness;
         }

@@ -462,12 +462,14 @@ impl LadderFilter {
             let delay_val = self.delay[i].as_f32();
             let new_stage = (prev - delay_val) * g / (1.0 + g) + delay_val;
 
-            self.stage[i] = FilterState::new(if self.drive.as_f32() > 1.0 {
+            let saturated = if self.drive.as_f32() > 1.0 {
                 Self::saturate(new_stage)
             } else {
                 new_stage
-            });
-            self.delay[i] = self.stage[i];
+            };
+            self.stage[i] = FilterState::new(saturated);
+            // Trapezoidal integrator state update: 2*output - previous_delay
+            self.delay[i] = FilterState::new(2.0 * saturated - delay_val);
         }
 
         self.stage[3].as_f32()

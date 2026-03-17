@@ -125,6 +125,9 @@ impl CameraMode {
     }
 }
 
+#[derive(Message, Debug, Clone, Copy)]
+pub struct CameraModeEvent(pub CameraMode);
+
 /// Camera state resource.
 #[derive(Resource)]
 pub struct CameraState {
@@ -145,8 +148,6 @@ pub struct CameraState {
     dolly_zoom: f32,
     /// Previous bass energy for drop detection.
     prev_bass: f32,
-    /// Pending camera mode requested via OSC (consumed by input system).
-    pub osc_requested_mode: Option<CameraMode>,
 }
 
 impl Default for CameraState {
@@ -161,7 +162,6 @@ impl Default for CameraState {
             fly_z: 30.0,
             dolly_zoom: 0.0,
             prev_bass: 0.0,
-            osc_requested_mode: None,
         }
     }
 }
@@ -174,7 +174,11 @@ pub struct OrbitCamera {
 }
 
 /// Handle camera mode switching (C / Shift+C) and auto-cut toggle (V).
-pub fn input(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<CameraState>) {
+pub fn input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<CameraState>,
+    mut ev_camera: MessageReader<CameraModeEvent>,
+) {
     if keys.just_pressed(KeyCode::KeyC) {
         let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         state.mode = if shift {
@@ -191,9 +195,9 @@ pub fn input(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<CameraState>) {
     }
 
     // Handle OSC-requested camera mode
-    if let Some(mode) = state.osc_requested_mode.take() {
-        state.mode = mode;
-        info!("Camera mode (OSC): {}", mode.name());
+    for ev in ev_camera.read() {
+        state.mode = ev.0;
+        info!("Camera mode (OSC): {}", ev.0.name());
     }
 }
 
