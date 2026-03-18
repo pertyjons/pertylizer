@@ -90,10 +90,10 @@ Många effekter använder just nu ett enda delat material för hundratals instan
 
 ## 4. Nya Effektidéer (Kreativ Expansion)
 
-- [ ] **`cyber_wireframe` (Terrain / Base):** Trådmodeller av tunna cylindrar i grid. Noderna hoppar med FFT, linjerna pulserar med beat_phase, färg sveper som en radar med beat_position.
-- [ ] **`orbital_satellites` (Hero):** En ring av "satelliter" som svävar runt centrum. Vid `last_note_on` skjuter de tunna lasrar in mot mitten och rekylerar. Rotationen styrs av tempo/flux.
-- [ ] **`spectral_aurora` (Ambient / Sky):** Mjuka vågande draperier högt uppe (`y=20.0`) likt norrsken. Amplituden styrs av `rms` och färgskiftningar triggas av `centroid_hz`. Ger en mjuk, rökig kontrast till andra hårda geometrier.
-- [ ] **`beat_fracture` (Transients / Actions):** Hela luften "spricker" som glas vid extrem `event_drops` eller `flux`+`rms`. Slumpmässiga, nästan genomskinliga men neonkantade skärvor som hänger i luften i 0.2s och sen faller.
+- [x] **`cyber_wireframe` (Terrain / Base):** Trådmodeller av tunna cylindrar i grid. Noderna hoppar med FFT, linjerna pulserar med beat_phase, färg sveper som en radar med beat_position.
+- [x] **`orbital_satellites` (Hero):** En ring av "satelliter" som svävar runt centrum. Vid `last_note_on` skjuter de tunna lasrar in mot mitten och rekylerar. Rotationen styrs av tempo/flux.
+- [x] **`spectral_aurora` (Ambient / Sky):** Mjuka vågande draperier högt uppe (`y=20.0`) likt norrsken. Amplituden styrs av `rms` och färgskiftningar triggas av `centroid_hz`. Ger en mjuk, rökig kontrast till andra hårda geometrier.
+- [x] **`beat_fracture` (Transients / Actions):** Hela luften "spricker" som glas vid extrem `event_drops` eller `flux`+`rms`. Slumpmässiga, nästan genomskinliga men neonkantade skärvor som hänger i luften i 0.2s och sen faller.
 
 ---
 

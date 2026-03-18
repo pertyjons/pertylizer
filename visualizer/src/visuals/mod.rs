@@ -1,11 +1,13 @@
 //! Visual systems driven by synth telemetry.
 
 pub mod base_floor;
+pub mod beat_fracture;
 pub mod beat_pulse;
 pub mod camera;
 pub mod centroid_nebula;
 pub mod chord_bloom;
 pub mod cpu_overdrive;
+pub mod cyber_wireframe;
 pub mod debug_hud;
 pub mod effects;
 pub mod ferrofluid_tendrils;
@@ -17,12 +19,14 @@ pub mod harmonic_ribbons;
 pub mod instrument_cubes;
 pub mod neon_calligraphy;
 pub mod note_tree;
+pub mod orbital_satellites;
 pub mod particles;
 pub mod phase_rings;
 pub mod pulse_terrain;
 pub mod reaction_diffusion;
 pub mod rms_light;
 pub mod spectral_cathedral;
+pub mod spectral_aurora;
 pub mod spectral_origami;
 pub mod spectral_waterfall;
 pub mod telemetry_color;
@@ -45,9 +49,12 @@ use bevy::render::view::Hdr;
 use bevy::ui::IsDefaultUiCamera;
 
 use ferrofluid_tendrils::FerrofluidMaterial;
+use voronoi_shatter::VoronoiShatterMaterial;
+use cyber_wireframe::CyberWireframeMaterial;
 use fft_terrain::FftTerrainMaterial;
 use pulse_terrain::PulseTerrainMaterial;
 use reaction_diffusion::ReactionDiffusionDisplayMaterial;
+use spectral_aurora::SpectralAuroraMaterial;
 use spectral_waterfall::WaterfallMaterial;
 
 /// System set for effect switching (runs before visual updates).
@@ -70,10 +77,13 @@ impl Plugin for VisualsPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .add_plugins(MaterialPlugin::<WaterfallMaterial>::default())
             .add_plugins(MaterialPlugin::<PulseTerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<CyberWireframeMaterial>::default())
             .add_plugins(MaterialPlugin::<FftTerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<ReactionDiffusionDisplayMaterial>::default())
             .add_plugins(reaction_diffusion::ReactionDiffusionComputePlugin)
             .add_plugins(MaterialPlugin::<FerrofluidMaterial>::default())
+            .add_plugins(MaterialPlugin::<VoronoiShatterMaterial>::default())
+            .add_plugins(MaterialPlugin::<SpectralAuroraMaterial>::default())
             .init_resource::<debug_hud::DebugHudState>()
             .init_resource::<beat_pulse::BeatPulseState>()
             .init_resource::<particles::ParticleCount>()
@@ -92,6 +102,10 @@ impl Plugin for VisualsPlugin {
             .init_resource::<reaction_diffusion::ReactionDiffusionState>()
             .init_resource::<reaction_diffusion::ReactionDiffusionParams>()
             .init_resource::<ferrofluid_tendrils::FerrofluidState>()
+            .init_resource::<cyber_wireframe::CyberWireframeState>()
+            .init_resource::<voronoi_shatter::VoronoiState>()
+            .init_resource::<spectral_aurora::SpectralAuroraState>()
+            .init_resource::<beat_fracture::ShardCount>()
             .init_resource::<camera::CameraState>()
             .add_systems(
                 Startup,
@@ -121,7 +135,11 @@ impl Plugin for VisualsPlugin {
                     ferrofluid_tendrils::setup,
                     neon_calligraphy::setup,
                     instrument_cubes::setup,
+                    orbital_satellites::setup,
                     voronoi_shatter::setup,
+                    cyber_wireframe::setup,
+                    spectral_aurora::setup,
+                    beat_fracture::setup,
                     fft_terrain::setup,
                     reaction_diffusion::setup,
                     note_tree::setup,
@@ -209,6 +227,9 @@ impl Plugin for VisualsPlugin {
                     neon_calligraphy::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::NeonCalligraphy,
                     )),
+                    orbital_satellites::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::OrbitalSatellites,
+                    )),
                 )
                     .after(ThemeUpdate),
             )
@@ -218,11 +239,17 @@ impl Plugin for VisualsPlugin {
                     voronoi_shatter::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::VoronoiShatter,
                     )),
+                    cyber_wireframe::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::CyberWireframe,
+                    )),
                     fft_terrain::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::FftTerrain,
                     )),
                     reaction_diffusion::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::ReactionDiffusion,
+                    )),
+                    spectral_aurora::update.run_if(effects::effect_active_or_pending(
+                        effects::EffectId::SpectralAurora,
                     )),
                     note_tree::update.run_if(effects::effect_active_or_pending(
                         effects::EffectId::NoteTree,
@@ -239,9 +266,6 @@ impl Plugin for VisualsPlugin {
                     )),
                     spectral_origami::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralOrigami,
-                    )),
-                    voronoi_shatter::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::VoronoiShatter,
                     )),
                 )
                     .in_set(UpdateMaterials)
@@ -260,6 +284,9 @@ impl Plugin for VisualsPlugin {
                     instrument_cubes::spawn
                         .run_if(effects::effect_active(effects::EffectId::InstrumentCubes)),
                     instrument_cubes::update,
+                    beat_fracture::spawn
+                        .run_if(effects::effect_active(effects::EffectId::BeatFracture)),
+                    beat_fracture::update,
                     waiting_indicator::update,
                     debug_hud::toggle,
                     debug_hud::update,

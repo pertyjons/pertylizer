@@ -47,6 +47,12 @@ pub enum EffectId {
     FftTerrain,
     ReactionDiffusion,
     NoteTree,
+
+    // New shader-based effects
+    CyberWireframe,
+    OrbitalSatellites,
+    SpectralAurora,
+    BeatFracture,
 }
 
 impl EffectId {
@@ -60,6 +66,7 @@ impl EffectId {
         Self::PhaseRings,
         Self::VoronoiShatter,
         Self::FftTerrain,
+        Self::CyberWireframe,
     ];
 
     pub const HERO: &[Self] = &[
@@ -68,12 +75,14 @@ impl EffectId {
         Self::FractalPulse,
         Self::FerrofluidTendrils,
         Self::NoteTree,
+        Self::OrbitalSatellites,
     ];
 
     pub const AMBIENT: &[Self] = &[
         Self::CentroidNebula,
         Self::SpectralCathedral,
         Self::ReactionDiffusion,
+        Self::SpectralAurora,
     ];
 
     pub const TRANSIENTS: &[Self] = &[
@@ -83,6 +92,7 @@ impl EffectId {
         Self::ChordBloom,
         Self::NeonCalligraphy,
         Self::InstrumentCubes,
+        Self::BeatFracture,
     ];
 }
 
@@ -233,6 +243,20 @@ fn presets() -> &'static [SceneConfig] {
                 hero: Some(EffectId::NoteTree),
                 ambient: Some(EffectId::CentroidNebula),
                 transients: vec![EffectId::HarmonicRibbons, EffectId::NoteParticles],
+            },
+            // 9: Neon Grid
+            SceneConfig {
+                terrain: Some(EffectId::CyberWireframe),
+                hero: Some(EffectId::OrbitalSatellites),
+                ambient: Some(EffectId::SpectralAurora),
+                transients: vec![EffectId::BeatFracture],
+            },
+            // 10: Arctic Station
+            SceneConfig {
+                terrain: Some(EffectId::CyberWireframe),
+                hero: Some(EffectId::FluxSupernova),
+                ambient: Some(EffectId::SpectralAurora),
+                transients: vec![EffectId::NoteParticles, EffectId::BeatFracture],
             },
         ]
     })
