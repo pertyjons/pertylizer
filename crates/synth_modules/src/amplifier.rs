@@ -55,8 +55,8 @@ impl Amplifier {
     fn apply_clip(x: f32, mode: ClipMode) -> f32 {
         match mode {
             ClipMode::Off => x,
-            ClipMode::Soft => x.tanh(),
-            ClipMode::Hard => x.clamp(-1.0, 1.0),
+            ClipMode::Soft => crate::math::soft_clip(x),
+            ClipMode::Hard => crate::math::hard_clip(x),
         }
     }
 }

@@ -294,7 +294,7 @@ mod tests {
         wt.note_on(MidiNote::new(69), Velocity::new(100.0)); // A4
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(1024));
+        outputs.insert(PortName::OUT, AudioBuffer::new(1024));
 
         let context = ProcessContext {
             samples: synth_core::SampleCount::new(256),
@@ -305,7 +305,7 @@ mod tests {
         wt.process(InputPorts::empty(), &mut outputs, &context);
 
         // Should produce non-zero output
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         let max_abs = (0..256).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
         assert!(
             max_abs > 0.01,
@@ -339,7 +339,7 @@ mod tests {
             wt.note_on(MidiNote::new(69), Velocity::new(100.0));
 
             let mut outputs = HashMap::new();
-            outputs.insert("out".to_string(), AudioBuffer::new(128));
+            outputs.insert(PortName::OUT, AudioBuffer::new(128));
 
             let context = ProcessContext {
                 samples: synth_core::SampleCount::new(128),
@@ -349,7 +349,7 @@ mod tests {
 
             wt.process(InputPorts::empty(), &mut outputs, &context);
 
-            let out = &outputs["out"];
+            let out = &outputs[&PortName::OUT];
             for i in 0..128 {
                 assert!(
                     out[i].abs() <= 1.5, // Allow some headroom

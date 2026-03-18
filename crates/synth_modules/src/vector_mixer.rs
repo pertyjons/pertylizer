@@ -235,7 +235,6 @@ impl PolyModule for VectorMixer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_core::SampleCount;
 
     #[test]
     fn test_vector_mixer_creation() {

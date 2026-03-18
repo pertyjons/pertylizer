@@ -12,7 +12,7 @@
 //! - 100% real-time safe: zero heap allocations in `process()`
 
 use std::collections::HashMap;
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::TAU;
 
 use synth_core::{
     AudioBuffer, Describable, FractalOscParam, Hertz, InputPorts, MidiNote, ModuleCategory,
@@ -125,9 +125,7 @@ impl FractalOscillator {
             // Equal-power stereo panning:
             // Even partials pan left (-spread), odd partials pan right (+spread)
             let pan = if n % 2 == 0 { -spread } else { spread };
-            let angle = ((pan + 1.0) * 0.5) * FRAC_PI_2;
-            let gain_l = angle.cos();
-            let gain_r = angle.sin();
+            let (gain_l, gain_r) = crate::math::equal_power_pan(pan);
 
             out_l += amp * value * gain_l;
             out_r += amp * value * gain_r;

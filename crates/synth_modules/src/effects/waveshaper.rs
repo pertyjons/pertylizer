@@ -37,8 +37,7 @@ impl Waveshaper {
     /// Map normalized drive (0-1) to actual gain multiplier (1x-20x, exponential).
     #[inline]
     fn drive_gain(&self) -> f32 {
-        let d = self.drive.as_f32();
-        1.0 + d * d * 19.0
+        crate::math::drive_gain(self.drive.as_f32(), 19.0)
     }
 
     /// Apply the selected waveshaping curve to a single sample.
@@ -56,8 +55,7 @@ impl Waveshaper {
 
         match self.curve {
             WaveshaperCurve::SoftClip => {
-                // tanh(x * drive)
-                driven.tanh()
+                crate::math::soft_clip(driven)
             }
 
             WaveshaperCurve::Asymmetric => {
@@ -73,19 +71,7 @@ impl Waveshaper {
             }
 
             WaveshaperCurve::Fold => {
-                // Wavefolder: fold signal back when it exceeds +-1
-                let threshold = 1.0;
-                let mut x = driven;
-                for _ in 0..16 {
-                    if x > threshold {
-                        x = threshold - (x - threshold);
-                    } else if x < -threshold {
-                        x = -threshold - (x + threshold);
-                    } else {
-                        break;
-                    }
-                }
-                x.clamp(-threshold, threshold)
+                crate::math::foldback(driven, 1.0)
             }
 
             WaveshaperCurve::Chebyshev => {

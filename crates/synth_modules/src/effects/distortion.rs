@@ -50,34 +50,22 @@ impl Distortion {
     fn distort(&self, input: f32) -> f32 {
         // Apply drive (exponential curve for more usable range)
         let drive = self.drive.as_f32();
-        let gain = 1.0 + drive * drive * 50.0;
+        let gain = crate::math::drive_gain(drive, 50.0);
         let driven = input * gain;
 
         match self.dist_type {
             DistortionType::SoftClip => {
                 // Tanh soft clipping
-                driven.tanh()
+                crate::math::soft_clip(driven)
             }
 
             DistortionType::HardClip => {
                 // Simple hard clipping
-                driven.clamp(-1.0, 1.0)
+                crate::math::hard_clip(driven)
             }
 
             DistortionType::Foldback => {
-                // Foldback distortion with iteration limit for real-time safety
-                let threshold = 1.0;
-                let mut x = driven;
-                for _ in 0..16 {
-                    if x > threshold {
-                        x = threshold - (x - threshold);
-                    } else if x < -threshold {
-                        x = -threshold - (x + threshold);
-                    } else {
-                        break;
-                    }
-                }
-                x.clamp(-threshold, threshold)
+                crate::math::foldback(driven, 1.0)
             }
 
             DistortionType::Bitcrush => {
@@ -89,13 +77,7 @@ impl Distortion {
             }
 
             DistortionType::Tube => {
-                // Tube-like asymmetric soft clipping
-                let x = driven;
-                if x >= 0.0 {
-                    1.0 - (-x).exp()
-                } else {
-                    -1.0 + x.exp()
-                }
+                crate::math::tube_saturate(driven)
             }
         }
     }

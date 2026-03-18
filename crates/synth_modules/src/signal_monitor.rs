@@ -336,7 +336,7 @@ mod tests {
     fn test_signal_monitor_pass_through() {
         let mut sm = SignalMonitor::new();
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(64));
+        outputs.insert(PortName::OUT, AudioBuffer::new(64));
 
         let mut input_buf = AudioBuffer::new(64);
         for i in 0..64 {
@@ -353,7 +353,7 @@ mod tests {
         let inputs = InputPorts::new(&input_refs);
         sm.process(inputs, &mut outputs, &context);
 
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         for i in 0..64 {
             assert!(
                 (out[i] - (i as f32) / 64.0).abs() < 0.001,

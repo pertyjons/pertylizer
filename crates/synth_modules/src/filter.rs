@@ -132,7 +132,7 @@ impl Filter {
             FilterModel::Standard => {
                 // Apply drive as pre-gain with soft saturation
                 let driven = if self.drive.as_f32() > 1.0 {
-                    (input * self.drive.as_f32()).tanh()
+                    crate::math::soft_clip(input * self.drive.as_f32())
                 } else {
                     input * self.drive.as_f32()
                 };
@@ -430,7 +430,7 @@ impl LadderFilter {
 
     #[inline]
     fn saturate(x: f32) -> f32 {
-        x.tanh()
+        crate::math::soft_clip(x)
     }
 
     #[inline]

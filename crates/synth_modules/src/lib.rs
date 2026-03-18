@@ -18,6 +18,8 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::similar_names)]
 
+pub mod math;
+
 pub mod additive_osc;
 pub mod amplifier;
 pub mod envelope;

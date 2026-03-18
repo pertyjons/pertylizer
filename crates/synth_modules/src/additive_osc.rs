@@ -365,7 +365,7 @@ mod tests {
         osc.note_on(MidiNote::new(69), Velocity::new(0.8));
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(64));
+        outputs.insert(PortName::OUT, AudioBuffer::new(64));
 
         let context = ProcessContext {
             samples: synth_core::SampleCount::new(64),
@@ -375,7 +375,7 @@ mod tests {
 
         osc.process(InputPorts::empty(), &mut outputs, &context);
 
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         let max = (0..64).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
         assert!(max > 0.01, "Additive osc should produce sound, max={max}");
     }

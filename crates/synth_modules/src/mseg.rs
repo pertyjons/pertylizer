@@ -704,12 +704,12 @@ mod tests {
     fn test_mseg_idle_output_silence() {
         let mut mseg = Mseg::new();
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(64));
+        outputs.insert(PortName::OUT, AudioBuffer::new(64));
 
         let context = make_context(64);
         mseg.process(InputPorts::empty(), &mut outputs, &context);
 
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         for i in 0..64 {
             assert!(
                 out[i].abs() < 0.001,

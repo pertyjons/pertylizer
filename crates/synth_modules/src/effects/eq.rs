@@ -124,13 +124,12 @@ impl Eq {
 
     /// Calculate low shelf filter coefficients.
     fn calc_low_shelf(&mut self) {
-        let a = 10.0_f32.powf(self.low_gain.as_f32() / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.low_freq.as_f32() / self.sample_rate.as_f32();
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        // Shelf slope parameter S = 0.9 (controls transition bandwidth; 1.0 = standard slope)
+        let a = crate::math::db_to_eq_amplitude(self.low_gain.as_f32());
+        let omega = crate::math::biquad_omega(self.low_freq, self.sample_rate);
+        let cos_w0 = omega.cos_w0;
+        let sin_w0 = omega.sin_w0;
         let shelf_slope = 0.9_f32;
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / shelf_slope - 1.0) + 2.0).sqrt();
+        let alpha = crate::math::biquad_alpha_shelf(sin_w0, a, shelf_slope);
         let sqrt_a = a.sqrt();
 
         self.low_coeffs = BiquadCoeffs::from_raw(
@@ -145,11 +144,11 @@ impl Eq {
 
     /// Calculate peaking EQ filter coefficients.
     fn calc_mid_peak(&mut self) {
-        let a = 10.0_f32.powf(self.mid_gain.as_f32() / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.mid_freq.as_f32() / self.sample_rate.as_f32();
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / (2.0 * self.mid_q);
+        let a = crate::math::db_to_eq_amplitude(self.mid_gain.as_f32());
+        let omega = crate::math::biquad_omega(self.mid_freq, self.sample_rate);
+        let cos_w0 = omega.cos_w0;
+        let sin_w0 = omega.sin_w0;
+        let alpha = crate::math::biquad_alpha_from_q(sin_w0, self.mid_q);
 
         self.mid_coeffs = BiquadCoeffs::from_raw(
             1.0 + alpha * a,
@@ -163,13 +162,12 @@ impl Eq {
 
     /// Calculate high shelf filter coefficients.
     fn calc_high_shelf(&mut self) {
-        let a = 10.0_f32.powf(self.high_gain.as_f32() / 40.0);
-        let w0 = 2.0 * std::f32::consts::PI * self.high_freq.as_f32() / self.sample_rate.as_f32();
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        // Shelf slope parameter S = 0.9 (controls transition bandwidth; 1.0 = standard slope)
+        let a = crate::math::db_to_eq_amplitude(self.high_gain.as_f32());
+        let omega = crate::math::biquad_omega(self.high_freq, self.sample_rate);
+        let cos_w0 = omega.cos_w0;
+        let sin_w0 = omega.sin_w0;
         let shelf_slope = 0.9_f32;
-        let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / shelf_slope - 1.0) + 2.0).sqrt();
+        let alpha = crate::math::biquad_alpha_shelf(sin_w0, a, shelf_slope);
         let sqrt_a = a.sqrt();
 
         self.high_coeffs = BiquadCoeffs::from_raw(

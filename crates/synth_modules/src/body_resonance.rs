@@ -62,16 +62,12 @@ impl BodyResonance {
         sample_rate: SampleRate,
     ) -> f32 {
         // Coefficient calculation with dynamic Nyquist limit
-        let sr = sample_rate.as_f32();
-        let nyquist_limit = sr * 0.49;
-        let f = (freq.as_f32().min(nyquist_limit)) / sr;
-        let w = 2.0 * std::f32::consts::PI * f;
-        let sin_w = w.sin();
-        let alpha = sin_w / (2.0 * q.max(0.5));
+        let omega = crate::math::biquad_omega(freq, sample_rate);
+        let alpha = crate::math::biquad_alpha_from_q(omega.sin_w0, q.max(0.5));
 
         // Simple bandpass using biquad coefficients
         let a0 = 1.0 + alpha;
-        let a1 = -2.0 * w.cos();
+        let a1 = -2.0 * omega.cos_w0;
         let a2 = 1.0 - alpha;
         let b0 = alpha;
         let b2 = -alpha;

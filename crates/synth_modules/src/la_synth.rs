@@ -360,7 +360,7 @@ mod tests {
         }
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(num));
+        outputs.insert(PortName::OUT, AudioBuffer::new(num));
 
         let context = ProcessContext {
             samples: SampleCount::new(num),
@@ -373,7 +373,7 @@ mod tests {
         la.process(inputs, &mut outputs, &context);
 
         // Without note_on, should pass through sustain
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         for i in 0..num {
             assert!(
                 (out[i] - 0.5).abs() < 0.001,

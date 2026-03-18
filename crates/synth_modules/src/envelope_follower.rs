@@ -222,7 +222,7 @@ mod tests {
     fn test_envelope_follower_silence() {
         let mut ef = EnvelopeFollower::new();
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(64));
+        outputs.insert(PortName::OUT, AudioBuffer::new(64));
 
         let context = ProcessContext {
             samples: synth_core::SampleCount::new(64),
@@ -232,7 +232,7 @@ mod tests {
 
         ef.process(InputPorts::empty(), &mut outputs, &context);
 
-        let out = &outputs["out"];
+        let out = &outputs[&PortName::OUT];
         for i in 0..64 {
             assert!(
                 out[i].abs() < 0.001,

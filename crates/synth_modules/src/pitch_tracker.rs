@@ -400,8 +400,8 @@ mod tests {
         let in_buf = AudioBuffer::new(num); // all zeros
 
         let mut outputs = HashMap::new();
-        outputs.insert("pitch_cv".to_string(), AudioBuffer::new(num));
-        outputs.insert("gate".to_string(), AudioBuffer::new(num));
+        outputs.insert(PortName::PITCH_CV, AudioBuffer::new(num));
+        outputs.insert(PortName::GATE, AudioBuffer::new(num));
 
         let context = ProcessContext {
             samples: SampleCount::new(num),
@@ -414,7 +414,7 @@ mod tests {
         pt.process(inputs, &mut outputs, &context);
 
         // Gate should be closed for silence
-        let gate = &outputs["gate"];
+        let gate = &outputs[&PortName::GATE];
         for i in 0..num {
             assert!(
                 gate[i] < 0.5,

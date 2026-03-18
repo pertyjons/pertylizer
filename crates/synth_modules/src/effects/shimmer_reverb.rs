@@ -56,8 +56,8 @@ impl GrainShifter {
         // Hann crossfade based on position within grain
         let phase1 = (pos1.rem_euclid(grain)) / grain;
         let phase2 = (pos2.rem_euclid(grain)) / grain;
-        let w1 = 0.5 * (1.0 - (phase1 * std::f32::consts::TAU).cos());
-        let w2 = 0.5 * (1.0 - (phase2 * std::f32::consts::TAU).cos());
+        let w1 = crate::math::hann_window(phase1);
+        let w2 = crate::math::hann_window(phase2);
 
         let s1 = Self::read_lerp(&self.buffer, pos1);
         let s2 = Self::read_lerp(&self.buffer, pos2);

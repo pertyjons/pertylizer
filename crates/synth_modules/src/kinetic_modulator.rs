@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_kinetic_modulator_basic() {
-        let mut km = KineticModulator::new();
+        let km = KineticModulator::new();
         assert_eq!(km.module_type(), ModuleType::KineticModulator);
         assert!(!km.active);
     }
@@ -334,7 +334,7 @@ mod tests {
         km.note_on(MidiNote::A4, Velocity::MAX);
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(64));
+        outputs.insert(PortName::OUT, AudioBuffer::new(64));
 
         let context = ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
@@ -358,7 +358,7 @@ mod tests {
         km.note_on(MidiNote::A4, Velocity::MAX);
 
         let mut outputs = HashMap::new();
-        outputs.insert("out".to_string(), AudioBuffer::new(1024));
+        outputs.insert(PortName::OUT, AudioBuffer::new(1024));
 
         let context = ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,

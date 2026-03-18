@@ -282,23 +282,32 @@ mod tests {
     fn test_limiter_reduces_peaks() {
         let mut limiter = Limiter::new();
         limiter.ceiling = Decibels::new(-6.0); // ~0.5 linear
-        limiter.lookahead_samples = 1;
+        // Use default lookahead (~132 samples at 44.1kHz) for proper peak detection
+        limiter.update_lookahead();
 
+        // Need enough frames to fill the lookahead buffer and settle
+        let num_frames = 1024;
         let context = ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
-            samples: SampleCount::new(128),
+            samples: SampleCount::new(num_frames),
             ..Default::default()
         };
 
-        // Loud input
-        let input: Vec<f32> = vec![1.0; 256];
-        let mut output = vec![0.0; 256];
+        // Loud stereo input (2 floats per frame)
+        let input: Vec<f32> = vec![1.0; num_frames * 2];
+        let mut output = vec![0.0; num_frames * 2];
 
         limiter.process(&input, &mut output, &context);
 
-        // After settling, output should be below ceiling
-        for sample in &output[20..] {
-            assert!(sample.abs() <= 0.55, "Limiter output too loud: {}", sample);
+        // After the lookahead buffer has filled, output should be limited
+        let ceiling_linear = Decibels::new(-6.0).to_linear();
+        let settle_offset = MAX_LOOKAHEAD_SAMPLES * 2 + 40; // past lookahead fill + settling
+        for sample in &output[settle_offset..] {
+            assert!(
+                sample.abs() <= ceiling_linear + 0.05,
+                "Limiter output too loud: {}",
+                sample
+            );
         }
     }
 }
